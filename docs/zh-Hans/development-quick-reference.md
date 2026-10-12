@@ -1,6 +1,6 @@
 # AIPOCH Open-Science — 开发与打包
 
-AIPOCH Open-Science 是使用 React、TypeScript、Prisma/SQLite 和基于 ACP 的智能体运行时构建的 Electron 应用。
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。
 
 源代码开发前提条件：
 
@@ -15,24 +15,32 @@ npm install
 npm run dev
 ```
 
-`npm install` 会自动生成 Prisma 客户端并安装 Electron 原生依赖项。`npm run dev` 构建 Electron main/preload 软件包、启动渲染器并打开桌面应用。开发数据隔离在 `~/.open-science-project` 下。
+`npm install` → Prisma / Electron. `npm run dev` 构建 Node 后端、准备可执行文件并打开 Electron。监听器自动重建软件包和后端；构建成功后，正常退出应用并重新运行命令以加载 backend/Main/Preload 变更。渲染器使用 HMR。
+
+`~/.open-science-project` · `~/Open-Science-DEV`
 
 常用命令：
 
-| 命令                   | 用途                                    |
-| ---------------------- | --------------------------------------- |
-| `npm run dev`          | 启动开发应用                            |
-| `npm run dev:web`      | 开发应用 + localhost Web UI (127.0.0.1) |
-| `npm run dev:headless` | 开发后端 + Web UI，不打开 Electron 窗口 |
-| `npm run lint`         | 运行 ESLint                             |
-| `npm run typecheck`    | 对 main 和 renderer 代码进行类型检查    |
-| `npm test`             | 运行 Vitest 测试套件                    |
-| `npm run build`        | 类型检查并构建应用                      |
-| `npm run build:web`    | 构建可选 localhost Web UI               |
-| `npm run build:mac`    | 打包 macOS 构建                         |
-| `npm run build:win`    | 打包 Windows 构建                       |
-| `npm run build:linux`  | 打包 Linux 构建                         |
+| 命令                   | 用途                                      |
+| ---------------------- | ----------------------------------------- |
+| `npm run dev`          | 启动开发应用                              |
+| `npm run dev:web`      | Node 后端和本地 Web 界面；不启动 Electron |
+| `npm run dev:headless` | Node 后端和本地 Web 界面；不启动 Electron |
+| `npm run lint`         | 运行 ESLint                               |
+| `npm run typecheck`    | 对 main 和 renderer 代码进行类型检查      |
+| `npm test`             | 运行 Vitest 测试套件                      |
+| `npm run build`        | 类型检查并构建应用                        |
+| `npm run build:web`    | 构建可选 localhost Web UI                 |
+| `npm run build:mac`    | 打包 macOS 构建                           |
+| `npm run build:win`    | 打包 Windows 构建                         |
+| `npm run build:linux`  | 打包 Linux 构建                           |
 
 打包输出写入 `dist/`。
 
 [README](README.md)
+
+源码开发需要 Node.js 24。独立 npm 软件包需要 Node >=22.13.0，轻量 CLI/SDK 需要 Node >=22.5。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
+
+`npm run build:backend` → Node; `npm run pack:backend` → tarball.
+
+[Node](../standalone-runtime.md)

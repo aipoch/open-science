@@ -1,4 +1,9 @@
-import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { createCleanupStopEvidence, hasCleanupStopEvidence } from './cleanup-stop-evidence'
+import {
+  ComputeJobLifecycle,
+  DISPATCH_DEFINITELY_NOT_STARTED,
+  dispatchMayHaveStarted
+} from './compute-job-lifecycle'
 import { classifyConnectionFailure, type ComputeConnectionBrokerAcquirer } from './connection'
 import { DispatchTracker } from './dispatch-tracker'
 import {
@@ -20,7 +25,7 @@ import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 type ComputeJobDeletionRepository = Pick<
   ComputeJobRepository,
-  'findByOwner' | 'listOwners' | 'get' | 'settleRemoteCleanup'
+  'findByOwner' | 'listOwners' | 'get' | 'settleRemoteCleanup' | 'recordRemoteCleanupStopped'
 >
 type ComputeJobOwnerLiveness = boolean | 'unknown'
 
@@ -43,6 +48,9 @@ type PreparedRemoteCleanup = {
   jobId: string
   providerId: string
   command: string
+  stopCommand: string
+  job: ComputeJob
+  workdir: string
   slurm?: {
     job: ComputeJob
     handle?: SlurmRemoteHandle
@@ -97,7 +105,9 @@ const cleanupCommand = (
   workdir: string,
   handle: ComputeRemoteHandle | undefined,
   requirePidWitness = false,
-  allowPidCleanup = true
+  allowPidCleanup = true,
+  allowAbsentParents = false,
+  stopOnly = false
 ): string => {
   const markerIndex = Math.max(
     workdir.lastIndexOf('/.open-science/jobs/'),
@@ -120,6 +130,23 @@ const cleanupCommand = (
   const lines = [
     `[ ! -L ${quotedWorkdir} ] || exit 1`,
     `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P) || exit 1`,
+    // Walk from a readable/searchable canonical scratch directory. A failed lookup is only
+    // absence after validating its parent; files, symlinks and inaccessible directories fail.
+    ...(allowAbsentParents
+      ? [
+          'cleanup_parent=$scratch_root',
+          ...workdirSuffix
+            .split('/')
+            .flatMap((component) => [
+              '[ -d "$cleanup_parent" ] && [ -r "$cleanup_parent" ] && [ -x "$cleanup_parent" ] || exit 1',
+              `cleanup_child="$cleanup_parent"/${quoteRemotePath(component)}`,
+              '[ ! -L "$cleanup_child" ] || exit 1',
+              '[ -e "$cleanup_child" ] || exit 0',
+              '[ -d "$cleanup_child" ] || exit 1',
+              'cleanup_parent=$cleanup_child'
+            ])
+        ]
+      : []),
     `workdir_parent=$(cd -- ${quotedWorkdirParent} 2>/dev/null && pwd -P) || exit 1`,
     'expected_workdir_parent=${scratch_root%/}/' + quotedWorkdirParentSuffix,
     '[ "$workdir_parent" = "$expected_workdir_parent" ] || exit 1',
@@ -138,6 +165,7 @@ const cleanupCommand = (
     '  case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac',
     '}'
   ]
+  if (handle || requirePidWitness) lines.push('[ -n "$workdir" ] || exit 1')
   if (handle && handle.driver !== 'slurm') lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
   if (requirePidWitness) {
     lines.push(`[ -z "$workdir" ] || [ -f ${quotedPidFile} ] || exit 1`)
@@ -147,6 +175,7 @@ const cleanupCommand = (
       `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`
     )
   }
+  if (stopOnly) return lines.join('\n')
   lines.push(
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
     `test ! -e ${quotedWorkdir} && test ! -L ${quotedWorkdir}`
@@ -550,16 +579,33 @@ class ComputeJobDeletionOwner {
     if (!workdir) {
       throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
     }
-    const handle = activeRemoteHandle(job, workdir)
-    const isActiveSlurm = ACTIVE_STATUSES.has(job.status) && job.execution_mode === 'slurm'
+    const noLaunch = !job.remote_handle && job.last_poll_error === DISPATCH_DEFINITELY_NOT_STARTED
+    const stopped = hasCleanupStopEvidence(job, workdir)
+    const handle = stopped ? undefined : activeRemoteHandle(job, workdir)
+    const isActiveSlurm =
+      !noLaunch && ACTIVE_STATUSES.has(job.status) && job.execution_mode === 'slurm'
     return {
       jobId: job.job_id,
       providerId: job.provider_id,
-      command: cleanupCommand(
+      job,
+      workdir,
+      command: cleanupCommand(workdir, undefined, false, false, true),
+      stopCommand: cleanupCommand(
         workdir,
-        handle,
-        job.execution_mode !== 'slurm' && job.status === 'submitted' && !handle,
-        job.execution_mode !== 'slurm'
+        handle?.driver === 'slurm' ? undefined : handle,
+        !noLaunch &&
+          job.execution_mode !== 'slurm' &&
+          (job.status === 'submitted' || dispatchMayHaveStarted(job)) &&
+          !handle,
+        job.execution_mode !== 'slurm',
+        (job.status === 'error' &&
+          job.error_code === 'dispatch_failed' &&
+          !job.remote_handle &&
+          !dispatchMayHaveStarted(job) &&
+          job.started_at === undefined) ||
+          noLaunch ||
+          job.execution_mode === 'slurm',
+        true
       ),
       ...(isActiveSlurm
         ? {
@@ -573,21 +619,63 @@ class ComputeJobDeletionOwner {
   }
 
   private async runRemoteCleanup(cleanup: PreparedRemoteCleanup): Promise<void> {
+    const current = await this.deps.jobRepository.get(cleanup.jobId)
+    if (!current) throw new Error(`Compute Job ${cleanup.jobId} disappeared during cleanup.`)
+    // Cancellation/recovery may settle status, diagnostic evidence, or the previously missing
+    // handle after prepare. Replan those phases, but never retarget a different execution.
+    if (
+      current.status === 'queued' ||
+      (cleanup.job.remote_handle !== undefined &&
+        cleanup.job.remote_handle !== current.remote_handle) ||
+      createCleanupStopEvidence(current, cleanup.workdir) !==
+        createCleanupStopEvidence(
+          { ...cleanup.job, remote_handle: current.remote_handle },
+          cleanup.workdir
+        )
+    ) {
+      throw new Error(`Compute Job ${cleanup.jobId} changed during cleanup.`)
+    }
+    if (current.remote_handle !== undefined && cleanup.job.remote_handle === undefined) {
+      const recovered = parseRemoteJobHandle(current.remote_handle, cleanup.workdir)
+      if (!recovered || (current.execution_mode === 'slurm') !== (recovered.driver === 'slurm')) {
+        throw new Error(`Invalid recovered remote handle for Compute Job ${cleanup.jobId}.`)
+      }
+    }
+    const refreshed = await this.prepareRemoteCleanup(current)
+    if (!refreshed) return
+    if (refreshed.workdir !== cleanup.workdir) {
+      throw new Error(`Compute Job ${cleanup.jobId} changed cleanup work directory.`)
+    }
+    cleanup = refreshed
     const connection = await this.deps.connectionBroker.acquire(cleanup.providerId, {
       intent: 'job_cleanup'
     })
-    if (cleanup.slurm) {
-      const handle = cleanup.slurm.handle ?? (await recoverSlurmJob(cleanup.slurm.job, connection))
-      if (!handle) {
-        throw new Error(
-          `Slurm job for Compute Job ${cleanup.jobId} could not be recovered; remote cleanup was not attempted.`
-        )
+    if (!hasCleanupStopEvidence(current, cleanup.workdir)) {
+      if (cleanup.slurm) {
+        const handle =
+          cleanup.slurm.handle ?? (await recoverSlurmJob(cleanup.slurm.job, connection))
+        if (!handle) {
+          throw new Error(
+            `Slurm job for Compute Job ${cleanup.jobId} could not be recovered; remote cleanup was not attempted.`
+          )
+        }
+        if (!(await cancelSlurmJob(handle, connection))) {
+          throw new Error(
+            `Slurm cancellation is not yet confirmed for Compute Job ${cleanup.jobId}; remote cleanup was not attempted.`
+          )
+        }
       }
-      if (!(await cancelSlurmJob(handle, connection))) {
-        throw new Error(
-          `Slurm cancellation is not yet confirmed for Compute Job ${cleanup.jobId}; remote cleanup was not attempted.`
-        )
+      const stopped = await connection.run(cleanup.stopCommand, {
+        timeoutMs: 30_000,
+        loginShell: false,
+        maxOutputBytes: 4 * 1024
+      })
+      const stopFailure = classifyConnectionFailure(stopped, false)
+      if (stopFailure) throw stopFailure
+      if (stopped.timedOut || stopped.exitCode !== 0) {
+        throw new Error(`Remote Compute Job cleanup failed while stopping ${cleanup.jobId}.`)
       }
+      await this.deps.jobRepository.recordRemoteCleanupStopped(cleanup.job, cleanup.workdir)
     }
     const result = await connection.run(cleanup.command, {
       timeoutMs: 30_000,

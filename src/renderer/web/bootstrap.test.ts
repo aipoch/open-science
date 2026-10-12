@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import webHtml from './index.html?raw'
 
 import {
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
@@ -22,9 +23,6 @@ const themeMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/theme', () => themeMocks)
 vi.mock('../src/main', () => ({}))
-vi.mock('../../main/remote-access/openscience-logo.svg?raw', () => ({
-  default: '<svg viewBox="0 0 1 1"></svg>'
-}))
 
 type SocketEventName = 'open' | 'message' | 'close'
 type SocketEvent = { data?: unknown; code?: number }
@@ -200,14 +198,8 @@ beforeEach(() => {
   FakeWebSocket.instances = []
   document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
-  document.body.innerHTML = `
-    <div id=open-science-connection-state role=status>
-      <div class=open-science-connection-panel>
-        <span id=open-science-connection-logo></span>
-        <p id=open-science-connection-message>Connecting to remote computer…</p>
-      </div>
-    </div>
-  `
+  document.body.innerHTML = new DOMParser().parseFromString(webHtml, 'text/html').body.innerHTML
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   sessionStorage.clear()
   sessionStorage.setItem('open-science-web-client', 'web-client-1')
   delete (window as unknown as { api?: unknown }).api
@@ -229,6 +221,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   sessionStorage.clear()
   localStorage.clear()
   document.body.innerHTML = ''
@@ -236,6 +229,25 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('uses the desktop particle loader before React startup and releases it when replaced', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      arc: vi.fn(),
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      fill: vi.fn(),
+      restore: vi.fn(),
+      save: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
+    await loadBootstrap()
+    expect(document.querySelector('#open-science-connection-logo canvas')).not.toBeNull()
+    expect(document.querySelector('.open-science-connection-name')).toBeNull()
+    expect(document.querySelector('.open-science-connection-spinner')).toBeNull()
+    document.getElementById('root')!.replaceChildren(document.createElement('main'))
+    await vi.waitFor(() => expect(cancelFrame).toHaveBeenCalled())
+    expect(document.querySelector('canvas')).toBeNull()
+  })
+
   it('records the caller location returned by bootstrap', async () => {
     await loadBootstrap()
 

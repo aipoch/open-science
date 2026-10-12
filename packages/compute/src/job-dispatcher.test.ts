@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +24,7 @@ import type { ComputeHostRepository, ComputeJobRepository } from './ports'
 import { runScpUpload, type ScpRunner } from './scp-runner'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 
+import { createComputeExecution } from './execution'
 import { DispatchTracker } from './dispatch-tracker'
 import {
   buildLauncherScript,
@@ -350,6 +359,7 @@ describe('dispatchJob', () => {
     expect(transition).toHaveBeenCalledWith('job-1', ['submitted'], {
       status: 'error',
       errorCode: 'authentication_failed',
+      lastPollError: null,
       stderrTail: 'Authentication failed. Verify the username and password.',
       finishedAt: expect.any(Date)
     })
@@ -382,7 +392,7 @@ describe('dispatchJob', () => {
         ['submitted'],
         expect.objectContaining({ status: 'running' })
       )
-      const updateCall = transition.mock.calls[0]![2]
+      const updateCall = transition.mock.calls.find((call) => call[2].status === 'running')![2]
       expect(updateCall).toHaveProperty('remoteHandle')
       const handle = JSON.parse(updateCall.remoteHandle as string)
       expect(handle.pid).toBe(12345)
@@ -427,9 +437,7 @@ describe('dispatchJob', () => {
       'job-1',
       ['submitted'],
       expect.objectContaining({
-        status: 'error',
-        errorCode: 'dispatch_failed',
-        stderrTail: 'Could not read pid from dispatch output: "not-a-pid [redacted]"'
+        lastPollError: 'Could not read pid from dispatch output: "not-a-pid [redacted]"'
       })
     )
     expect(JSON.stringify(transition.mock.calls)).not.toContain(secret)
@@ -577,11 +585,11 @@ describe('dispatchJob', () => {
     expect(JSON.stringify(transition.mock.calls)).not.toContain('raw-server-detail')
   })
 
-  it('transitions to error with dispatch_failed when mkdir/launch fails (non-zero exit)', async () => {
+  it('transitions to error with dispatch_failed for an explicit pre-launch failure', async () => {
     const job = makeJob()
     const runner = makeSshRunner({
-      exitCode: 1,
-      stdout: '',
+      exitCode: 73,
+      stdout: 'OPEN_SCIENCE_DISPATCH_PRE_LAUNCH_FAILED_V1\n',
       stderr: 'Permission denied',
       truncated: false,
       timedOut: false
@@ -751,4 +759,426 @@ describe('dispatchJob — staging integration', () => {
       expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
     )
   })
+})
+
+describe('dispatch preparation shell boundaries', () => {
+  pit.each(['mkdir', 'cd', 'command', 'launcher', 'chmod'] as const)(
+    'fails closed before launch when %s fails',
+    async (failure) => {
+      const root = mkdtempSync(join(tmpdir(), 'compute-dispatch-closed-'))
+      launcherFixtures.push(root)
+      const initial = join(root, 'initial')
+      const workdir = join(root, 'scratch', '.open-science', 'jobs', 'job-1')
+      mkdirSync(initial)
+      for (const name of ['command.sh', 'launcher.sh', 'job.pid']) {
+        writeFileSync(join(initial, name), 'sentinel')
+      }
+      if (failure === 'mkdir') writeFileSync(join(root, 'scratch'), 'blocked')
+      else mkdirSync(workdir, { recursive: true })
+      if (failure === 'command' || failure === 'launcher') mkdirSync(join(workdir, `${failure}.sh`))
+      const injected =
+        failure === 'cd'
+          ? 'cd() { return 1; }\n'
+          : failure === 'chmod'
+            ? 'chmod() { return 1; }\n'
+            : ''
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => {
+          const result = spawnSync('/bin/sh', ['-c', injected + command], {
+            cwd: initial,
+            encoding: 'utf8'
+          })
+          return {
+            exitCode: result.status ?? 1,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            timedOut: false,
+            truncated: false
+          }
+        })
+      }
+      const job = makeJob({ remote_workdir: workdir, command: 'touch executed' })
+      const { repo, transition } = makeJobRepo(job)
+      const execution = createComputeExecution()
+      await execution.dispatchJob(job.job_id, {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+        jobRepository: repo as ComputeJobRepository
+      })
+      expect(transition).toHaveBeenCalledWith(
+        'job-1',
+        ['submitted'],
+        expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+      )
+      for (const name of ['command.sh', 'launcher.sh', 'job.pid'])
+        expect(readFileSync(join(initial, name), 'utf8')).toBe('sentinel')
+      expect(existsSync(join(initial, 'executed'))).toBe(false)
+      expect(existsSync(join(workdir, 'job.pid'))).toBe(false)
+      expect(existsSync(join(workdir, 'executed'))).toBe(false)
+      await execution.waitForDispatch([job.job_id])
+    }
+  )
+})
+
+describe('post-launch shell failures', () => {
+  pit.each(['pid-write', 'pid-response'] as const)(
+    'keeps durable tracking after %s fails',
+    async (failure) => {
+      const root = mkdtempSync(join(tmpdir(), 'compute-post-launch-'))
+      launcherFixtures.push(root)
+      const workdir = join(root, '.open-science', 'jobs', 'job-1')
+      mkdirSync(workdir, { recursive: true })
+      if (failure === 'pid-write') mkdirSync(join(workdir, 'job.pid'))
+      let call = 0
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => {
+          if (++call > 1)
+            return {
+              exitCode: 0,
+              stdout: [
+                'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+                'workdir:1',
+                'exit_code:',
+                `pid:${readFileSync(join(workdir, 'job.pid'), 'utf8').trim()}`,
+                'cwd_match:1'
+              ].join('\n'),
+              stderr: '',
+              timedOut: false,
+              truncated: false
+            }
+          // Execute the real dispatch shell; replace only detached workload with a finite marker.
+          const injection =
+            "trap 'wait' 0\nnohup() { touch launched; }\n" +
+            (failure === 'pid-response'
+              ? 'echo_calls=0; echo() { echo_calls=$((echo_calls+1)); [ "$echo_calls" -lt 2 ] || return 1; command echo "$@"; }\n'
+              : '')
+          const result = spawnSync(
+            '/bin/sh',
+            ['-c', injection + command + '\nresult=$?; wait; exit "$result"'],
+            { cwd: root, encoding: 'utf8' }
+          )
+          expect(result.status).not.toBe(0)
+          return {
+            exitCode: result.status ?? 1,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            timedOut: false,
+            truncated: false
+          }
+        })
+      }
+      const job = makeJob({ remote_workdir: workdir })
+      const { repo, transition } = makeJobRepo(job)
+      await createComputeExecution().dispatchJob(job.job_id, {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+        jobRepository: repo as ComputeJobRepository
+      })
+      expect(existsSync(join(workdir, 'launched'))).toBe(true)
+      expect(transition).toHaveBeenCalledWith(
+        'job-1',
+        ['submitted'],
+        expect.objectContaining({ status: 'running', remoteHandle: expect.any(String) })
+      )
+      expect(transition.mock.calls.some((call) => call[2].status === 'error')).toBe(false)
+    }
+  )
+
+  it.each(['cancelled', 'success', 'deleted'] as const)(
+    'respects a concurrent %s CAS rejection and releases leases',
+    async () => {
+      const job = makeJob()
+      const execution = createComputeExecution()
+      const { repo, transition } = makeJobRepo(job)
+      transition.mockResolvedValue(null)
+      const onJobUpdated = vi.fn()
+      const runner = makeSshRunner({
+        exitCode: 73,
+        stdout: 'OPEN_SCIENCE_DISPATCH_PRE_LAUNCH_FAILED_V1',
+        stderr: '',
+        timedOut: false,
+        truncated: false
+      })
+      await execution.dispatchJob(job.job_id, {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+        jobRepository: repo as ComputeJobRepository,
+        onJobUpdated
+      })
+      expect(transition).toHaveBeenCalledWith(
+        'job-1',
+        ['submitted'],
+        expect.objectContaining({ lastPollError: 'dispatch_may_have_started' })
+      )
+      expect(runner.run).not.toHaveBeenCalled()
+      expect(onJobUpdated).not.toHaveBeenCalled()
+      expect(execution.isDispatching(job.job_id)).toBe(false)
+    }
+  )
+})
+
+describe('ambiguous post-launch recovery', () => {
+  it('retains submitted recovery tracking when exit 74 loses both PID and workdir evidence', async () => {
+    const job = makeJob()
+    const { repo, transition } = makeJobRepo(job)
+    const runner: SshRunner = {
+      run: vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 74,
+          stdout: '',
+          stderr: '',
+          timedOut: false,
+          truncated: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: noLaunchRecoveryOutput,
+          stderr: '',
+          timedOut: false,
+          truncated: false
+        })
+    }
+    await createComputeExecution().dispatchJob(job.job_id, {
+      connectionBroker: brokerFromRunners(runner),
+      hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+      jobRepository: repo as ComputeJobRepository
+    })
+    expect(transition).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({ lastPollError: 'dispatch_recovery_pending' })
+    )
+    expect(transition.mock.calls.some((call) => call[2].status === 'error')).toBe(false)
+  })
+
+  pit('fails before upload when the manifest workdir cannot be created', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'compute-manifest-closed-'))
+    launcherFixtures.push(root)
+    writeFileSync(join(root, 'blocked'), 'sentinel')
+    const workdir = join(root, 'blocked', '.open-science', 'jobs', 'job-1')
+    const runner: SshRunner = {
+      run: vi.fn(async (_target, command) => {
+        const result = spawnSync('/bin/sh', ['-c', command], { cwd: root, encoding: 'utf8' })
+        return {
+          exitCode: result.status ?? 1,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          timedOut: false,
+          truncated: false
+        }
+      })
+    }
+    const lease = leaseFromRunners(runner)
+    lease.upload = vi.fn()
+    const job = makeJob({
+      remote_workdir: workdir,
+      input_manifest: JSON.stringify([
+        { kind: 'upload', localPath: '/local/data', dstFilename: 'data', label: 'data' }
+      ])
+    })
+    const { repo, transition } = makeJobRepo(job)
+    await createComputeExecution().dispatchJob(job.job_id, {
+      connectionBroker: { acquire: async () => lease },
+      hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+      jobRepository: repo as ComputeJobRepository
+    })
+    expect(lease.upload).not.toHaveBeenCalled()
+    expect(transition).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+    )
+    expect(readFileSync(join(root, 'blocked'), 'utf8')).toBe('sentinel')
+    expect(existsSync(join(root, 'command.sh'))).toBe(false)
+  })
+})
+
+describe('durable uncertain launch recovery', () => {
+  it.each(['pending', 'not_started'] as const)(
+    'keeps %s launches recoverable across polling, unavailable host, and a new execution scope',
+    async (observation) => {
+      let current = makeJob()
+      const updateIfStatus = vi.fn(
+        async (
+          _id: string,
+          statuses: readonly string[],
+          updates: import('./ports').UpdateJobRequest
+        ) => {
+          if (!statuses.includes(current.status)) return null
+          current = {
+            ...current,
+            status: updates.status ?? current.status,
+            last_poll_error:
+              updates.lastPollError === null
+                ? undefined
+                : (updates.lastPollError ?? current.last_poll_error),
+            error_code:
+              updates.errorCode === null ? undefined : (updates.errorCode ?? current.error_code),
+            remote_handle: updates.remoteHandle ?? current.remote_handle,
+            exit_code: updates.exitCode ?? current.exit_code
+          }
+          return structuredClone(current)
+        }
+      )
+      const repository = {
+        get: async () => structuredClone(current),
+        updateIfStatus,
+        findNonTerminal: async () =>
+          ['submitted', 'running'].includes(current.status) ? [structuredClone(current)] : [],
+        findTerminalUnharvested: async () => [],
+        findNotificationReadyUnnotified: async () => []
+      } as unknown as ComputeJobRepository
+      let phase: 'dispatch' | 'recover' | 'unavailable' | 'exited' = 'dispatch'
+      const runner: SshRunner = {
+        run: vi.fn(async () => {
+          if (phase === 'dispatch') {
+            phase = 'recover'
+            return { exitCode: 74, stdout: '', stderr: '', timedOut: false, truncated: false }
+          }
+          if (phase === 'unavailable') throw new ComputeConnectionError('host_unreachable')
+          return {
+            exitCode: 0,
+            stdout: [
+              'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+              `workdir:${observation === 'pending' || phase === 'exited' ? 1 : 0}`,
+              `exit_code:${phase === 'exited' ? 0 : ''}`,
+              'pid:',
+              'cwd_match:0'
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+            truncated: false
+          }
+        })
+      }
+      const deps = {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo(sampleHost()) as ComputeHostRepository,
+        jobRepository: repository
+      }
+      const execution = createComputeExecution()
+      await execution.dispatchJob(current.job_id, deps)
+      const poller = execution.createPoller(deps)
+      await poller.tick()
+      await poller.tick()
+      expect(current.status).toBe('submitted')
+      phase = 'unavailable'
+      await poller.tick()
+      expect(current.last_poll_error).toContain('host_unreachable')
+      phase = 'recover'
+      const restartedPoller = createComputeExecution().createPoller(deps)
+      for (let attempt = 0; attempt < 3; attempt++) await restartedPoller.tick()
+      expect(current.status).toBe('submitted')
+      expect(current.error_code).toBeUndefined()
+      phase = 'exited'
+      await restartedPoller.tick()
+      expect(current.status).toBe('success')
+      expect(current.exit_code).toBe(0)
+    }
+  )
+})
+
+describe('legacy uncertain dispatch recovery', () => {
+  it.each(['new-dispatch', 'existing-marker'] as const)(
+    'preserves the historical workdir and never cleans uncertain %s work during polling',
+    async (scenario) => {
+      const workdir = '/scratch/legacy/.openscience/jobs/job-1'
+      let current = makeJob({
+        remote_workdir: undefined,
+        last_poll_error:
+          scenario === 'existing-marker'
+            ? 'dispatch_may_have_started: dispatch_recovery_pending'
+            : undefined
+      })
+      const repository = {
+        get: async () => structuredClone(current),
+        updateIfStatus: vi.fn(
+          async (
+            _id: string,
+            statuses: readonly string[],
+            updates: import('./ports').UpdateJobRequest
+          ) => {
+            if (!statuses.includes(current.status)) return null
+            current = {
+              ...current,
+              status: updates.status ?? current.status,
+              remote_workdir: updates.remoteWorkdir ?? current.remote_workdir,
+              remote_handle: updates.remoteHandle ?? current.remote_handle,
+              last_poll_error:
+                updates.lastPollError === null
+                  ? undefined
+                  : (updates.lastPollError ?? current.last_poll_error),
+              error_code:
+                updates.errorCode === null ? undefined : (updates.errorCode ?? current.error_code),
+              exit_code: updates.exitCode ?? current.exit_code
+            }
+            return structuredClone(current)
+          }
+        ),
+        findNonTerminal: async () =>
+          ['submitted', 'running'].includes(current.status) ? [structuredClone(current)] : [],
+        findTerminalUnharvested: async () => [],
+        findNotificationReadyUnnotified: async () => []
+      } as unknown as ComputeJobRepository
+      let phase: 'dispatch' | 'pending' | 'unavailable' | 'exited' =
+        scenario === 'new-dispatch' ? 'dispatch' : 'pending'
+      const commands: string[] = []
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => {
+          commands.push(command)
+          if (phase === 'dispatch') {
+            phase = 'pending'
+            return { exitCode: 74, stdout: '', stderr: '', timedOut: false, truncated: false }
+          }
+          if (phase === 'unavailable') throw new ComputeConnectionError('host_unreachable')
+          return {
+            exitCode: 0,
+            stdout: [
+              'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+              'workdir:1',
+              `exit_code:${phase === 'exited' ? 0 : ''}`,
+              'pid:',
+              'cwd_match:0'
+            ].join('\n'),
+            stderr: '',
+            timedOut: false,
+            truncated: false
+          }
+        })
+      }
+      const deps = {
+        connectionBroker: brokerFromRunners(runner),
+        hostRepository: makeHostRepo({
+          ...sampleHost(),
+          scratchRoot: '/scratch/legacy'
+        }) as ComputeHostRepository,
+        jobRepository: repository
+      }
+      const execution = createComputeExecution()
+      if (scenario === 'new-dispatch') {
+        await execution.dispatchJob(current.job_id, deps)
+        expect(current.remote_workdir).toBe(workdir)
+      }
+      const poller = execution.createPoller(deps)
+      await poller.tick()
+      await poller.tick()
+      expect(commands.some((command) => command.includes('rm -rf'))).toBe(false)
+      expect(current.status).toBe('submitted')
+      phase = 'unavailable'
+      await poller.tick()
+      expect(current.last_poll_error).toContain('dispatch_may_have_started: host_unreachable')
+      phase = 'pending'
+      const restartedPoller = createComputeExecution().createPoller(deps)
+      await restartedPoller.tick()
+      await restartedPoller.tick()
+      expect(current.status).toBe('submitted')
+      expect(commands.every((command) => command.includes(workdir))).toBe(true)
+      expect(commands.some((command) => command.includes('rm -rf'))).toBe(false)
+      phase = 'exited'
+      await restartedPoller.tick()
+      expect(current.status).toBe('success')
+      expect(current.exit_code).toBe(0)
+    }
+  )
 })

@@ -2,49 +2,47 @@ import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 /* Hallmark · component: library preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Preserve project tokens and native control states.
  */
-import {
-  ArrowUpRight,
-  Check,
-  Copy,
-  Info,
-  BookOpen,
-  Inbox,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  ListChecks,
-  X,
-  Search
-} from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
-import { literatureItemToMentionOption } from '../literature-pdf-options'
-import { LibraryInboxPreview } from './LibraryInboxPreview'
-import type { LibraryPreviewScopeRequest } from './library-reference-actions'
-import { LibraryChatButton } from './LibraryChatButton'
-import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { cn } from '@/lib/utils'
 import {
   createLiteratureIdentifierUrl,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
+import { oversizedLiteratureReference } from '@aipoch/literature-library/client'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
-  createLiteratureAttachmentVersionReference,
-  type LiteratureItemView,
-  type LiteratureCatalogSearchPage
-} from '../../../../../shared/literature'
-import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  FileText,
+  Inbox,
+  Info,
+  ListChecks,
+  Search,
+  X
+} from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
+import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
 import { useLiteratureChanges } from '../../literature/useLiteratureChanges'
+import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
+import { literatureItemToMentionOption } from '../literature-pdf-options'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
+import type { LibraryPreviewScopeRequest } from './library-reference-actions'
+import { LibraryChatButton } from './LibraryChatButton'
+import { LibraryInboxPreview } from './LibraryInboxPreview'
 
 const PAGE_SIZE = 20
 const ABSTRACT_EXCERPT_LENGTH = 300

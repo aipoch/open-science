@@ -1,8 +1,8 @@
-import { useRef, type RefObject } from 'react'
-import { useTranslation } from 'react-i18next'
 import type { LiteratureCitationStyle } from '@aipoch/literature-citations/contracts'
+import { useState, type RefObject } from 'react'
+import { useTranslation } from 'react-i18next'
 
-const LITERATURE_BATCH_COMMAND_SIZE = 200
+import { createReferenceExporter } from '@aipoch/literature-library/client'
 
 export function useLiteratureExport({
   citationStyle: citationStyleRef,
@@ -23,59 +23,30 @@ export function useLiteratureExport({
   exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
 } {
   const { t } = useTranslation()
-  const exportInFlightRef = useRef(false)
+  const [exportReferences] = useState(() =>
+    createReferenceExporter({
+      format: (request) => window.api.literature.formatReferences(request),
+      save: (file) => window.api.saveBlobFile(file)
+    })
+  )
 
   const exportReferenceIds = async (
     itemIds: readonly string[],
     format: 'bibtex' | 'ris',
     filenameStem: string
   ): Promise<boolean> => {
-    if (itemIds.length === 0 || exportInFlightRef.current) return false
-    exportInFlightRef.current = true
     setError(undefined)
     try {
-      const chunks: string[] = []
-      const citationKeys = new Set<string>()
-      for (let offset = 0; offset < itemIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        const result = await window.api.literature.formatReferences({
-          itemIds: itemIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          styleId: citationStyleRef.current,
-          locale: citationLocale
-        })
-        if (format === 'bibtex') {
-          // These headers come from our BibTeX exporter, whose keys are validated before emission.
-          for (const match of result.exports.bibtex.matchAll(/^@[a-z]+\{([^,\r\n]+),/gimu)) {
-            const key = match[1]!
-            if (citationKeys.has(key))
-              throw new Error('Selected Literature Items have duplicate citation keys.')
-            citationKeys.add(key)
-          }
-        }
-        chunks.push(result.exports[format].trim())
-      }
-      const content = `${chunks.filter(Boolean).join('\n\n')}\n`
-      const encoded = new TextEncoder().encode(content)
-      const safeStem =
-        filenameStem
-          .normalize('NFKC')
-          .trim()
-          .replace(/[/:*?"<>|\\]/gu, '-')
-          .replace(/\s+/gu, ' ')
-          .slice(0, 80) || 'references'
-      const result = await window.api.saveBlobFile({
-        suggestedName: `${safeStem}.${format === 'bibtex' ? 'bib' : 'ris'}`,
-        mimeType:
-          format === 'bibtex'
-            ? 'application/x-bibtex;charset=utf-8'
-            : 'application/x-research-info-systems;charset=utf-8',
-        data: encoded.buffer
+      return await exportReferences({
+        itemIds,
+        format,
+        filenameStem,
+        styleId: citationStyleRef.current,
+        locale: citationLocale
       })
-      return result.saved
-    } catch (exportError) {
+    } catch (error) {
       setError(t('References could not be exported.'))
-      throw exportError
-    } finally {
-      exportInFlightRef.current = false
+      throw error
     }
   }
 

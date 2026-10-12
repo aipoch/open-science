@@ -12,8 +12,9 @@ import { license as licenseId } from '../../../../../package.json'
 import { AppLogo } from '@/components/AppLogo'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
+import { useLocaleStore } from '@/stores/locale-store'
 import { useUpdateStore } from '@/stores/update-store'
-import { APP } from '../../../../shared/app-config'
+import { APP, getDocumentationUrl } from '../../../../shared/app-config'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
 
 export type AppVersionSectionPreviewState =
@@ -42,6 +43,7 @@ const AppVersionSection = ({
   previewState = 'default'
 }: AppVersionSectionProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const locale = useLocaleStore((state) => state.locale)
   const appInfo = useUpdateStore((state) => state.appInfo)
   const status = useUpdateStore((state) => state.status)
   const check = useUpdateStore((state) => state.check)
@@ -136,7 +138,8 @@ const AppVersionSection = ({
 
       <div>
         <ExternalTextLink
-          href={APP.links.docs}
+          href={getDocumentationUrl(locale)}
+          data-settings-anchor="general.help-center"
           aria-label={t('Open Help Center in your browser')}
           className={`${resourceLinkClassName} ${helpPreviewClassName}`}
         >

@@ -1,49 +1,48 @@
 // @vitest-environment jsdom
-import { act, forwardRef, useCallback, useEffect } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, waitFor } from '@testing-library/react'
-import { literatureItemInputSchema } from '../../../../shared/literature'
-import { BookmarksProvider } from './bookmarks/BookmarksProvider'
-import type { PropsWithChildren } from 'react'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
+import {
+  createInitialReviewState,
+  selectProjectSessionReviews,
+  useReviewStore
+} from '@/stores/review-store'
+import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
 import {
   useSessionStore,
   type ChatMessage,
   type ChatSession,
   type ToolActivity
 } from '@/stores/session-store'
-import {
-  createInitialReviewState,
-  selectProjectSessionReviews,
-  useReviewStore
-} from '@/stores/review-store'
-import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { fireEvent, waitFor } from '@testing-library/react'
+import type { PropsWithChildren } from 'react'
+import { act, forwardRef, useCallback, useEffect } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
-import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
-import type {
-  HandoffLifecycleEvent,
-  HandoffLifecycleEventSource
-} from '../../../../shared/handoff-lifecycle'
-import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type {
-  NotebookRunRecord,
-  NotebookSessionReference,
-  NotebookSessionState
-} from '../../../../shared/notebook'
+import type { JobSummary } from '../../../../shared/compute'
 import {
   createLinearConversationGraph,
   projectConversationMessage,
   resolveActiveConversationMessages
 } from '../../../../shared/conversation-graph'
+import type {
+  HandoffLifecycleEvent,
+  HandoffLifecycleEventSource
+} from '../../../../shared/handoff-lifecycle'
+import type {
+  NotebookRunRecord,
+  NotebookSessionReference,
+  NotebookSessionState
+} from '../../../../shared/notebook'
+import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import { normalizeSessionFile } from '../../../../shared/session-persistence'
-import {
-  createInitialGrantedFoldersState,
-  useGrantedFoldersStore
-} from '@/stores/granted-folders-store'
-import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
-import type { JobSummary } from '../../../../shared/compute'
-
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
+import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 import type { ComposerDoc } from './composer/composer-doc'

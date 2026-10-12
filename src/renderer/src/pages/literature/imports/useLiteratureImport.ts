@@ -1,23 +1,23 @@
-import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { createLiteratureCreation } from '@aipoch/literature-library/client'
+import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '@aipoch/literature-library/contracts'
 import type { TFunction } from 'i18next'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '../../../../../shared/literature'
+import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
 import { useLiteraturePdfStaging } from './useLiteraturePdfStaging'
 
+import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
 import type {
-  LiteratureCatalogCommand,
   LiteratureCollectionView,
   LiteratureDuplicatePolicy,
-  LiteratureItemInput,
   LiteratureItemView
-} from '../../../../../shared/literature'
-import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 
+import { type LiteratureDetailController } from '@aipoch/literature-library/client'
 import { formatUploadSizeLimit } from '../../../../../shared/uploads'
 import { stageComposerFile } from '../../workspace/composer-upload-transfer'
-import { type LiteratureDetailController } from '../detail/LiteratureDetailController'
 import { type RecordImportDraft } from './LiteratureRecordImportDialog'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200
@@ -124,17 +124,25 @@ export function useLiteratureImport({
   const [createItemError, setCreateItemError] = useState<string>()
   const [createdItemId, setCreatedItemId] = useState<string>()
   const creatingItemRef = useRef(false)
-  const pendingCreationRef = useRef<{
-    id: string
-    destination?: Extract<
-      LiteratureCatalogCommand,
-      { kind: 'set-project-item' | 'set-collection-item' }
-    >
-    projectId?: string
-    collectionId?: string
-    file?: File | PdfAnnotationSource
-    pdfItem?: LiteratureItemView
-  }>(undefined)
+  const [detailReader] = useState(() => {
+    let latest = detailController
+    return {
+      update: (next: LiteratureDetailController): void => {
+        latest = next
+      },
+      read: (id: string): Promise<LiteratureItemView | undefined> => latest.read(id)
+    }
+  })
+  useLayoutEffect(() => {
+    detailReader.update(detailController)
+  }, [detailController, detailReader])
+  const [creation] = useState(() =>
+    createLiteratureCreation<File | PdfAnnotationSource>({
+      transact: (command) => window.api.literature.transact(command),
+      read: detailReader.read,
+      onCreated: setCreatedItemId
+    })
+  )
   const [pendingImportPdf, setPendingImportPdf] = useState<File | PdfAnnotationSource>()
   const [pendingImportMetadataNotice, setPendingImportMetadataNotice] = useState<string>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
@@ -172,93 +180,61 @@ export function useLiteratureImport({
   const recordImportRequest = useRef(0)
 
   const [isImportingRecords, setIsImportingRecords] = useState(false)
+  const importingRecordsRef = useRef(false)
   const importMetadataGenerationRef = useRef(0)
   const newMetadataDirtyRef = useRef(false)
   const trackNewMetadataDirty = useCallback((dirty: boolean) => {
     newMetadataDirtyRef.current = dirty
   }, [])
   const createManualItem = async (item?: LiteratureItemInput): Promise<void> => {
-    if (creatingItemRef.current || (!pendingCreationRef.current && !item)) return
+    if (creatingItemRef.current || (!creation.pendingId && !item)) return
     creatingItemRef.current = true
     setIsSavingNewItem(true)
     setCreateItemError(undefined)
     const transferId = crypto.randomUUID()
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
     try {
-      if (!pendingCreationRef.current) {
-        const receipt = await window.api.literature.transact({
-          kind: 'create-item',
-          item: item!,
-          ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
-        })
-        // This receipt belongs to this dialog's creation intent, including its original destination.
-        pendingCreationRef.current = {
-          id: receipt.id,
+      const result = await creation.complete(
+        {
+          item,
+          duplicatePolicy,
           projectId,
           collectionId,
-          file: pendingImportPdf,
-          destination: projectId
-            ? {
-                kind: 'set-project-item',
-                projectId,
-                itemId: receipt.id,
-                included: true,
-                source: 'library'
-              }
-            : collectionId && !selectedCollection?.smart
-              ? { kind: 'set-collection-item', collectionId, itemId: receipt.id, included: true }
-              : undefined
-        }
-        setCreatedItemId(receipt.id)
-      }
-      const pending = pendingCreationRef.current
-      if (pending.destination) {
-        await window.api.literature.transact(pending.destination)
-        pending.destination = undefined
-      }
-      if (pending.file && !pending.pdfItem) {
-        if ('kind' in pending.file) {
-          pending.pdfItem = (
-            await window.api.literature.addPdf({
-              source: pending.file,
-              itemId: pending.id,
-              operationId: transferId
-            })
-          ).item
-        } else {
-          staged = await pdfStaging.stagePdf(pending.file, transferId)
+          smartCollection: Boolean(selectedCollection?.smart),
+          file: pendingImportPdf
+        },
+        async (file, itemId) => {
+          if ('kind' in file)
+            return (
+              await window.api.literature.addPdf({ source: file, itemId, operationId: transferId })
+            ).item
+          staged = await pdfStaging.stagePdf(file, transferId)
           await window.api.uploads.claimLocalFile?.({ transferId })
           pdfStaging.finishPdfStaging()
           const operationId = crypto.randomUUID()
           pdfStaging.trackNativeImport(operationId)
-          pending.pdfItem = (
-            await window.api.literature.importPdf({
-              itemId: pending.id,
-              attachment: staged,
-              operationId
-            })
-          ).item
+          const result = await window.api.literature.importPdf({
+            itemId,
+            attachment: staged,
+            operationId
+          })
           pdfStaging.trackNativeImport(undefined)
+          return result.item
         }
-      }
-      const created = pending.pdfItem ?? (await detailController.read(pending.id))
-      if (!created) throw new Error('Literature Item is unavailable after creating.')
+      )
+      const created = result.item
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
           ? entries.map((entry) => (entry.id === created.id ? created : entry))
           : [created, ...entries]
       )
-      if (pending.collectionId) await loadCollections()
-      if (pending.projectId) await loadProjectCounts()
+      if (result.collectionId) await loadCollections()
+      if (result.projectId) await loadProjectCounts()
       resetItemEditor()
       openSelectedItemDetail(created)
     } catch (error) {
-      const pending = pendingCreationRef.current
-      // Retain the existing PDF-error detail recovery only once destination linking has completed.
-      const created =
-        pending?.file && !pending.destination && !pending.pdfItem
-          ? await detailController.read(pending.id).catch(() => undefined)
-          : undefined
+      setCreatedItemId(creation.pendingId)
+      const created = await creation.recoverPdfFailure()
       if (created) {
         resetItemEditor()
         openSelectedItemDetail(created)
@@ -269,8 +245,8 @@ export function useLiteratureImport({
         )
       } else {
         setCreateItemError(
-          pending
-            ? pending.destination
+          creation.failurePhase !== 'create'
+            ? creation.failurePhase === 'destination'
               ? t(
                   'The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.'
                 )
@@ -333,7 +309,7 @@ export function useLiteratureImport({
   }
 
   const resetItemEditor = (): void => {
-    pendingCreationRef.current = undefined
+    creation.reset()
     setCreatedItemId(undefined)
     setDuplicatePolicy('reuse')
     importMetadataGenerationRef.current += 1
@@ -389,7 +365,13 @@ export function useLiteratureImport({
   }
 
   const commitRecordImport = async (): Promise<void> => {
-    if (!recordImport?.preview || recordImport.preview.items.length === 0) return
+    if (
+      importingRecordsRef.current ||
+      !recordImport?.preview ||
+      recordImport.preview.items.length === 0
+    )
+      return
+    importingRecordsRef.current = true
     const { projectId, collectionId } = recordImport.destination
     setIsImportingRecords(true)
     setRecordImport((current) =>
@@ -458,6 +440,7 @@ export function useLiteratureImport({
           : current
       )
     } finally {
+      importingRecordsRef.current = false
       setIsImportingRecords(false)
     }
   }
@@ -473,6 +456,7 @@ export function useLiteratureImport({
     setIsCreatingItem(true)
   }
   const closeRecordImport = (): void => {
+    if (importingRecordsRef.current) return
     recordImportRequest.current += 1
     setRecordImport(undefined)
   }

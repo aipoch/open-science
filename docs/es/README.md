@@ -84,6 +84,7 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 | macOS 12+: Intel                          | El DMG de macOS para Intel/x64                     |
 | Windows x64                               | El instalador de Windows x64 (con firma de código) |
 | Linux x64                                 | El paquete AppImage o Debian de Linux x64          |
+| Linux ARM64                               | AppImage o paquete Debian de Linux ARM64           |
 
 Descargue desde la [página oficial de descargas](https://aipoch.com/open-science/download); consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) si es necesario.
 
@@ -187,7 +188,7 @@ AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimo
 | Área                                                | Capacidad central                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Habilidades científicas**                         | Amplíe la investigación con **23 habilidades integradas** y **525 habilidades** del [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace), con instalación y actualizaciones en un clic. Cree habilidades mediante conversación o trabajo completado e importe paquetes o fuentes de GitHub. Las aportaciones se publican tras revisión; una importación local no las publica.                                                                                                                                                              |
-| **Conectores**                                      | Acceda a recursos científicos con **24 conectores integrados** o añada conectores MCP locales y remotos personalizados. Gestione permisos por herramienta e importe o exporte configuraciones.                                                                                                                                                                                                                                                                                                                                                                      |
+| **Conectores**                                      | Acceda a recursos científicos con **36 conectores integrados** o añada conectores MCP locales y remotos personalizados. Gestione permisos por herramienta e importe o exporte configuraciones.                                                                                                                                                                                                                                                                                                                                                                      |
 | **Especialistas y delegación**                      | Instale **10 especialistas** del [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) o cree especialistas personales para recibir tareas del agente principal. Los paquetes admiten importación y exportación; las aportaciones se revisan antes de publicarse y las importaciones locales no las publican.                                                                                                                                                                                                                      |
 | **Modelos y backends de agentes**                   | Use modelos en la nube, pasarelas compatibles o inicios de sesión de suscripciones Claude y Codex. Elija Claude Code, OpenCode, Codex o CodeBuddy como backend, con pruebas de conexión, entrada de imágenes y ajustes de razonamiento.                                                                                                                                                                                                                                                                                                                             |
 | **Proyectos, sesiones y paquetes de investigación** | Organice proyectos con sesiones fijadas, ramas de mensajes, conversaciones laterales e historial recuperable. Traslade un **paquete de investigación `.science` portátil** a otro proyecto o equipo con ramas de conversación, versiones de archivos seleccionadas, registros de Notebook y evidencia de verificación. Las importaciones son de solo lectura, sin ejecutar código ni restaurar credenciales; se excluyen conversaciones laterales y marcadores, y los archivos dependen de la selección de exportación.                                             |
@@ -208,7 +209,7 @@ AIPOCH Open-Science es independiente del modelo a nivel de producto: conéctelo 
 | **Suscripción de Codex**           | Seleccione el framework de agentes Codex y luego elija Suscripción de Codex como tipo de proveedor.                                                                                                                                                                                                                                                                                                                                                                          |
 | **Suscripción de Claude**          | Inicie sesión con una suscripción de Claude en dos modos: **compartido** (un inicio de sesión en el navegador que almacena las credenciales en el perfil predeterminado `~/.claude`) o **aislado** (un flujo `claude setup-token` gestionado por la aplicación bajo un `CLAUDE_CONFIG_DIR` propio y completamente aislado de `~/.claude/`, con la opción alternativa de pegar un token).                                                                                     |
 
-Los proveedores integrados incluyen OpenAI, Anthropic, DeepSeek, NVIDIA Build y otros. Los modelos y puntos de acceso regionales dependen de la versión instalada y del backend elegido; consulte el selector y la prueba de conexión de la aplicación.
+Hay 25 opciones de proveedor preconfiguradas, incluidos OpenAI, Anthropic, DeepSeek, NVIDIA Build y otros. Los modelos y puntos de acceso regionales dependen de la versión instalada y del backend elegido; consulte el selector y la prueba de conexión de la aplicación.
 
 ## Datos, permisos y confianza
 
@@ -236,7 +237,7 @@ Revise los parámetros del conector y la actividad de la herramienta antes de ap
 
 ## Desarrollo y empaquetado
 
-AIPOCH Open-Science es una aplicación Electron creada con React, TypeScript, Prisma/SQLite y un entorno de ejecución de agentes basado en ACP.
+La interfaz web funciona con un backend Node independiente, sin Electron ni entorno gráfico.
 
 Requisitos previos para desarrollar desde el código fuente:
 
@@ -255,14 +256,20 @@ Consulte la [referencia de comandos de desarrollo y empaquetado](development-qui
 
 ### Modos web y sin interfaz gráfica en localhost
 
-Opcionalmente, el backend de escritorio puede servir el mismo renderizador a un navegador en el equipo local. Esta función está desactivada de forma predeterminada y solo escucha en `127.0.0.1`.
+La interfaz web funciona con un backend Node independiente, sin Electron ni entorno gráfico.
 
 ```bash
-npm run build:web
 npm run dev:web
+npm run pack:backend
 ```
 
-Abra la URL autenticada que muestra la aplicación. Utilice `npm run dev:headless` para iniciar el backend, la bandeja, el entorno de ejecución del agente y el servicio web localhost sin abrir una ventana de Electron. Configure `OPEN_SCIENCE_WEB_PORT` para elegir un puerto (predeterminado: `44100`). Al salir explícitamente de la aplicación también se cierran con normalidad los procesos del agente y de Notebook.
+La interfaz web funciona con un backend Node independiente, sin Electron ni entorno gráfico. `npm run dev:web` y `npm run dev:headless` compilan e inician el backend y la interfaz web; no inician el escritorio ni la bandeja. `OPEN_SCIENCE_WEB_PORT` selecciona el puerto (predeterminado `44100`); Ctrl+C cierra el servicio en primer plano de forma ordenada.
+
+El desarrollo desde el código fuente requiere Node.js 24. El tarball npm independiente requiere Node >=22.13.0; el CLI/SDK ligero requiere Node >=22.5. Los archivos de Release, la fórmula Homebrew y el lanzador del escritorio incluyen su propio entorno de ejecución.
+
+El escritorio y el navegador comparten el servicio. Al salir, el escritorio detiene solo el backend que inició; si se conectó a un servicio del CLI, únicamente se desconecta.
+
+[CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
 ### Acceso remoto móvil
 
@@ -274,6 +281,13 @@ La CLI sin interfaz gráfica y el SDK de Node.js sin dependencias utilizan el mi
 
 - [Guía CLI](../../packages/open-science/CLI.md): instalación, ciclo de vida del servicio, automatización de tareas, artefactos, formatos de salida y códigos de salida
 - [Descripción general del paquete SDK](../../packages/open-science/README.md) - Inicio rápido de Node.js y punto de entrada del paquete
+
+```bash
+brew install --cask open-science
+brew install aipoch/tap/open-science
+```
+
+[Homebrew / Release](../standalone-runtime.md)
 
 ## Preguntas frecuentes
 
@@ -291,7 +305,7 @@ R: **Computación remota (SSH)** permanece siempre habilitada y no necesita acti
 
 ### ¿Existe una interfaz de línea de comandos?
 
-R: Sí. Instálela con un solo clic desde **Configuración → General → Herramienta de línea de comandos → Instalar comando** (añade `open-science` a su `PATH`; no requiere una instalación independiente de Node.js). La CLI controla el servicio local y envía tareas de investigación sin abrir un navegador:
+R: Sí. Instale el paquete Node independiente para iniciar un backend autónomo. El comando instalado desde **Configuración → General → Herramienta de línea de comandos → Instalar comando** controla una instancia de escritorio que ya esté en ejecución; para ello no necesita instalar Node.js por separado. Excepción: el lanzador incluido en el paquete Debian inicia el backend incluido con su runtime Node. Para el siguiente ejemplo autónomo, instale el paquete independiente y Node.js, inicialice el perfil local e inicie el servicio:
 
 ```bash
 # Inicie el servicio en segundo plano

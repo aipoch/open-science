@@ -1,5 +1,5 @@
 import { runtimeMetadata } from '../runtime-metadata'
-import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import { createAcpRuntime } from '../acp/runtime-composition'

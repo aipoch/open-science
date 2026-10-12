@@ -1,14 +1,14 @@
+import { literatureMetadataProviderLabel } from '@aipoch/literature-library/contracts'
 import { Check, LoaderCircle } from 'lucide-react'
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
-import { literatureMetadataProviderLabel } from '../../../../../shared/literature'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
-import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
+import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
 
 import { metadataValuesMatch } from '../literature-item-display'
 

@@ -161,7 +161,9 @@ describe('Compute password authentication release gate', () => {
     const databaseBytes = await readFile(join(storageRoot, 'open-science.db'))
     expect(databaseBytes.includes(Buffer.from(secret, 'utf8'))).toBe(false)
 
-    const makeFailingBroker = (): {
+    const makeFailingBroker = (
+      preLaunchFailure = false
+    ): {
       broker: SshConfigComputeConnectionBroker
       runner: SshRunner
     } => {
@@ -176,8 +178,8 @@ describe('Compute password authentication release gate', () => {
             timedOut: false
           })
           .mockResolvedValueOnce({
-            exitCode: 42,
-            stdout: '',
+            exitCode: preLaunchFailure ? 73 : 42,
+            stdout: preLaunchFailure ? 'OPEN_SCIENCE_DISPATCH_PRE_LAUNCH_FAILED_V1\n' : '',
             stderr: `vendor diagnostic accidentally included ${secret}`,
             truncated: false,
             timedOut: false
@@ -225,7 +227,7 @@ describe('Compute password authentication release gate', () => {
       commandHash: 'release-gate-hash',
       initialStatus: 'submitted'
     })
-    const jobFailure = makeFailingBroker()
+    const jobFailure = makeFailingBroker(true)
     await dispatchJob('release-gate-job', {
       connectionBroker: jobFailure.broker,
       hostRepository: repository,

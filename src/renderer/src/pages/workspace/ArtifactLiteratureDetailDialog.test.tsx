@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
-import { literatureItemInputSchema } from '../../../../shared/literature'
 import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 
 afterEach(() => {
   cleanup()

@@ -1,15 +1,15 @@
-import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
 import {
-  createLiteratureAttachmentVersionReference,
   type LiteratureAttachmentVersionView,
   type LiteratureCollectionView,
   type LiteratureItemView
-} from '../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import type {
   LiteratureReference,
   LiteratureScopeReference,
   SessionPdfContextSource
 } from '../../../../shared/session-persistence'
+import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
 
 export type LiteraturePdfOption = Readonly<{
   itemId: string

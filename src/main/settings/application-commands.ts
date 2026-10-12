@@ -1,5 +1,5 @@
 import { requireDesktopCaller } from '../caller-context'
-import type { PrivateDestinationRequest } from '../../shared/notebook-network'
+import type { PrivateDestinationRequest } from '../../shared/notebook-network-settings'
 import type {
   AppIconPreview,
   ClaudeInstallEvent,

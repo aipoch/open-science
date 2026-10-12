@@ -9,12 +9,13 @@ import {
   symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, normalize } from 'node:path'
+import { join, normalize, sep } from 'node:path'
 import { parse } from 'yaml'
 import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
 import {
   createPackageTestPlan,
+  dedicatedPackageTestRoots,
   verificationFamilies,
   packageTestExcludePatterns,
   notebookPackageVerificationPlan,
@@ -89,6 +90,35 @@ describe('independent package test direction', () => {
       ])
     }
   )
+  it.each(dedicatedPackageTestRoots)('keeps %s in its dedicated lane', (root) => {
+    for (const verification of [false, true]) {
+      expect(
+        createPackageTestPlan([`${root}/src/change.ts`], registry, { verification })
+      ).toMatchObject({ selected: [], excluded: [core, providers, mcp] })
+      expect(
+        createPackageTestPlan([`${root}/package.json`, `${providers}/src/provider.ts`], registry, {
+          verification
+        }).selected
+      ).toEqual([providers])
+      for (const unknown of [
+        `${root}-new/src/change.ts`,
+        'packages/new-package/index.ts',
+        'package-lock.json'
+      ])
+        expect(
+          createPackageTestPlan([`${root}/src/change.ts`, unknown], registry, { verification })
+            .excluded
+        ).toEqual([])
+      // Registration takes precedence if a dedicated package gains an independent suite later.
+      expect(
+        createPackageTestPlan(
+          [`${root}/src/change.ts`],
+          { ...registry, packages: [...registry.packages, { root, dependencies: [core] }] },
+          { verification }
+        ).selected
+      ).toEqual([root])
+    }
+  })
   it('rejects invalid roots, missing dependencies, duplicates and dependency cycles', () => {
     for (const packages of [
       [{ root: 'src', dependencies: [] }],
@@ -232,7 +262,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       join(fixture, 'packages/resilient-download/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/resilient-download'))}, test: {name:'resilient-download',include:['src/**/*.test.ts']}}`
     )
-    const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
+    const list = (portable: string, excluded = [core], scope = ''): Array<{ file: string }> =>
       JSON.parse(
         execFileSync(
           process.execPath,
@@ -252,6 +282,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
             env: {
               ...process.env,
               VITEST_PORTABLE_CI: portable,
+              OPEN_SCIENCE_CI_PORTABLE_SCOPE: scope,
               OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(excluded)
             }
           }
@@ -285,6 +316,29 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         .sort()
     )
     expect(list('0')).toHaveLength(11)
+    // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
+    for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
+      const file = join(fixture, path)
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, 'import { it } from "vitest"; it("fixture", () => {})\n')
+    }
+    for (const excluded of [[], [core, 'packages/compute']]) {
+      const files = (scope: string): string[] =>
+        list('1', excluded, scope)
+          .map(({ file }) => normalize(file))
+          .sort()
+      const baseline = files('')
+      const host = files('host')
+      const packages = files('packages')
+      expect(host).toHaveLength(3)
+      expect(packages.length).toBeGreaterThan(0)
+      expect(host.every((file) => !file.startsWith(join(fixture, 'packages') + sep))).toBe(true)
+      expect(packages.every((file) => file.startsWith(join(fixture, 'packages') + sep))).toBe(true)
+      expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
+      expect([...host, ...packages].sort()).toEqual(baseline)
+    }
+    expect(list('0', [], 'host')).toHaveLength(13)
+    expect(list('0', [], 'packages')).toHaveLength(13)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
@@ -523,6 +577,7 @@ describe('installed-consumer input selection', () => {
     'scripts/package-verification-plan.test.ts',
     'scripts/ci/module-test-impact.mjs',
     'test/config/vite.browser-test.config.test.ts',
+    'test/fixtures/pdf-translation/adam-parenthetical-native-body.jsonl',
     'e2e/session-diagnostics.spec.ts',
     'electron.vite.config.ts',
     'vite.web.config.ts'
@@ -598,8 +653,9 @@ describe('installed-consumer input selection', () => {
     }
   )
   it('does not let verification rules narrow portable test or ownership policy', () => {
-    expect(
-      createPackageTestPlan(['scripts/ci/windows-test-sequencer.test.ts'], actual).excluded
-    ).toEqual([])
+    expect(select(['scripts/ci/module-test-impact.mjs']).selected).toEqual([])
+    expect(createPackageTestPlan(['scripts/ci/module-test-impact.mjs'], actual).excluded).toEqual(
+      []
+    )
   })
 })

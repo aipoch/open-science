@@ -1,6 +1,6 @@
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
-import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { ManagedPreviewSource } from '../../shared/preview-resources'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'

@@ -1,23 +1,26 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { LoaderCircle } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { LiteratureItemRow, LiteratureRowActions } from './LiteratureItemRow'
-import { LiteratureSelectPageCheckbox } from './LiteratureSelection'
 import {
   LiteratureTable,
   LiteratureTableScrollArea,
   LiteratureTextTooltip
 } from '../LiteratureTable'
 import { type SmartCollectionCellActions } from '../collections/SmartCollectionDecision'
+import { useLiteratureSmartReevaluation } from '../collections/useLiteratureSmartReevaluation'
 import { useAttachmentOperations } from '../workflows/literature-attachment-operations'
+import { LiteratureItemRow, LiteratureRowActions } from './LiteratureItemRow'
+import { LiteratureSelectPageCheckbox } from './LiteratureSelection'
 import { LiteratureRowNumbers } from './literature-row-numbers'
 import type { LiteratureSelectionStore } from './literature-selection'
-import { useLiteratureSmartReevaluation } from '../collections/useLiteratureSmartReevaluation'
 import { useLiteratureTable } from './useLiteratureTable'
 
 export function LiteratureResultsTable({

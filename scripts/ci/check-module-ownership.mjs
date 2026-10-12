@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync } from 'node:child_process'
+import { verifiedHostOwnerSplits } from './host-owner-split.mjs'
 import {
   verifiedConsumerRetirements,
   verifiedExcludedPackageTests,
@@ -45,7 +46,8 @@ function registrationViolations(
   changes = [],
   retiredConsumers = new Set(),
   retiredPackageTests = new Set(),
-  boundedOwnerSplits = new Set()
+  boundedOwnerSplits = new Set(),
+  transferredOwnerTests = new Set()
 ) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
@@ -174,6 +176,7 @@ function registrationViolations(
         (path) =>
           headFiles.has(path) &&
           !(kind === 'consumer' && retiredConsumers.has(`${id}:${path}`)) &&
+          !(kind === 'owner' && transferredOwnerTests.has(`${id}:${path}`)) &&
           !retiredPackageTests.has(`${id}:${kind}:${path}`)
       )
     }
@@ -230,7 +233,8 @@ export function checkModuleOwnership({
   changes,
   retiredConsumers = new Set(),
   retiredPackageTests = new Set(),
-  boundedOwnerSplits = new Set()
+  boundedOwnerSplits = new Set(),
+  transferredOwnerTests = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -247,7 +251,8 @@ export function checkModuleOwnership({
     changes,
     retiredConsumers,
     retiredPackageTests,
-    boundedOwnerSplits
+    boundedOwnerSplits,
+    transferredOwnerTests
   )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
@@ -299,20 +304,28 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   const baseManifest = baseFiles.some(isModuleImpactRegistrationPath)
     ? loadModuleImpactManifestAtRevision(mergeBase, { cwd })
     : headManifest
+  // Reject malformed registration before any exception helper inspects candidate fields.
+  validateModuleImpactManifest(baseManifest)
+  const existing = new Set(headFiles)
+  validateModuleImpactManifest(headManifest, { pathExists: (path) => existing.has(path) })
+  const hostSplits = verifiedHostOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
   return checkModuleOwnership({
     baseManifest,
     headManifest,
     baseFiles,
     headFiles,
-    retiredConsumers: verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, {
-      cwd
-    }),
+    retiredConsumers: new Set([
+      ...verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...hostSplits.consumers
+    ]),
     retiredPackageTests: verifiedExcludedPackageTests(mergeBase, head, baseManifest, headManifest, {
       cwd
     }),
-    boundedOwnerSplits: verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, {
-      cwd
-    }),
+    boundedOwnerSplits: new Set([
+      ...verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...hostSplits.paths
+    ]),
+    transferredOwnerTests: hostSplits.ownerTests,
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))
   })
 }

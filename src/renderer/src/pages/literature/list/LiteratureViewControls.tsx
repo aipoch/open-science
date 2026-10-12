@@ -7,17 +7,17 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
 import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
 
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { JournalDatasetChoices, LiteratureColumnCustomizer } from './LiteratureColumnCustomizer'
-import { LiteratureFilters } from './LiteratureFilters'
 import { setJournalSourceYear } from '../journals/journal-attribute-store'
 import type { LiteratureTableColumn } from './literature-table-preferences'
+import { JournalDatasetChoices, LiteratureColumnCustomizer } from './LiteratureColumnCustomizer'
+import { LiteratureFilters } from './LiteratureFilters'
 import { useLiteratureTable } from './useLiteratureTable'
 
 export function LiteratureViewControls({

@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
+import { createLiteratureDetailController } from '@aipoch/literature-library/client'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
 import { literatureDeletionError } from '../../../../../shared/literature-deletion'
 import { useAttachmentOperations } from '../workflows/literature-attachment-operations'
-import { createLiteratureDetailController } from './LiteratureDetailController'
 import { LiteratureAttachments } from './LiteratureAttachments'
 
 const version = (
@@ -127,7 +125,7 @@ describe('Attachment safety and version access', () => {
     const delayed = Promise.withResolvers<LiteratureItemView>()
     const get = vi.mocked(window.api.literature.get)
     get.mockReturnValueOnce(delayed.promise).mockResolvedValue(latest)
-    const controller = createLiteratureDetailController()
+    const controller = createLiteratureDetailController((id) => window.api.literature.get(id))
     render(<LiteratureAttachments item={oldItem} readItem={controller.read} onPreview={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v1.pdf' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Retry file verification' }))

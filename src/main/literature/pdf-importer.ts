@@ -1,34 +1,36 @@
-import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
-import { literatureItemInputSchema } from '../../shared/literature'
-import { nativeImportReceipt } from '../pdf-annotations/native-import'
-import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
-import {
-  parseNativePdfAnnotations,
-  type NativePdfAnnotationImportResult
-} from '../pdf-annotations/native-import'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
-import { createHash } from 'node:crypto'
+import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
+import {
+  nativeImportReceipt,
+  parseNativePdfAnnotations,
+  type NativePdfAnnotationImportResult
+} from '../pdf-annotations/native-import'
+import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 
+import type {
+  LiteratureItemView,
+  LiteraturePdfImportReceipt
+} from '@aipoch/literature-library/contracts'
+import type { LiteraturePdfImportRequest } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
+import type {
+  CreatePdfAnnotationRequest,
+  PdfNativeAnnotationImportProgress
+} from '../../shared/pdf-annotations'
 import {
   DEFAULT_UPLOAD_PROJECT_ID,
   getUploadedAttachmentName,
   PENDING_UPLOAD_SESSION_ID,
   type UploadedAttachment
 } from '../../shared/uploads'
-import type {
-  LiteratureItemView,
-  LiteraturePdfImportReceipt,
-  LiteraturePdfImportRequest
-} from '../../shared/literature'
-import type { PdfNativeAnnotationImportProgress } from '../../shared/pdf-annotations'
-import type { LiteratureCatalog } from './catalog'
+import type { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import type { ContentRepository } from '../storage/content-repository'
 import type { UploadRepository } from '../uploads/repository'
-import type { PdfAnnotationRepository } from '../pdf-annotations/repository'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
-import type { CreatePdfAnnotationRequest } from '../../shared/pdf-annotations'
+import type { LiteratureCatalog } from './catalog'
 
 type LiteraturePdfImporterOptions = Readonly<{
   uploads: Pick<UploadRepository, 'deleteUpload' | 'resolveManagedUploadPath'>

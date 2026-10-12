@@ -4,7 +4,9 @@ import {
   ClassificationEvaluationError,
   AutomaticClassificationPausedError,
   SMART_COLLECTION_RESUME_UNAVAILABLE,
-  type ClassifyLiterature
+  type ClassifyLiterature,
+  type ReadScreeningEvidence,
+  type SmartEvidenceMode
 } from '../src/index.js'
 import { formatSmartRule } from '../src/rules.js'
 import { MemoryScreeningStore } from './memory-store.js'
@@ -27,7 +29,10 @@ beforeEach(() => {
   })
   owner = makeOwner()
 })
-const makeOwner = (): LiteratureSmartCollections =>
+const makeOwner = (
+  readEvidence?: ReadScreeningEvidence,
+  acquireWriter?: () => () => void
+): LiteratureSmartCollections =>
   new LiteratureSmartCollections(
     async () => store.database,
     {
@@ -59,13 +64,15 @@ const makeOwner = (): LiteratureSmartCollections =>
         })
       }
     },
-    changed
+    changed,
+    readEvidence,
+    acquireWriter
   )
 afterEach(async () => {
   await owner.dispose()
   vi.restoreAllMocks()
 })
-const create = async (): Promise<string> =>
+const create = async (evidenceMode?: SmartEvidenceMode): Promise<string> =>
   (
     await owner.execute({
       kind: 'create-smart-collection',
@@ -75,7 +82,8 @@ const create = async (): Promise<string> =>
         inclusion: 'Original studies',
         exclusion: ''
       }),
-      scope: { kind: 'library' }
+      scope: { kind: 'library' },
+      evidenceMode
     })
   ).id
 const refresh = async (id: string): Promise<void> => {
@@ -101,6 +109,245 @@ it('reports missing evidence as not evaluated without a paid call', async () => 
   const id = await create()
   await refresh(id)
   expect((await owner.view(id)).rows[0]?.verdict).toBe('pending')
+  expect(classify).not.toHaveBeenCalled()
+})
+
+it('retries a failed PDF read on refresh without changing the evidence digest', async () => {
+  store.edit('paper', { abstract: '' })
+  store.documents.set('paper', {
+    id: 'pdf-version',
+    attachmentId: 'pdf',
+    checksum: 'checksum',
+    filename: 'study.pdf',
+    sizeBytes: 100,
+    contentType: 'application/pdf'
+  })
+  const read = vi
+    .fn<ReadScreeningEvidence>()
+    .mockRejectedValueOnce(new Error('Reader temporarily unavailable'))
+    .mockResolvedValue({
+      coverage: 'full-text',
+      passages: [{ pageStart: 1, pageEnd: 1, content: 'Original study' }]
+    })
+  owner = makeOwner(read)
+  const id = await create('full-text')
+  await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+  expect((await owner.view(id)).rows[0]).toMatchObject({ verdict: 'error', failure: 'unknown' })
+  expect(store.assessments.size).toBe(0)
+  expect(classify).not.toHaveBeenCalled()
+  const firstDigest = [...store.items.values()][0]!.digest
+  await refresh(id)
+  expect(read).toHaveBeenCalledTimes(2)
+  expect(classify).toHaveBeenCalledOnce()
+  expect((await owner.view(id)).rows[0]).toMatchObject({
+    verdict: 'match',
+    assessment: { evidence: { coverage: 'full-text', attachmentVersionId: 'pdf-version' } }
+  })
+  expect([...store.items.values()].every((item) => item.digest === firstDigest)).toBe(true)
+})
+
+it('does not repeat a successful PDF read that found no usable evidence on refresh', async () => {
+  store.edit('paper', { abstract: '' })
+  store.documents.set('paper', {
+    id: 'pdf-version',
+    attachmentId: 'pdf',
+    checksum: 'checksum',
+    filename: 'study.pdf',
+    sizeBytes: 100,
+    contentType: 'application/pdf'
+  })
+  const read = vi.fn<ReadScreeningEvidence>().mockResolvedValue({
+    coverage: 'unavailable',
+    passages: []
+  })
+  owner = makeOwner(read)
+  const id = await create('full-text')
+  await refresh(id)
+  expect((await owner.view(id)).rows[0]).toMatchObject({
+    verdict: 'pending',
+    reason: 'missing-evidence',
+    assessment: { model: 'insufficient-evidence', current: true }
+  })
+  await refresh(id)
+  expect((await owner.view(id)).run?.total).toBe(0)
+  expect(read).toHaveBeenCalledOnce()
+  expect(classify).not.toHaveBeenCalled()
+})
+
+it('retains abstract fallback when reading a PDF fails', async () => {
+  store.documents.set('paper', {
+    id: 'pdf-version',
+    attachmentId: 'pdf',
+    checksum: 'checksum',
+    filename: 'study.pdf',
+    sizeBytes: 100,
+    contentType: 'application/pdf'
+  })
+  const read = vi.fn<ReadScreeningEvidence>().mockRejectedValue(new Error('Reader unavailable'))
+  owner = makeOwner(read)
+  const id = await create('full-text')
+  await refresh(id)
+  expect(classify).toHaveBeenCalledOnce()
+  expect(classify.mock.calls[0][0]).toMatchObject({
+    abstract: 'Original study',
+    evidence: { coverage: 'unavailable', passages: [] }
+  })
+  expect(await owner.members(id)).toEqual(['paper'])
+})
+
+it.each(['cancel', 'dispose'] as const)(
+  'drains a pending PDF read that rejects after %s without caching missing evidence',
+  async (action) => {
+    store.edit('paper', { abstract: '' })
+    store.documents.set('paper', {
+      id: 'pdf-version',
+      attachmentId: 'pdf',
+      checksum: 'checksum',
+      filename: 'study.pdf',
+      sizeBytes: 100,
+      contentType: 'application/pdf'
+    })
+    let resume!: () => void
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const read = vi.fn<ReadScreeningEvidence>().mockImplementation(async () => {
+      await gate
+      throw new Error('Reader unavailable after cancellation')
+    })
+    const released = vi.fn()
+    const acquireWriter = vi.fn(() => released)
+    owner = makeOwner(read, acquireWriter)
+    const id = await create('full-text')
+    let disposed = false
+    let disposal: Promise<void> | undefined
+    try {
+      await owner.execute({
+        kind: 'smart-collection',
+        collectionId: id,
+        action: 'refresh',
+        offset: 0
+      })
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      expect((await owner.view(id)).run?.state).toBe('running')
+      expect(acquireWriter).toHaveBeenCalledOnce()
+      if (action === 'cancel') {
+        await owner.execute({ kind: 'smart-collection', collectionId: id, action, offset: 0 })
+        expect(released).not.toHaveBeenCalled()
+        resume()
+        // Observe cancellation before teardown can abort the run on its own.
+        await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('cancelled'))
+      } else {
+        disposal = owner.dispose().then(() => {
+          disposed = true
+        })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(disposed).toBe(false)
+        expect(released).not.toHaveBeenCalled()
+        expect(store.assessments.size).toBe(0)
+        expect(classify).not.toHaveBeenCalled()
+      }
+    } finally {
+      // Release the reader even if a setup assertion fails so teardown can drain it.
+      resume()
+      await disposal
+    }
+    if (action === 'cancel') {
+      await owner.dispose()
+      disposed = true
+    }
+    expect(disposed).toBe(true)
+    expect(released).toHaveBeenCalledOnce()
+    expect(read).toHaveBeenCalledOnce()
+    expect((await owner.view(id)).run?.state).toBe('cancelled')
+    expect(store.runs.size).toBe(1)
+    expect([...store.items.values()]).toEqual([expect.objectContaining({ state: 'pending' })])
+    expect([...store.items.values()][0]?.failure ?? undefined).toBeUndefined()
+    expect(store.assessments.size).toBe(0)
+    expect(classify).not.toHaveBeenCalled()
+  }
+)
+
+it.each([false, true])(
+  'drains an admitted initial scan before disposing (scan fails: %s)',
+  async (fails) => {
+    const released = vi.fn()
+    const acquireWriter = vi.fn(() => released)
+    owner = makeOwner(undefined, acquireWriter)
+    const id = await create()
+    // Force a fresh scan instead of the revision cache populated by creation.
+    store.touch()
+    let resume!: () => void
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const papers = store.database.papers
+    const scan = vi.spyOn(store.database, 'papers').mockImplementationOnce(async (...args) => {
+      await gate
+      if (fails) throw new Error('Initial scan unavailable')
+      return papers(...args)
+    })
+    const pending = owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'refresh',
+      offset: 0
+    })
+    const settled = Promise.allSettled([pending])
+    let disposed = false
+    let disposal: Promise<void> | undefined
+    try {
+      await vi.waitFor(() => expect(scan).toHaveBeenCalledOnce())
+      expect(acquireWriter).toHaveBeenCalledOnce()
+      disposal = owner.dispose().then(() => {
+        disposed = true
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      expect(released).not.toHaveBeenCalled()
+    } finally {
+      resume()
+      await disposal
+      await settled
+    }
+    expect(disposed).toBe(true)
+    expect(released).toHaveBeenCalledOnce()
+    expect((await settled)[0].status).toBe('rejected')
+    expect(store.runs.size).toBe(0)
+    expect(classify).not.toHaveBeenCalled()
+  }
+)
+
+it('does not admit a refresh suspended before reservation after disposal', async () => {
+  const released = vi.fn()
+  const acquireWriter = vi.fn(() => released)
+  owner = makeOwner(undefined, acquireWriter)
+  const id = await create()
+  let resume!: () => void
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve
+  })
+  const definition = store.database.definition
+  const lookup = vi.spyOn(store.database, 'definition').mockImplementationOnce(async (...args) => {
+    await gate
+    return definition(...args)
+  })
+  const pending = owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'refresh',
+    offset: 0
+  })
+  try {
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce())
+    await owner.dispose()
+  } finally {
+    resume()
+    await pending
+  }
+  expect(acquireWriter).not.toHaveBeenCalled()
+  expect(store.runs.size).toBe(0)
   expect(classify).not.toHaveBeenCalled()
 })
 

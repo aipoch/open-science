@@ -9,7 +9,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
@@ -38,7 +38,13 @@ type Job = {
   'runs-on'?: string
   strategy?: {
     'fail-fast'?: boolean
-    matrix?: { shard?: number[] | string; group?: string[] | string }
+    matrix?:
+      | {
+          shard?: number[] | string
+          group?: string[] | string
+          include?: Array<{ scope: string; shard: number; total: number }>
+        }
+      | string
   }
   steps?: Step[]
   'timeout-minutes'?: number
@@ -81,6 +87,115 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it.skipIf(process.platform === 'win32')(
+    'allocates package runners only for trusted affected package evidence',
+    () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'portable-matrix-'))
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      const write = (path: string, content = 'changed'): void => {
+        mkdirSync(dirname(join(cwd, path)), { recursive: true })
+        writeFileSync(join(cwd, path), content)
+      }
+      const step = workflow.jobs.preflight.steps!.find(({ id }) => id === 'portable_matrix')!
+      const trustedDir = join(process.cwd(), 'scripts/ci')
+      const registry = readFileSync(join(trustedDir, 'package-test-boundaries.json'), 'utf8')
+      try {
+        git('init', '--quiet')
+        git('config', 'user.email', 'ci@example.com')
+        git('config', 'user.name', 'CI Test')
+        write('scripts/ci/package-test-boundaries.json', registry)
+        for (const { root } of JSON.parse(registry).packages) {
+          write(
+            `${root}/package.json`,
+            readFileSync(join(process.cwd(), root, 'package.json'), 'utf8')
+          )
+        }
+        write('packages/compute/src/old.ts')
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'trusted package baseline')
+        const base = git('rev-parse', 'HEAD')
+        const run = (
+          head: string,
+          event = 'pull_request',
+          dir = trustedDir,
+          trustedBase = base
+        ): string[] => {
+          const output = join(cwd, 'output')
+          writeFileSync(output, '')
+          const result = spawnSync('bash', ['-e', '-c', step.run!], {
+            cwd,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              EVENT_NAME: event,
+              BASE_SHA: base,
+              HEAD_SHA: head,
+              TRUSTED_BASE_SHA: trustedBase,
+              TRUSTED_CLASSIFIER_DIR: dir,
+              GITHUB_OUTPUT: output,
+              GITHUB_STEP_SUMMARY: join(cwd, 'summary')
+            }
+          })
+          expect(result.status, result.stderr).toBe(0)
+          const matrix = JSON.parse(readFileSync(output, 'utf8').trim().slice('matrix='.length))
+          return matrix.include.map(
+            ({ scope, shard, total }: { scope: string; shard: number; total: number }) =>
+              `${scope}:${shard}/${total}`
+          )
+        }
+        const host = [1, 2, 3, 4].map((shard) => `host:${shard}/4`)
+        const both = [...host, 'packages:1/2', 'packages:2/2']
+        for (const [path, selected] of [
+          ['src/main/host.ts', false],
+          ['docs/packages.md', false],
+          ['scripts/unrelated.test.ts', false],
+          ['test/fixtures/nbformat.v4.5.schema.json', false],
+          ['packages/compute/src/index.ts', true],
+          ['packages/open-science/cli.ts', true],
+          ['packages/new-package/test.ts', true],
+          ['test/fixtures/pdf-translation/sample.json', true],
+          ['package-lock.json', true],
+          ['.nvmrc', true]
+        ] as const) {
+          git('reset', '--hard', base)
+          write(path)
+          git('add', path)
+          git('commit', '--quiet', '-m', 'changed input')
+          const head = git('rev-parse', 'HEAD')
+          // Candidate selector code cannot authorize a skip.
+          write('scripts/ci/package-test-impact.mjs', 'throw new Error("candidate executed")')
+          for (const event of ['pull_request', 'merge_group']) {
+            expect(run(head, event), `${event}: ${path}`).toEqual(selected ? both : host)
+          }
+        }
+        git('reset', '--hard', base)
+        write('src/main/host.ts')
+        git('add', 'src/main/host.ts')
+        git('commit', '--quiet', '-m', 'host only')
+        const head = git('rev-parse', 'HEAD')
+        expect(run(head, 'workflow_dispatch')).toEqual(both)
+        expect(run(head, 'pull_request', join(cwd, 'missing-policy'))).toEqual(both)
+        expect(run(head, 'pull_request', trustedDir, '0'.repeat(40))).toEqual(both)
+        // A package change in the synthetic checkout still requires the package group.
+        git('rm', 'packages/compute/src/old.ts')
+        git('commit', '--quiet', '-m', 'delete package source')
+        expect(run(head)).toEqual(both)
+        expect(run(git('rev-parse', 'HEAD'), 'merge_group')).toEqual(both)
+      } finally {
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('requires selective execution for every affected-test step', () => {
+    const steps = Object.values(workflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .filter((step) => step.run?.includes('npm run test:affected'))
+    expect(steps).toHaveLength(3)
+    for (const step of steps) expect(step.run).toContain('--require-selective')
+  })
+
   it('rejects module dry-runs against changed application code while allowing CI-only fixes', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'module-coverage-source-'))
     const git = (...args: string[]): string =>
@@ -175,13 +290,13 @@ describe('PR Gate workflow', () => {
     const selected = shards.steps?.find(({ id }) => id === 'unit_macos_related_shard')
     expect(selected?.run).toContain('npm run test:affected')
     expect(selected?.run).toContain('--coverage-changed "$BASE_SHA" --')
-    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/4')
+    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/${{ matrix.total }}')
     expect(selected?.run).toContain('--reporter=dot')
     expect(selected?.run).toContain('--reporter=blob')
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
     expect(merge?.run).toContain(
-      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports'
+      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports'
     )
     expect(workflow.jobs.unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     const serial = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
@@ -571,7 +686,8 @@ describe('PR Gate workflow', () => {
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
-      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}'
+      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
+      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}'
     })
 
     for (const bundle of manifest.bundleOrder) {
@@ -818,7 +934,8 @@ describe('PR Gate workflow', () => {
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
-      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}'
+      windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
+      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}'
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
     expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
@@ -1074,14 +1191,15 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it('checks complete ownership and import consumers for selective source plans', () => {
+  it('checks ownership and consumers for selective plans and deferred full PR/queue plans', () => {
     const guard = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Check complete module ownership and consumer evidence'
     )
     expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
     expect(guard?.run).toContain('scripts/ci/module-consumer-coverage.test.ts')
-    expect(guard?.if).toContain(".mode != 'full'")
-    expect(guard?.if).toContain(".bundles, 'unit'")
+    expect(guard?.if).toBe(
+      "${{ (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full') || (contains(fromJSON('[\"pull_request\",\"merge_group\"]'), github.event_name) && fromJSON(needs.preflight.outputs.plan).mode == 'full') }}"
+    )
     expect(guard?.['continue-on-error']).not.toBe(true)
   })
 
@@ -1132,11 +1250,16 @@ describe('PR Gate workflow', () => {
     expect(classify?.run).toContain("'runtime_bundle'")
   })
 
-  it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
+  it('separates host and package Ubuntu runners and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
-    // Temporary PR shard budget; build.yml verify_tests keeps its own budget.
-    expect(shards['timeout-minutes']).toBe(30)
+    const sourceRegressionWorkflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/source-regression.yml'), 'utf8')
+    ) as Workflow
+    // Complete portable shards share the scheduled regression budget.
+    expect(shards['timeout-minutes']).toBe(
+      sourceRegressionWorkflow.jobs.portable['timeout-minutes']
+    )
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
     const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
     const download = unit.steps?.find(({ name }) => name === 'Download full-suite blob reports')
@@ -1163,14 +1286,15 @@ describe('PR Gate workflow', () => {
     expect(shards).toMatchObject({
       env: {
         VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
-        VITEST_PORTABLE_CI: '1'
+        VITEST_PORTABLE_CI: '1',
+        OPEN_SCIENCE_CI_PORTABLE_SCOPE: '${{ matrix.scope }}'
       },
-      name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
+      name: 'Portable ${{ matrix.scope }} tests (Ubuntu, shard ${{ matrix.shard }}/${{ matrix.total }})',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
       strategy: {
         'fail-fast': false,
-        matrix: { shard: [1, 2, 3, 4] }
+        matrix: '${{ fromJSON(needs.preflight.outputs.portable_matrix) }}'
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
@@ -1184,17 +1308,17 @@ describe('PR Gate workflow', () => {
         '--coverage',
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
-        '--shard=${{ matrix.shard }}/4',
+        '--shard=${{ matrix.shard }}/${{ matrix.total }}',
         '--reporter=dot',
         '--reporter=blob',
         '--reporter=github-actions',
-        '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+        '--outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json'
       ].join(' ')
     })
     expect(shardUpload).toMatchObject({
       if: '${{ always() }}',
       with: {
-        name: 'unit-portable-blob-${{ matrix.shard }}',
+        name: 'unit-portable-blob-${{ matrix.scope }}-${{ matrix.shard }}',
         path: 'vitest-reports/',
         'retention-days': 1,
         'if-no-files-found': 'error'
@@ -1395,7 +1519,9 @@ describe('PR Gate workflow', () => {
   it('selects Windows mainline groups with trusted base policy on every entry point', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.env!.E2E_GREP).toBe('${{ needs.preflight.outputs.windows_e2e_grep }}')
-    expect(job.strategy?.matrix?.shard).toEqual([1])
+    expect(
+      typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.shard : undefined
+    ).toEqual([1])
     const selector = workflow.jobs.preflight.steps!.find(({ id }) => id === 'windows_mainline')!
     expect(selector.run).toContain('git show "$TRUSTED_BASE_SHA:$selector"')
     expect(selector.run).toContain('node "$TRUSTED_DIR/windows-e2e-mainline.mjs"')
@@ -1424,7 +1550,9 @@ describe('PR Gate workflow', () => {
 
   it('runs affected Windows mainlines on one isolated desktop with the stable aggregate gate', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy?.matrix?.shard).toEqual([1])
+    expect(
+      typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.shard : undefined
+    ).toEqual([1])
     expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
       if: "${{ steps.setup.outcome == 'success' }}",
       run: expect.stringContaining(
@@ -1982,7 +2110,7 @@ describe('E2E throughput contracts', () => {
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
-    expect(job.strategy?.matrix?.group).toBe(
+    expect(typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.group : undefined).toBe(
       `\${{ fromJSON(needs.preflight.outputs.plan).macosGroups || fromJSON('["journeys","presentation","regressions","delegation"]') }}`
     )
     for (const [id, group] of [

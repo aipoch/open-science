@@ -28,12 +28,21 @@ Notebook execution path.
   software and is a compatibility control rather than hard network isolation.
 
 On macOS, Linux, and Windows protected mode, enforced policies protect declared user-data
-roots while allowing system files required by tools, and restrict outbound access to
-approved public network destinations. Windows standard mode inherits the host user's
+roots while allowing system files required by tools. Approved destinations are allowed by policy.
+In addition, the command gateway can admit HTTPS GET/HEAD requests to otherwise unknown
+public DNS hosts on port 443, inspecting TLS through a per-command local CA. The request
+target is limited to 8192 bytes, with no per-command request-count quota. Explicitly blocked
+destinations do not use this path. The read channel is prepared by default when the local CA
+is available, except on the separate WSL2 path; there is no user-facing switch. This is not
+an allowlist-only network boundary. Windows standard mode inherits the host user's
 filesystem access; its proxy applies only to software that honors proxy settings and
 cannot guarantee network enforcement. Enable protected mode before treating those Windows
 rules as security boundaries. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
+
+Agent-native file tools such as Read/Write/Edit run in their selected Agent process, outside
+the Notebook execution sandbox. Their restrictions depend on the framework and its own
+sandbox/permission configuration; a framework-specific restriction is not a guarantee for all Agents.
 
 Remote compute adopts the security boundary of the remote host: approved commands run as
 the configured account. Use a dedicated least-privilege account and review the command,
@@ -83,8 +92,9 @@ Messages and Markdown previews defer external media until the user activates it.
 the destination hosts and exposes the full URLs on hover. This permission is local to the displayed
 media and its URL set, not a permanent domain grant. After activation, media uses the browser's
 network stack and normal redirect behavior; it is not routed through the Notebook domain policy.
-Mermaid image nodes are blocked before diagram rendering; use a separate Markdown image to load
-them explicitly. Ordinary diagrams remain available. Managed artifact previews retain their existing
+Mermaid shape-image nodes are blocked before diagram rendering. At this baseline, HTML-label
+images are not covered by that detector and can load without media activation; do not interpret
+the Markdown activation control as complete protection for Mermaid content. Ordinary diagrams remain available. Managed artifact previews retain their existing
 authorization. Import previews that disable media continue to suppress it entirely.
 
 Image understanding uses metadata-minimized derivatives. Original attachments remain intact for
@@ -106,8 +116,8 @@ Open-Science does not infer a zero-retention guarantee from HTTPS, local models,
 
 ### Runtime network verification
 
-The app proxy settings affect Electron sessions and the environment of subsequently started
-processes. They do not change the OS proxy, reconfigure already running agent processes, or control
+The app proxy settings configure the Node backend network adapter and the environment of
+subsequently started processes. They do not configure Electron renderer sessions. They do not change the OS proxy, reconfigure already running agent processes, or control
 a remote browser's network stack. Third-party runtime telemetry cannot be established from this
 repository's environment flags alone.
 
@@ -129,16 +139,18 @@ Open-Science keeps configuration and research data in local storage by default:
 
 Development builds use `~/.open-science-project` and `~/Open-Science-DEV` unless an
 explicit development override is supplied. Desktop logs use Electron's
-operating-system-specific logs directory; the CLI daemon writes `cli-daemon.log` under
-the configuration root.
+operating-system-specific logs directory. Backend diagnostics use `logs/` under the
+configuration root; desktop-spawned backend output uses `logs/desktop-backend-<pid>-<timestamp>.log`.
+The CLI daemon captures output in `cli-daemon-<uuid>.log` under the configuration root.
 
 Project, session, Notebook, artifact, and log content remain user-readable local files
 and rely on operating-system account isolation and filesystem protection. Use full-disk
 encryption when the device or research data requires protection at rest.
 
 By default, Open-Science protects API keys, Connector secrets and OAuth state, GitHub
-tokens, and compute passwords with Electron `safeStorage`, backed by the operating
-system's secure storage. OS mode rejects new secret writes when a secure backend is
+tokens with the Node credential-identity implementation and native OS helpers, using
+Electron-compatible ciphertext backed by the operating system's secure storage. Compute
+passwords use a separate credential vault. OS mode rejects new secret writes when a secure backend is
 unavailable, including Linux's unprotected `basic_text` backend.
 
 The Linux headless backend also accepts an explicit `--credential-store=file` option.
@@ -156,7 +168,7 @@ a mode does not migrate or re-encrypt existing credentials.
 Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
 under the configuration root and relies on operating-system account and filesystem
 protection. Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
-stores its OAuth token as a `safeStorage`-encrypted provider key and uses an app-owned
+stores its OAuth token as a OS-encrypted provider key and uses an app-owned
 `CLAUDE_CONFIG_DIR` under the Open-Science configuration root, separate from `~/.claude`.
 
 ## Diagnostics

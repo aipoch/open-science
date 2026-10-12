@@ -1,22 +1,22 @@
 /* Hallmark · component scope · existing Open-Science tokens · P5 H5 E5 S5 R5 V4 */
-import { useMemo, useState } from 'react'
-import * as Dialog from '@/components/ui/dialog'
-import { BookOpenText, LoaderCircle, X } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
+import * as Dialog from '@/components/ui/dialog'
 import {
   dialogBodyClassName,
+  dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
-  dialogTitleClassName,
-  dialogDescriptionClassName
+  dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import type { LiteratureItemView } from '../../../../../shared/literature'
-import { MAX_SESSION_PDF_CONTEXTS } from '../../../../../shared/session-persistence'
 import type { PdfReadingDocument } from '@/stores/navigation-store'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { BookOpenText, LoaderCircle, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { MAX_SESSION_PDF_CONTEXTS } from '../../../../../shared/session-persistence'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { literatureReadingDocument } from './literature-reading'
 
 export const LiteratureReadingDialog = ({

@@ -51,8 +51,8 @@ Keeping these services separate prevents Browser access from changing the behavi
 ## 3. Enable App access
 
 1. Select **App access**.
-2. If Open-Science reports that setup is incomplete, select **Detect again**.
-3. Approve the operating-system prompt if service creation or repair requires administrator access.
+2. If Open-Science reports a status error, select **Check again**; otherwise use **Detect again**.
+3. On macOS, approve the operating-system prompt if service creation or repair requires administrator access.
 4. Wait until the page reports **Connected**.
 5. Open the Remote.It mobile app and sign in to the same account.
 6. Select the host computer, then select **Open-Science Remote**.
@@ -99,7 +99,7 @@ In Remote.It, choose **+ → This system → Add Device** once. Do not use a cla
 
 ### Setup asks for administrator approval
 
-Administrator approval is requested only when an Open-Science service must be created or repaired. Repeated mode switches should reuse the healthy services and should not recreate them.
+On macOS, administrator approval is requested when an Open-Science service must be created or repaired. Repeated mode switches should reuse the healthy services and should not recreate them.
 
 ### The provider is still switching its background service mode
 
@@ -125,3 +125,10 @@ Keep Open-Science and the Remote.It agent running on the host, verify that the h
 - Do not share a browser pairing code with another person.
 - Revoke browsers you no longer use.
 - Select **Off** when remote access is not needed.
+
+## Verification scope
+
+The application status-error action is **Check again**; **Detect again** belongs to the normal
+detection flow. The app-owned administrator authorization path for Remote.It service creation
+and repair is macOS-specific. Remote.It screens and account steps above are third-party guidance,
+not a claim that their current UI has been revalidated on every platform.

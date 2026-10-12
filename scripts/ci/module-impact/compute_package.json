@@ -1,6 +1,8 @@
 {
   "ownerPaths": [
     "packages/compute/LICENSE",
+    "packages/compute/src/cleanup-stop-evidence.ts",
+    "packages/compute/src/cleanup-stop-evidence.test.ts",
     "packages/compute/src/bounded-child-termination.ts",
     "packages/compute/src/compute-environment.test.ts",
     "packages/compute/src/compute-environment.ts",
@@ -41,6 +43,7 @@
     "packages/compute/src/scp-runner.ts",
     "packages/compute/src/slurm-driver-boundaries.test.ts",
     "packages/compute/src/slurm-driver.ts",
+    "packages/compute/src/ssh-runner.real-process.test.ts",
     "packages/compute/src/ssh-runner.test.ts",
     "packages/compute/src/ssh-runner.ts",
     "packages/compute/src/submitted-job-recovery.ts",
@@ -58,6 +61,7 @@
   "consumerModules": ["compute_service"],
   "testFiles": {
     "owner": [
+      "packages/compute/src/cleanup-stop-evidence.test.ts",
       "packages/compute/src/compute-environment.test.ts",
       "packages/compute/src/concurrency-manager.test.ts",
       "packages/compute/src/dispatch-tracker.test.ts",
@@ -71,6 +75,7 @@
       "packages/compute/src/remote-job-process.test.ts",
       "packages/compute/src/scp-runner.test.ts",
       "packages/compute/src/slurm-driver-boundaries.test.ts",
+      "packages/compute/src/ssh-runner.real-process.test.ts",
       "packages/compute/src/ssh-runner.test.ts",
       "packages/compute/src/execution.test.ts",
       "packages/compute/src/lifecycle-boundary.test.ts"
@@ -78,6 +83,8 @@
     "contract": [],
     "consumer": [
       "src/main/composition/session-packages.test.ts",
+      "src/main/compute/compute-job-operation-repository.test.ts",
+      "src/main/session-persistence/projection.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -94,6 +101,8 @@
       "src/main/compute/compute-host-profile-concurrency.test.ts",
       "src/main/compute/compute-host-profile-owner.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/compute-job-lifecycle.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-jobs.integration.test.ts",

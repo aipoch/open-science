@@ -1,6 +1,6 @@
 # AIPOCH Open-Science — 開發與封裝
 
-AIPOCH Open-Science 是以 React、TypeScript、Prisma/SQLite 及 ACP 智能體執行環境建構的 Electron 應用程式。
+Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 原始碼開發前置需求：
 
@@ -15,24 +15,32 @@ npm install
 npm run dev
 ```
 
-`npm install` 會自動產生 Prisma 用戶端並安裝 Electron 原生相依套件。`npm run dev` 會建置 Electron main/preload 套件、啟動 renderer 並開啟桌面應用程式。開發資料隔離在 `~/.open-science-project` 下。
+`npm install` → Prisma / Electron. `npm run dev` 建置 Node 後端、準備執行檔並開啟 Electron。監看器會自動重建套件與後端；建置成功後，正常結束應用程式並重新執行命令，才會載入 backend/Main/Preload 變更。轉譯器使用 HMR。
+
+`~/.open-science-project` · `~/Open-Science-DEV`
 
 常用指令：
 
-| 指令                   | 用途                                        |
-| ---------------------- | ------------------------------------------- |
-| `npm run dev`          | 啟動開發應用程式                            |
-| `npm run dev:web`      | 開發應用程式 + localhost Web UI (127.0.0.1) |
-| `npm run dev:headless` | 開發後端 + Web UI，不開啟 Electron 視窗     |
-| `npm run lint`         | 執行 ESLint                                 |
-| `npm run typecheck`    | 對 main 與 renderer 程式碼進行型別檢查      |
-| `npm test`             | 執行 Vitest 測試套件                        |
-| `npm run build`        | 型別檢查並建置應用程式                      |
-| `npm run build:web`    | 建置選用的 localhost Web UI                 |
-| `npm run build:mac`    | 封裝 macOS 建置                             |
-| `npm run build:win`    | 封裝 Windows 建置                           |
-| `npm run build:linux`  | 封裝 Linux 建置                             |
+| 指令                   | 用途                                      |
+| ---------------------- | ----------------------------------------- |
+| `npm run dev`          | 啟動開發應用程式                          |
+| `npm run dev:web`      | Node 後端與本機 Web 介面；不啟動 Electron |
+| `npm run dev:headless` | Node 後端與本機 Web 介面；不啟動 Electron |
+| `npm run lint`         | 執行 ESLint                               |
+| `npm run typecheck`    | 對 main 與 renderer 程式碼進行型別檢查    |
+| `npm test`             | 執行 Vitest 測試套件                      |
+| `npm run build`        | 型別檢查並建置應用程式                    |
+| `npm run build:web`    | 建置選用的 localhost Web UI               |
+| `npm run build:mac`    | 封裝 macOS 建置                           |
+| `npm run build:win`    | 封裝 Windows 建置                         |
+| `npm run build:linux`  | 封裝 Linux 建置                           |
 
 封裝輸出寫入 `dist/`。
 
 [README](README.md)
+
+原始碼開發需要 Node.js 24。獨立 npm 套件需要 Node >=22.13.0，輕量 CLI/SDK 需要 Node >=22.5。Release 壓縮檔、Homebrew Formula 與桌面命令啟動器均內含執行環境。
+
+`npm run build:backend` → Node; `npm run pack:backend` → tarball.
+
+[Node](../standalone-runtime.md)

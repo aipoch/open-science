@@ -1,7 +1,8 @@
 # Credential identity metadata probe
 
 This standalone executable checks an allowlisted application name against macOS file-keychain
-metadata. Importing the package only returns `executablePath`. The caller must run it as a separate
+metadata. Importing the package returns `executablePath`, `validatorExecutablePath`, and
+`secretExecutablePath` without running any helper. The caller must run it as a separate
 process with a timeout, bounded stdout, and no shell; never embed its Security API calls in Electron.
 
 The argument is one of `Open Science`, `Open Science (DEV)`, `Open-Science`, or
@@ -60,21 +61,22 @@ documents the no-UI flag and returned-buffer cleanup requirements.
 
 `exists` proves only a metadata match at the time of inspection. It does not prove password access,
 ACL approval, decryption success, or that system state will remain unchanged. A legacy bare-account
-match can cause Electron itself to copy the key into the suffixed account on its later first real
-use; this probe does not perform that operation. MAS builds use a different suffix and are not covered.
+match can cause Electron itself to copy the key into the suffixed account and, after successful copying, delete the legacy account
+on its later first real use; this probe does not perform that operation. MAS builds use a different suffix and are not covered.
 
 ## Version evidence
 
-The application lockfile currently resolves Electron 39.8.10 / Chromium 142.0.7444.265. Its relevant
-Electron startup and account-suffix patch were also compared with Electron 39.2.6:
+The application lockfile resolves Electron 43.7.5; that release
+[declares Chromium 150.0.7871.250](https://github.com/electron/electron/blob/v43.7.5/DEPS).
+The following pinned sources describe the current implementation:
 
-- [Electron startup timing](https://github.com/electron/electron/blob/v39.8.10/shell/browser/electron_browser_main_parts.cc):
+- [Electron startup timing](https://github.com/electron/electron/blob/v43.7.5/shell/browser/electron_browser_main_parts.cc):
   `PostCreateMainMessageLoop` snapshots the application name for macOS and Linux OSCrypt.
-- [Electron account suffix patch](https://github.com/electron/electron/blob/v39.8.10/patches/chromium/feat_ensure_mas_builds_of_the_same_application_can_use_safestorage.patch):
-  suffixed account first, bare-account fallback, and legacy key copy.
-- [Chromium file-Keychain interaction guard](https://github.com/chromium/chromium/blob/142.0.7444.226/crypto/apple/keychain.cc):
+- [Electron account suffix patch](https://github.com/electron/electron/blob/v43.7.5/patches/chromium/feat_ensure_mas_builds_of_the_same_application_can_use_safestorage.patch):
+  suffixed account first, bare-account fallback, and legacy key copy followed by deletion after successful copying.
+- [Chromium file-Keychain interaction guard](https://github.com/chromium/chromium/blob/150.0.7871.250/crypto/apple/scoped_keychain_user_interaction_allowed.cc):
   file-based Keychains require `SecKeychainSetUserInteractionAllowed` (FB16959400).
-- [Chromium metadata/secret query implementation](https://github.com/chromium/chromium/blob/142.0.7444.226/crypto/apple/keychain_secitem.mm):
+- [Chromium metadata/secret query implementation](https://github.com/chromium/chromium/blob/150.0.7871.250/crypto/apple/keychain_v2.mm):
   OSCrypt's real lookup requests password data and must never serve as a metadata probe.
 - [Apple's macOS query/result implementation](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecItem.cpp#L3132):
   numeric match limits are supported; a limit greater than one returns an array even for one match.
@@ -112,5 +114,5 @@ This does not change the metadata probe's read-only contract above.
 
 The Node cipher is pinned to Electron 43.7.5's
 [OSCrypt sync implementation](https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch).
-See [compatibility and persistent-state notes](../../docs/standalone-runtime.md#historical-compatibility)
+See [compatibility and persistent-state notes](../../docs/standalone-runtime.md#historical-compatibility-requiring-review)
 before changing its format or selected OS identity.

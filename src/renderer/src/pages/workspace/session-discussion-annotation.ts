@@ -1,6 +1,6 @@
 import type { TextAnnotation } from '../../../../shared/annotations'
 import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
-import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
 import { createUploadVersionReference } from '../../../../shared/uploads'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 

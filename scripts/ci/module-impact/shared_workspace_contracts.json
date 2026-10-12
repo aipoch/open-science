@@ -37,7 +37,10 @@
     "src/shared/storage.ts",
     "src/shared/uploads.test.ts",
     "src/shared/uploads.ts",
-    "src/shared/renderer-contracts/session-replay.ts"
+    "src/shared/renderer-contracts/session-replay.ts",
+    "src/shared/artifact-version-locator.ts",
+    "src/shared/artifact-version-locator.test.ts",
+    "src/shared/notebook-network-settings.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -65,7 +68,9 @@
     "src/shared/session-reading.ts",
     "src/shared/storage.ts",
     "src/shared/uploads.ts",
-    "src/shared/renderer-contracts/session-replay.ts"
+    "src/shared/renderer-contracts/session-replay.ts",
+    "src/shared/artifact-version-locator.ts",
+    "src/shared/notebook-network-settings.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -81,7 +86,8 @@
       "src/shared/projects.test.ts",
       "src/shared/storage.test.ts",
       "src/shared/uploads.test.ts",
-      "src/shared/session-replay.test.ts"
+      "src/shared/session-replay.test.ts",
+      "src/shared/artifact-version-locator.test.ts"
     ],
     "contract": [],
     "consumer": []

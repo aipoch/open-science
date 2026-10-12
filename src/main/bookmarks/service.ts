@@ -1,5 +1,5 @@
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import type {
   Bookmark,
   BookmarkListResult,
@@ -11,7 +11,7 @@ import type {
   UpdateBookmarkNoteRequest
 } from '../../shared/bookmarks'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ResolvedSessionPdfVersion } from '../literature/session-pdf-source-resolver'
 import type { BookmarkRepository } from './repository'

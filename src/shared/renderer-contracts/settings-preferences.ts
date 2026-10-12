@@ -45,9 +45,9 @@ import type { NetworkProxySettings } from '../network-proxy'
 import type {
   PrivateDestinationRequest,
   PrivateDestinationReview,
-  NotebookNetworkSettings,
-  NotebookNetworkStatus
-} from '../notebook-network'
+  NotebookNetworkSettings
+} from '../notebook-network-settings'
+import type { NotebookNetworkStatus } from '../notebook-network'
 
 import { callable, EVENT, ELECTRON_EVENT, LOCAL } from './definition'
 

@@ -1,12 +1,12 @@
 import { Button } from '@/components/ui/button'
 import type { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
+import { type PdfImportDestination } from '../imports/LiteraturePdfBatchImportDialog'
 import { LiteratureAddMenu, LiteratureLibraryActionsMenu } from './LiteratureLibraryMenus'
 import { type LibrarySection } from './LiteratureLibrarySidebar'
-import { type PdfImportDestination } from '../imports/LiteraturePdfBatchImportDialog'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
 
 export function LiteratureLibraryHeader({

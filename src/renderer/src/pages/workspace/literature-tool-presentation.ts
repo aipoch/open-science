@@ -1,4 +1,4 @@
-import { literatureCatalogReceiptSchema } from '../../../../shared/literature'
+import { literatureCatalogReceiptSchema } from '@aipoch/literature-library/contracts'
 import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-save'
 
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
@@ -605,14 +605,14 @@ const buildLiteratureLibraryToolSummary = (
 }
 
 export {
-  pdfElementToolAction,
-  buildPdfElementToolSummary,
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
+  buildPdfElementToolSummary,
   getLiteratureLibraryToolAction,
   isLiteratureLibraryAcquirePdfTool,
   isLiteratureLibraryLatexTool,
   isLiteratureLibraryPdfReadTool,
-  isLiteratureReadDocumentTool
+  isLiteratureReadDocumentTool,
+  pdfElementToolAction
 }
 export type { LiteratureToolAction, LiteratureToolSummary }

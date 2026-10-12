@@ -1,33 +1,33 @@
 // @vitest-environment jsdom
-import { createRef } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { createRef } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
-import {
-  type ApplicationCommandErrorEnvelope,
-  unwrapApplicationCommandOutcome
-} from '../../../../shared/application-command-contract'
 import {
   LITERATURE_ITEM_TYPES,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
-  literatureItemInputSchema,
   type LiteratureItemView
-} from '../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import {
+  type ApplicationCommandErrorEnvelope,
+  unwrapApplicationCommandOutcome
+} from '../../../../shared/application-command-contract'
+import { CitationStylesView } from './CitationStylesView'
 import {
   CollectionEditorDialog,
   type CollectionEditorDialogHandle
 } from './collections/CollectionEditorDialog'
-import { CitationStylesView } from './CitationStylesView'
-import { LiteratureMergeReview } from './duplicates/LiteratureMergeReview'
-import { LiteratureMetadataEditor } from './detail/LiteratureMetadataEditor'
-import { LiteratureResultsTable } from './list/LiteratureResultsTable'
-import { LiteratureTypeControl } from './list/LiteratureInlineEditors'
-import { createLiteratureSelectionStore } from './list/literature-selection'
 import type { SmartCollectionCellActions } from './collections/SmartCollectionDecision'
+import { LiteratureMetadataEditor } from './detail/LiteratureMetadataEditor'
+import { LiteratureMergeReview } from './duplicates/LiteratureMergeReview'
+import { LiteratureTypeControl } from './list/LiteratureInlineEditors'
+import { LiteratureResultsTable } from './list/LiteratureResultsTable'
+import { createLiteratureSelectionStore } from './list/literature-selection'
 
 const previousApi = window.api
 const locales = ['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const

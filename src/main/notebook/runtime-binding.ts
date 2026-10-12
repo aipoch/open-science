@@ -189,14 +189,17 @@ export class NotebookRuntimeBindingOwner {
     return new Promise<void>((resolve) => waiters.add(resolve))
   }
 
-  async list(session: RuntimeBindingSession): Promise<{
+  async list(
+    session: RuntimeBindingSession,
+    language?: NotebookLanguage
+  ): Promise<{
     runtimes: NotebookRuntimeListing[]
     bindings: NotebookRuntimeBindings
   }> {
     const runtimes: NotebookRuntimeListing[] = []
-    for (const language of ['python', 'r'] as const) {
-      const bound = session.runtimeBinding(language)
-      for (const env of await this.listEnabledInterpreters(language)) {
+    for (const kind of language ? [language] : (['python', 'r'] as const)) {
+      const bound = session.runtimeBinding(kind)
+      for (const env of await this.listEnabledInterpreters(kind)) {
         const binding = this.toInternalBinding(env)
         runtimes.push({
           language: binding.language,

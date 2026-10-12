@@ -1,4 +1,5 @@
 import { ArrowUpRight } from 'lucide-react'
+import type { ComponentPropsWithoutRef } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -9,18 +10,16 @@ const ExternalTextLink = ({
   href,
   children,
   className,
-  'aria-label': ariaLabel
-}: {
+  ...props
+}: Omit<ComponentPropsWithoutRef<'a'>, 'target' | 'rel'> & {
   href: string
   children: React.ReactNode
-  className?: string
-  'aria-label'?: string
 }): React.JSX.Element => (
   <a
+    {...props}
     href={href}
     target="_blank"
     rel="noreferrer"
-    aria-label={ariaLabel}
     className={cn(
       'inline-flex items-center gap-0.5 font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary/80',
       className

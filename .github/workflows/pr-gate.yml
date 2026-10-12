@@ -53,6 +53,7 @@ jobs:
       lanes: ${{ steps.classify.outputs.lanes }}
       plan: ${{ steps.classify.outputs.plan }}
       windows_e2e_grep: ${{ steps.windows_mainline.outputs.grep }}
+      portable_matrix: ${{ steps.portable_matrix.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -376,6 +377,52 @@ jobs:
           }
           NODE
 
+      - name: Select portable runners from trusted package policy
+        id: portable_matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.revisions.outputs.trusted-base }}
+          TRUSTED_CLASSIFIER_DIR: ${{ steps.trusted_classifier.outputs.dir }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process'
+          import { appendFileSync, existsSync } from 'node:fs'
+          import { join } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+
+          const selector = join(process.env.TRUSTED_CLASSIFIER_DIR, 'package-test-impact.mjs')
+          let packages = true
+          let reason = 'manual validation or unavailable trusted policy: include package runners'
+          if (['pull_request', 'merge_group'].includes(process.env.EVENT_NAME) && existsSync(selector)) {
+            const { packageTestPlanFromRevisions } = await import(pathToFileURL(selector).href)
+            const { fixtureTestPatterns } = await import(pathToFileURL(
+              join(process.env.TRUSTED_CLASSIFIER_DIR, 'classify-pr-changes.mjs')
+            ).href)
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+            const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
+            const paths = [
+              ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
+              ...git('diff', '--name-only', '--no-renames', '-z', process.env.HEAD_SHA, 'HEAD').split('\0')
+            ].filter(Boolean)
+            const plan = packageTestPlanFromRevisions(
+              process.env.BASE_SHA, process.env.HEAD_SHA, process.env.TRUSTED_BASE_SHA
+            )
+            // Dedicated packages and registered fixture readers also live in the package scope.
+            packages = plan.selected.length > 0 || paths.some(path =>
+              path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
+            )
+            reason = packages ? 'affected package sources, shared inputs or fixture readers' : 'no affected packages: skip package runners'
+          }
+          const include = [
+            ...[1, 2, 3, 4].map(shard => ({ scope: 'host', shard, total: 4 })),
+            ...(packages ? [1, 2].map(shard => ({ scope: 'packages', shard, total: 2 })) : [])
+          ]
+          appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Portable runners\n\n- ${reason}\n`)
+          NODE
+
       - name: Select Windows mainline journeys
         id: windows_mainline
         shell: bash
@@ -545,9 +592,9 @@ jobs:
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
       - name: Check complete module ownership and consumer evidence
-        # Full portable shards already run these guards. Selective source plans must also
-        # detect newly introduced imports that make their checked-in consumer evidence stale.
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
+        # Retain these guards when full portable validation moves to scheduled acceptance.
+        # Selective source plans must also validate newly introduced consumer imports.
+        if: ${{ (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full') || (contains(fromJSON('["pull_request","merge_group"]'), github.event_name) && fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
         run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
@@ -714,19 +761,19 @@ jobs:
           selection: ci
 
   unit_shard:
-    name: Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Portable ${{ matrix.scope }} tests (Ubuntu, shard ${{ matrix.shard }}/${{ matrix.total }})
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    # 25m cancelled slow full-suite shards before reporting; 30m is a temporary budget.
-    timeout-minutes: 30
+      OPEN_SCIENCE_CI_PORTABLE_SCOPE: ${{ matrix.scope }}
+    # Match source-regression's complete portable shards, including setup and report upload.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+      matrix: ${{ fromJSON(needs.preflight.outputs.portable_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -758,11 +805,11 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/${{ matrix.total }}
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Test affected Module shard
         id: unit_macos_related_shard
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -772,19 +819,19 @@ jobs:
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective --
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/${{ matrix.total }}
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: unit-portable-blob-${{ matrix.shard }}
+          name: unit-portable-blob-${{ matrix.scope }}-${{ matrix.shard }}
           path: vitest-reports/
           retention-days: 1
           if-no-files-found: error
@@ -840,7 +887,7 @@ jobs:
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER"
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -867,7 +914,7 @@ jobs:
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true

@@ -21,7 +21,7 @@ import {
   type PdfAnnotation,
   type TextAnnotation
 } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'

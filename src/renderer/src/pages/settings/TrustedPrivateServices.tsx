@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
-import type { TrustedPrivateDestination } from '../../../../shared/notebook-network'
+import type { TrustedPrivateDestination } from '../../../../shared/notebook-network-settings'
 import { validateCustomAllowedDomain } from '../../../../shared/notebook-network'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

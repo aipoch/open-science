@@ -266,7 +266,12 @@
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
-      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.accessibility.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

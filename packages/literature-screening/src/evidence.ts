@@ -37,6 +37,7 @@ export async function readSmartEvidence(
 ): Promise<{
   source: SmartEvidence
   passages: { pageStart: number; pageEnd: number; content: string }[]
+  readFailed?: boolean
 }> {
   if (mode === 'abstract') return { source: { coverage: 'abstract' }, passages: [] }
   const version = input.version
@@ -60,14 +61,15 @@ export async function readSmartEvidence(
       passages: result.passages
     }
   } catch {
-    // PDF extraction/availability is not a classification service failure.
+    // Preserve abstract fallback, but do not cache a read failure as missing evidence.
     return {
       source: {
         coverage: 'unavailable',
         attachmentVersionId: version.id,
         filename: version.filename
       },
-      passages: []
+      passages: [],
+      readFailed: true
     }
   }
 }

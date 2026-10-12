@@ -1,6 +1,6 @@
 {
   "name": "@aipoch/skills",
-  "version": "0.37.1",
+  "version": "0.1.0",
   "private": true,
   "description": "File-based Skill catalog, imports, transactions and runtime projections",
   "license": "Apache-2.0",

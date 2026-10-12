@@ -1,60 +1,47 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve, dirname, relative, isAbsolute } from 'node:path'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import ts from 'typescript'
 
 it('keeps all application consumers on the four public Skill package exports', () => {
   const root = resolve(__dirname, '../../..')
-  const packageRoot = resolve(root, 'packages/skills')
-  const allowed = new Set([
-    '@aipoch/skills',
-    '@aipoch/skills/document',
-    '@aipoch/skills/sources',
-    '@aipoch/skills/projection'
-  ])
-  const files = execFileSync(
-    'git',
-    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-    { cwd: root, encoding: 'utf8' }
-  )
-    .split('\0')
-    .filter(
-      (file) => /^(src|test|e2e|scripts|packages)\//.test(file) && /\.[cm]?[jt]sx?$/.test(file)
+  // Run the repository-wide TypeScript scanner outside Vitest's V8 coverage session.
+  // The child performs the same checks; this test still fails on every reported violation.
+  const output = execFileSync(process.execPath, ['scripts/check-skill-package-boundary.mjs'], {
+    cwd: root,
+    encoding: 'utf8'
+  })
+  expect(JSON.parse(output)).toEqual([])
+})
+
+it('reports private, relative and escaped imports and host forwarding from the scanner process', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'skill-boundary-')))
+  try {
+    execFileSync('git', ['init', '--quiet'], { cwd: root })
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'src/valid.ts'), "import '@aipoch/skills/document'")
+    writeFileSync(join(root, 'src/private.ts'), "import '@aipoch/skills/src/private.js'")
+    writeFileSync(join(root, 'src/relative.ts'), "import '../packages/skills/src/private.js'")
+    writeFileSync(join(root, 'src/escaped.ts'), String.raw`import '@aipoch/\u0073kills/internal'`)
+    writeFileSync(join(root, 'src/forward.ts'), "export { value } from '@aipoch/skills'")
+    const output = execFileSync(
+      process.execPath,
+      [resolve(__dirname, '../../../scripts/check-skill-package-boundary.mjs')],
+      { cwd: root, encoding: 'utf8' }
     )
-    .map((file) => resolve(root, file))
-    .filter(existsSync)
-  const violations: string[] = []
-  for (const file of new Set(files)) {
-    if (!relative(packageRoot, file).startsWith('..')) continue
-    const source = readFileSync(file, 'utf8')
-    const imports = ts.preProcessFile(source, true, true).importedFiles
-    if (
-      imports.some(({ fileName }) => fileName.startsWith('@aipoch/skills')) &&
-      !relative(resolve(root, 'src'), file).startsWith('..')
-    ) {
-      const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
-      for (const statement of ast.statements) {
-        if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier) continue
-        if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
-        if (/^@aipoch\/skills(?:\/|$)/.test(statement.moduleSpecifier.text))
-          violations.push(
-            `${file}: import package APIs directly instead of forwarding through the host`
-          )
-      }
-    }
-    for (const { fileName: spec } of imports) {
-      if (spec.startsWith('@aipoch/skills') && !allowed.has(spec))
-        violations.push(`${file}: ${spec}`)
-      if (spec.startsWith('.') || isAbsolute(spec)) {
-        const target = resolve(dirname(file), spec)
-        if (!relative(packageRoot, target).startsWith('..'))
-          violations.push(`${file}: relative package bypass ${spec}`)
-      }
-    }
+    expect(JSON.parse(output).sort()).toEqual(
+      [
+        `${join(root, 'src/private.ts')}: @aipoch/skills/src/private.js`,
+        `${join(root, 'src/relative.ts')}: relative package bypass ../packages/skills/src/private.js`,
+        `${join(root, 'src/escaped.ts')}: @aipoch/skills/internal`,
+        `${join(root, 'src/forward.ts')}: import package APIs directly instead of forwarding through the host`
+      ].sort()
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
-  // Report the complete scan once instead of constructing assertions for every repository import.
-  expect(violations).toEqual([])
 })
 
 it('keeps generic host networking independent from feature package types', () => {

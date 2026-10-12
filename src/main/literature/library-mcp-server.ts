@@ -1,6 +1,6 @@
-import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { withDataRootWrite } from '../storage/migration-state'
 
 import {
   LITERATURE_CITATION_LOCALES,
@@ -8,17 +8,17 @@ import {
   type LiteratureCitationLocale,
   type LiteratureCitationStyle
 } from '@aipoch/literature-citations/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import {
-  literatureItemInputSchema,
   literatureSourceInputSchema,
   type LiteratureItemView
-} from '../../shared/literature'
+} from '@aipoch/literature-library/contracts'
 import {
   summarizeLiteratureSaveReceipts,
   type LiteratureLibrarySaveResult
 } from '../../shared/literature-save'
-import { literatureReadPresentation } from './mcp-server'
 import type { AgentPdfAcquisitionResult } from './agent-pdf-acquisition'
+import { literatureReadPresentation } from './mcp-server'
 
 const LITERATURE_LIBRARY_MCP_SERVER_NAME = 'open-science-library'
 const LITERATURE_LIBRARY_SEARCH_TOOL_NAME = 'search_library'
@@ -798,16 +798,16 @@ const createLiteratureLibraryMcpServer = (
 }
 
 export {
+  createLiteratureLibraryMcpServer,
+  LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME,
+  LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME,
   LITERATURE_LIBRARY_MCP_SERVER_NAME,
+  LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME,
   LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME,
   LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
-  LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME,
-  LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME,
-  LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME,
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
   LITERATURE_LIBRARY_SAVE_TOOL_NAME,
-  LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
-  createLiteratureLibraryMcpServer
+  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  LITERATURE_LIBRARY_SEARCH_TOOL_NAME
 }
 export type {
   LiteratureLibraryDiscovery,
@@ -815,9 +815,9 @@ export type {
   LiteratureLibraryFormatDocumentResult,
   LiteratureLibraryFormatReferencesRequest,
   LiteratureLibraryFormatReferencesResult,
+  LiteratureLibraryMcpHandler,
   LiteratureLibraryPrepareLatexRequest,
   LiteratureLibraryPrepareLatexResult,
-  LiteratureLibraryMcpHandler,
   LiteratureLibraryReadAbstractRequest,
   LiteratureLibraryReadAbstractResult,
   LiteratureLibraryReadPdfRequest,

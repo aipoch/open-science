@@ -43,7 +43,7 @@ import type {
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { NotebookNetworkSettings } from '../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting

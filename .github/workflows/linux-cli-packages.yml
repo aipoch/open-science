@@ -1,0 +1,185 @@
+name: Verify Linux CLI packages
+
+on:
+  workflow_call:
+    inputs:
+      source_release:
+        type: string
+        default: ''
+        description: Existing stable Release to repack; empty uses this run's CLI archives.
+      target:
+        type: string
+        default: all
+        description: all, linux-x64-gnu or linux-arm64-gnu.
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      version: ${{ steps.source.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          TARGET: ${{ inputs.target }}
+          SOURCE_RELEASE: ${{ inputs.source_release }}
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          if (process.env.SOURCE_RELEASE && !/^v\d+\.\d+\.\d+$/.test(process.env.SOURCE_RELEASE)) throw new Error('Expected a stable Release tag');
+          const targets = [
+            {id:'linux-x64-gnu',runner:'ubuntu-24.04'},
+            {id:'linux-arm64-gnu',runner:'ubuntu-24.04-arm'}
+          ];
+          const selected = process.env.TARGET === 'all' ? targets : targets.filter(t => t.id === process.env.TARGET);
+          if (!selected.length) throw new Error('Expected a supported Linux target');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({include:selected})}\n`);
+          JS
+      - id: source
+        env:
+          SOURCE_RELEASE: ${{ inputs.source_release }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$SOURCE_RELEASE" ]; then
+            version=${SOURCE_RELEASE#v}
+            source_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_RELEASE" --jq .sha)
+            gh release view "$SOURCE_RELEASE" --json isDraft,isPrerelease --jq 'if .isDraft or .isPrerelease then error("Expected a published stable Release") else "stable" end'
+          else
+            version=$(node -p 'require("./package.json").version')
+            source_sha=$GITHUB_SHA
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+      TARGET: ${{ matrix.id }}
+      SOURCE_RELEASE: ${{ inputs.source_release }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Install packaging and existing smoke-fixture dependencies
+        run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+      - name: Download current-run verified CLI archive
+        if: inputs.source_release == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: cli-${{ matrix.id }}
+          path: out/cli-input
+      - name: Download immutable released CLI archive
+        if: inputs.source_release != ''
+        run: |
+          mkdir -p out/cli-input
+          gh release download "$SOURCE_RELEASE" --dir out/cli-input \
+            --pattern "open-science-$VERSION-$TARGET.tar.gz" --pattern SHA256SUMS.txt
+          gh attestation verify "out/cli-input/open-science-$VERSION-$TARGET.tar.gz" --repo "$GITHUB_REPOSITORY"
+      - name: Verify source and prepare unchanged payload
+        run: |
+          filename="open-science-$VERSION-$TARGET.tar.gz"
+          if [ -n "$SOURCE_RELEASE" ]; then
+            checksum=$(awk -v name="$filename" '$2 == name { print $1 }' out/cli-input/SHA256SUMS.txt)
+          else
+            # shellcheck disable=SC2016
+            checksum=$(node -p 'require("./out/cli-input/"+process.env.TARGET+".json").sha256')
+          fi
+          node scripts/linux-cli-packages.mjs prepare "out/cli-input/$filename" "$checksum" "$SOURCE_SHA" "$TARGET" out/cli-prepared
+      - name: Install Debian build and runtime prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev binutils libsecret-1-0 libdbus-1-3 libatomic1 libgomp1 bubblewrap gnome-keyring dbus-user-session python3-venv
+      - name: Build Debian CLI package
+        run: node scripts/linux-cli-packages.mjs deb "$PWD/out/cli-prepared" "$PWD/out/linux-cli-packages"
+      - name: Verify real Debian install and lifecycle
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -m venv "$RUNNER_TEMP/cli-package-python"
+          "$RUNNER_TEMP/cli-package-python/bin/pip" install ipykernel
+          export OPEN_SCIENCE_TEST_PYTHON="$RUNNER_TEMP/cli-package-python/bin/python"
+          export OPEN_SCIENCE_TEST_FAKE_AGENT="$PWD/e2e/fixtures/fake-opencode.mjs"
+          export OPEN_SCIENCE_PACKAGE_PAYLOAD="$PWD/out/cli-prepared/payload"
+          # The inner shell expands its own variables after entering the D-Bus session.
+          # shellcheck disable=SC2016
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            node scripts/test-linux-cli-package.mjs deb "$PWD"/out/linux-cli-packages/*.deb
+          '
+      - name: Build and verify RPM in native Fedora
+        run: |
+          docker run --rm --privileged -v "$PWD:/workspace" -w /workspace \
+            -e OPEN_SCIENCE_TEST_FAKE_AGENT=/workspace/e2e/fixtures/fake-opencode.mjs \
+            -e OPEN_SCIENCE_TEST_PYTHON=/usr/bin/python3 \
+            -e OPEN_SCIENCE_PACKAGE_PAYLOAD=/workspace/out/cli-prepared/payload \
+            fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 bash -euo pipefail -c '
+              dnf install -y --setopt=install_weak_deps=False rpm-build binutils libsecret dbus-daemon systemd bubblewrap openssl-libs libatomic libstdc++ libgomp gnome-keyring python3-ipykernel sudo coreutils tar gzip findutils
+              useradd -m package-test
+              echo "package-test ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/package-test
+              chmod 0440 /etc/sudoers.d/package-test
+              # Fedora mode-0000 shadow blocks the PAM helper under current OCI runtimes.
+              # Owner read is confined to this disposable container: linux-pam/linux-pam#876.
+              chmod u+r /etc/shadow
+              runuser -u package-test -- sudo -n true
+              node=/workspace/out/cli-prepared/payload/node-runtime/node
+              "$node" scripts/linux-cli-packages.mjs rpm /workspace/out/cli-prepared /workspace/out/linux-cli-packages
+              chown -R package-test:package-test out/linux-cli-packages
+              runuser -u package-test -- dbus-run-session -- bash -euo pipefail -c '\''
+                printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+                /workspace/out/cli-prepared/payload/node-runtime/node scripts/test-linux-cli-package.mjs rpm /workspace/out/linux-cli-packages/*.rpm
+              '\''
+            '
+      - name: Upload verified Linux packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: linux-cli-packages-${{ matrix.id }}
+          path: out/linux-cli-packages/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-set:
+    if: inputs.target == 'all'
+    needs: [plan, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: linux-cli-packages-*
+          merge-multiple: true
+          path: out/linux-cli-packages
+      - name: Verify complete Linux package set
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+        run: node scripts/linux-cli-packages.mjs verify out/linux-cli-packages "$VERSION" "$SOURCE_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: linux-cli-package-set
+          path: out/linux-cli-packages/
+          if-no-files-found: error
+          retention-days: 7

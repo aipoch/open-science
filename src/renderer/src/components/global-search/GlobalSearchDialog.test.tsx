@@ -1,34 +1,34 @@
+import { LITERATURE_OVERSIZED_REFERENCE } from '@aipoch/literature-library/client'
 import { pdfAnnotationSchema, type PdfAnnotation } from '../../../../shared/pdf-annotations'
-import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
 // @vitest-environment jsdom
-import { act } from 'react'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
-import { useSessionStore } from '@/stores/session-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useProjectStore } from '@/stores/project-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
+import { useSessionStore } from '@/stores/session-store'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMessageSearch } from '../../../../main/session-persistence/message-search'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import {
   artifact,
-  upload,
-  message,
-  literature,
+  button,
+  clickRow,
   collection,
+  detail,
+  input,
+  literature,
+  makeSession,
+  message,
+  onClose,
+  renderSearch,
+  rows,
+  search,
   setupSearch,
   teardownSearch,
-  renderSearch,
-  search,
-  input,
-  rows,
-  clickRow,
-  button,
-  detail,
-  onClose,
-  makeSession
+  upload
 } from './global-search.test-support'
 
 vi.mock('@/pages/workspace/previews/PreviewFileContent', async () => {

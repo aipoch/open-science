@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import {
-  literatureItemInputSchema,
   type LiteratureCatalogSearchRequest,
   type LiteratureInboxCandidateView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LibraryInboxPreview } from './LibraryInboxPreview'
 import LibraryPreview from './LibraryPreview'
 

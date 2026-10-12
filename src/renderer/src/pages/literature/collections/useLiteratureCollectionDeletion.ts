@@ -1,10 +1,10 @@
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
   type LiteratureCollectionView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 type CollectionDeletion = {
   collection: LiteratureCollectionView

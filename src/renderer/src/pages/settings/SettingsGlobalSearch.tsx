@@ -160,6 +160,13 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     keywords: 'update version',
     searchLabels: ['Checking for updates…', 'Release notes']
   },
+  {
+    id: 'general.help-center',
+    panel: 'general',
+    labelKey: 'Help Center',
+    keywords: 'help docs documentation guide manual tutorial support troubleshooting faq',
+    searchLabels: ['Read setup guides and troubleshooting.']
+  },
   { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
   { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
   { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
@@ -295,9 +302,9 @@ const SettingsGlobalSearch = ({
     return () => ownerWindow.removeEventListener('keydown', preserveComposingEscape, true)
   }, [])
 
-  const panelLabel = (panel: SettingsPanelId): string => {
+  const panelLabelKey = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
-    return entry ? t(entry.labelKey) : panel
+    return entry?.labelKey ?? panel
   }
 
   const results = useMemo(() => {
@@ -307,12 +314,13 @@ const SettingsGlobalSearch = ({
       [
         entry.labelKey,
         t(entry.labelKey),
-        panelLabel(entry.panel),
+        panelLabelKey(entry.panel),
+        t(panelLabelKey(entry.panel)),
         entry.keywords ?? '',
         ...(entry.searchLabels ?? []).flatMap((label) => [label, t(label)])
       ].some((haystack) => haystack.toLowerCase().includes(normalized))
     )
-    // panelLabel closes over t and panels; both are covered by the deps below.
+    // panelLabelKey closes over panels, which is covered by the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, t, panels])
 
@@ -426,7 +434,7 @@ const SettingsGlobalSearch = ({
               >
                 <span className="min-w-0 truncate">{t(entry.labelKey)}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {panelLabel(entry.panel)}
+                  {t(panelLabelKey(entry.panel))}
                 </span>
               </button>
             ))

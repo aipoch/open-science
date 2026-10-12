@@ -2,15 +2,11 @@
 import { act, cleanup, renderHook, type RenderHookResult } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  LiteratureCatalogSearchPage,
-  LiteratureCatalogSearchRequest
-} from '../../../../../shared/literature'
+import type { LiteratureCatalogSearchRequest } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { useLiteratureEntries } from './useLiteratureEntries'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
 
 const page: LiteratureCatalogSearchPage = { entries: [], totalCount: 0 }
 const search =
@@ -124,6 +120,38 @@ describe('useLiteratureEntries', () => {
     expect(onError).not.toHaveBeenCalledWith(true)
     expect(result.current.loading).toBe(false)
   })
+
+  it.each([false, true])(
+    'rejects a retained reload after leaving its request context, returning: %s',
+    async (returnToOriginal) => {
+      const { result, rerender, onPage, onError } = setup()
+      await act(async () => {})
+      const oldReload = result.current.reload
+      rerender({
+        enabled: true,
+        scopeKey: 'collection-b',
+        request: { ...request, collectionId: 'b' }
+      })
+      await act(async () => {})
+      // The current scope has already processed a broadcast before the old write completes.
+      await act(() => result.current.reload(true, true))
+      if (returnToOriginal) {
+        rerender({ enabled: true, scopeKey: 'library', request })
+        await act(async () => {})
+      }
+      const requests = search.mock.calls.length
+      const publications = onPage.mock.calls.length
+      const errors = onError.mock.calls.length
+      await act(() => oldReload(true))
+      expect(search).toHaveBeenCalledTimes(requests)
+      expect(onPage).toHaveBeenCalledTimes(publications)
+      expect(onError).toHaveBeenCalledTimes(errors)
+      expect(result.current.loading).toBe(false)
+      // Admission rejection must preserve the current page cache too.
+      await act(() => result.current.reload())
+      expect(search).toHaveBeenCalledTimes(requests)
+    }
+  )
 
   it('starts first-page navigation without waiting for a debounce timer', async () => {
     const { rerender, result } = setup()

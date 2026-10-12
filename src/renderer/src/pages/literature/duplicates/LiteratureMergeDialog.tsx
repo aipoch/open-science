@@ -7,14 +7,14 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { Merge, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemView } from '../../../../../shared/literature'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import { LiteratureMergeReview } from './LiteratureMergeReview'
 import { fullCreatorLabel } from '../literature-item-display'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { mergeScalarFields } from './literature-merge'
+import { LiteratureMergeReview } from './LiteratureMergeReview'
 
 export function LiteratureMergeDialog({
   mergeOpen,

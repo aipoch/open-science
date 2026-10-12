@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { createComputeExecution } from './execution'
 import { ConcurrencyManager } from './concurrency-manager'
 import type { ComputeHost, ComputeJob } from './model'
 import type { ComputeHostRepository, ComputeJobRepository } from './ports'
@@ -974,6 +975,49 @@ describe('ConcurrencyManager', () => {
   })
 
   describe('onJobCompleted - dispatch error handling', () => {
+    it('keeps a possibly launched job recoverable when dispatch post-processing rejects', async () => {
+      let current = {
+        job_id: 'job-1',
+        session_id: 'session-1',
+        provider_id: 'ssh:cluster-a',
+        created_at: 1000,
+        status: 'queued'
+      } as ComputeJob
+      vi.mocked(jobRepo.findQueuedJobs).mockImplementation(async () =>
+        current.status === 'queued' ? [current] : []
+      )
+      vi.mocked(jobRepo.get).mockImplementation(async () => structuredClone(current))
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      vi.mocked(jobRepo.updateIfStatus).mockImplementation(async (_id, statuses, updates) => {
+        if (!statuses.includes(current.status)) return null
+        current = {
+          ...current,
+          status: updates.status ?? current.status,
+          last_poll_error:
+            updates.lastPollError === null
+              ? undefined
+              : (updates.lastPollError ?? current.last_poll_error),
+          error_code:
+            updates.errorCode === null ? undefined : (updates.errorCode ?? current.error_code)
+        }
+        return structuredClone(current)
+      })
+      const queue = createComputeExecution().createQueue({
+        jobs: jobRepo,
+        hosts: hostRepo,
+        dispatch: async () => {
+          current.last_poll_error = 'dispatch_may_have_started: dispatch_recovery_pending'
+          throw new Error('host finalization failed after dispatch')
+        }
+      })
+      await queue.onJobCompleted()
+      expect(current.status).toBe('submitted')
+      expect(current.error_code).toBeUndefined()
+      expect(current.last_poll_error).toContain('dispatch_may_have_started')
+    })
+
     it('does not overwrite a terminal job when a promoted dispatch fails late', async () => {
       const queuedJob = {
         job_id: 'job-1',
@@ -1040,6 +1084,7 @@ describe('ConcurrencyManager', () => {
       expect(jobRepo.updateIfStatus).toHaveBeenLastCalledWith('job-1', ['submitted'], {
         status: 'error',
         errorCode: 'dispatch_failed',
+        lastPollError: null,
         finishedAt: expect.any(Date)
       })
       expect(onJobUpdated).toHaveBeenCalledWith(failedJob)
@@ -1081,6 +1126,7 @@ describe('ConcurrencyManager', () => {
       expect(jobRepo.updateIfStatus).toHaveBeenCalledWith('job-1', ['submitted'], {
         status: 'error',
         errorCode: 'dispatch_failed',
+        lastPollError: null,
         finishedAt: expect.any(Date)
       })
 

@@ -1,8 +1,6 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { describe, expect, it } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
 import { buildLiteratureMergeItem, literatureMergeRows } from './literature-merge'
 
 const entry = (id: string, metadata: Record<string, unknown> = {}): LiteratureItemView => ({

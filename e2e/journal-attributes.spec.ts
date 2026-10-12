@@ -1,11 +1,11 @@
+import type { JournalResult } from '@aipoch/journal-catalog/contracts'
 import { expect } from '@playwright/test'
-import type { ElectronApplication, Page } from 'playwright'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { ElectronApplication, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
-import type { JournalResult } from '@aipoch/journal-catalog/contracts'
 
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 
 // Independently authored fixtures; never use user spreadsheets or provider datasets.
 const prepare = (

@@ -1,3 +1,4 @@
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -10,10 +11,9 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { LoaderCircle, X } from 'lucide-react'
-import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
 import { useLiteratureCollectionDeletion } from './useLiteratureCollectionDeletion'
 
 export function LiteratureCollectionDeleteDialog({

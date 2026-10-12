@@ -15,11 +15,11 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureInboxCandidateView } from '../../../../../shared/literature'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue
 } from '@aipoch/literature-citations/contracts'
+import type { LiteratureInboxCandidateView } from '@aipoch/literature-library/contracts'
 
 import {
   getExternalLiteratureUrl,

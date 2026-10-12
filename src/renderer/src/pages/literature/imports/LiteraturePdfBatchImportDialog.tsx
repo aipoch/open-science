@@ -1,18 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, LoaderCircle } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
-import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import { stageComposerFile } from '../../workspace/composer-upload-transfer'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
-  type LiteratureItemInput,
   type LiteratureDuplicatePolicy
-} from '../../../../../shared/literature'
-import type { UploadTransferProgress, UploadedAttachment } from '../../../../../shared/uploads'
+} from '@aipoch/literature-library/contracts'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
+import { Check, LoaderCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { PdfNativeAnnotationImportProgress } from '../../../../../shared/pdf-annotations'
+import type { UploadTransferProgress, UploadedAttachment } from '../../../../../shared/uploads'
+import { stageComposerFile } from '../../workspace/composer-upload-transfer'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
+import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
+import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 
 type Row = {
   file: File

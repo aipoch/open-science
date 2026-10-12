@@ -1,20 +1,20 @@
-import { Info } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useTranslation } from 'react-i18next'
 import {
   journalChoices,
   journalDatasetLabel,
   type JournalAttribute
 } from '@aipoch/journal-catalog/contracts'
+import { Info } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type { LiteratureItemInput } from '../../../../shared/literature'
-import { TAG_COLORS } from '@/pages/settings/tag-presentation'
-import type { TagColorKey } from '../../../../shared/tags'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
-import { useJournalAttributes } from './journals/journal-attribute-store'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { TAG_COLORS } from '@/pages/settings/tag-presentation'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { TagColorKey } from '../../../../shared/tags'
+import { useJournalAttributes } from './journals/journal-attribute-store'
 
 const JOURNAL_POPOVER_OPENED = 'open-science:journal-popover-opened'
 

@@ -18,7 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import {
   LiteratureDuplicateCount,
   type LiteratureDuplicateCountHandle

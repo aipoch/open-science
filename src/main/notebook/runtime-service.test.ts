@@ -12321,6 +12321,20 @@ describe('v4 runtime bindings & agent tools', () => {
       return { approve, requested, respond }
     }
 
+    it('does not probe the other language before first execution', async () => {
+      const h = await makeApprovalHarness()
+      const pending = waitingApproval()
+      h.service.setRuntimeBindingApproval(pending.approve)
+      const operation = h.service.execute({ ...h.request, code: h.code })
+      await pending.requested
+      const probedLanguages = h.discovery.mock.calls.map(([language]) => language)
+      pending.respond(false)
+      await operation.catch(() => undefined)
+      const beforeRun = await h.service.state(h.request)
+      expect(beforeRun.cells.some((cell) => cell.code === h.code)).toBe(true)
+      expect(probedLanguages).not.toContain(language === 'python' ? 'r' : 'python')
+    })
+
     it.each([false, true])(
       'Auto admits the verified default with multiple=%s and preserves the other binding',
       async (multiple) => {

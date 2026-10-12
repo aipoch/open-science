@@ -3,6 +3,11 @@ import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdow
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { useProjectStore } from '@/stores/project-store'
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import {
   BookOpenText,
   ChevronDown,
@@ -16,14 +21,12 @@ import {
   X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { LiteratureBatchDestinationMenus } from '../collections/LiteratureBatchDestinationMenus'
-import { type BatchLookupMode } from '../workflows/LiteratureBatchLookupDialog'
 import { LiteratureHoverDropdown, LiteratureHoverMenuGroup } from '../LiteratureHoverMenus'
+import { LiteratureBatchDestinationMenus } from '../collections/LiteratureBatchDestinationMenus'
+import type { useSmartDecisionBatch } from '../collections/useSmartDecisionBatch'
+import { type BatchLookupMode } from '../workflows/LiteratureBatchLookupDialog'
 import { LiteratureExportMenu } from './LiteratureLibraryMenus'
 import type { LiteratureSelectionStore } from './literature-selection'
-import type { useSmartDecisionBatch } from '../collections/useSmartDecisionBatch'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 

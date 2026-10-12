@@ -11,91 +11,53 @@
       content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:"
     />
     <style>
+      /* Match the renderer startup surface before its stylesheet has loaded. */
       :root {
-        --connection-background: #ffffff;
-        --connection-foreground: #171717;
-        --connection-muted: #737373;
-        --connection-spinner-track: #d4d4d4;
+        --connection-background: #fafaf8;
+        --connection-foreground: #202321;
+        --connection-muted: #646762;
       }
       .dark {
-        --connection-background: #171717;
-        --connection-foreground: #fafafa;
-        --connection-muted: #a3a3a3;
-        --connection-spinner-track: #525252;
+        --connection-background: #1a1a18;
+        --connection-foreground: #e8e6df;
+        --connection-muted: #a8a49a;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --connection-background: #171717;
-          --connection-foreground: #fafafa;
-          --connection-muted: #a3a3a3;
-          --connection-spinner-track: #525252;
+          --connection-background: #1a1a18;
+          --connection-foreground: #e8e6df;
+          --connection-muted: #a8a49a;
         }
-      }
-      * {
-        box-sizing: border-box;
       }
       body {
         margin: 0;
       }
       .open-science-connection-panel {
-        display: grid;
-        width: fit-content;
-        max-width: 420px;
-        justify-items: start;
-        text-align: left;
-      }
-      .open-science-connection-brand {
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: flex-start;
-        gap: 10px;
+        gap: 3.5rem;
+        text-align: center;
+        max-width: min(420px, calc(100vw - 3rem));
       }
-      .open-science-connection-logo {
-        display: block;
-        width: 40px;
-        height: 39px;
-        flex: none;
+      #open-science-connection-logo:empty + p {
+        visibility: hidden;
+      }
+      #open-science-connection-logo > div {
+        position: relative;
+        width: 14rem;
+        height: 14rem;
+        flex-shrink: 0;
+      }
+      #open-science-connection-logo canvas {
+        pointer-events: none;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: min(200%, 100vw);
+        height: min(200%, 100vw);
+        translate: -50% -50%;
         color: var(--connection-foreground);
-      }
-      .open-science-connection-logo svg {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-      .open-science-connection-name {
-        font-family: Georgia, serif;
-        font-size: 28px;
-        letter-spacing: -0.02em;
-      }
-      .open-science-connection-progress {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 9px;
-        margin-top: 14px;
-        color: var(--connection-muted);
-      }
-      .open-science-connection-spinner {
-        width: 16px;
-        height: 16px;
-        flex: none;
-        border: 2px solid var(--connection-spinner-track);
-        border-top-color: currentColor;
-        border-radius: 999px;
-        animation: open-science-connection-spin 0.8s linear infinite;
-      }
-      .connection-failed .open-science-connection-spinner {
-        display: none;
-      }
-      @keyframes open-science-connection-spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .open-science-connection-spinner {
-          animation-duration: 1.8s;
-        }
       }
     </style>
   </head>
@@ -108,9 +70,8 @@
         style="
           box-sizing: border-box;
           display: grid;
-          min-height: 100dvh;
+          min-height: 100svh;
           place-items: center;
-          padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
           background: var(--connection-background);
           color: var(--connection-foreground);
           font-family:
@@ -124,23 +85,13 @@
         "
       >
         <div class="open-science-connection-panel">
-          <div class="open-science-connection-brand">
-            <span
-              id="open-science-connection-logo"
-              class="open-science-connection-logo"
-              aria-hidden="true"
-            ></span>
-            <div class="open-science-connection-name">Open-Science</div>
-          </div>
-          <div class="open-science-connection-progress">
-            <span class="open-science-connection-spinner" aria-hidden="true"></span>
-            <p
-              id="open-science-connection-message"
-              style="margin: 0; color: var(--connection-muted); font-size: 14px; line-height: 1.6"
-            >
-              Connecting to remote computer…
-            </p>
-          </div>
+          <div id="open-science-connection-logo" aria-hidden="true"></div>
+          <p
+            id="open-science-connection-message"
+            style="margin: 0; color: var(--connection-muted); font-size: 14px; line-height: 20px"
+          >
+            Connecting to remote computer…
+          </p>
         </div>
       </div>
     </div>

@@ -1,9 +1,9 @@
-import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { LoaderCircle, X } from 'lucide-react'
+import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parseLiteratureDeletionError } from '../../../../../shared/literature-deletion'
 import { LiteratureDeletionNotice } from '../LiteratureDeletionNotice'
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
 import {
   useAttachmentOperations,
   type AttachmentOperation

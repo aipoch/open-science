@@ -1,6 +1,6 @@
 {
   "name": "@aipoch/compute",
-  "version": "0.37.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Remote Compute execution protocols, scheduling and lifecycle",
   "license": "Apache-2.0",

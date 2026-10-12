@@ -4,9 +4,11 @@ import {
   createJobLifecycle,
   createSshRunner
 } from '@aipoch/compute/node'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ComputeHostUnavailableError } from '@aipoch/compute'
@@ -101,6 +103,198 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     }
     return { client, jobs, operations, createJob }
   }
+
+  it.each(['running', 'exited', 'vanished'] as const)(
+    'retains uncertain missing-directory cancellation until later %s evidence',
+    async (laterEvidence) => {
+      const { jobs, operations, createJob } = await setup()
+      await createJob('submitted')
+      const scratchRoot = await mkdtemp(join(tmpdir(), 'cancellation-missing-workdir-'))
+      try {
+        const localWorkdir = join(scratchRoot, '.openscience', 'jobs', 'job-1')
+        // Remote paths always use POSIX syntax, independently of the SQLite host platform.
+        const workdir = posix.join(
+          process.platform === 'win32' ? '/scratch/cancellation-test' : scratchRoot,
+          '.openscience',
+          'jobs',
+          'job-1'
+        )
+        await jobs.update('job-1', {
+          remoteWorkdir: workdir,
+          lastPollError: 'dispatch_may_have_started: host_unreachable'
+        })
+        let observation: 'not_started' | typeof laterEvidence = 'not_started'
+        const run = vi.fn<ComputeConnectionLease['run']>(async (command) => {
+          if (command.includes('OPEN_SCIENCE_DISPATCH_RECOVERY_V1'))
+            return success(
+              [
+                'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+                `workdir:${observation === 'not_started' ? 0 : 1}`,
+                `exit_code:${observation === 'exited' ? 0 : ''}`,
+                `pid:${observation === 'not_started' || observation === 'exited' ? '' : 4321}`,
+                `cwd_match:${observation === 'running' ? 1 : 0}`
+              ].join('\n')
+            )
+          return success(command.includes('kill_job_pid') ? 'terminated' : 'owned')
+        })
+        const broker: ComputeConnectionBrokerAcquirer = {
+          acquire: async () => ({
+            run,
+            upload: async () => undefined,
+            download: async () => ({
+              exitCode: 0,
+              stderr: '',
+              timedOut: false,
+              bytesWritten: 0,
+              exceeded: false
+            })
+          })
+        }
+        const cancellation = createJobCancellation(operations, jobs)
+        const onConfirmed = vi.fn()
+        let clock = Date.now() + 10_000
+        const options = { now: () => new Date(clock), retryDelayMs: () => 1, onConfirmed }
+        await cancellation.request('job-1', scope)
+        await createComputeExecution()
+          .createCancellationReaper(operations, jobs, broker, options)
+          .runOnce()
+        clock += 10
+        await createComputeExecution()
+          .createCancellationReaper(operations, jobs, broker, options)
+          .runOnce()
+        await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
+          status: 'submitted',
+          cancellation_status: 'cancelling'
+        })
+        await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+          phase: 'active',
+          outcome: null,
+          claimToken: null,
+          attemptCount: 2
+        })
+        const uncertain = await jobs.get('job-1')
+        expect(uncertain?.remote_cleanup_disposition).not.toBe('cleaned')
+        expect(uncertain?.harvested_at).toBeUndefined()
+        expect(uncertain?.last_poll_error).toContain('dispatch_may_have_started')
+        expect(onConfirmed).not.toHaveBeenCalled()
+        expect(run).toHaveBeenCalledTimes(2)
+
+        const cleanupRun = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue({
+          ...success(''),
+          exitCode: 1,
+          stderr: 'Remote workdir is absent.'
+        })
+        const queueManager = { pauseOwner: vi.fn(async () => undefined), resumeOwner: vi.fn() }
+        const deletion = createComputeExecution().createDeletionOwner({
+          jobRepository: jobs,
+          hostRepository: { get: async () => null },
+          queueManager,
+          connectionBroker: {
+            acquire: async () => ({
+              run: cleanupRun,
+              upload: async () => undefined,
+              download: async () => ({
+                exitCode: 0,
+                stderr: '',
+                timedOut: false,
+                bytesWritten: 0,
+                exceeded: false
+              })
+            })
+          }
+        })
+        await deletion.prepareSessionJobDeletion(scope.projectId, scope.sessionId)
+        await expect(
+          deletion.commitSessionJobDeletion(scope.projectId, scope.sessionId)
+        ).rejects.toThrow(/cleanup failed/)
+        await expect(jobs.get('job-1')).resolves.not.toBeNull()
+        expect(cleanupRun).toHaveBeenCalledOnce()
+        expect(queueManager.resumeOwner).not.toHaveBeenCalled()
+        await deletion.abortSessionJobDeletion(scope.projectId, scope.sessionId)
+
+        observation = laterEvidence
+        clock += 10
+        await createComputeExecution()
+          .createCancellationReaper(operations, jobs, broker, options)
+          .runOnce()
+        await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
+          status: 'failed',
+          cancellation_status: 'cancelled'
+        })
+        await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+          phase: 'settled',
+          outcome: 'fulfilled'
+        })
+        expect(onConfirmed).toHaveBeenCalledOnce()
+        expect((await jobs.get('job-1'))?.remote_cleanup_disposition).not.toBe('cleaned')
+        expect((await jobs.get('job-1'))?.harvested_at).toBeUndefined()
+        expect((await jobs.get('job-1'))?.last_poll_error).toBeUndefined()
+        // Harvest has completed; cleanup must not demand a PID witness after definitive
+        // cancellation evidence, even when job.pid was never a usable file.
+        await jobs.update('job-1', { harvestedAt: new Date(clock) })
+        await mkdir(join(localWorkdir, 'job.pid'), { recursive: true })
+        await writeFile(join(localWorkdir, 'exit_code'), '0')
+        cleanupRun.mockImplementation(async (command) => {
+          expect(command).not.toContain('[ -z "$workdir" ] || [ -f ')
+          // Keep the complete SQLite/owner protocol test portable; execute the generated
+          // remote shell command locally only where this host provides Unix semantics.
+          if (process.platform === 'win32') return success('')
+          const result = await promisify(execFile)('sh', ['-c', command])
+          return success(result.stdout)
+        })
+        await deletion.prepareSessionJobDeletion(scope.projectId, scope.sessionId)
+        await deletion.commitSessionJobDeletion(scope.projectId, scope.sessionId)
+        await expect(jobs.get('job-1')).resolves.toBeNull()
+        expect(queueManager.resumeOwner).toHaveBeenCalled()
+      } finally {
+        await rm(scratchRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('still confirms a missing workdir without an uncertain-launch witness', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('submitted')
+    const run = vi
+      .fn<ComputeConnectionLease['run']>()
+      .mockResolvedValue(
+        success(
+          [
+            'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+            'workdir:0',
+            'exit_code:',
+            'pid:',
+            'cwd_match:0'
+          ].join('\n')
+        )
+      )
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: async () => ({
+        run,
+        upload: async () => undefined,
+        download: async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        })
+      })
+    }
+    const cancellation = createJobCancellation(operations, jobs)
+    await cancellation.request('job-1', scope)
+    await createComputeExecution().createCancellationReaper(operations, jobs, broker).runOnce()
+    await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+      phase: 'settled',
+      outcome: 'fulfilled'
+    })
+    await expect(jobs.get('job-1')).resolves.toMatchObject({
+      status: 'failed',
+      remote_cleanup_disposition: 'cleaned',
+      harvested_at: expect.any(Number)
+    })
+    expect(run).toHaveBeenCalledOnce()
+  })
 
   it.each(['owned', 'absent', 'mismatch', 'truncated-stdout', 'truncated-termination'] as const)(
     'uses complete stdout evidence with truncated SSH banners: %s',

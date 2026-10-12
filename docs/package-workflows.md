@@ -22,7 +22,18 @@ npm run check:packages -- --ci
 ```
 
 Explicit package names select exactly those consumers, plus prerequisite builds. Ordinary PR updates
-run affected package unit tests and host integration tests; installed tarball verification runs in
+run bounded affected package unit tests and host integration tests on separate Ubuntu runners.
+PR Gate uses four host shards and two package shards; `packages/` test files run only in the package
+group, while host, CLI and repository-policy tests run in the host group. Both groups retain the
+trusted package/module selection and feed one blocking coverage aggregate. Pure host changes omit
+package runners entirely; package fixture readers and shared runtime/build inputs still select
+package checks. Full portable plans defer to scheduled/manual Source Regression on both PRs and
+merge queue. Its complete acceptance runs the same separate host/package groups without exclusions.
+Selected test failures, timeouts and cancellations block the gate. A selective runner whose plan
+unexpectedly expands to full fails with `--require-selective`; it never silently restarts full.
+Full-suite failures can first appear after merge. CI policy changes still use the trusted base policy.
+
+Installed tarball verification runs in
 **merge queue** as a separate blocking job. Static checks no longer install or execute package tarballs;
 CLI/SDK, Node 22 compatibility and published-runtime checks have their own job with unchanged selection.
 
@@ -53,7 +64,7 @@ suites through module-impact fixture routing. Unknown paths and incomplete trust
 the complete package baseline.
 
 The dispatcher reuses the Connector, Diagnostics, Environment, Compute, Notebook, Skills and
-PDF/Literature verifiers.
+PDF/Literature, Reproducibility, Resilient Download and Durable Files verifiers.
 Prerequisites need compilation; only selected packages need their own unit suites. Installed
 consumers retain public declarations, private-import rejection, browser entries, CJS/ESM identity
 where supported, actual execution and resource checks. PDF worker assets, Notebook grammars and

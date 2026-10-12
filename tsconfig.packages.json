@@ -60,6 +60,12 @@
     },
     {
       "path": "./packages/resilient-download/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-reading/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-library/tsconfig.dev.json"
     }
   ]
 }

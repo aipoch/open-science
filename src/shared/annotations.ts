@@ -6,7 +6,10 @@ import {
   sanitizeAcpMessageImage,
   type AcpMessageImage
 } from './acp'
-import { createArtifactVersionLocator, parseArtifactVersionLocator } from './artifact-provenance'
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from './artifact-version-locator'
 import { parseLiteratureAttachmentVersionReference } from './literature-attachment-reference'
 import { createUploadVersionReference, parseUploadVersionReference } from './uploads'
 

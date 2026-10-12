@@ -36,7 +36,7 @@ import type {
   GenerateArtifactCodeReconstructionRequest,
   GetArtifactCodeReconstructionRequest
 } from '../../shared/artifact-code-reconstruction'
-import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { resolveProjectId } from '../../shared/project-scope'
 import type {
   FinalizeRunArtifactsRequest,

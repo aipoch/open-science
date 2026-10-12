@@ -4,7 +4,7 @@ import type {
   ArtifactVersionDescriptor,
   GetArtifactLineageRequest
 } from '../../../../shared/artifact-provenance'
-import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
 import type {
   NotebookRunCursor,
   NotebookSessionReference,

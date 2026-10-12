@@ -1,8 +1,8 @@
 import { useFileDropZone } from '@/hooks/useFileDropZone'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { stageComposerFile } from '../../workspace/composer-upload-transfer'
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
 import { pdfImportErrorMessage } from '../imports/useLiteratureImport'
 import { useLiteraturePdfStaging } from '../imports/useLiteraturePdfStaging'
 

@@ -14,6 +14,16 @@ const packageGlobalInput =
 // the independently published package contracts, so changing them must not run every package.
 const packageExemptInput = /^(?:test\/fixtures\/|scripts\/)/
 
+// These packages run through module/host contracts and dedicated platform or CLI lanes.
+// They are downstream of independent libraries, never inputs to those libraries' suites.
+export const dedicatedPackageTestRoots = [
+  'packages/notebook-network-sandbox',
+  'packages/open-science',
+  'packages/credential-identity-probe-native',
+  'packages/process-tree-native',
+  'packages/safe-file-publisher-native'
+]
+
 // These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
 export const verificationFamilies = [
   { script: 'check:resilient-download-package', packages: ['resilient-download'] },
@@ -38,7 +48,9 @@ export const verificationFamilies = [
       'literature-citations',
       'journal-catalog',
       'literature-discovery',
-      'literature-screening'
+      'literature-screening',
+      'literature-library',
+      'literature-reading'
     ]
   }
 ]
@@ -47,7 +59,7 @@ export const verificationFamilies = [
 const verificationSharedInput =
   /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|vitest[^/]*|tsconfig[^/]*|patches\/|scripts\/(?:(?:check-packages|package-verification-plan|build-dev-packages|build-packages)\.mjs$|ci\/(?:package-test-boundaries\.json$|(?:package-test-impact|npm-ci)\.mjs$))|\.github\/actions\/(?:select-package-tests|verify-packages)\/)/
 const verificationUnrelatedInput =
-  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/config\/|scripts\/runtime-archives\.mjs$|scripts\/ci\/windows-test-sequencer\.ts$|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-|consumer-retirement)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
+  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/(?:config|fixtures)\/|scripts\/runtime-archives\.mjs$|scripts\/ci\/windows-test-sequencer\.ts$|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-|consumer-retirement)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
 
 function verificationPaths(paths, roots) {
   return paths.flatMap((path) => {
@@ -165,7 +177,9 @@ export function createPackageTestPlan(paths, registry, { verification = false } 
         excluded: [],
         reasons: [`${path} -> package compilation, discovery or policy input -> all package tests`]
       }
-    } else if (packageExemptInput.test(path)) {
+    } else if (dedicatedPackageTestRoots.some((root) => path.startsWith(root + '/'))) {
+      reasons.push(`${path} -> dedicated module/host lane -> independent package suites excluded`)
+    } else if (!verification && packageExemptInput.test(path)) {
       reasons.push(`${path} -> non-package test or script input -> package unit tests excluded`)
     } else if (!/^(?:src\/|docs\/|[^/]+\.md$)/.test(path)) {
       return {

@@ -146,7 +146,6 @@
     "List or read official reference tables.": "공식 참조 표 목록 조회 또는 읽기.",
     "List bulk datasets without downloading.": "다운로드 없이 일괄 데이터셋 목록 조회.",
     "Download and verify one bulk dataset.": "일괄 데이터셋 하나를 다운로드하고 검증.",
-
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 암 단백질체 연구, 검체 및 분주 검체 매핑과 파일 검색.",
     "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
     "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
@@ -7161,6 +7160,8 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{total}}개 중 {{shown}}개를 표시합니다. 아래 전체 코드를 검토하세요.",
     "Current environment": "현재 환경",
     "Selected environment": "선택한 환경",
-    "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다."
+    "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다.",
+    "No code has run in this view yet.": "이 보기에서는 아직 코드가 실행되지 않았습니다.",
+    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다."
   }
 }

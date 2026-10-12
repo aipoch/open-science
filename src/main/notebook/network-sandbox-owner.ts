@@ -27,12 +27,12 @@ import {
 import { probeWindowsRuntimeComponent } from './windows-runtime-probe'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 
+import { type NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import {
   buildNotebookNetworkPolicy,
   notebookNetworkSettingsAllowDomain,
   normalizeNotebookNetworkSettings,
   validateCustomAllowedDomain,
-  type NotebookNetworkSettings,
   type NotebookNetworkStatus,
   type NotebookNetworkStatusReason
 } from '../../shared/notebook-network'

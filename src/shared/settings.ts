@@ -25,7 +25,7 @@ import type {
 } from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
-import type { NotebookNetworkSettings } from './notebook-network'
+import type { NotebookNetworkSettings } from './notebook-network-settings'
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor

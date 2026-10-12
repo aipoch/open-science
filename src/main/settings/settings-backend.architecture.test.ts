@@ -863,156 +863,207 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks dependency-aware impact owners and cross-surface evidence', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
-    expect(manifest.modules.settings_repository.ownerPaths).toEqual([
-      'src/main/settings/repository.ts',
-      'src/main/settings/record-codec.ts',
-      'src/main/settings/provider-token-limits.ts',
-      'src/main/settings/document-codec.ts',
-      'src/main/settings/document-store.ts',
-      'src/main/settings/compute-grant-port.ts',
-      'src/main/settings/subagent-model-settings.ts',
-      'src/main/settings/compute-grants.test.ts',
-      'src/main/settings/connectors-settings.test.ts',
-      'src/main/settings/custom-mcp-settings.test.ts',
-      'src/main/settings/document-codec.test.ts',
-      'src/main/settings/document-store.test.ts',
-      'src/main/settings/mirror-settings.test.ts',
-      'src/main/settings/provider-token-limits.test.ts',
-      'src/main/settings/record-codec.test.ts',
-      'src/main/settings/repository.test.ts',
-      'src/main/settings/document-read-error.ts',
-      'src/main/settings/document-shape.ts',
-      'src/main/settings/classification-config.ts'
-    ])
-    expect(manifest.modules.settings_repository.interfacePaths).toEqual([
-      'src/main/settings/repository.ts',
-      'src/shared/network-proxy.ts',
-      'src/main/settings/compute-grant-port.ts',
-      'src/main/settings/provider-token-limits.ts',
-      'src/main/settings/document-store.ts'
-    ])
-    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
-      'src/main/settings/bounded-response.ts',
-      'src/main/settings/provider-accounts.ts',
-      'src/main/settings/provider-auth-lifecycle.ts',
-      'src/main/settings/provider-draft-projection.ts',
-      'src/main/settings/provider-model-catalog-owner.ts',
-      'src/main/settings/provider-resource-limits.ts',
-      'src/main/settings/provider-runtime-projection.ts',
-      'src/main/settings/xai-oauth.ts',
-      'src/main/settings/xai-provider-account-owner.ts',
-      'src/main/settings/claude-isolated-auth.test.ts',
-      'src/main/settings/claude-isolated-auth.ts',
-      'src/main/settings/claude-shared-auth.test.ts',
-      'src/main/settings/claude-shared-auth.ts',
-      'src/main/settings/codex-auth.test.ts',
-      'src/main/settings/codex-auth.ts',
-      'src/main/settings/crypto.test.ts',
-      'src/main/settings/crypto.ts',
-      'src/main/settings/list-models.test.ts',
-      'src/main/settings/list-models.ts',
-      'src/main/settings/provider-accounts.test.ts',
-      'src/main/settings/provider-auth-lifecycle.architecture.test.ts',
-      'src/main/settings/provider-auth-lifecycle.test.ts',
-      'src/main/settings/provider-env.test.ts',
-      'src/main/settings/provider-env.ts',
-      'src/main/settings/provider-runtime-projection.architecture.test.ts',
-      'src/main/settings/provider-runtime-projection.test.ts',
-      'src/main/settings/validate.test.ts',
-      'src/main/settings/validate.ts',
-      'src/main/settings/xai-oauth.test.ts',
-      'src/main/settings/xai-provider-account-owner.test.ts',
-      'src/main/settings/provider-text-generation.ts',
-      'src/main/settings/provider-text-generation.test.ts'
-    ])
-    expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual([
-      'src/main/settings/provider-accounts.ts',
-      'src/main/settings/bounded-response.ts',
-      'src/main/settings/claude-isolated-auth.ts',
-      'src/main/settings/claude-shared-auth.ts',
-      'src/main/settings/codex-auth.ts',
-      'src/main/settings/crypto.ts',
-      'src/main/settings/list-models.ts',
-      'src/main/settings/provider-draft-projection.ts',
-      'src/main/settings/provider-env.ts',
-      'src/main/settings/provider-resource-limits.ts',
-      'src/main/settings/provider-runtime-projection.ts',
-      'src/main/settings/validate.ts',
-      'src/main/settings/provider-text-generation.ts'
-    ])
-    expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
-      'src/main/settings/backend-resolver.ts',
-      'src/main/settings/backend-selection-owner.ts',
-      'src/main/settings/backend-route-planner.ts',
-      'src/main/settings/codex-bridge-tools.ts',
-      'src/main/settings/codex-bridge-tools.test.ts',
-      'src/main/settings/network-proxy-runtime.ts',
-      'src/main/settings/environment-check.ts',
-      'src/main/settings/system-proxy.ts',
-      'src/main/settings/native-responses-compatibility.ts',
-      'src/main/settings/anthropic-provider-bridge.ts',
-      'src/main/settings/openai-provider-bridge.ts',
-      'src/main/settings/xai-oauth-provider-bridge.ts',
-      'src/main/settings/xai-protocol.ts',
-      'src/main/settings/provider-error-replay.ts',
-      'src/main/settings/provider-loopback-http-host.ts',
-      'src/main/settings/provider-transport-owner.ts',
-      'src/main/settings/provider-failure-observation.ts',
-      'src/main/settings/provider-runtime-health-owner.ts',
-      'src/main/settings/responses-bridge.ts',
-      'src/main/settings/responses-bridge.plan-tools.test.ts',
-      'src/main/settings/responses-protocol-types.ts',
-      'src/main/settings/responses-request-adapter.ts',
-      'src/main/settings/responses-response-adapter.ts',
-      'src/main/settings/anthropic-provider-bridge.test.ts',
-      'src/main/settings/backend-resolver.test.ts',
-      'src/main/settings/backend-route-planner.architecture.test.ts',
-      'src/main/settings/backend-route-planner.test.ts',
-      'src/main/settings/backend-selection-owner.architecture.test.ts',
-      'src/main/settings/backend-selection-owner.test.ts',
-      'src/main/settings/environment-check-proxy.test.ts',
-      'src/main/settings/environment-check.test.ts',
-      'src/main/settings/native-responses-compatibility.test.ts',
-      'src/main/settings/network-proxy-runtime.test.ts',
-      'src/main/settings/openai-provider-bridge.test.ts',
-      'src/main/settings/provider-error-replay.test.ts',
-      'src/main/settings/provider-loopback-http-host.architecture.test.ts',
-      'src/main/settings/provider-loopback-http-host.test.ts',
-      'src/main/settings/provider-transport-owner.architecture.test.ts',
-      'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/settings/provider-runtime-health-owner.test.ts',
-      'src/main/settings/responses-bridge.integration.test.ts',
-      'src/main/settings/responses-bridge.test.ts',
-      'src/main/settings/responses-reasoning-replay.test.ts',
-      'src/main/settings/responses-request-adapter.architecture.test.ts',
-      'src/main/settings/responses-request-adapter.test.ts',
-      'src/main/settings/responses-response-adapter.architecture.test.ts',
-      'src/main/settings/responses-response-adapter.test.ts',
-      'src/main/settings/system-proxy.test.ts',
-      'src/main/settings/xai-oauth-provider-bridge.test.ts',
-      'src/main/settings/xai-protocol.test.ts',
-      'src/main/settings/backend-target.ts'
-    ])
-    expect(manifest.modules.settings_backend_resolution.interfacePaths).toEqual([
-      'src/main/settings/backend-resolver.ts',
-      'src/main/settings/responses-bridge.ts',
-      'src/main/settings/anthropic-provider-bridge.ts',
-      'src/main/settings/backend-route-planner.ts',
-      'src/main/settings/environment-check.ts',
-      'src/main/settings/native-responses-compatibility.ts',
-      'src/main/settings/network-proxy-runtime.ts',
-      'src/main/settings/openai-provider-bridge.ts',
-      'src/main/settings/provider-loopback-http-host.ts',
-      'src/main/settings/provider-transport-owner.ts',
-      'src/main/settings/provider-failure-observation.ts',
-      'src/main/settings/provider-runtime-health-owner.ts',
-      'src/main/settings/responses-request-adapter.ts',
-      'src/main/settings/responses-response-adapter.ts',
-      'src/main/settings/system-proxy.ts',
-      'src/main/settings/xai-oauth-provider-bridge.ts',
-      'src/main/settings/xai-protocol.ts',
-      'src/main/settings/backend-target.ts'
-    ])
+    // A registration-only split must keep these exact leaves and inherited routing intact.
+    const splits = [
+      [
+        'settings_token_policy',
+        'settings_repository',
+        ['provider-token-limits.ts', 'provider-token-limits.test.ts']
+      ],
+      ['settings_response_bounds', 'settings_provider_accounts', ['bounded-response.ts']],
+      ['settings_provider_limits', 'settings_provider_accounts', ['provider-resource-limits.ts']],
+      [
+        'settings_proxy_runtime',
+        'settings_backend_resolution',
+        [
+          'network-proxy-runtime.ts',
+          'system-proxy.ts',
+          'network-proxy-runtime.test.ts',
+          'system-proxy.test.ts'
+        ]
+      ]
+    ] as const
+    const movedPaths = new Set<string>()
+    for (const [id, parentId, names] of splits) {
+      const child = manifest.modules[id]
+      if (!child) continue
+      const parent = manifest.modules[parentId]
+      const paths = names.map((name) => `src/main/settings/${name}`)
+      expect([...child.ownerPaths].sort()).toEqual([...paths].sort())
+      expect([...child.interfacePaths].sort()).toEqual(
+        paths.filter((path) => !path.endsWith('.test.ts')).sort()
+      )
+      expect([...child.testFiles.owner].sort()).toEqual(
+        paths.filter((path) => path.endsWith('.test.ts')).sort()
+      )
+      expect(child.testFiles.contract).toEqual(parent.testFiles.contract)
+      expect(child.consumerModules).toEqual(parent.consumerModules)
+      expect(child.capabilityOverlays).toEqual(parent.capabilityOverlays)
+      expect(child.fallbackCapability).toEqual(parent.fallbackCapability)
+      paths.forEach((path) => movedPaths.add(path))
+    }
+    expect(manifest.modules.settings_repository.ownerPaths).toEqual(
+      [
+        'src/main/settings/repository.ts',
+        'src/main/settings/record-codec.ts',
+        'src/main/settings/provider-token-limits.ts',
+        'src/main/settings/document-codec.ts',
+        'src/main/settings/document-store.ts',
+        'src/main/settings/compute-grant-port.ts',
+        'src/main/settings/subagent-model-settings.ts',
+        'src/main/settings/compute-grants.test.ts',
+        'src/main/settings/connectors-settings.test.ts',
+        'src/main/settings/custom-mcp-settings.test.ts',
+        'src/main/settings/document-codec.test.ts',
+        'src/main/settings/document-store.test.ts',
+        'src/main/settings/mirror-settings.test.ts',
+        'src/main/settings/provider-token-limits.test.ts',
+        'src/main/settings/record-codec.test.ts',
+        'src/main/settings/repository.test.ts',
+        'src/main/settings/document-read-error.ts',
+        'src/main/settings/document-shape.ts',
+        'src/main/settings/classification-config.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expect(manifest.modules.settings_repository.interfacePaths).toEqual(
+      [
+        'src/main/settings/repository.ts',
+        'src/shared/network-proxy.ts',
+        'src/main/settings/compute-grant-port.ts',
+        'src/main/settings/provider-token-limits.ts',
+        'src/main/settings/document-store.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual(
+      [
+        'src/main/settings/bounded-response.ts',
+        'src/main/settings/provider-accounts.ts',
+        'src/main/settings/provider-auth-lifecycle.ts',
+        'src/main/settings/provider-draft-projection.ts',
+        'src/main/settings/provider-model-catalog-owner.ts',
+        'src/main/settings/provider-resource-limits.ts',
+        'src/main/settings/provider-runtime-projection.ts',
+        'src/main/settings/xai-oauth.ts',
+        'src/main/settings/xai-provider-account-owner.ts',
+        'src/main/settings/claude-isolated-auth.test.ts',
+        'src/main/settings/claude-isolated-auth.ts',
+        'src/main/settings/claude-shared-auth.test.ts',
+        'src/main/settings/claude-shared-auth.ts',
+        'src/main/settings/codex-auth.test.ts',
+        'src/main/settings/codex-auth.ts',
+        'src/main/settings/crypto.test.ts',
+        'src/main/settings/crypto.ts',
+        'src/main/settings/list-models.test.ts',
+        'src/main/settings/list-models.ts',
+        'src/main/settings/provider-accounts.test.ts',
+        'src/main/settings/provider-auth-lifecycle.architecture.test.ts',
+        'src/main/settings/provider-auth-lifecycle.test.ts',
+        'src/main/settings/provider-env.test.ts',
+        'src/main/settings/provider-env.ts',
+        'src/main/settings/provider-runtime-projection.architecture.test.ts',
+        'src/main/settings/provider-runtime-projection.test.ts',
+        'src/main/settings/validate.test.ts',
+        'src/main/settings/validate.ts',
+        'src/main/settings/xai-oauth.test.ts',
+        'src/main/settings/xai-provider-account-owner.test.ts',
+        'src/main/settings/provider-text-generation.ts',
+        'src/main/settings/provider-text-generation.test.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual(
+      [
+        'src/main/settings/provider-accounts.ts',
+        'src/main/settings/bounded-response.ts',
+        'src/main/settings/claude-isolated-auth.ts',
+        'src/main/settings/claude-shared-auth.ts',
+        'src/main/settings/codex-auth.ts',
+        'src/main/settings/crypto.ts',
+        'src/main/settings/list-models.ts',
+        'src/main/settings/provider-draft-projection.ts',
+        'src/main/settings/provider-env.ts',
+        'src/main/settings/provider-resource-limits.ts',
+        'src/main/settings/provider-runtime-projection.ts',
+        'src/main/settings/validate.ts',
+        'src/main/settings/provider-text-generation.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual(
+      [
+        'src/main/settings/backend-resolver.ts',
+        'src/main/settings/backend-selection-owner.ts',
+        'src/main/settings/backend-route-planner.ts',
+        'src/main/settings/codex-bridge-tools.ts',
+        'src/main/settings/codex-bridge-tools.test.ts',
+        'src/main/settings/network-proxy-runtime.ts',
+        'src/main/settings/environment-check.ts',
+        'src/main/settings/system-proxy.ts',
+        'src/main/settings/native-responses-compatibility.ts',
+        'src/main/settings/anthropic-provider-bridge.ts',
+        'src/main/settings/openai-provider-bridge.ts',
+        'src/main/settings/xai-oauth-provider-bridge.ts',
+        'src/main/settings/xai-protocol.ts',
+        'src/main/settings/provider-error-replay.ts',
+        'src/main/settings/provider-loopback-http-host.ts',
+        'src/main/settings/provider-transport-owner.ts',
+        'src/main/settings/provider-failure-observation.ts',
+        'src/main/settings/provider-runtime-health-owner.ts',
+        'src/main/settings/responses-bridge.ts',
+        'src/main/settings/responses-bridge.plan-tools.test.ts',
+        'src/main/settings/responses-protocol-types.ts',
+        'src/main/settings/responses-request-adapter.ts',
+        'src/main/settings/responses-response-adapter.ts',
+        'src/main/settings/anthropic-provider-bridge.test.ts',
+        'src/main/settings/backend-resolver.test.ts',
+        'src/main/settings/backend-route-planner.architecture.test.ts',
+        'src/main/settings/backend-route-planner.test.ts',
+        'src/main/settings/backend-selection-owner.architecture.test.ts',
+        'src/main/settings/backend-selection-owner.test.ts',
+        'src/main/settings/environment-check-proxy.test.ts',
+        'src/main/settings/environment-check.test.ts',
+        'src/main/settings/native-responses-compatibility.test.ts',
+        'src/main/settings/network-proxy-runtime.test.ts',
+        'src/main/settings/openai-provider-bridge.test.ts',
+        'src/main/settings/provider-error-replay.test.ts',
+        'src/main/settings/provider-loopback-http-host.architecture.test.ts',
+        'src/main/settings/provider-loopback-http-host.test.ts',
+        'src/main/settings/provider-transport-owner.architecture.test.ts',
+        'src/main/settings/provider-transport-owner.test.ts',
+        'src/main/settings/provider-runtime-health-owner.test.ts',
+        'src/main/settings/responses-bridge.integration.test.ts',
+        'src/main/settings/responses-bridge.test.ts',
+        'src/main/settings/responses-reasoning-replay.test.ts',
+        'src/main/settings/responses-request-adapter.architecture.test.ts',
+        'src/main/settings/responses-request-adapter.test.ts',
+        'src/main/settings/responses-response-adapter.architecture.test.ts',
+        'src/main/settings/responses-response-adapter.test.ts',
+        'src/main/settings/system-proxy.test.ts',
+        'src/main/settings/xai-oauth-provider-bridge.test.ts',
+        'src/main/settings/xai-protocol.test.ts',
+        'src/main/settings/backend-target.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expect(manifest.modules.settings_backend_resolution.interfacePaths).toEqual(
+      [
+        'src/main/settings/backend-resolver.ts',
+        'src/main/settings/responses-bridge.ts',
+        'src/main/settings/anthropic-provider-bridge.ts',
+        'src/main/settings/backend-route-planner.ts',
+        'src/main/settings/environment-check.ts',
+        'src/main/settings/native-responses-compatibility.ts',
+        'src/main/settings/network-proxy-runtime.ts',
+        'src/main/settings/openai-provider-bridge.ts',
+        'src/main/settings/provider-loopback-http-host.ts',
+        'src/main/settings/provider-transport-owner.ts',
+        'src/main/settings/provider-failure-observation.ts',
+        'src/main/settings/provider-runtime-health-owner.ts',
+        'src/main/settings/responses-request-adapter.ts',
+        'src/main/settings/responses-response-adapter.ts',
+        'src/main/settings/system-proxy.ts',
+        'src/main/settings/xai-oauth-provider-bridge.ts',
+        'src/main/settings/xai-protocol.ts',
+        'src/main/settings/backend-target.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
@@ -1591,7 +1642,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/connectors/custom-mcp-config.test.ts',
       'src/main/connectors/mcp-host-dependencies.test.ts',
       'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
-      'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
+      'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
+      ...(manifest.modules.settings_proxy_runtime?.testFiles.owner ?? [])
     ])
     expect(
       [

@@ -819,7 +819,8 @@ describe('post-merge Windows validation', () => {
       'build',
       'package-smoke',
       'notarize-mac',
-      'cli-artifacts'
+      'cli-artifacts',
+      'linux-cli-packages'
     ])
     expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(nightly.jobs['package-smoke']).toMatchObject({
@@ -1034,7 +1035,8 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'build',
       'package-smoke',
       'notarize-mac',
-      'cli-artifacts'
+      'cli-artifacts',
+      'linux-cli-packages'
     ])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run

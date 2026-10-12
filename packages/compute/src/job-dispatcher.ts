@@ -29,6 +29,7 @@ export {
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
+const PRE_LAUNCH_FAILURE = 'OPEN_SCIENCE_DISPATCH_PRE_LAUNCH_FAILED_V1'
 
 // Timeout for the dispatch SSH connection (mkdir + write files + launch). Generous to accommodate
 // slow cluster file systems; the job itself runs detached so the connection can close after.
@@ -162,12 +163,20 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
           await lifecycle.recordPollError(jobId, 'submitted', error.message, false)
           return
         }
-        await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
+        await lifecycle.dispatchError(jobId, {
+          definitelyNotStarted: true,
+          errorCode: error.code,
+          stderrTail: error.message
+        })
         return
       }
       if (!(error instanceof ComputeConnectionError)) return
       const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
-      await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
+      await lifecycle.dispatchError(jobId, {
+        definitelyNotStarted: true,
+        errorCode: error.code,
+        stderrTail: error.message
+      })
     }
   } finally {
     try {
@@ -187,7 +196,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
 
   const host = await hostRepository.get(job.provider_id)
   if (!host) {
-    await lifecycle.dispatchError(jobId, { errorCode: 'dispatch_failed' })
+    await lifecycle.dispatchError(jobId, {
+      definitelyNotStarted: true,
+      errorCode: 'dispatch_failed'
+    })
     return
   }
 
@@ -201,6 +213,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
         ? { code: err.code, message: err.message }
         : { code: 'host_unreachable', message: 'The Compute Host could not be reached.' }
     await lifecycle.dispatchError(jobId, {
+      definitelyNotStarted: true,
       errorCode: failure.code,
       stderrTail: failure.message
     })
@@ -226,6 +239,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
       )
     } catch {
       await lifecycle.dispatchError(jobId, {
+        definitelyNotStarted: true,
         errorCode: 'dispatch_failed',
         stderrTail: 'Failed to parse inputManifest JSON'
       })
@@ -242,6 +256,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     if (mkdirConnectionFailure) throw mkdirConnectionFailure
     if (mkdirResult.exitCode !== 0) {
       await lifecycle.dispatchError(jobId, {
+        definitelyNotStarted: true,
         errorCode: 'dispatch_failed',
         stderrTail: 'Could not prepare the remote Compute Job directory.'
       })
@@ -254,6 +269,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
       if (err instanceof ComputeConnectionError) throw err
       const msg = err instanceof Error ? err.message : String(err)
       await lifecycle.dispatchError(jobId, {
+        definitelyNotStarted: true,
         errorCode: 'dispatch_failed',
         stderrTail: `Input staging failed: ${msg}`
       })
@@ -279,20 +295,24 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   // One SSH command: mkdir workdir, write scripts via base64 pipes, launch detached, echo pid.
   // Stdout = the pid (we echo it last).
   const quotedWorkdir = quoteRemotePath(workdir)
+  const preparationFailure = ` || { printf '%s\\n' '${PRE_LAUNCH_FAILURE}'; exit 73; }`
   const dispatchCmd = [
-    `mkdir -p ${quotedWorkdir}`,
-    `cd ${quotedWorkdir}`,
+    `mkdir -p ${quotedWorkdir}` + preparationFailure,
+    `cd ${quotedWorkdir}` + preparationFailure,
     // Write command.sh and launcher.sh via base64 to avoid heredoc/quoting issues.
-    `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh`,
-    `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh`,
-    `chmod +x command.sh launcher.sh`,
+    `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh` + preparationFailure,
+    `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh` + preparationFailure,
+    `chmod +x command.sh launcher.sh` + preparationFailure,
     // Detached launch: nohup + setsid so the process survives SSH disconnect.
     `nohup setsid bash launcher.sh >/dev/null 2>&1 &`,
     // Write pid to file AND echo it so we can read it back in this round-trip.
     `LAUNCHED_PID=$!`,
-    `echo $LAUNCHED_PID > job.pid`,
+    `echo $LAUNCHED_PID > job.pid || { echo $LAUNCHED_PID; exit 74; }`,
     `echo $LAUNCHED_PID`
   ].join('\n')
+
+  const dispatchAttempt = await lifecycle.beginRemoteDispatch(jobId, workdir)
+  if (dispatchAttempt.kind === 'ignored') return
 
   let runResult
   try {
@@ -314,12 +334,22 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     return
   }
 
-  // Non-connection failure (mkdir, base64, etc.)
-  if (runResult.exitCode !== 0) {
+  // Only this preparation-only response proves that detached launch was never reached.
+  if (
+    runResult.exitCode === 73 &&
+    !isConnectionStdoutTruncated(runResult) &&
+    runResult.stdout.trim() === PRE_LAUNCH_FAILURE
+  ) {
     await lifecycle.dispatchError(jobId, {
+      definitelyNotStarted: true,
       errorCode: 'dispatch_failed',
       stderrTail: 'The remote Compute Job launcher failed.'
     })
+    return
+  }
+
+  if (runResult.exitCode !== 0 && runResult.exitCode !== 74) {
+    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle)
     return
   }
 
@@ -328,7 +358,13 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   const pidOutput = runResult.stdout.trim()
   const pid = /^[1-9]\d*$/.test(pidOutput) ? Number(pidOutput) : Number.NaN
   if (isConnectionStdoutTruncated(runResult) || !Number.isSafeInteger(pid) || pid <= 1) {
-    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle, runResult.stdout)
+    await recoverAmbiguousRemoteLaunch(
+      job,
+      connection,
+      workdir,
+      lifecycle,
+      runResult.exitCode === 74 ? undefined : runResult.stdout
+    )
     return
   }
 
@@ -413,7 +449,7 @@ const recoverAmbiguousRemoteLaunch = async (
   if (observation.kind === 'not_started' && invalidProtocolOutput !== undefined) {
     const [safeStdout = ''] = await redactConnectionOutputs(connection, [invalidProtocolOutput])
     const stderrTail = `Could not read pid from dispatch output: ${JSON.stringify(safeStdout)}`
-    await lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed', stderrTail })
+    await lifecycle.recordPollError(job.job_id, 'submitted', stderrTail)
     return
   }
   if (observation.kind === 'pending' || observation.kind === 'not_started') {

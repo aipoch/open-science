@@ -9,6 +9,7 @@ import type { ComputeJob } from './model'
 import type { ComputeHostRepository, ComputeJobRepository } from './ports'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 
+import { createComputeExecution } from './execution'
 import { DispatchTracker } from './dispatch-tracker'
 import type { HarvestFn } from './job-harvest-scheduler'
 import { JobPoller, POLL_INTERVAL_MS } from './job-poller'
@@ -126,6 +127,76 @@ const sampleHost = (): import('./model').ComputeHost => ({
 // ---------------------------------------------------------------------------
 
 describe('JobPoller', () => {
+  it.each(['pause', 'stop'] as const)(
+    '%s drains a pending provider after another provider persistence fails',
+    async (method) => {
+      let releaseB!: () => void
+      const pendingB = new Promise<void>((resolve) => {
+        releaseB = resolve
+      })
+      let finishWriteB!: () => void
+      const pendingWriteB = new Promise<void>((resolve) => {
+        finishWriteB = resolve
+      })
+      const completedB = vi.fn()
+      const jobs = [makeJob(), makeJob({ job_id: 'job-2', provider_id: 'ssh:second' })]
+      const updateIfStatus = vi.fn(async (id: string) => {
+        if (id === 'job-1') throw new Error('database unavailable')
+        await pendingWriteB
+        return jobs[1]
+      })
+      const acquire = vi.fn(async (provider: string, options: { signal?: AbortSignal }) => {
+        if (provider === 'ssh:biowulf') throw new Error('connection failed')
+        await pendingB
+        completedB(options.signal?.aborted)
+        throw new Error('second connection failed')
+      })
+      const poller = createComputeExecution().createPoller({
+        connectionBroker: { acquire },
+        jobRepository: {
+          findNonTerminal: vi.fn(async () => jobs),
+          updateIfStatus
+        } as unknown as ComputeJobRepository,
+        hostRepository: {} as ComputeHostRepository
+      })
+      poller.start()
+      try {
+        await vi.waitFor(() =>
+          expect(updateIfStatus).toHaveBeenCalledWith('job-1', expect.anything(), expect.anything())
+        )
+        expect(acquire).toHaveBeenCalledTimes(2)
+        const drained = vi.fn()
+        const draining = poller[method]().then(drained)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        expect(drained).not.toHaveBeenCalled()
+        expect(completedB).not.toHaveBeenCalled()
+        releaseB()
+        if (method === 'pause') {
+          await vi.waitFor(() =>
+            expect(updateIfStatus).toHaveBeenCalledWith(
+              'job-2',
+              expect.anything(),
+              expect.anything()
+            )
+          )
+          expect(drained).not.toHaveBeenCalled()
+        }
+        finishWriteB()
+        await draining
+        expect(completedB).toHaveBeenCalledWith(method === 'stop')
+        if (method === 'pause') {
+          expect(updateIfStatus).toHaveBeenCalledWith('job-2', expect.anything(), expect.anything())
+          poller.resume()
+          await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(4))
+        }
+      } finally {
+        releaseB()
+        finishWriteB()
+        await poller.stop()
+      }
+    }
+  )
+
   it('reports startup integrity issues once without preventing ordinary recovery ticks', async () => {
     const integrityIssue = {
       jobId: 'unknown-job',
@@ -2224,5 +2295,237 @@ describe('JobPoller sub-batching (per-job output budget)', () => {
     const updatedIds = new Set(update.mock.calls.map((c) => c[0]))
     expect(updatedIds.size).toBe(10)
     for (let i = 0; i < 10; i++) expect(updatedIds.has(`job-${i}`)).toBe(true)
+  })
+})
+
+describe('uncertain historical recovery path validation', () => {
+  it.each(['missing-host', 'unsafe-root'] as const)(
+    'retains a marked legacy row with %s',
+    async (scenario) => {
+      let current = makeJob({
+        status: 'submitted',
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        last_poll_error: 'dispatch_may_have_started: host_unreachable'
+      })
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        timedOut: false,
+        truncated: false
+      })
+      const jobRepository = {
+        get: async () => structuredClone(current),
+        findNonTerminal: async () => [structuredClone(current)],
+        findTerminalUnharvested: async () => [],
+        findNotificationReadyUnnotified: async () => [],
+        updateIfStatus: vi.fn(
+          async (
+            _id: string,
+            statuses: readonly string[],
+            updates: import('./ports').UpdateJobRequest
+          ) => {
+            if (!statuses.includes(current.status)) return null
+            current = {
+              ...current,
+              status: updates.status ?? current.status,
+              last_poll_error: updates.lastPollError ?? current.last_poll_error
+            }
+            return structuredClone(current)
+          }
+        )
+      } as unknown as ComputeJobRepository
+      const poller = createComputeExecution().createPoller({
+        jobRepository,
+        hostRepository: {
+          get: async () =>
+            scenario === 'missing-host' ? null : { ...sampleHost(), scratchRoot: '../unsafe' },
+          updateConcurrencyLimit: async () => undefined
+        } satisfies ComputeHostRepository,
+        connectionBroker: brokerFromRunner(runner)
+      })
+      await poller.tick()
+      await poller.tick()
+      expect(runner.run).not.toHaveBeenCalled()
+      expect(current.status).toBe('submitted')
+      expect(current.remote_workdir).toBeUndefined()
+      expect(current.last_poll_error).toBe('dispatch_may_have_started: dispatch_recovery_required')
+    }
+  )
+})
+
+describe('durable historical recovery convergence', () => {
+  it.each(['running', 'exited', 'vanished', 'pending', 'not_started', 'ambiguous'] as const)(
+    'persists the fallback path before %s recovery and downstream harvesting',
+    async (observation) => {
+      const workdir = '/scratch/legacy/.openscience/jobs/job-1'
+      let current = makeJob({
+        status: 'submitted',
+        remote_workdir: undefined,
+        remote_handle: undefined,
+        last_poll_error: 'dispatch_may_have_started: dispatch_recovery_pending'
+      })
+      const jobRepository = {
+        get: async () => structuredClone(current),
+        findNonTerminal: async () =>
+          ['submitted', 'running'].includes(current.status) ? [structuredClone(current)] : [],
+        findTerminalUnharvested: async () => [],
+        updateIfStatus: vi.fn(
+          async (
+            _id: string,
+            statuses: readonly string[],
+            updates: import('./ports').UpdateJobRequest
+          ) => {
+            if (!statuses.includes(current.status)) return null
+            current = {
+              ...current,
+              status: updates.status ?? current.status,
+              remote_workdir: updates.remoteWorkdir ?? current.remote_workdir,
+              remote_handle: updates.remoteHandle ?? current.remote_handle,
+              started_at: updates.startedAt?.getTime() ?? current.started_at,
+              last_poll_error:
+                updates.lastPollError === null
+                  ? undefined
+                  : (updates.lastPollError ?? current.last_poll_error),
+              error_code:
+                updates.errorCode === null ? undefined : (updates.errorCode ?? current.error_code),
+              exit_code: updates.exitCode ?? current.exit_code
+            }
+            return structuredClone(current)
+          }
+        )
+      } as unknown as ComputeJobRepository
+      const recoveryOutput = [
+        'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+        `workdir:${observation === 'not_started' ? 0 : 1}`,
+        `exit_code:${observation === 'exited' ? 0 : ''}`,
+        `pid:${observation === 'pending' || observation === 'not_started' ? '' : 1234}`,
+        `cwd_match:${observation === 'ambiguous' ? 'unknown' : observation === 'running' ? 1 : 0}`
+      ].join('\n')
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: recoveryOutput,
+        stderr: '',
+        timedOut: false,
+        truncated: false
+      })
+      const harvestFn = vi.fn(async () => undefined)
+      const deps = {
+        jobRepository,
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: {
+          get: async () => ({ ...sampleHost(), scratchRoot: '/scratch/legacy' }),
+          updateConcurrencyLimit: async () => undefined
+        } satisfies ComputeHostRepository,
+        harvestFn,
+        makeNonce: () => NONCE
+      }
+      let poller = createComputeExecution().createPoller(deps)
+      await poller.tick()
+      expect(current.remote_workdir).toBe(workdir)
+      if (
+        observation === 'pending' ||
+        observation === 'not_started' ||
+        observation === 'ambiguous'
+      ) {
+        poller = createComputeExecution().createPoller(deps)
+        await poller.tick()
+        await poller.tick()
+        expect(current.status).toBe('submitted')
+        expect(current.remote_workdir).toBe(workdir)
+        expect(current.last_poll_error).toContain('dispatch_may_have_started')
+        expect(harvestFn).not.toHaveBeenCalled()
+        return
+      }
+      if (observation === 'running') {
+        expect(current.status).toBe('running')
+        expect(JSON.parse(current.remote_handle!)).toMatchObject({ workdir, pid: 1234 })
+        expect(current.last_poll_error).toBeUndefined()
+        poller = createComputeExecution().createPoller(deps)
+        vi.mocked(runner.run).mockResolvedValue({
+          exitCode: 0,
+          stdout: withNonce([
+            'JOB_START:job-1',
+            'alive:1',
+            '',
+            '',
+            'STDOUT_END:job-1',
+            '',
+            'STDERR_END:job-1'
+          ]),
+          stderr: '',
+          timedOut: false,
+          truncated: false
+        })
+        await poller.tick()
+        expect(current.status).toBe('running')
+        expect(current.error_code).toBeUndefined()
+        vi.mocked(runner.run).mockResolvedValue({
+          exitCode: 0,
+          stdout: withNonce([
+            'JOB_START:job-1',
+            'alive:0',
+            '0',
+            '',
+            'STDOUT_END:job-1',
+            '',
+            'STDERR_END:job-1'
+          ]),
+          stderr: '',
+          timedOut: false,
+          truncated: false
+        })
+        await poller.tick()
+      }
+      await poller.pause()
+      expect(current.status).toBe(observation === 'vanished' ? 'failed' : 'success')
+      expect(current.remote_workdir).toBe(workdir)
+      expect(harvestFn).toHaveBeenCalledWith(
+        expect.objectContaining({ remote_workdir: workdir, status: current.status }),
+        observation === 'running' ? expect.any(AbortSignal) : undefined
+      )
+    }
+  )
+
+  it('does not probe or clean when the fallback-path CAS is rejected', async () => {
+    const current = makeJob({
+      status: 'submitted',
+      remote_workdir: undefined,
+      remote_handle: undefined,
+      last_poll_error: 'dispatch_may_have_started: dispatch_recovery_pending'
+    })
+    const updateIfStatus = vi.fn(async () => null)
+    const jobRepository = {
+      get: async () => current,
+      findNonTerminal: async () => [current],
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: noLaunchRecoveryOutput,
+      stderr: '',
+      timedOut: false,
+      truncated: false
+    })
+    await createComputeExecution()
+      .createPoller({
+        jobRepository,
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: {
+          get: async () => ({ ...sampleHost(), scratchRoot: '/scratch/legacy' }),
+          updateConcurrencyLimit: async () => undefined
+        } satisfies ComputeHostRepository
+      })
+      .tick()
+    expect(updateIfStatus).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({
+        remoteWorkdir: '/scratch/legacy/.openscience/jobs/job-1',
+        lastPollError: 'dispatch_may_have_started'
+      })
+    )
+    expect(runner.run).not.toHaveBeenCalled()
   })
 })

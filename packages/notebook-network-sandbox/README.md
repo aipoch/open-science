@@ -2,8 +2,10 @@
 
 This private package is the Open-Science-owned process boundary for local Notebook, REPL, Notebook
 Bash, and `manage_packages` installer processes. Its low-level runtime remains private; application
-code crosses only the `NotebookProcessSandbox` adapter in
-`src/main/notebook/process-sandbox.ts`.
+Notebook execution primarily crosses the `NotebookProcessSandbox` adapter in
+`src/main/notebook/process-sandbox.ts`. Some host configuration/environment/platform consumers
+also import package helpers directly, including private runtime paths; those existing imports
+are not a supported public package API.
 
 ## Scope
 
@@ -15,13 +17,15 @@ The package provides:
 - live policy updates without restarting the proxy;
 - command wrapping, denial annotations, readiness checks, and cleanup;
 - write-deny-by-default filesystem access with sensitive user roots hidden unless declared;
-- host-environment projection that excludes credentials and process hooks by default;
+- integration with host-environment projection from `@aipoch/environment`, which filters credentials and process hooks;
 - one validated CA bundle shared by Notebook clients and HTTPS parent-proxy connections;
 - explicit Windows setup for the Notebook AppContainer and its fenced loopback gateway access;
 - ownership-tracked, idempotent Windows removal for uninstall and repair.
 
 The implementation contains no generic configuration loader, user credential injection, AWS
-signing, TLS interception, or request-body inspection.
+signing or general request-body inspection. The public HTTPS read channel does terminate TLS
+using a per-command local CA to inspect GET/HEAD requests; ordinary approved tunnels retain
+their separate routing behavior.
 
 ## Architecture
 
@@ -161,7 +165,7 @@ Call `dispose()` during lifecycle shutdown.
   but applications that ignore proxy variables are not a security boundary. An explicit Settings
   action enables protected mode. Short-lived package installers are additionally contained by the
   bundled host's kill-on-close Job Object in standard mode, without changing that mode's network or
-  filesystem guarantees. Protected mode launches commands in a capability-free AppContainer
+  filesystem guarantees. Protected mode launches commands in a AppContainer with a per-command filesystem capability (no general network capability)
   and installs Windows Filtering Platform (WFP) filters scoped to that AppContainer SID. The filters
   permit only TCP to the installation-owned authenticated gateway on `127.0.0.1`; all other IPv4 and
   IPv6 connect attempts from the AppContainer are blocked. Concurrent commands share that listener
@@ -192,7 +196,7 @@ Call `dispose()` during lifecycle shutdown.
 `status()` never elevates privileges or changes durable setup resources. When a receipt appears
 active, it launches short-lived positive and negative connection probes before reporting protected
 mode. Missing Windows setup leaves the runtime in standard mode; first Notebook use never prompts.
-Only an explicit call to `installWindows()` may display a UAC prompt. A cancelled or failed setup
+Explicit setup, removal, and protected R authorization can display a UAC prompt. A cancelled or failed setup
 leaves standard mode available. Successful setup affects new Notebook and package-manager processes;
 already-running sessions retain their original mode. `removeWindows()` uses the same explicit
 elevation behavior, stops protected AppContainer processes, removes only ownership-proven resources,

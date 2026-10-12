@@ -6,7 +6,9 @@ import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-
 import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
 import {
   createArtifactVersionLocator,
-  parseArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../../../shared/artifact-version-locator'
+import {
   type ArtifactLineageProvenance,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'

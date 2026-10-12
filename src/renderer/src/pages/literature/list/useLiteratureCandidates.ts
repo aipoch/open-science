@@ -1,10 +1,10 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
-import { useTranslation } from 'react-i18next'
 import type {
   LiteratureCatalogCommand,
   LiteratureInboxCandidateView
-} from '../../../../../shared/literature'
-import { readMatchingCandidateIds } from '../literature-inbox-reconciliation'
+} from '@aipoch/literature-library/contracts'
+import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useTranslation } from 'react-i18next'
+import { literatureClient } from '../literature-read-pages'
 import type { LiteratureSelectionStore } from './literature-selection'
 
 const LITERATURE_INBOX_COMMAND_SIZE = 100
@@ -209,7 +209,7 @@ export function useLiteratureCandidates({
     try {
       const wanted = new Set(candidateIds)
       const readMatchingIds = (state: 'pending' | 'dismissed'): Promise<Set<string>> =>
-        readMatchingCandidateIds(wanted, state)
+        literatureClient.readMatchingCandidateIds(wanted, state)
       const dismissed = await readMatchingIds('dismissed')
       const pending =
         dismissed.size === wanted.size ? new Set<string>() : await readMatchingIds('pending')

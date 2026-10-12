@@ -1,6 +1,6 @@
 import type { FileReference } from './artifacts'
-import { createArtifactVersionLocator } from './artifact-provenance'
-import { createLiteratureAttachmentVersionReference } from './literature'
+import { createArtifactVersionLocator } from './artifact-version-locator'
+import { createLiteratureAttachmentVersionReference } from './literature-attachment-reference'
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,

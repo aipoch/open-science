@@ -83,6 +83,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 | macOS 12+ — Intel                       | 适用于 Intel / x64 的 macOS DMG           |
 | Windows x64                             | Windows x64 安装程序（已代码签名）        |
 | Linux x64                               | Linux x64 AppImage 或 Debian 软件包       |
+| Linux ARM64                             | Linux ARM64 AppImage 或 Debian 软件包     |
 
 从[官方应用下载页面](https://aipoch.com/open-science/download)下载安装包；如需校验，请参阅[验证下载](../../SECURITY.md#verifying-your-download)。
 
@@ -185,9 +186,9 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 
 | 领域                           | 核心能力                                                                                                                                                                                                                                                                    |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **科学技能**                   | 提供 **23 个内置 Skills**，并可从 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安装 **525 个 Skills**，支持一键安装与更新。可通过对话或已完成的工作创建技能，导入技能包及 GitHub 来源。市场投稿经审核后发布，本地导入不会自动上架。        |
-| **连接器**                     | 通过 **24 个内置 Connectors** 访问科学资源，也可添加自定义本地或远程 MCP 连接器。支持工具级权限管理，以及连接器配置的导入和导出。                                                                                                                                           |
-| **专家与委派**                 | 从 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安装 **10 个 Specialists**，或创建和定制个人专家，由主智能体委派任务。专家包支持导入和导出；市场投稿经审核后发布，本地导入不会自动上架。                                          |
+| **科学技能**                   | 提供 **23 个内置技能**，并可从 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安装 **525 个技能**，支持一键安装与更新。可通过对话或已完成的工作创建技能，导入技能包及 GitHub 来源。市场投稿经审核后发布，本地导入不会自动上架。              |
+| **连接器**                     | 通过 **36 个内置连接器** 访问科学资源，也可添加自定义本地或远程 MCP 连接器。支持工具级权限管理，以及连接器配置的导入和导出。                                                                                                                                                |
+| **专家与委派**                 | 从 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安装 **10 个专家**，或创建和定制个人专家，由主智能体委派任务。专家包支持导入和导出；市场投稿经审核后发布，本地导入不会自动上架。                                                  |
 | **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。支持 Claude Code、OpenCode、Codex 和 CodeBuddy 四种智能体后端，并提供模型连接检查、图片输入和推理强度设置。                                                                                                  |
 | **项目、会话与研究包**         | 管理项目，支持会话置顶、消息分支、侧边对话和历史恢复。将会话导出为**可移植的 `.science` 研究包**，并导入其他项目或计算机，携带对话分支、所选文件版本、Notebook 记录和验证证据。导入结果为只读历史，不执行代码或恢复凭据；侧边对话和书签不随包导出，文件范围取决于导出选择。 |
 | **审阅智能体**                 | 按需开启自动审阅，在独立上下文中核对智能体已完成轮次的回复、执行记录及相关文件证据。生成带依据的通过、警告或失败检查项，发现问题后可触发主智能体修正，并在有限轮次内复审。保留审阅日志与问题处理状态，审阅范围限于该轮可用记录。                                            |
@@ -207,7 +208,7 @@ AIPOCH Open-Science 在产品层面不限定模型：可连接主要云端 LLM �
 | **Codex 订阅**   | 选择 Codex 智能体框架，然后在服务商类型中选择 Codex 订阅。                                                                                                                                                                                                                                                           |
 | **Claude 订阅**  | 通过两种模式登录 Claude 订阅：**共享**（浏览器登录，将凭据存入默认 `~/.claude` 配置）或**隔离**（应用在自有 `CLAUDE_CONFIG_DIR` 下管理 `claude setup-token`，与 `~/.claude/` 完全隔离，并提供浏览器流程和粘贴令牌的回退方式）。                                                                                      |
 
-内置服务商包括 OpenAI、Anthropic、DeepSeek、NVIDIA Build 等；可用模型和地区端点取决于安装版本及所选智能体后端。请以应用中的服务商选择器和连接测试为准。
+有 25 个预设服务商选项，包括 OpenAI、Anthropic、DeepSeek、NVIDIA Build 等；可用模型和地区端点取决于安装版本及所选智能体后端。请以应用中的服务商选择器和连接测试为准。
 
 ## 数据、权限与信任
 
@@ -235,7 +236,7 @@ AIPOCH Open-Science 将项目数据、设置、产物版本和来源证据存储
 
 ## 开发与打包
 
-AIPOCH Open-Science 是使用 React、TypeScript、Prisma/SQLite 和基于 ACP 的智能体运行时构建的 Electron 应用。
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。 `npm run dev` 构建 Node 后端、准备可执行文件并打开 Electron
 
 源代码开发前提条件：
 
@@ -254,14 +255,20 @@ npm run dev
 
 ### Localhost Web 和无界面模式
 
-桌面后端可以选择在本地计算机上向浏览器提供同一渲染器。此功能默认关闭，并且只绑定到 `127.0.0.1`。
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。
 
 ```bash
-npm run build:web
 npm run dev:web
+npm run pack:backend
 ```
 
-打开应用打印的认证 URL。使用 `npm run dev:headless` 启动后端、托盘、智能体运行时和 localhost Web 服务，而不打开 Electron 窗口。设置 `OPEN_SCIENCE_WEB_PORT` 可选择端口（默认 `44100`）。明确退出应用仍会正常关闭智能体和 Notebook 进程。
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`npm run dev:web` 和 `npm run dev:headless` 会构建并启动后端及 Web 界面，不启动桌面或托盘。`OPEN_SCIENCE_WEB_PORT` 选择端口（默认 `44100`）；Ctrl+C 正常关闭前台服务。
+
+源码开发需要 Node.js 24。独立 npm 软件包需要 Node >=22.13.0，轻量 CLI/SDK 需要 Node >=22.5。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
+
+桌面与浏览器共享同一服务。退出桌面只会停止它自行启动的后端；若连接的是 CLI 启动的服务，则只断开桌面连接。
+
+[CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
 ### 移动端远程访问
 
@@ -273,6 +280,13 @@ npm run dev:web
 
 - [CLI 指南](../../packages/open-science/CLI.md) — 安装、服务生命周期、任务自动化、产物、输出格式和退出码
 - [SDK 软件包概览](../../packages/open-science/README.md) — Node.js 快速开始和软件包入口点
+
+```bash
+brew install --cask open-science
+brew install aipoch/tap/open-science
+```
+
+[Homebrew / Release](../standalone-runtime.md)
 
 ## 常见问题
 
@@ -290,7 +304,7 @@ npm run dev:web
 
 ### 是否提供命令行界面？
 
-答：提供。在 **Settings → General → Command line tool → Install command** 中一键安装（将 `open-science` 添加到 PATH，无需单独安装 Node.js）。CLI 可控制本地服务并提交研究任务，无需打开浏览器：
+答：提供。启动独立后端需要安装独立 Node 软件包。通过 **Settings → General → Command line tool → Install command** 安装的命令用于控制已运行的桌面实例，此用途无需单独安装 Node.js。例外是 Debian 软件包自带的启动器，它可用自带的 Node 运行时启动自带后端。以下独立启动示例需要先安装独立软件包和普通 Node.js，再初始化本地配置并启动服务：
 
 ```bash
 # 在后台启动服务

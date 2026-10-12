@@ -76,12 +76,13 @@ Completed research sessions can also be exported as portable `.science` packages
 
 Open the [official download page](https://aipoch.com/open-science/download) and choose the installer for your computer:
 
-| Your computer                           | Choose                                   |
-| --------------------------------------- | ---------------------------------------- |
-| macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
-| macOS 12+ — Intel                       | The macOS DMG for Intel / x64            |
-| Windows x64                             | The Windows x64 installer (code-signed)  |
-| Linux x64                               | The Linux x64 AppImage or Debian package |
+| Your computer                           | Choose                                     |
+| --------------------------------------- | ------------------------------------------ |
+| macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64    |
+| macOS 12+ — Intel                       | The macOS DMG for Intel / x64              |
+| Windows x64                             | The Windows x64 installer (code-signed)    |
+| Linux x64                               | The Linux x64 AppImage or Debian package   |
+| Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
 Download from the [official download page](https://aipoch.com/open-science/download); see [download verification](SECURITY.md#verifying-your-download) if needed.
 
@@ -90,6 +91,15 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 ```bash
 brew install --cask open-science
 ```
+
+For the standalone CLI on macOS or Linux, use the separate [AIPOCH tap](https://github.com/aipoch/homebrew-tap):
+
+```bash
+brew install aipoch/tap/open-science
+```
+
+The CLI includes Node and runs without the desktop app. See the [standalone runtime guide](docs/standalone-runtime.md)
+for startup, prerequisites, shared profiles and upgrades.
 
 Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 
@@ -185,7 +195,7 @@ AIPOCH Open-Science combines project management, multi-model agent execution, Py
 | Area                                          | Core capability                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Scientific skills**                         | Extend research workflows with **23 built-in skills** and **525 skills** available from the [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace), with one-click installation and updates. Create skills through conversation or completed work, and import packages or GitHub sources. Marketplace contributions are published after review; local imports do not publish skills.                                                      |
-| **Connectors**                                | Access scientific resources through **24 built-in connectors**, or add custom local and remote MCP connectors. Manage tool-level permissions and import or export connector configurations.                                                                                                                                                                                                                                                                      |
+| **Connectors**                                | Access scientific resources through **36 built-in connectors**, or add custom local and remote MCP connectors. Manage tool-level permissions and import or export connector configurations.                                                                                                                                                                                                                                                                      |
 | **Specialists and delegation**                | Install **10 Specialists** from the [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace), or create and customize personal specialists for delegation from the main agent. Specialist packages support import and export; marketplace contributions are reviewed before publication, and local imports do not publish them.                                                                                                    |
 | **Models and agent backends**                 | Use cloud models, compatible custom gateways, or Claude and Codex subscription logins. Choose Claude Code, OpenCode, Codex, or CodeBuddy as the agent backend, with model connection checks, image input, and reasoning controls.                                                                                                                                                                                                                                |
 | **Projects, sessions, and research packages** | Organize projects with pinned sessions, message branches, side chats, and recoverable history. Export a **portable `.science` research package** and import it into another project or computer with conversation branches, selected file versions, Notebook records, and verification evidence. Imports are read-only and do not execute code or restore credentials; side chats and bookmarks are excluded, and included files depend on the export selection. |
@@ -206,7 +216,7 @@ AIPOCH Open-Science is model-agnostic at the product level: connect it to major 
 | **Codex Subscription**       | Select the Codex agent framework, then choose Codex Subscription as the provider type.                                                                                                                                                                                                                                                                                                                                                               |
 | **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback).                                                                                                                     |
 
-Built-in providers include OpenAI, Anthropic, DeepSeek, NVIDIA Build, and others; available models and regional endpoints depend on the installed version and selected agent backend. Check the provider selector and connection test in the app.
+There are 25 preset provider options, including OpenAI, Anthropic, DeepSeek, NVIDIA Build, and others; available models and regional endpoints depend on the installed version and selected agent backend. Check the provider selector and connection test in the app.
 
 ## Data, Permissions, and Trust
 
@@ -299,7 +309,7 @@ A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in
 
 ### Is there a command-line interface?
 
-A: Yes. Install the standalone Node package, or use **Settings → General → Command line tool → Install command** to control an already running desktop instance. Starting an independent backend requires the standalone package and ordinary Node. Initialize the local profile, then control the service and submit research tasks without opening a browser:
+A: Yes. Install the standalone Node package, or use **Settings → General → Command line tool → Install command** to control an already running desktop instance. For independent startup, use the standalone package and ordinary Node. The Debian package-owned launcher is an exception: it starts the bundled backend with the bundled Node runtime. Initialize the local profile, then control the service and submit research tasks without opening a browser:
 
 ```bash
 # Initialize the local CLI profile and start the service in the background

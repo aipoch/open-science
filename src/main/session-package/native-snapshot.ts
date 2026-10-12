@@ -8,7 +8,7 @@ import {
 import {
   parseLiteratureAttachmentVersionReference,
   createLiteratureAttachmentVersionReference
-} from '../../shared/literature'
+} from '../../shared/literature-attachment-reference'
 import { packageReproducibilitySchema, type PackageReproducibility } from './reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
@@ -19,9 +19,9 @@ import type { SessionPackageManifest, SessionPackageRequest } from '../../shared
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   createArtifactVersionLocator,
-  parseArtifactVersionLocator,
-  type PersistedArtifactExecutionSnapshot
-} from '../../shared/artifact-provenance'
+  parseArtifactVersionLocator
+} from '../../shared/artifact-version-locator'
+import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
 import { reproductionRecipes } from '../artifacts/reproducibility-host'

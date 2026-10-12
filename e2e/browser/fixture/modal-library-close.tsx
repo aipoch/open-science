@@ -1,25 +1,25 @@
 import '@/assets/main.css'
-import { useState } from 'react'
+import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { initI18n } from '@/i18n'
+import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
+import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   PdfPreviewContent,
   PdfPreviewRenderer
 } from '@/pages/workspace/previews/renderers/PdfPreview'
-import { createRoot } from 'react-dom/client'
-import { initI18n } from '@/i18n'
-import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { useWorkspaceComposerController } from '@/pages/workspace/workspace-composer-controller'
+import { WorkspaceComposerDraftsProvider } from '@/pages/workspace/workspace-composer-drafts'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { WorkspaceComposerDraftsProvider } from '@/pages/workspace/workspace-composer-drafts'
-import { useWorkspaceComposerController } from '@/pages/workspace/workspace-composer-controller'
-import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
-import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand
-} from '../../../src/shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { useState } from 'react'
+import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const previewCase = new URLSearchParams(location.search).get('preview')

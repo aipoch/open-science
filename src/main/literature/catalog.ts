@@ -1,70 +1,71 @@
 import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
+import {
+  LibraryTransaction,
+  canonicalJson,
+  mergeLiteratureDuplicates,
+  normalizeIdentifier,
+  normalizeSpace,
+  normalizedIdentifiers,
+  type LibraryStore
+} from '@aipoch/literature-library'
+import { LITERATURE_OVERSIZED_REFERENCE } from '@aipoch/literature-library'
 
-import { saveSmartRuleVersion } from './smart-rule-history'
-import {
-  serializedSmartRuleSchema,
-  formatSmartRule,
-  parseSmartRule
-} from '@aipoch/literature-screening/rules'
-import { smartScopeSchema, smartEvidenceModeSchema } from '@aipoch/literature-screening/contracts'
-import type { LiteratureScreening } from './screening-adapter'
-import type { JournalAttributes } from './journal-attributes'
-import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
-import { ensureBinding } from '../pdf-annotations/document-store'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { smartEvidenceModeSchema, smartScopeSchema } from '@aipoch/literature-screening/contracts'
+import { createHash, randomUUID } from 'node:crypto'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import {
-  LITERATURE_OVERSIZED_REFERENCE,
   type LiteratureExportRecordRequest,
   type LiteratureExportRecordResult
 } from '../../shared/literature-export'
-import { boundedLiteraturePage } from './response-page'
+import { ensureBinding } from '../pdf-annotations/document-store'
+import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import type { ContentRepository } from '../storage/content-repository'
-import { createHash, randomUUID } from 'node:crypto'
+import type { JournalAttributes } from './journal-attributes'
+import { boundedLiteraturePage } from './response-page'
+import type { LiteratureScreening } from './screening-adapter'
+import { saveSmartRuleVersion } from './smart-rule-history'
 
-import { Prisma, type PrismaClient } from '@prisma/client'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { findLiteratureDuplicateGroups } from '@aipoch/literature-library'
+import { Prisma, type PrismaClient } from '@prisma/client'
 import { normalizeLiteratureSearchTextV1 as normalizeSearchText } from '../../shared/literature-search-text'
-import { findLiteratureDuplicateGroups } from './duplicates'
-import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
 import { searchTitleRank } from '../../shared/search-text'
 
 import {
-  LITERATURE_IDENTITY_SCHEMES,
   normalizeLiteratureIdentifierValue,
-  normalizeLiteratureIdentifierPreferences,
   type LiteratureCreatorInput,
-  type LiteratureIdentifierInput,
   type LiteratureIdentifierScheme
 } from '@aipoch/literature-citations/contracts'
 import {
-  LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
-  LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
-  LITERATURE_COLLECTION_REVISION_CONFLICT,
   literatureCandidateInputSchema,
-  literaturePdfProvenanceSchema,
-  type LiteraturePdfProvenance,
   literatureCandidateOriginSchema,
-  literatureItemInputSchema,
-  type LiteratureCatalogCommand,
-  type LiteratureChangedEvent,
-  type LiteratureDuplicatePolicy,
-  type LiteratureCollectionView,
-  type LiteratureAnnotationSearchView,
-  type LiteratureCatalogReceipt,
-  type LiteratureCatalogSearchPage,
-  type LiteratureCatalogSearchRequest,
+  literaturePdfProvenanceSchema,
   type LiteratureCandidateInput,
+  type LiteratureCatalogCommand,
+  type LiteratureCatalogReceipt,
+  type LiteratureCatalogSearchRequest,
+  type LiteratureChangedEvent,
+  type LiteratureCollectionView,
+  type LiteratureDuplicatePolicy,
   type LiteratureInboxCandidateView,
   type LiteratureInboxState,
-  type LiteratureItemInput,
   type LiteratureItemView,
-  type LiteratureRecordImportReceipt,
+  type LiteraturePdfProvenance,
   type LiteratureRecordImportEntry,
   type LiteratureRecordImportError,
-  type LiteratureSourceRecordView,
-  type LiteratureSourceInput
+  type LiteratureRecordImportReceipt,
+  type LiteratureSourceInput,
+  type LiteratureSourceRecordView
+} from '@aipoch/literature-library/contracts'
+import {
+  literatureItemInputSchema,
+  type LiteratureItemInput
+} from '@aipoch/literature-library/item'
+import {
+  type LiteratureAnnotationSearchView,
+  type LiteratureCatalogSearchPage
 } from '../../shared/literature'
 
 type LiteratureCatalogClient = Pick<
@@ -123,29 +124,7 @@ type ApplyLiteratureMetadataInput = Readonly<{
   sources?: readonly LiteratureSourceInput[]
 }>
 
-const identitySchemes = new Set<string>(LITERATURE_IDENTITY_SCHEMES)
-
-const normalizeSpace = (value: string): string =>
-  value.normalize('NFKC').trim().replace(/\s+/gu, ' ')
-
-const normalizeIdentifier = (scheme: LiteratureIdentifierScheme, rawValue: string): string => {
-  const value = normalizeSpace(rawValue)
-  switch (scheme) {
-    case 'doi':
-      return normalizeLiteratureIdentifierValue(scheme, value).toLowerCase()
-    case 'pmid':
-      return normalizeLiteratureIdentifierValue(scheme, value)
-    case 'pmcid':
-      return normalizeLiteratureIdentifierValue(scheme, value)
-    case 'arxiv':
-      return normalizeLiteratureIdentifierValue(scheme, value).toLowerCase()
-    case 'isbn':
-    case 'issn':
-      return value.replace(/[^0-9X]/giu, '').toUpperCase()
-    case 'other':
-      return value.toLowerCase()
-  }
-}
+const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
 const normalizeCreatorName = (creator: LiteratureCreatorInput): string =>
   creator.nameMode === 'organization'
@@ -171,57 +150,6 @@ const searchIdentifiers = (
     const normalizedValue = normalizeIdentifier(scheme, text)
     return pattern.test(normalizedValue) ? [{ scheme, normalizedValue }] : []
   })
-}
-
-const canonicalJsonValue = (value: unknown): unknown => {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (Array.isArray(value)) return value.map(canonicalJsonValue)
-  if (typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonicalJsonValue(entry)])
-    )
-  }
-  throw new Error('Literature metadata must contain JSON-compatible values.')
-}
-
-const canonicalJson = (value: unknown): string => JSON.stringify(canonicalJsonValue(value))
-
-const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
-
-const normalizedIdentifiers = (
-  identifiers: readonly LiteratureIdentifierInput[]
-): Array<LiteratureIdentifierInput & { normalizedValue: string }> => {
-  const unique = new Map<string, LiteratureIdentifierInput & { normalizedValue: string }>()
-  for (const identifier of identifiers) {
-    const normalizedValue = normalizeIdentifier(identifier.scheme, identifier.value)
-    if (!normalizedValue) throw new Error(`Literature ${identifier.scheme} identifier is empty.`)
-    const key = `${identifier.scheme}:${normalizedValue}`
-    if (!unique.has(key) || identifier.isPrimary)
-      unique.set(key, { ...identifier, normalizedValue })
-  }
-  return normalizeLiteratureIdentifierPreferences([...unique.values()])
-}
-
-const candidateDedupeKey = (candidate: LiteratureCandidateInput): string => {
-  const identity = normalizedIdentifiers(candidate.item.identifiers).find(({ scheme }) =>
-    identitySchemes.has(scheme)
-  )
-  if (identity) return `${identity.scheme}:${identity.normalizedValue}`
-  if (candidate.source.externalId) {
-    return `source:${normalizeSpace(candidate.source.provider).toLowerCase()}:${normalizeSpace(candidate.source.externalId).toLowerCase()}`
-  }
-  const firstCreator = candidate.item.creators[0]
-  return `metadata:${sha256(
-    canonicalJson({
-      creator: firstCreator ? normalizeCreatorName(firstCreator) : '',
-      issuedYear: candidate.item.issuedYear ?? null,
-      title: normalizeSpace(candidate.item.title).toLowerCase()
-    })
-  )}`
 }
 
 // Deletion intents are independent recovery records, not a Project foreign-key relation.
@@ -396,224 +324,10 @@ const attachProjectIfPresent = async (
   })
 }
 
-const findIdentityItem = async (
-  transaction: Prisma.TransactionClient,
-  identifiers: readonly (LiteratureIdentifierInput & { normalizedValue: string })[]
-): Promise<string | undefined> => {
-  const identity = identifiers.filter(({ scheme }) => identitySchemes.has(scheme))
-  if (identity.length === 0) return undefined
-  const matches = await transaction.literatureItem.findMany({
-    where: {
-      mergedIntoItemId: null,
-      identifiers: {
-        some: { OR: identity.map(({ normalizedValue, scheme }) => ({ scheme, normalizedValue })) }
-      }
-    },
-    orderBy: [{ deletedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-    select: { id: true, identifiers: true }
-  })
-  const owners = matches.map((match) =>
-    match.identifiers.filter(({ scheme }) => identitySchemes.has(scheme))
-  )
-  // Multiple values are established aliases only when one stored owner contains them all.
-  if (
-    identity.some(
-      (identifier) =>
-        identity.some(
-          (other) =>
-            other.scheme === identifier.scheme &&
-            other.normalizedValue !== identifier.normalizedValue
-        ) &&
-        !owners.some((owner) =>
-          identity
-            .filter(({ scheme }) => scheme === identifier.scheme)
-            .every((alias) =>
-              owner.some(
-                ({ scheme, normalizedValue }) =>
-                  scheme === alias.scheme && normalizedValue === alias.normalizedValue
-              )
-            )
-        )
-    )
-  )
-    throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
-  // Explicit copies may lack fields, but must share an identity and agree on populated schemes.
-  const commonIdentity = owners[0]?.filter((identifier) =>
-    owners.every((existing) =>
-      existing.some(
-        ({ scheme, normalizedValue }) =>
-          scheme === identifier.scheme && normalizedValue === identifier.normalizedValue
-      )
-    )
-  )
-  if (
-    (owners.length > 1 && commonIdentity?.length === 0) ||
-    owners.some(
-      (existing) =>
-        identity.some((identifier) => {
-          const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
-          return (
-            sameScheme.length > 0 &&
-            !owners.some((owner) =>
-              owner.some(
-                ({ scheme, normalizedValue }) =>
-                  scheme === identifier.scheme && normalizedValue === identifier.normalizedValue
-              )
-            )
-          )
-        }) ||
-        owners.some((other) =>
-          existing.some((identifier) => {
-            const sameScheme = other.filter(({ scheme }) => scheme === identifier.scheme)
-            return (
-              sameScheme.length > 0 &&
-              !sameScheme.some(({ normalizedValue }) =>
-                existing.some(
-                  (alias) =>
-                    alias.scheme === identifier.scheme && alias.normalizedValue === normalizedValue
-                )
-              )
-            )
-          })
-        )
-    )
-  )
-    throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
-  return matches[0]?.id
-}
-
-const restoreExistingItem = (
-  transaction: Prisma.TransactionClient,
-  itemId: string
-): Promise<{ count: number }> =>
-  transaction.literatureItem.updateMany({
-    where: { id: itemId },
-    data: { deletedAt: null }
-  })
-
-const identityKey = (scheme: string, value: string): string => `${scheme}:${value}`
-
-type ImportIdentityIndex = {
-  byIdentifier: Map<string, Set<string | number>>
-  records: Map<string | number, Pick<LiteratureItemInput, 'title' | 'identifiers'>>
-}
-
-const rememberImportIdentity = (
-  index: ImportIdentityIndex,
-  target: string | number,
-  item: Pick<LiteratureItemInput, 'title' | 'identifiers'>
-): void => {
-  index.records.set(target, item)
-  for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
-    if (!identitySchemes.has(scheme)) continue
-    const key = identityKey(scheme, normalizedValue)
-    const targets = index.byIdentifier.get(key) ?? new Set<string | number>()
-    targets.add(target)
-    index.byIdentifier.set(key, targets)
-  }
-}
-
 // Include all owners, including Trash and explicitly independent duplicates.
-const importIdentityMap = async (
-  transaction: Prisma.TransactionClient,
-  items: readonly LiteratureItemInput[]
-): Promise<ImportIdentityIndex> => {
-  const identifiers = items.flatMap((item) =>
-    normalizedIdentifiers(item.identifiers).filter(({ scheme }) => identitySchemes.has(scheme))
-  )
-  const result: ImportIdentityIndex = { byIdentifier: new Map(), records: new Map() }
-  for (let offset = 0; offset < identifiers.length; offset += 200) {
-    const matches = await transaction.literatureItem.findMany({
-      where: {
-        mergedIntoItemId: null,
-        identifiers: {
-          some: {
-            OR: identifiers
-              .slice(offset, offset + 200)
-              .map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
-          }
-        }
-      },
-      select: { id: true, title: true, identifiers: true }
-    })
-    for (const match of matches) {
-      rememberImportIdentity(result, match.id, {
-        title: match.title,
-        identifiers: match.identifiers.map((identifier) => ({
-          scheme: identifier.scheme as LiteratureIdentifierScheme,
-          value: identifier.rawValue,
-          isPrimary: identifier.isPrimary
-        }))
-      })
-    }
-  }
-  return result
-}
-
-const importIdentity = (
-  index: ImportIdentityIndex,
-  item: LiteratureItemInput
-): { target?: string | number; conflict?: LiteratureRecordImportEntry['conflict'] } => {
-  const identifiers = normalizedIdentifiers(item.identifiers).filter(({ scheme }) =>
-    identitySchemes.has(scheme)
-  )
-  const targets = [
-    ...new Set(
-      identifiers.flatMap(({ scheme, normalizedValue }) => [
-        ...(index.byIdentifier.get(identityKey(scheme, normalizedValue)) ?? [])
-      ])
-    )
-  ]
-  const contradictory = identifiers.some((identifier) =>
-    identifiers.some(
-      (other) =>
-        other.scheme === identifier.scheme && other.normalizedValue !== identifier.normalizedValue
-    )
-  )
-  const target = targets[0]
-  const existing =
-    target === undefined ? [] : normalizedIdentifiers(index.records.get(target)!.identifiers)
-  const disagrees = identifiers.some((identifier) => {
-    const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
-    return (
-      sameScheme.length > 0 &&
-      !sameScheme.some(({ normalizedValue }) => normalizedValue === identifier.normalizedValue)
-    )
-  })
-  if (targets.length > 1 || contradictory || disagrees)
-    return {
-      conflict: {
-        identifiers: identifiers.map(({ scheme, value, isPrimary }) => ({
-          scheme,
-          value,
-          isPrimary
-        })),
-        matches: targets.map((target) => ({
-          ...(typeof target === 'string' ? { itemId: target } : { inputIndex: target }),
-          title: index.records.get(target)!.title
-        }))
-      }
-    }
-  return { target }
-}
 
 // Plan the entire batch before any write. Virtual targets retain input indexes,
 // so bridges between earlier rows are checked identically in preview and commit.
-const resolveImportItems = (
-  identities: ImportIdentityIndex,
-  items: readonly LiteratureItemInput[]
-): ReturnType<typeof importIdentity>[] =>
-  items.map((item, inputIndex) => {
-    const resolution = importIdentity(identities, item)
-    if (resolution.conflict) return resolution
-    const target = resolution.target ?? inputIndex
-    const previous = identities.records.get(target)
-    rememberImportIdentity(identities, target, {
-      title: previous?.title ?? item.title,
-      identifiers: [...(previous?.identifiers ?? []), ...item.identifiers]
-    })
-    return resolution
-  })
 
 const createItem = async (
   transaction: Prisma.TransactionClient,
@@ -678,23 +392,6 @@ const createItem = async (
     })
   }
   return created.id
-}
-
-const supplementExistingItem = async (
-  transaction: Prisma.TransactionClient,
-  itemId: string,
-  incoming: LiteratureItemInput
-): Promise<LiteratureItemInput> => {
-  const row = await transaction.literatureItem.findUniqueOrThrow({
-    where: { id: itemId },
-    include: itemInclude
-  })
-  const existing = toItemView(row).item
-  const { item } = supplementLiteratureMetadata(existing, incoming)
-  if (canonicalJson(existing) !== canonicalJson(item)) {
-    await replaceItemMetadata(transaction, itemId, row.metadataRevision, item)
-  }
-  return item
 }
 
 const replaceItemMetadata = async (
@@ -861,73 +558,6 @@ const registerAttachmentNotes = async (
     name: version.filename,
     path: createLiteratureAttachmentVersionReference(versionId)
   })
-}
-
-const acceptInboxCandidate = async (
-  transaction: Prisma.TransactionClient,
-  candidateId: string
-): Promise<LiteratureCatalogReceipt> => {
-  const row = await transaction.literatureInboxCandidate.findUnique({
-    where: { id: candidateId },
-    include: { discoveries: true }
-  })
-  if (!row) throw new Error('Literature Inbox candidate not found.')
-  if (row.state === 'accepted' && row.acceptedItemId) {
-    return { kind: 'item', id: row.acceptedItemId, state: 'present' }
-  }
-  if (row.state !== 'pending') throw new Error('Literature Inbox candidate is already settled.')
-  const candidate = literatureCandidateInputSchema.parse(JSON.parse(row.candidateJson))
-  const identifiers = normalizedIdentifiers(candidate.item.identifiers)
-  const itemId =
-    (await findIdentityItem(transaction, identifiers)) ??
-    (await createItem(transaction, candidate.item))
-  await restoreExistingItem(transaction, itemId)
-  await transferSourceRecords(transaction, { inboxCandidateId: row.id }, itemId)
-  for (const discovery of row.discoveries) {
-    await attachProjectIfPresent(
-      transaction,
-      discovery.projectId ?? undefined,
-      itemId,
-      discovery.origin
-    )
-  }
-  await transaction.literatureInboxCandidate.update({
-    where: { id: row.id },
-    data: { state: 'accepted', acceptedItemId: itemId, settledAt: new Date() }
-  })
-  const pdfs = await transaction.literatureInboxPdf.findMany({ where: { candidateId } })
-  for (const pdf of pdfs) {
-    const existing = await transaction.literatureAttachmentVersion.findFirst({
-      where: { checksum: pdf.checksum, attachment: { itemId } }
-    })
-    if (existing) await registerAttachmentNotes(transaction, existing.id)
-    else {
-      const attachment = await transaction.literatureAttachment.create({
-        data: {
-          itemId,
-          kind: 'fullText',
-          title: pdf.filename,
-          sortOrder: await transaction.literatureAttachment.count({ where: { itemId } }),
-          versions: {
-            create: {
-              contentBlobId: pdf.contentBlobId,
-              filename: pdf.filename,
-              sizeBytes: pdf.sizeBytes,
-              checksum: pdf.checksum,
-              pageCount: pdf.pageCount,
-              contentType: 'application/pdf',
-              provenanceJson: pdf.provenanceJson,
-              versionNumber: 1
-            }
-          }
-        },
-        include: { versions: true }
-      })
-      await registerAttachmentNotes(transaction, attachment.versions[0].id)
-    }
-  }
-  await transaction.literatureInboxPdf.deleteMany({ where: { candidateId } })
-  return { kind: 'item', id: itemId, state: 'linked' }
 }
 
 class LiteratureCatalog {
@@ -1956,10 +1586,12 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     if (!this.content) throw new Error('Literature content operations are unavailable.')
     // The session barrier protects reference confirmation and the deletion transaction only.
-    const { contentIds, annotationsDeleted } = await this.withAttachmentRemoval(
-      (assertUnreferenced) => this.deleteUnreferencedAttachment(command, assertUnreferenced)
-    )
-    if (annotationsDeleted) await this.publishTagAssignmentsChanged()
+    const { contentIds, annotationsDeleted, sourceBindingsDeleted } =
+      await this.withAttachmentRemoval((assertUnreferenced) =>
+        this.deleteUnreferencedAttachment(command, assertUnreferenced)
+      )
+    // Source removal also changes the tagged note's navigation route while its bytes are retained.
+    let tagsChanged = annotationsDeleted > 0 || sourceBindingsDeleted > 0
     let cleanupPending = false
     try {
       const sweep = await this.content.sweep({
@@ -1967,16 +1599,20 @@ class LiteratureCatalog {
         createdBefore: new Date(Date.now() + 1)
       })
       cleanupPending = sweep.failedIds.length > 0
+      // Verified PDF notes survive source removal while their blob still exists. The sweep can
+      // remove their tag assignments when it deletes the last blob, after the catalog commit.
+      tagsChanged ||= sweep.removedIds.length > 0
     } catch {
       cleanupPending = true
     }
+    if (tagsChanged) await this.publishTagAssignmentsChanged()
     return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
   }
 
   private async deleteUnreferencedAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>,
     assertUnreferenced: (attachmentIds: readonly string[]) => void
-  ): Promise<{ contentIds: string[]; annotationsDeleted: number }> {
+  ): Promise<{ contentIds: string[]; annotationsDeleted: number; sourceBindingsDeleted: number }> {
     const client = await this.getClient()
     return this.commit(
       client,
@@ -1991,14 +1627,19 @@ class LiteratureCatalog {
         })
         if (!attachment) throw new Error('Literature Attachment is unavailable.')
         assertUnreferenced([command.attachmentId])
-        const annotationsDeleted = await deletePdfAnnotations(transaction, {
+        const sourceScope = {
           sourceKind: 'literature-attachment-version',
           sourceFileId: command.attachmentId
+        }
+        const sourceBindingsDeleted = await transaction.pdfAnnotationSourceBinding.count({
+          where: sourceScope
         })
+        const annotationsDeleted = await deletePdfAnnotations(transaction, sourceScope)
         await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
         return {
           contentIds: attachment.versions.map(({ contentBlobId }) => contentBlobId),
-          annotationsDeleted
+          annotationsDeleted,
+          sourceBindingsDeleted
         }
       },
       { itemIds: [command.itemId] }
@@ -2099,70 +1740,10 @@ class LiteratureCatalog {
     collectionId?: string,
     duplicatePolicy: LiteratureDuplicatePolicy = 'reuse'
   ): Promise<LiteratureRecordImportReceipt> {
-    const items = inputs.map((item) => literatureItemInputSchema.parse(item))
     const client = await this.getClient()
     return this.commit(
       client,
-      async (transaction) => {
-        let nextSortOrder = 0
-        if (collectionId) {
-          const collection = await transaction.literatureCollection.findUnique({
-            where: { id: collectionId },
-            select: { id: true }
-          })
-          if (!collection) throw new Error('Literature Collection is unavailable.')
-          if (await transaction.literatureSmartCollection.count({ where: { collectionId } }))
-            throw new Error(
-              'Import into the library or an ordinary collection, then update the smart collection.'
-            )
-          const last = await transaction.literatureCollectionItem.findFirst({
-            where: { collectionId },
-            orderBy: { sortOrder: 'desc' },
-            select: { sortOrder: true }
-          })
-          nextSortOrder = (last?.sortOrder ?? -1) + 1
-        }
-
-        const identities = await importIdentityMap(transaction, items)
-        const resolutions =
-          duplicatePolicy === 'separate' ? [] : resolveImportItems(identities, items)
-        if (resolutions.some(({ conflict }) => conflict))
-          throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
-        const importedTargets = new Map<number, string>()
-        const itemIds: string[] = []
-        let createdCount = 0
-        let reusedCount = 0
-        for (const [inputIndex, item] of items.entries()) {
-          const target = resolutions[inputIndex]?.target
-          const existingId =
-            typeof target === 'string'
-              ? target
-              : target === undefined
-                ? undefined
-                : importedTargets.get(target)
-          const itemId = existingId ?? (await createItem(transaction, item))
-          if (existingId) {
-            await restoreExistingItem(transaction, existingId)
-            if (duplicatePolicy === 'fill-missing') {
-              await supplementExistingItem(transaction, existingId, item)
-            }
-            reusedCount += 1
-          } else {
-            createdCount += 1
-          }
-          importedTargets.set(inputIndex, itemId)
-          if (!itemIds.includes(itemId)) itemIds.push(itemId)
-          if (collectionId) {
-            await transaction.literatureCollectionItem.upsert({
-              where: { collectionId_itemId: { collectionId, itemId } },
-              create: { collectionId, itemId, sortOrder: nextSortOrder },
-              update: {}
-            })
-            nextSortOrder += 1
-          }
-        }
-        return { itemIds, createdCount, reusedCount }
-      },
+      (tx) => this.domain(tx).importItems(inputs, collectionId, duplicatePolicy),
       (result) => ({
         itemIds: result.itemIds,
         collectionIds: collectionId ? [collectionId] : undefined
@@ -2176,51 +1757,10 @@ class LiteratureCatalog {
     errors: readonly LiteratureRecordImportError[],
     parserWarnings: readonly LiteratureRecordImportEntry['warnings'][] = []
   ): Promise<LiteratureRecordImportEntry[]> {
-    const items = inputs.map((item) => literatureItemInputSchema.parse(item))
     const client = await this.getClient()
-    const entries: LiteratureRecordImportEntry[] = []
-    await client.$transaction(async (transaction) => {
-      const identities = await importIdentityMap(transaction, items)
-      const resolutions = resolveImportItems(identities, items)
-      for (const [index, item] of items.entries()) {
-        const { target, conflict } = resolutions[index]!
-        const existingItemId = !conflict && typeof target === 'string' ? target : undefined
-        const warnings: LiteratureRecordImportEntry['warnings'] = [
-          ...(parserWarnings[index] ?? []),
-          ...(item.creators.length === 0 ? (['missing-authors'] as const) : []),
-          ...(item.issuedYear === undefined && !item.issuedText ? (['missing-year'] as const) : []),
-          ...(!item.containerTitle &&
-          ['journalArticle', 'conferencePaper', 'preprint'].includes(item.itemType)
-            ? (['missing-container-title'] as const)
-            : [])
-        ]
-        entries.push({
-          index,
-          title: item.title,
-          status: conflict
-            ? 'conflict'
-            : target !== undefined
-              ? 'existing'
-              : warnings.length > 0
-                ? 'warning'
-                : 'ready',
-          ...(conflict ? { conflict } : {}),
-          warnings,
-          item,
-          ...(existingItemId ? { existingItemId } : {})
-        })
-      }
-    })
-    for (const [errorIndex, error] of errors.entries()) {
-      entries.push({
-        index: items.length + errorIndex,
-        title: error.preview,
-        status: 'invalid',
-        warnings: [],
-        error: error.error
-      })
-    }
-    return entries
+    return client.$transaction((tx) =>
+      this.domain(tx).inspectImportItems(inputs, errors, parserWarnings)
+    )
   }
 
   private async createManualItem(
@@ -2236,46 +1776,10 @@ class LiteratureCatalog {
     sources: readonly LiteratureSourceInput[] = [],
     operationId?: string
   ): Promise<LiteratureCatalogReceipt> {
-    const itemId = normalizeSpace(command.itemId)
-    const item = literatureItemInputSchema.parse(command.item)
     const client = await this.getClient()
-
-    return this.commit(
-      client,
-      async (transaction): Promise<LiteratureCatalogReceipt> => {
-        if (operationId) {
-          const receipt = await transaction.literatureMetadataCommitReceipt.findUnique({
-            where: { operationId }
-          })
-          if (receipt) {
-            if (
-              receipt.itemId !== itemId ||
-              receipt.expectedMetadataRevision !== command.expectedMetadataRevision
-            )
-              throw new Error('Metadata operation identity does not match the reviewed reference.')
-            return { kind: 'item', id: itemId, state: 'present' }
-          }
-        }
-        await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
-        for (const source of sources) await this.attachSource(transaction, { source, itemId })
-        if (operationId) {
-          const committed = await transaction.literatureItem.findUniqueOrThrow({
-            where: { id: itemId },
-            select: { metadataRevision: true }
-          })
-          await transaction.literatureMetadataCommitReceipt.create({
-            data: {
-              operationId,
-              itemId,
-              expectedMetadataRevision: command.expectedMetadataRevision,
-              committedMetadataRevision: committed.metadataRevision
-            }
-          })
-        }
-        return { kind: 'item', id: itemId, state: 'present' }
-      },
-      { itemIds: [itemId] }
-    ).finally(() => duplicateGroups.delete(client))
+    return this.commit(client, (tx) => this.domain(tx).updateItem(command, sources, operationId), {
+      itemIds: [normalizeSpace(command.itemId)]
+    }).finally(() => duplicateGroups.delete(client))
   }
 
   private async stageCandidate(
@@ -2283,128 +1787,10 @@ class LiteratureCatalog {
     pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string },
     signal?: AbortSignal
   ): Promise<LiteratureCatalogReceipt> {
-    const candidate = literatureCandidateInputSchema.parse(input)
-    const provenanceJson = pdf?.provenance
-      ? canonicalJson(literaturePdfProvenanceSchema.parse(pdf.provenance))
-      : null
-    const identifiers = normalizedIdentifiers(candidate.item.identifiers)
     const client = await this.getClient()
     return this.commit(
       client,
-      async (transaction) => {
-        signal?.throwIfAborted()
-        const existingItemId = await findIdentityItem(transaction, identifiers)
-        const existingItem = existingItemId
-          ? await transaction.literatureItem.findUnique({
-              where: { id: existingItemId },
-              select: { deletedAt: true }
-            })
-          : undefined
-        signal?.throwIfAborted()
-        // From the first write onward this transaction settles atomically, even if cancelled.
-        if (existingItemId && existingItem?.deletedAt === null && !pdf) {
-          await attachProjectIfPresent(
-            transaction,
-            candidate.origin.projectId,
-            existingItemId,
-            candidate.origin.kind
-          )
-          await this.attachSource(transaction, { source: candidate.source, itemId: existingItemId })
-          return { kind: 'item', id: existingItemId, state: 'present' }
-        }
-        const dedupeKey = pdf
-          ? sha256(`pdf:${candidateDedupeKey(candidate)}:${pdf.checksum}`)
-          : candidateDedupeKey(candidate)
-        const previous = await transaction.literatureInboxCandidate.findUnique({
-          where: { dedupeKey },
-          include: { acceptedItem: { select: { deletedAt: true } } }
-        })
-        if (previous?.state === 'accepted' && previous.acceptedItem?.deletedAt) {
-          // Keep the accepted review history while giving this deletion a new review opportunity.
-          await transaction.literatureInboxCandidate.update({
-            where: { id: previous.id },
-            data: { dedupeKey: `accepted:${previous.id}` }
-          })
-        }
-        const candidateJson = canonicalJson(candidate)
-        const metadataChecksum = sha256(candidateJson)
-        const persisted = await transaction.literatureInboxCandidate.upsert({
-          where: { dedupeKey },
-          create: {
-            dedupeKey,
-            itemType: candidate.item.itemType,
-            title: candidate.item.title,
-            abstract: candidate.item.abstract,
-            issuedYear: candidate.item.issuedYear,
-            candidateJson,
-            metadataChecksum,
-            origin: candidate.origin.kind,
-            sourceProjectId: candidate.origin.projectId,
-            sourceSessionId: candidate.origin.sessionId
-          },
-          update: {},
-          select: { id: true, state: true }
-        })
-        const contextKey = canonicalJson([
-          candidate.origin.kind,
-          candidate.origin.projectId ?? null,
-          candidate.origin.sessionId ?? null
-        ])
-        await transaction.literatureCandidateDiscovery.upsert({
-          where: { candidateId_contextKey: { candidateId: persisted.id, contextKey } },
-          create: {
-            candidateId: persisted.id,
-            contextKey,
-            origin: candidate.origin.kind,
-            projectId: candidate.origin.projectId,
-            sessionId: candidate.origin.sessionId
-          },
-          update: {}
-        })
-        if (persisted.state === 'pending') {
-          if (pdf) {
-            const blob = await transaction.contentBlob.findUnique({
-              where: { id: pdf.contentBlobId }
-            })
-            if (
-              !blob ||
-              blob.state !== 'available' ||
-              blob.checksum !== pdf.checksum ||
-              blob.sizeBytes !== BigInt(pdf.sizeBytes) ||
-              (blob.contentType && blob.contentType !== 'application/pdf')
-            )
-              throw new Error('Inbox PDF content or ownership changed.')
-            await transaction.literatureInboxPdf.upsert({
-              where: {
-                candidateId_checksum: { candidateId: persisted.id, checksum: pdf.checksum }
-              },
-              create: {
-                candidateId: persisted.id,
-                contentBlobId: blob.id,
-                filename: pdf.filename,
-                sizeBytes: blob.sizeBytes,
-                checksum: blob.checksum,
-                pageCount: pdf.pageCount,
-                sourceUrl: pdf.sourceUrl,
-                provenanceJson
-              },
-              update: {}
-            })
-          }
-          // Repeated discoveries retain the first reviewed candidate and its matching evidence.
-          if (previous?.id !== persisted.id) {
-            await this.attachSource(transaction, {
-              source: candidate.source,
-              candidateId: persisted.id
-            })
-          }
-        }
-        return {
-          kind: 'candidate',
-          id: persisted.id,
-          state: persisted.state as LiteratureInboxState
-        }
-      },
+      (tx) => this.domain(tx).stageCandidate(input, pdf, signal),
       (result) =>
         result.kind === 'item' ? { itemIds: [result.id] } : { candidateIds: [result.id] }
     )
@@ -2414,7 +1800,7 @@ class LiteratureCatalog {
     const client = await this.getClient()
     return this.commit(
       client,
-      (transaction) => acceptInboxCandidate(transaction, candidateId),
+      (transaction) => this.domain(transaction).acceptCandidate(candidateId),
       (result) => ({
         candidateIds: [candidateId],
         itemIds: result.kind === 'item' ? [result.id] : undefined
@@ -2451,27 +1837,7 @@ class LiteratureCatalog {
     const client = await this.getClient()
     return this.commit(
       client,
-      async (transaction) => {
-        if (command.state === 'accepted') {
-          for (const candidateId of command.candidateIds) {
-            await acceptInboxCandidate(transaction, candidateId)
-          }
-        } else {
-          const updated = await transaction.literatureInboxCandidate.updateMany({
-            where: { id: { in: command.candidateIds }, state: 'pending' },
-            data: { state: 'dismissed', settledAt: new Date() }
-          })
-          if (updated.count !== command.candidateIds.length) {
-            throw new Error('One or more Literature Inbox candidates are not pending.')
-          }
-        }
-        return {
-          kind: 'candidate',
-          id: command.candidateIds[0]!,
-          state: command.state,
-          count: command.candidateIds.length
-        }
-      },
+      (tx) => this.domain(tx).settleCandidates(command.candidateIds, command.state),
       { candidateIds: command.candidateIds }
     )
   }
@@ -2480,25 +1846,9 @@ class LiteratureCatalog {
     candidateIds: readonly string[]
   ): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    return this.commit(
-      client,
-      async (transaction) => {
-        const updated = await transaction.literatureInboxCandidate.updateMany({
-          where: { id: { in: [...candidateIds] }, state: 'dismissed' },
-          data: { state: 'pending', settledAt: null }
-        })
-        if (updated.count !== candidateIds.length) {
-          throw new Error('One or more Literature Inbox candidates are not dismissed.')
-        }
-        return {
-          kind: 'candidate',
-          id: candidateIds[0]!,
-          state: 'pending',
-          count: candidateIds.length
-        }
-      },
-      { candidateIds }
-    )
+    return this.commit(client, (tx) => this.domain(tx).restoreCandidates(candidateIds), {
+      candidateIds
+    })
   }
 
   private async createCollection(
@@ -2506,127 +1856,35 @@ class LiteratureCatalog {
     descriptionInput?: string,
     parentId?: string
   ): Promise<LiteratureCatalogReceipt> {
-    const name = normalizeSpace(nameInput)
-    if (!name) throw new Error('Literature Collection name is required.')
     const client = await this.getClient()
-    if (parentId && this.smart && (await this.smart.members(parentId)) !== undefined)
-      throw new Error('Smart collections cannot contain child collections.')
-    const last = await client.literatureCollection.findFirst({
-      where: { parentId: parentId ?? null },
-      orderBy: { sortOrder: 'desc' },
-      select: { sortOrder: true }
-    })
-    const collection = await this.commit(
+    return this.commit(
       client,
-      (transaction) =>
-        transaction.literatureCollection.create({
-          data: {
-            name,
-            nameKey: name.toLowerCase(),
-            description: descriptionInput?.trim() ?? '',
-            parentId,
-            sortOrder: (last?.sortOrder ?? -1) + 1
-          },
-          select: { id: true }
-        }),
+      (tx) => this.domain(tx).createCollection(nameInput, descriptionInput, parentId),
       (result) => ({ collectionIds: [result.id] })
-    ).catch((error: unknown) => {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
-      }
-      throw error
-    })
-    return { kind: 'collection', id: collection.id }
-  }
-
-  private async updateCollection(
-    command: Extract<LiteratureCatalogCommand, { kind: 'update-collection' }>
-  ): Promise<LiteratureCatalogReceipt> {
-    const name = normalizeSpace(command.name)
-    if (!name) throw new Error('Literature Collection name is required.')
-    if (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 1)
-      throw new Error(LITERATURE_COLLECTION_REVISION_CONFLICT)
-    const client = await this.getClient()
-    const updated = await this.commit(
-      client,
-      async (transaction) => {
-        const previous = await transaction.literatureCollection.findUnique({
-          where: { id: command.collectionId },
-          include: { smart: true }
-        })
-        if (previous?.smart) serializedSmartRuleSchema.parse(command.description)
-        else if (command.description.trim().length > LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH)
-          throw new Error('Collection description is too long.')
-        const previousRule = previous?.smart ? parseSmartRule(previous.description) : undefined
-        const description = previous?.smart
-          ? formatSmartRule(parseSmartRule(command.description)!)
-          : command.description.trim()
-        if (
-          command.smartScope &&
-          (!previous?.smart ||
-            !this.smart ||
-            !(await this.smart.scope(transaction, command.smartScope)))
-        )
-          throw new Error('Smart collection source is unavailable.')
-        const scopeChanged =
-          command.smartScope &&
-          previous?.smart &&
-          (command.smartScope.kind !== previous.smart.scopeKind ||
-            (command.smartScope.kind === 'library' ? null : command.smartScope.id) !==
-              previous.smart.scopeId)
-        const ruleChanged =
-          (previousRule ? formatSmartRule(previousRule) : previous?.description) !== description ||
-          scopeChanged ||
-          (command.smartEvidenceMode !== undefined &&
-            command.smartEvidenceMode !== previous?.smart?.evidenceMode)
-        const result = await transaction.literatureCollection.updateMany({
-          where: { id: command.collectionId, revision: command.expectedRevision },
-          data: {
-            name,
-            nameKey: name.toLowerCase(),
-            description,
-            revision: { increment: 1 }
-          }
-        })
-        if (
-          result.count &&
-          previous?.smart &&
-          (ruleChanged || command.smartAutoUpdate !== undefined)
-        ) {
-          await transaction.literatureSmartCollection.update({
-            where: { collectionId: command.collectionId },
-            data: {
-              ...(ruleChanged ? { ruleRevision: { increment: 1 } } : {}),
-              ...(command.smartEvidenceMode !== undefined
-                ? { evidenceMode: command.smartEvidenceMode }
-                : {}),
-              ...(command.smartAutoUpdate !== undefined
-                ? { autoUpdate: command.smartAutoUpdate }
-                : {}),
-              ...(command.smartScope
-                ? {
-                    scopeKind: command.smartScope.kind,
-                    scopeId: command.smartScope.kind === 'library' ? null : command.smartScope.id
-                  }
-                : {})
-            }
-          })
-        }
-        if (result.count && previous?.smart && ruleChanged)
-          await saveSmartRuleVersion(transaction, command.collectionId)
-        return result
-      },
-      { collectionIds: [command.collectionId] }
     ).catch((error: unknown) => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
         throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
       throw error
     })
-    if (updated.count !== 1) throw new Error(LITERATURE_COLLECTION_REVISION_CONFLICT)
-    await this.smart?.ruleUpdated(command.collectionId).catch((error) => {
-      log.warn('Could not notify the running smart collection after saving its rule', { error })
+  }
+
+  private async updateCollection(
+    command: Extract<LiteratureCatalogCommand, { kind: 'update-collection' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    const client = await this.getClient()
+    const result = await this.commit(client, (tx) => this.domain(tx).updateCollection(command), {
+      collectionIds: [command.collectionId]
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+        throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
+      throw error
     })
-    return { kind: 'collection', id: command.collectionId }
+    await this.smart
+      ?.ruleUpdated(command.collectionId)
+      .catch((error) =>
+        log.warn('Could not notify the running smart collection after saving its rule', { error })
+      )
+    return result
   }
 
   private async deleteCollection(collectionId: string): Promise<LiteratureCatalogReceipt> {
@@ -2637,69 +1895,23 @@ class LiteratureCatalog {
 
   private async removeCollection(collectionId: string): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    await this.commit(
-      client,
-      async (transaction) => {
-        // Child promotion changes the structural context captured by an open editor.
-        await transaction.literatureCollection.updateMany({
-          where: { parentId: collectionId },
-          data: { revision: { increment: 1 } }
-        })
-        await transaction.literatureCollection.delete({ where: { id: collectionId } })
-      },
-      { collectionIds: [collectionId] }
-    ).catch((error: unknown) => {
+    return this.commit(client, (tx) => this.domain(tx).removeCollection(collectionId), {
+      collectionIds: [collectionId]
+    }).catch((error: unknown) => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
         throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
       throw error
     })
-    return { kind: 'collection', id: collectionId }
   }
 
   private async setCollectionItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-collection-item' }>
   ): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    if (this.smart && (await this.smart.members(command.collectionId)) !== undefined)
-      throw new Error('Use an explicit smart collection override.')
-    if (!command.included) {
-      await this.commit(
-        client,
-        (transaction) =>
-          transaction.literatureCollectionItem.deleteMany({
-            where: { collectionId: command.collectionId, itemId: command.itemId }
-          }),
-        { itemIds: [command.itemId], collectionIds: [command.collectionId] }
-      )
-      return { kind: 'item', id: command.itemId, state: 'unlinked' }
-    }
-    await this.commit(
-      client,
-      async (transaction) => {
-        const available = await transaction.literatureItem.count({
-          where: { id: command.itemId, deletedAt: null, mergedIntoItemId: null }
-        })
-        if (!available) throw new Error('One or more Literature Items are unavailable.')
-        const last = await transaction.literatureCollectionItem.findFirst({
-          where: { collectionId: command.collectionId },
-          orderBy: { sortOrder: 'desc' },
-          select: { sortOrder: true }
-        })
-        await transaction.literatureCollectionItem.upsert({
-          where: {
-            collectionId_itemId: { collectionId: command.collectionId, itemId: command.itemId }
-          },
-          create: {
-            collectionId: command.collectionId,
-            itemId: command.itemId,
-            sortOrder: (last?.sortOrder ?? -1) + 1
-          },
-          update: {}
-        })
-      },
-      { itemIds: [command.itemId], collectionIds: [command.collectionId] }
-    )
-    return { kind: 'item', id: command.itemId, state: 'linked' }
+    return this.commit(client, (tx) => this.domain(tx).setCollectionItem(command), {
+      itemIds: [command.itemId],
+      collectionIds: [command.collectionId]
+    })
   }
 
   private async setProjectItem(
@@ -2715,73 +1927,19 @@ class LiteratureCatalog {
   private async setProjectItems(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-project-items' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    if (!command.included) {
-      await this.commit(
-        client,
-        (transaction) =>
-          transaction.projectLiterature.deleteMany({
-            where: { projectId: command.projectId, itemId: { in: itemIds } }
-          }),
-        { itemIds }
-      )
-      return { kind: 'item', id: itemIds[0]!, state: 'unlinked' }
-    }
-    const source = normalizeSpace(command.source)
-    if (!source) throw new Error('Project Literature source is required.')
-    await this.commit(
-      client,
-      async (transaction) => {
-        const project = await transaction.project.findFirst({
-          where: { AND: [{ id: command.projectId }, await availableProjectWhere(transaction)] },
-          select: { id: true }
-        })
-        if (!project) throw new Error('Project is unavailable.')
-        const available = await transaction.literatureItem.count({
-          where: { id: { in: itemIds }, deletedAt: null, mergedIntoItemId: null }
-        })
-        if (available !== itemIds.length)
-          throw new Error('One or more Literature Items are unavailable.')
-        await Promise.all(
-          itemIds.map((itemId) =>
-            transaction.projectLiterature.upsert({
-              where: { projectId_itemId: { projectId: command.projectId, itemId } },
-              create: { projectId: command.projectId, itemId, source },
-              update: { source }
-            })
-          )
-        )
-      },
-      { itemIds }
-    )
-    return { kind: 'item', id: itemIds[0]!, state: 'linked' }
+    return this.commit(client, (tx) => this.domain(tx).setProjectItems(command), {
+      itemIds: [...new Set(command.itemIds)]
+    })
   }
 
   private async setItemLifecycle(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-item-lifecycle' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    const now = new Date()
-    await this.commit(
-      client,
-      async (transaction) => {
-        const updated = await transaction.literatureItem.updateMany({
-          where: { id: { in: itemIds }, mergedIntoItemId: null },
-          data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
-        })
-        await transaction.literatureSmartAssessment.updateMany({
-          where: { itemId: { in: itemIds } },
-          data: { policyKey: 'obsolete:lifecycle-change' }
-        })
-        if (updated.count !== itemIds.length) {
-          throw new Error('One or more Literature Items are unavailable.')
-        }
-      },
-      { itemIds }
-    )
-    return { kind: 'item', id: itemIds[0]!, state: command.state }
+    return this.commit(client, (tx) => this.domain(tx).setItemLifecycle(command), {
+      itemIds: [...new Set(command.itemIds)]
+    })
   }
 
   async contentBlobIdsForItems(itemIds: readonly string[]): Promise<string[]> {
@@ -2808,128 +1966,27 @@ class LiteratureCatalog {
   private async deleteItemsPermanently(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-items-permanently' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    let tagsChanged = false
-    const receipt = await this.withAttachmentRemoval((assertUnreferenced) =>
-      this.commit<LiteratureCatalogReceipt>(
-        client,
-        async (transaction) => {
-          const requestedItems = await transaction.literatureItem.findMany({
-            where: { id: { in: itemIds } },
-            select: { id: true, deletedAt: true }
-          })
-          if (
-            requestedItems.length !== itemIds.length ||
-            requestedItems.some(({ deletedAt }) => deletedAt === null)
-          ) {
-            throw new Error('Only Literature Items in Trash can be permanently deleted.')
-          }
-
-          const mergedItems = await transaction.literatureItem.findMany({
-            where: { mergedIntoItemId: { in: itemIds } },
-            select: { id: true }
-          })
-          const deletionIds = [...new Set([...itemIds, ...mergedItems.map(({ id }) => id)])]
-          const attachments = await transaction.literatureAttachment.findMany({
-            where: { itemId: { in: deletionIds } },
-            select: { id: true }
-          })
-          assertUnreferenced(attachments.map(({ id }) => id))
-          const creatorLinks = await transaction.literatureItemCreator.findMany({
-            where: { itemId: { in: deletionIds } },
-            select: { creatorId: true }
-          })
-
-          await transaction.literatureInboxCandidate.deleteMany({
-            where: { acceptedItemId: { in: deletionIds } }
-          })
-          const removedTags = await transaction.tagAssignment.deleteMany({
-            where: { resourceType: 'literature.item', resourceId: { in: deletionIds } }
-          })
-          const annotationsDeleted = await deletePdfAnnotations(transaction, {
-            sourceKind: 'literature-attachment-version',
-            sourceFileId: { in: attachments.map(({ id }) => id) }
-          })
-          tagsChanged = removedTags.count > 0 || annotationsDeleted > 0
-          await transaction.literatureItem.updateMany({
-            where: { id: { in: deletionIds } },
-            data: { mergedIntoItemId: null }
-          })
-          await transaction.literatureItem.deleteMany({ where: { id: { in: deletionIds } } })
-
-          const creatorIds = [...new Set(creatorLinks.map(({ creatorId }) => creatorId))]
-          if (creatorIds.length > 0) {
-            await transaction.literatureCreator.deleteMany({
-              where: { id: { in: creatorIds }, items: { none: {} } }
-            })
-          }
-          return { kind: 'item', id: itemIds[0]!, state: 'deleted-permanently' }
-        },
-        { itemIds }
-      )
+    const result = await this.withAttachmentRemoval((assert) =>
+      this.commit(client, (tx) => this.domain(tx, assert).deleteItemsPermanently(command.itemIds), {
+        itemIds: [...new Set(command.itemIds)]
+      })
     )
-    if (tagsChanged) await this.publishTagAssignmentsChanged()
-    return receipt
+    if (result.tagsChanged) await this.publishTagAssignmentsChanged()
+    return result.receipt
   }
 
   private async moveCollectionItems(
     command: Extract<LiteratureCatalogCommand, { kind: 'move-collection-items' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    if (
-      this.smart &&
-      ((await this.smart.members(command.targetCollectionId)) !== undefined ||
-        (command.sourceCollectionId &&
-          (await this.smart.members(command.sourceCollectionId)) !== undefined))
-    )
-      throw new Error('Smart collection membership cannot be moved manually.')
-    return this.commit(
-      client,
-      async (transaction) => {
-        const target = await transaction.literatureCollection.findUnique({
-          where: { id: command.targetCollectionId },
-          select: { id: true }
-        })
-        if (!target) throw new Error('Literature Collection is unavailable.')
-        const available = await transaction.literatureItem.count({
-          where: { id: { in: itemIds }, deletedAt: null, mergedIntoItemId: null }
-        })
-        if (available !== itemIds.length)
-          throw new Error('One or more Literature Items are unavailable.')
-        const last = await transaction.literatureCollectionItem.findFirst({
-          where: { collectionId: target.id },
-          orderBy: { sortOrder: 'desc' },
-          select: { sortOrder: true }
-        })
-        let sortOrder = (last?.sortOrder ?? -1) + 1
-        for (const itemId of itemIds) {
-          await transaction.literatureCollectionItem.upsert({
-            where: { collectionId_itemId: { collectionId: target.id, itemId } },
-            create: { collectionId: target.id, itemId, sortOrder },
-            update: {}
-          })
-          sortOrder += 1
-        }
-        if (
-          command.sourceCollectionId &&
-          command.sourceCollectionId !== command.targetCollectionId
-        ) {
-          await transaction.literatureCollectionItem.deleteMany({
-            where: { collectionId: command.sourceCollectionId, itemId: { in: itemIds } }
-          })
-        }
-        return { kind: 'item', id: itemIds[0]!, state: 'linked' }
-      },
-      {
-        itemIds,
-        collectionIds: [
-          command.targetCollectionId,
-          ...(command.sourceCollectionId ? [command.sourceCollectionId] : [])
-        ]
-      }
-    )
+    return this.commit(client, (tx) => this.domain(tx).moveCollectionItems(command), {
+      itemIds: [...new Set(command.itemIds)],
+      collectionIds: [
+        command.targetCollectionId,
+        ...(command.sourceCollectionId ? [command.sourceCollectionId] : [])
+      ]
+    })
   }
 
   private async mergeItems(
@@ -2948,279 +2005,507 @@ class LiteratureCatalog {
   private async mergeDuplicates(
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-duplicates' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const strategy = command.strategy ?? 'conflict-free'
-    if (strategy !== 'conflict-free' && command.mode === 'commit' && !command.expectedItems) {
-      throw new Error('Preview the selected merge strategy before committing.')
-    }
-    const batch: NonNullable<LiteratureCatalogReceipt['batch']> = {
-      eligible: 0,
-      reduced: 0,
-      review: 0,
-      succeeded: 0,
-      skipped: 0,
-      failed: 0,
-      groups: [],
-      details: []
-    }
-    const seen = new Set<string>()
     const client = await this.getClient()
-    for (const [groupIndex, ids] of command.groups.entries()) {
-      const detail: NonNullable<typeof batch.details>[number] = { groupIndex, status: 'skipped' }
-      batch.details!.push(detail)
-      if (ids.length > 20 || ids.some((id) => seen.has(id)) || new Set(ids).size !== ids.length) {
-        detail.reason = ids.length > 20 ? 'too-large' : 'overlapping'
-        batch.skipped += 1
-        batch.review += 1
-        continue
-      }
-      ids.forEach((id) => seen.add(id))
-      try {
-        let tagsChanged = false
-        const merged = await this.commit(
-          client,
-          async (transaction) => {
-            const rows = await transaction.literatureItem.findMany({
-              where: { id: { in: ids }, deletedAt: null, mergedIntoItemId: null },
-              include: await activeItemInclude(transaction),
-              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-            })
-            if (rows.length !== ids.length) {
-              detail.reason = 'unavailable'
-              return undefined
-            }
-            const views = rows.map(toItemView)
-            detail.title = views[0]?.item.title
-            if (
-              command.mode === 'commit' &&
-              command.expectedItems &&
-              views.some(
-                (view) =>
-                  !command.expectedItems!.some(
-                    (expected) =>
-                      expected.id === view.id &&
-                      expected.metadataRevision === view.metadataRevision &&
-                      expected.updatedAt === view.updatedAt
-                  )
-              )
-            ) {
-              detail.reason = 'changed'
-              return undefined
-            }
-            const plan = planLiteratureMerge(views, strategy)
-            if (!plan) {
-              detail.reason =
-                strategy === 'conflict-free' && planLiteratureMerge(views, 'oldest')
-                  ? 'conflicts'
-                  : 'identity'
-              return undefined
-            }
-            const items = views.map(({ id, metadataRevision, updatedAt }) => ({
-              id,
-              metadataRevision,
-              updatedAt
-            }))
-            if (command.mode === 'commit') {
-              const result = await this.mergeItemsInTransaction(transaction, {
-                kind: 'merge-items',
-                survivorId: plan.survivor.id,
-                duplicateIds: rows
-                  .filter((row) => row.id !== plan.survivor.id)
-                  .map((row) => row.id),
-                expectedMetadataRevision: plan.survivor.metadataRevision,
-                expectedItems: items,
-                item: plan.item
-              })
-              tagsChanged = result.tagsChanged
-            }
-            return {
-              survivorId: plan.survivor.id,
-              survivorTitle: plan.survivor.item.title,
-              conflicts: plan.conflicts,
-              items
-            }
-          },
-          { itemIds: ids }
-        )
-        if (merged) {
-          // Publish the result only after the transaction commits successfully.
-          if (tagsChanged) await this.publishTagAssignmentsChanged()
-          batch.groups!.push(merged)
-          detail.status = command.mode === 'commit' ? 'merged' : 'ready'
-          batch.eligible += 1
-          batch.reduced += ids.length - 1
-          if (command.mode === 'commit') batch.succeeded += 1
-        } else {
-          batch.review += 1
-          batch.skipped += 1
-        }
-      } catch {
-        detail.status = 'failed'
-        detail.reason = 'failed'
-        batch.failed += 1
-      }
-    }
-    return { kind: 'item', id: command.groups[0][0], batch }
+    return mergeLiteratureDuplicates(command, async (ids, work) => {
+      const merged = await this.commit(client, (tx) => work(this.domain(tx)), { itemIds: ids })
+      if (merged?.tagsChanged) await this.publishTagAssignmentsChanged()
+      return merged
+    })
   }
 
-  private async mergeItemsInTransaction(
+  private mergeItemsInTransaction(
     transaction: Prisma.TransactionClient,
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-items' }>
   ): Promise<{ receipt: LiteratureCatalogReceipt; tagsChanged: boolean }> {
-    const duplicateIds = [...new Set(command.duplicateIds)].filter(
-      (itemId) => itemId !== command.survivorId
-    )
-    if (duplicateIds.length !== command.duplicateIds.length) {
-      throw new Error('Duplicate Literature Item ids must be unique and exclude the survivor.')
+    return this.domain(transaction).mergeItems(command)
+  }
+
+  private domain(
+    transaction: Prisma.TransactionClient,
+    assertAttachmentsUnreferenced: (ids: readonly string[]) => void = (ids) => {
+      if (ids.length) throw new Error('Literature attachment removal is unavailable.')
     }
-    const rows = await transaction.literatureItem.findMany({
-      where: {
-        id: { in: [command.survivorId, ...duplicateIds] },
-        deletedAt: null,
-        mergedIntoItemId: null
+  ): LibraryTransaction {
+    const store: LibraryStore = {
+      collectionState: (id) =>
+        transaction.literatureCollection.findUnique({
+          where: { id },
+          select: {
+            description: true,
+            smart: { select: { scopeKind: true, scopeId: true, evidenceMode: true } }
+          }
+        }),
+      lastSiblingOrder: async (parentId) =>
+        (
+          await transaction.literatureCollection.findFirst({
+            where: { parentId: parentId ?? null },
+            orderBy: { sortOrder: 'desc' },
+            select: { sortOrder: true }
+          })
+        )?.sortOrder ?? -1,
+      createCollection: async (input) =>
+        (
+          await transaction.literatureCollection.create({
+            data: { ...input, nameKey: input.name.toLowerCase() },
+            select: { id: true }
+          })
+        ).id,
+      updateCollection: async (id, revision, input) =>
+        (
+          await transaction.literatureCollection.updateMany({
+            where: { id, revision },
+            data: { ...input, nameKey: input.name.toLowerCase(), revision: { increment: 1 } }
+          })
+        ).count,
+      scopeAvailable: async (scope) =>
+        this.smart ? Boolean(await this.smart.scope(transaction, scope)) : false,
+      updateSmartCollection: async (collectionId, input) => {
+        await transaction.literatureSmartCollection.update({
+          where: { collectionId },
+          data: {
+            ...(input.ruleChanged ? { ruleRevision: { increment: 1 } } : {}),
+            ...(input.evidenceMode !== undefined ? { evidenceMode: input.evidenceMode } : {}),
+            ...(input.autoUpdate !== undefined ? { autoUpdate: input.autoUpdate } : {}),
+            ...(input.scope
+              ? {
+                  scopeKind: input.scope.kind,
+                  scopeId: input.scope.kind === 'library' ? null : input.scope.id
+                }
+              : {})
+          }
+        })
       },
-      select: { id: true, metadataRevision: true, updatedAt: true }
-    })
-    if (rows.length !== duplicateIds.length + 1) {
-      throw new Error('One or more Literature Items are unavailable for merging.')
-    }
-    if (
-      command.expectedItems.length !== rows.length ||
-      rows.some(
-        (row) =>
-          !command.expectedItems.some(
-            (expected) =>
-              expected.id === row.id &&
-              expected.metadataRevision === row.metadataRevision &&
-              expected.updatedAt === row.updatedAt.getTime()
-          )
-      )
-    ) {
-      throw new Error('Literature references changed after review.')
-    }
-    const overrides = await transaction.literatureSmartOverride.findMany({
-      where: { itemId: { in: [command.survivorId, ...duplicateIds] } }
-    })
-    const decisions = new Map<string, string>()
-    for (const override of overrides) {
-      const previous = decisions.get(override.collectionId)
-      if (previous && previous !== override.decision)
-        throw new Error(
-          'Resolve conflicting smart collection decisions before merging these references.'
+      saveSmartRuleVersion: (id) => saveSmartRuleVersion(transaction, id),
+      removeCollection: async (id) => {
+        await transaction.literatureCollection.updateMany({
+          where: { parentId: id },
+          data: { revision: { increment: 1 } }
+        })
+        await transaction.literatureCollection.delete({ where: { id } })
+      },
+      deletionItems: async (ids) =>
+        (
+          await transaction.literatureItem.findMany({
+            where: { id: { in: [...ids] } },
+            select: { id: true, deletedAt: true }
+          })
+        ).map((row) => ({ id: row.id, deleted: row.deletedAt !== null })),
+      mergedItemIds: async (ids) =>
+        (
+          await transaction.literatureItem.findMany({
+            where: { mergedIntoItemId: { in: [...ids] } },
+            select: { id: true }
+          })
+        ).map((row) => row.id),
+      attachmentIds: async (ids) =>
+        (
+          await transaction.literatureAttachment.findMany({
+            where: { itemId: { in: [...ids] } },
+            select: { id: true }
+          })
+        ).map((row) => row.id),
+      assertAttachmentsUnreferenced,
+      deleteItemsAndRelations: async (ids) => {
+        const deletionIds = [...ids]
+        const attachments = await transaction.literatureAttachment.findMany({
+          where: { itemId: { in: deletionIds } },
+          select: { id: true }
+        })
+        const creatorLinks = await transaction.literatureItemCreator.findMany({
+          where: { itemId: { in: deletionIds } },
+          select: { creatorId: true }
+        })
+        await transaction.literatureInboxCandidate.deleteMany({
+          where: { acceptedItemId: { in: deletionIds } }
+        })
+        const removedTags = await transaction.tagAssignment.deleteMany({
+          where: { resourceType: 'literature.item', resourceId: { in: deletionIds } }
+        })
+        const annotationsDeleted = await deletePdfAnnotations(transaction, {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: { in: attachments.map((row) => row.id) }
+        })
+        await transaction.literatureItem.updateMany({
+          where: { id: { in: deletionIds } },
+          data: { mergedIntoItemId: null }
+        })
+        await transaction.literatureItem.deleteMany({ where: { id: { in: deletionIds } } })
+        const creatorIds = [...new Set(creatorLinks.map((row) => row.creatorId))]
+        if (creatorIds.length)
+          await transaction.literatureCreator.deleteMany({
+            where: { id: { in: creatorIds }, items: { none: {} } }
+          })
+        return removedTags.count > 0 || annotationsDeleted > 0
+      },
+
+      identityMatches: (identifiers) =>
+        transaction.literatureItem.findMany({
+          where: {
+            mergedIntoItemId: null,
+            identifiers: {
+              some: {
+                OR: identifiers.map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
+              }
+            }
+          },
+          orderBy: [{ deletedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+          select: { id: true, identifiers: true }
+        }),
+      importIdentityRecords: async (identifiers) => {
+        if (!identifiers.length) return []
+        const rows = await transaction.literatureItem.findMany({
+          where: {
+            mergedIntoItemId: null,
+            identifiers: {
+              some: {
+                OR: identifiers.map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
+              }
+            }
+          },
+          select: { id: true, title: true, identifiers: true }
+        })
+        return rows.map((row) => ({
+          id: row.id,
+          item: {
+            title: row.title,
+            identifiers: row.identifiers.map((id) => ({
+              scheme: id.scheme as LiteratureIdentifierScheme,
+              value: id.rawValue,
+              isPrimary: id.isPrimary
+            }))
+          }
+        }))
+      },
+      collection: async (id) => {
+        const row = await transaction.literatureCollection.findUnique({
+          where: { id },
+          select: { id: true, smart: { select: { collectionId: true } } }
+        })
+        return row ? { id, smart: Boolean(row.smart) } : null
+      },
+      lastCollectionOrder: async (collectionId) =>
+        (
+          await transaction.literatureCollectionItem.findFirst({
+            where: { collectionId },
+            orderBy: { sortOrder: 'desc' },
+            select: { sortOrder: true }
+          })
+        )?.sortOrder ?? -1,
+      linkCollection: async (collectionId, itemId, sortOrder) => {
+        await transaction.literatureCollectionItem.upsert({
+          where: { collectionId_itemId: { collectionId, itemId } },
+          create: { collectionId, itemId, sortOrder },
+          update: {}
+        })
+      },
+      unlinkCollection: async (collectionId, itemId) => {
+        await transaction.literatureCollectionItem.deleteMany({ where: { collectionId, itemId } })
+      },
+      createItem: (item) => createItem(transaction, item),
+      restoreItem: async (id) => {
+        await transaction.literatureItem.updateMany({ where: { id }, data: { deletedAt: null } })
+      },
+      item: async (id) => {
+        const row = await transaction.literatureItem.findUnique({
+          where: { id },
+          include: itemInclude
+        })
+        return row ? toItemView(row) : undefined
+      },
+      replaceMetadata: (id, revision, item) => replaceItemMetadata(transaction, id, revision, item),
+      metadataReceipt: (operationId) =>
+        transaction.literatureMetadataCommitReceipt.findUnique({ where: { operationId } }),
+      saveMetadataReceipt: async (operationId, receipt) => {
+        await transaction.literatureMetadataCommitReceipt.create({
+          data: { operationId, ...receipt }
+        })
+      },
+      attachSource: (input) =>
+        this.attachSource(transaction, input as Parameters<LiteratureCatalog['attachSource']>[1]),
+      candidate: (id) =>
+        transaction.literatureInboxCandidate.findUnique({
+          where: { id },
+          include: { discoveries: true }
+        }),
+      candidateByKey: async (dedupeKey) => {
+        const row = await transaction.literatureInboxCandidate.findUnique({
+          where: { dedupeKey },
+          include: { acceptedItem: { select: { deletedAt: true } } }
+        })
+        return row
+          ? { id: row.id, state: row.state, acceptedDeleted: Boolean(row.acceptedItem?.deletedAt) }
+          : null
+      },
+      retireCandidateKey: async (id) => {
+        await transaction.literatureInboxCandidate.update({
+          where: { id },
+          data: { dedupeKey: `accepted:${id}` }
+        })
+      },
+      createCandidate: (dedupeKey, candidate, candidateJson, metadataChecksum) =>
+        transaction.literatureInboxCandidate.upsert({
+          where: { dedupeKey },
+          create: {
+            dedupeKey,
+            itemType: candidate.item.itemType,
+            title: candidate.item.title,
+            abstract: candidate.item.abstract,
+            issuedYear: candidate.item.issuedYear,
+            candidateJson,
+            metadataChecksum,
+            origin: candidate.origin.kind,
+            sourceProjectId: candidate.origin.projectId,
+            sourceSessionId: candidate.origin.sessionId
+          },
+          update: {},
+          select: { id: true, state: true }
+        }),
+      recordDiscovery: async (candidateId, candidate, contextKey) => {
+        await transaction.literatureCandidateDiscovery.upsert({
+          where: { candidateId_contextKey: { candidateId, contextKey } },
+          create: {
+            candidateId,
+            contextKey,
+            origin: candidate.origin.kind,
+            projectId: candidate.origin.projectId,
+            sessionId: candidate.origin.sessionId
+          },
+          update: {}
+        })
+      },
+      stagePdf: async (candidateId, pdf, provenanceJson) => {
+        const blob = await transaction.contentBlob.findUnique({ where: { id: pdf.contentBlobId } })
+        if (
+          !blob ||
+          blob.state !== 'available' ||
+          blob.checksum !== pdf.checksum ||
+          blob.sizeBytes !== BigInt(pdf.sizeBytes) ||
+          (blob.contentType && blob.contentType !== 'application/pdf')
         )
-      decisions.set(override.collectionId, override.decision)
-    }
-    for (const [collectionId, decision] of decisions) {
-      await transaction.literatureSmartOverride.upsert({
-        where: { collectionId_itemId: { collectionId, itemId: command.survivorId } },
-        create: { collectionId, itemId: command.survivorId, decision },
-        update: { decision }
-      })
-    }
-    await transaction.literatureSmartAssessment.deleteMany({
-      where: { itemId: { in: [command.survivorId, ...duplicateIds] } }
-    })
-    await transaction.$executeRaw(
-      Prisma.sql`DELETE FROM "JournalItemBinding" WHERE "itemId" IN (${Prisma.join(duplicateIds)})`
-    )
-    await transaction.literatureIdentifier.deleteMany({
-      where: { itemId: { in: duplicateIds } }
-    })
-    await replaceItemMetadata(
-      transaction,
-      command.survivorId,
-      command.expectedMetadataRevision,
-      command.item
-    )
-
-    const [memberships, projects, assignments] = await Promise.all([
-      transaction.literatureCollectionItem.findMany({
-        where: { itemId: { in: duplicateIds } },
-        select: { collectionId: true, itemId: true, sortOrder: true }
-      }),
-      transaction.projectLiterature.findMany({
-        where: { itemId: { in: duplicateIds }, project: await availableProjectWhere(transaction) },
-        select: { projectId: true, itemId: true, source: true }
-      }),
-      transaction.tagAssignment.findMany({
-        where: { resourceType: 'literature.item', resourceId: { in: duplicateIds } },
-        select: { tagId: true, resourceId: true }
-      })
-    ])
-    for (const membership of memberships) {
-      await transaction.literatureCollectionItem.upsert({
-        where: {
-          collectionId_itemId: {
-            collectionId: membership.collectionId,
-            itemId: command.survivorId
-          }
-        },
-        create: {
-          collectionId: membership.collectionId,
-          itemId: command.survivorId,
-          sortOrder: membership.sortOrder
-        },
-        update: {}
-      })
-    }
-    for (const project of projects) {
-      await transaction.projectLiterature.upsert({
-        where: {
-          projectId_itemId: { projectId: project.projectId, itemId: command.survivorId }
-        },
-        create: {
-          projectId: project.projectId,
-          itemId: command.survivorId,
-          source: project.source
-        },
-        update: {}
-      })
-    }
-    for (const assignment of assignments) {
-      await transaction.tagAssignment.upsert({
-        where: {
-          tagId_resourceType_resourceId: {
-            tagId: assignment.tagId,
-            resourceType: 'literature.item',
-            resourceId: command.survivorId
-          }
-        },
-        create: {
-          tagId: assignment.tagId,
-          resourceType: 'literature.item',
-          resourceId: command.survivorId
-        },
-        update: {}
-      })
-    }
-    await Promise.all([
-      transaction.literatureCollectionItem.deleteMany({
-        where: { itemId: { in: duplicateIds } }
-      }),
-      transaction.projectLiterature.deleteMany({ where: { itemId: { in: duplicateIds } } }),
-      transaction.tagAssignment.deleteMany({
-        where: { resourceType: 'literature.item', resourceId: { in: duplicateIds } }
-      }),
-      transaction.literatureAttachment.updateMany({
-        where: { itemId: { in: duplicateIds } },
-        data: { itemId: command.survivorId }
-      }),
-
-      transaction.literatureInboxCandidate.updateMany({
-        where: { acceptedItemId: { in: duplicateIds } },
-        data: { acceptedItemId: command.survivorId }
-      })
-    ])
-    await transferSourceRecords(transaction, { itemId: { in: duplicateIds } }, command.survivorId)
-    await transaction.literatureItem.updateMany({
-      where: {
-        OR: [{ id: { in: duplicateIds } }, { mergedIntoItemId: { in: duplicateIds } }]
+          throw new Error('Inbox PDF content or ownership changed.')
+        await transaction.literatureInboxPdf.upsert({
+          where: { candidateId_checksum: { candidateId, checksum: pdf.checksum } },
+          create: {
+            candidateId,
+            contentBlobId: blob.id,
+            filename: pdf.filename,
+            sizeBytes: blob.sizeBytes,
+            checksum: blob.checksum,
+            pageCount: pdf.pageCount,
+            sourceUrl: pdf.sourceUrl,
+            provenanceJson
+          },
+          update: {}
+        })
       },
-      data: { deletedAt: new Date(), mergedIntoItemId: command.survivorId }
-    })
-    return {
-      receipt: { kind: 'item', id: command.survivorId, state: 'merged' },
-      tagsChanged: assignments.length > 0
+      attachProjectIfPresent: (projectId, itemId, source) =>
+        attachProjectIfPresent(transaction, projectId, itemId, source),
+      transferCandidateSources: (candidateId, itemId) =>
+        transferSourceRecords(transaction, { inboxCandidateId: candidateId }, itemId),
+      acceptCandidate: async (id, itemId) => {
+        await transaction.literatureInboxCandidate.update({
+          where: { id },
+          data: { state: 'accepted', acceptedItemId: itemId, settledAt: new Date() }
+        })
+      },
+      transferCandidatePdfs: async (candidateId, itemId) => {
+        const pdfs = await transaction.literatureInboxPdf.findMany({ where: { candidateId } })
+        for (const pdf of pdfs) {
+          const existing = await transaction.literatureAttachmentVersion.findFirst({
+            where: { checksum: pdf.checksum, attachment: { itemId } }
+          })
+          if (existing) await registerAttachmentNotes(transaction, existing.id)
+          else {
+            const attachment = await transaction.literatureAttachment.create({
+              data: {
+                itemId,
+                kind: 'fullText',
+                title: pdf.filename,
+                sortOrder: await transaction.literatureAttachment.count({ where: { itemId } }),
+                versions: {
+                  create: {
+                    contentBlobId: pdf.contentBlobId,
+                    filename: pdf.filename,
+                    sizeBytes: pdf.sizeBytes,
+                    checksum: pdf.checksum,
+                    pageCount: pdf.pageCount,
+                    contentType: 'application/pdf',
+                    provenanceJson: pdf.provenanceJson,
+                    versionNumber: 1
+                  }
+                }
+              },
+              include: { versions: true }
+            })
+            await registerAttachmentNotes(transaction, attachment.versions[0].id)
+          }
+        }
+        await transaction.literatureInboxPdf.deleteMany({ where: { candidateId } })
+      },
+      changeCandidates: async (ids, from, to) =>
+        (
+          await transaction.literatureInboxCandidate.updateMany({
+            where: { id: { in: [...ids] }, state: from },
+            data: { state: to, settledAt: to === 'pending' ? null : new Date() }
+          })
+        ).count,
+      activeItemCount: (ids) =>
+        transaction.literatureItem.count({
+          where: { id: { in: [...ids] }, deletedAt: null, mergedIntoItemId: null }
+        }),
+      projectAvailable: async (id) =>
+        Boolean(
+          await transaction.project.findFirst({
+            where: { AND: [{ id }, await availableProjectWhere(transaction)] },
+            select: { id: true }
+          })
+        ),
+      linkProject: async (projectId, itemId, source) => {
+        await transaction.projectLiterature.upsert({
+          where: { projectId_itemId: { projectId, itemId } },
+          create: { projectId, itemId, source },
+          update: { source }
+        })
+      },
+      unlinkProject: async (projectId, ids) => {
+        await transaction.projectLiterature.deleteMany({
+          where: { projectId, itemId: { in: [...ids] } }
+        })
+      },
+      setLifecycle: async (ids, state) =>
+        (
+          await transaction.literatureItem.updateMany({
+            where: { id: { in: [...ids] }, mergedIntoItemId: null },
+            data: { deletedAt: state === 'deleted' ? new Date() : null }
+          })
+        ).count,
+      invalidateAssessments: async (ids) => {
+        await transaction.literatureSmartAssessment.updateMany({
+          where: { itemId: { in: [...ids] } },
+          data: { policyKey: 'obsolete:lifecycle-change' }
+        })
+      },
+      mergeViews: async (ids) =>
+        (
+          await transaction.literatureItem.findMany({
+            where: { id: { in: [...ids] }, deletedAt: null, mergedIntoItemId: null },
+            include: await activeItemInclude(transaction)
+          })
+        ).map(toItemView),
+      mergeOverrides: (ids) =>
+        transaction.literatureSmartOverride.findMany({ where: { itemId: { in: [...ids] } } }),
+      prepareMerge: async (survivorId, duplicateIds, decisions) => {
+        for (const [collectionId, decision] of decisions)
+          await transaction.literatureSmartOverride.upsert({
+            where: { collectionId_itemId: { collectionId, itemId: survivorId } },
+            create: { collectionId, itemId: survivorId, decision },
+            update: { decision }
+          })
+        await transaction.literatureSmartAssessment.deleteMany({
+          where: { itemId: { in: [survivorId, ...duplicateIds] } }
+        })
+        await transaction.$executeRaw(
+          Prisma.sql`DELETE FROM "JournalItemBinding" WHERE "itemId" IN (${Prisma.join([...duplicateIds])})`
+        )
+        await transaction.literatureIdentifier.deleteMany({
+          where: { itemId: { in: [...duplicateIds] } }
+        })
+      },
+      moveMergedRelations: async (survivorId, duplicates) => {
+        const duplicateIds = [...duplicates]
+        const [memberships, projects, assignments] = await Promise.all([
+          transaction.literatureCollectionItem.findMany({
+            where: { itemId: { in: duplicateIds } },
+            select: { collectionId: true, itemId: true, sortOrder: true }
+          }),
+          transaction.projectLiterature.findMany({
+            where: {
+              itemId: { in: duplicateIds },
+              project: await availableProjectWhere(transaction)
+            },
+            select: { projectId: true, itemId: true, source: true }
+          }),
+          transaction.tagAssignment.findMany({
+            where: { resourceType: 'literature.item', resourceId: { in: duplicateIds } },
+            select: { tagId: true, resourceId: true }
+          })
+        ])
+        for (const membership of memberships) {
+          await transaction.literatureCollectionItem.upsert({
+            where: {
+              collectionId_itemId: {
+                collectionId: membership.collectionId,
+                itemId: survivorId
+              }
+            },
+            create: {
+              collectionId: membership.collectionId,
+              itemId: survivorId,
+              sortOrder: membership.sortOrder
+            },
+            update: {}
+          })
+        }
+        for (const project of projects) {
+          await transaction.projectLiterature.upsert({
+            where: {
+              projectId_itemId: { projectId: project.projectId, itemId: survivorId }
+            },
+            create: {
+              projectId: project.projectId,
+              itemId: survivorId,
+              source: project.source
+            },
+            update: {}
+          })
+        }
+        for (const assignment of assignments) {
+          await transaction.tagAssignment.upsert({
+            where: {
+              tagId_resourceType_resourceId: {
+                tagId: assignment.tagId,
+                resourceType: 'literature.item',
+                resourceId: survivorId
+              }
+            },
+            create: {
+              tagId: assignment.tagId,
+              resourceType: 'literature.item',
+              resourceId: survivorId
+            },
+            update: {}
+          })
+        }
+        await Promise.all([
+          transaction.literatureCollectionItem.deleteMany({
+            where: { itemId: { in: duplicateIds } }
+          }),
+          transaction.projectLiterature.deleteMany({ where: { itemId: { in: duplicateIds } } }),
+          transaction.tagAssignment.deleteMany({
+            where: { resourceType: 'literature.item', resourceId: { in: duplicateIds } }
+          }),
+          transaction.literatureAttachment.updateMany({
+            where: { itemId: { in: duplicateIds } },
+            data: { itemId: survivorId }
+          }),
+
+          transaction.literatureInboxCandidate.updateMany({
+            where: { acceptedItemId: { in: duplicateIds } },
+            data: { acceptedItemId: survivorId }
+          })
+        ])
+        await transferSourceRecords(transaction, { itemId: { in: duplicateIds } }, survivorId)
+        await transaction.literatureItem.updateMany({
+          where: {
+            OR: [{ id: { in: duplicateIds } }, { mergedIntoItemId: { in: duplicateIds } }]
+          },
+          data: { deletedAt: new Date(), mergedIntoItemId: survivorId }
+        })
+
+        return assignments.length > 0
+      }
     }
+    return new LibraryTransaction(store)
   }
 
   private async attachSource(
@@ -3293,9 +2578,9 @@ class LiteratureCatalog {
   }
 }
 
-export { LiteratureCatalog, candidateDedupeKey, normalizeIdentifier }
+export { LiteratureCatalog }
 export type {
   ApplyLiteratureMetadataInput,
-  AttachedLiteratureContent,
-  AttachLiteratureContentInput
+  AttachLiteratureContentInput,
+  AttachedLiteratureContent
 }

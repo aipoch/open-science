@@ -2,19 +2,19 @@ import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { useNavigationStore, type PdfReadingDocument } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import type {
   LiteratureCatalogSearchRequest,
   LiteratureItemView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { resolvePdfContextTarget } from '../../workspace/use-pdf-context-action'
 import { readLiteratureSelectionPage } from '../literature-read-pages'
 type PendingLiteratureReading = readonly PdfReadingDocument[]
 const isItem = (entry: unknown): entry is LiteratureItemView =>
   typeof entry === 'object' && entry !== null && 'item' in entry && 'metadataRevision' in entry
 
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type { LiteratureSelectionStore } from '../list/literature-selection'
 
 /** Own reading selection, project admission and cancellation of stale selection reads. */

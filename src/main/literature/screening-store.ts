@@ -1,6 +1,6 @@
+import { LITERATURE_COLLECTION_NAME_CONFLICT } from '@aipoch/literature-library/contracts'
+import type { ScreeningDatabase, ScreeningStore, SmartScope } from '@aipoch/literature-screening'
 import { Prisma, type PrismaClient } from '@prisma/client'
-import type { ScreeningStore, ScreeningDatabase, SmartScope } from '@aipoch/literature-screening'
-import { LITERATURE_COLLECTION_NAME_CONFLICT } from '../../shared/literature'
 import { saveSmartRuleVersion } from './smart-rule-history'
 import { readSmartRunProgress } from './smart-run-progress'
 

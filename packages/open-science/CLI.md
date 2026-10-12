@@ -12,7 +12,7 @@ Node >=22.13.0. It includes the backend, Web UI, resources and native dependenci
 a graphical display are not required.
 
 ```bash
-npm install --global ./aipoch-open-science-0.35.1.tgz
+npm install --global ./aipoch-open-science-VERSION.tgz # Replace VERSION with the downloaded version.
 open-science start --no-open
 open-science url
 ```
@@ -83,8 +83,8 @@ open-science init --config-root /absolute/path/to/profile --json
 
 `init` prepares the profile directory; the first `start` creates the authenticated service state and
 token. It does not migrate or modify an existing profile beyond creating the directory when needed.
-Use `--profile` as a portable alias for `--config-root`; the alias is reserved for future standalone
-CLI distributions and currently follows the same development-profile restrictions.
+Use `--profile` as an alias for `--config-root`. Both accept an absolute configuration directory,
+including in packaged distributions.
 
 Start the service without opening a browser, check its status, or stop it:
 
@@ -103,7 +103,7 @@ open-science url
 `open-science url` is the only command that intentionally prints an authenticated browser URL. Normal
 human-readable, JSON, and JSONL output never includes the local token.
 
-Use `--port <port>` to override the default port of `44100`. `start` discovers the standalone
+Use `--port <port>` to override `OPEN_SCIENCE_WEB_PORT`, or the default port of `44100` when neither is set. `start` discovers the standalone
 Node entry bundled beside the CLI, or `out/backend/index.cjs` in a source checkout. Build the
 source entry with `npm run build:backend` and Web UI with `npm run build:web` first.
 `--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
@@ -164,7 +164,7 @@ nonzero CLI error codes.
 ## First-run setup (Codex)
 
 Install the standalone artifact or a desktop package containing the ordinary Node backend first.
-`init` creates a configuration directory only; packaged builds do not accept `--profile` overrides.
+`init` creates a configuration directory only; `--profile` selects an absolute configuration directory.
 
 ```bash
 open-science start --no-open
@@ -253,7 +253,8 @@ open-science update
 open-science update --json
 ```
 
-The Node runtime reports that updates must use the package manager. Install a replacement standalone
+Against the Node runtime, `update` fails with a desktop-capability error and exits `1`; the
+status owner explains that backend updates use the package manager. Install a replacement standalone
 tarball with npm after deliberately stopping the backend. Use the desktop's native update UI for a
 desktop installation; it stops an owned Node service through the existing handoff gate. If desktop
 is borrowing a CLI-started service, stop that service explicitly before applying a desktop update.
@@ -316,22 +317,11 @@ without the bootstrap endpoint also permits this configured native-login path; i
 provider readiness. An empty profile instead receives `bootstrap_unavailable` with an instruction to
 update and restart the application. HTTP authorization failures do not trigger this fallback.
 
-### Linux AppImage sandbox fallback
+### AppImage and Node startup
 
-`open-science start` and `open-science update` keep Chromium sandboxing enabled by default. On some
-Linux hosts, an AppImage mounted with `nosuid` cannot use Chromium's SUID sandbox helper; Ubuntu may
-also restrict unprivileged user namespaces. In that case the command fails promptly with guidance
-instead of waiting for the service timeout.
-
-If the host cannot support sandboxed startup, an explicit rootless fallback is available:
-
-```bash
-open-science start --no-sandbox --no-open
-open-science update --no-sandbox
-```
-
-`--no-sandbox` disables Chromium's process sandbox and reduces security. Use it only when necessary;
-the Debian package or a host configuration that supports Chromium sandboxing is preferred.
+The desktop launcher starts ordinary Node. Chromium's `--no-sandbox` option is rejected by
+`open-science start`; it is not a fallback for starting or updating this backend. Desktop
+Chromium launch troubleshooting is separate from CLI service startup.
 
 ## Projects
 
@@ -471,7 +461,8 @@ open-science run \
   --json
 ```
 
-The default approval profile is `ask`. For unattended execution, explicitly add
+For a new Session, an explicit approval profile overrides Project Session defaults, then the saved global
+default; only when all are absent does it fall back to `ask`. Resumed Sessions retain their saved profile unless explicitly changed. For unattended execution, explicitly add
 `--permission-prompts none`. This keeps the selected approval profile and existing grants;
 it denies any remaining request that would require a person. `auto` can still require approval,
 and `full` does not answer questions or approve Plans on the user's behalf.
@@ -517,8 +508,9 @@ open-science run \
 - `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
   successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
   `review` property reports whether it started and its final lifecycle/outcome.
-- `--memory` and `--no-memory` update the Session Memory setting. When enabled, the Session uses the
-  agent's persistent project-scoped memory; the two flags are mutually exclusive.
+- `--memory` and `--no-memory` set Memory for a new Session; the two flags are mutually exclusive.
+  With `--session`, provider/model/reasoning, Memory and enabled Compute Host changes are rejected.
+  Use `session config update` on the idle Session before resuming it.
 - `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
   existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
@@ -584,7 +576,9 @@ availability only, never provider credentials.
 A framework change applies to new Sessions and future Reviewer work. Existing idle Sessions migrate
 lazily on their next turn, replaying their visible transcript when a fresh provider Session is
 needed. In-flight Main, Reviewer, and Subagent work remains pinned to the runtime generation and
-model snapshot admitted at its start. Reviewer and Subagent route changes affect only future work.
+model snapshot admitted at its start. In Reviewer inherit mode, admission freezes the model name;
+the provider is resolved when the Reviewer session is created. Fixed Reviewer routing freezes its
+explicit provider/framework target. Reviewer and Subagent route changes affect future work.
 
 ### Session persistence and compatibility
 
@@ -643,15 +637,18 @@ open-science run \
 
 Exit codes form part of the automation contract:
 
-| Exit code | Meaning                                                                   |
-| --------- | ------------------------------------------------------------------------- |
-| `0`       | The command succeeded, including a completed waited run.                  |
-| `1`       | A run failed or a general command failure occurred.                       |
-| `2`       | CLI usage was invalid.                                                    |
-| `3`       | The local daemon was unavailable.                                         |
-| `4`       | A requested project, run, session, artifact, or Specialist was not found. |
-| `5`       | Active research safely blocked an application update.                     |
-| `6`       | The application update requires a manual installation step.               |
+| Exit code | Meaning                                                                       |
+| --------- | ----------------------------------------------------------------------------- |
+| `0`       | The command succeeded, including a completed waited run.                      |
+| `1`       | A run failed, status found no service, or a general command failure occurred. |
+| `2`       | CLI usage was invalid.                                                        |
+| `3`       | The local daemon was unavailable.                                             |
+| `4`       | A requested project, run, session, artifact, or Specialist was not found.     |
+| `5`       | Active research safely blocked an application update.                         |
+| `6`       | The application update requires a manual installation step.                   |
+
+Codex login can propagate the native login process exit code (a signal without a code becomes `1`).
+A successfully cancelled Run is not itself a CLI failure; inspect its `cancelled` status.
 
 Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
 `session_busy` error codes in structured output.
@@ -669,8 +666,10 @@ Artifact output paths are resolved relative to the current working directory.
 
 ## Current scope
 
-The initial CLI does not expose file or directory attachments, per-run model selection, or per-run
-agent-backend selection. These require stable public runtime contracts before they can be added.
+The CLI does not expose file/directory attachments or per-run Agent framework selection.
+New Sessions accept provider/model selection; resumed Sessions use `session config update`.
+The help listing still includes `cli install`, but the Node host cannot perform this desktop-only
+operation. Use Settings in the desktop application to install a desktop launcher.
 
 ## Connector management
 
@@ -711,7 +710,7 @@ Changes reuse existing agent refresh behavior. Start a new session if its tool l
 these commands do not force-reset active conversations.
 
 `test` opens a separate MCP connection, discovers tools, and closes it. It does not enable a disabled
-Connector or execute business tools. Its result is `{ success, toolCount?, message }`; failure exits
+Connector or execute business tools. Its result is `{ success, toolCount?, message, stage?, code? }`; failure exits
 nonzero. Discovery is bounded to ten seconds. Bundled Connector live diagnostics are unsupported.
 OAuth refresh may update existing encrypted token state; testing does not perform first-time browser login.
 

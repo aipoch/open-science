@@ -3,8 +3,8 @@ import {
   type Annotation,
   type ManagedProjectFileAnnotationIdentity
 } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import { replayAnnotationTarget } from '../../../../../shared/replay-reference'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'

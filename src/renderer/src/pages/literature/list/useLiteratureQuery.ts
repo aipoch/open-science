@@ -1,15 +1,15 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
-  LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
   LiteratureCollectionView,
   LiteratureInboxCandidateView,
   LiteratureItemView,
   LiteratureProjectCountView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { type LibrarySection } from './LiteratureLibrarySidebar'
 import { useLiteratureEntries } from './useLiteratureEntries'
 import { useLiteratureTable } from './useLiteratureTable'
@@ -44,7 +44,7 @@ const isCollection = (entry: unknown): entry is LiteratureCollectionView =>
 const isProjectCount = (entry: unknown): entry is LiteratureProjectCountView =>
   typeof entry === 'object' && entry !== null && 'projectId' in entry && 'itemCount' in entry
 
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 
 /** Own catalog snapshots, query generations and paging while keeping the shared entries cache authoritative. */
 export function useLiteratureQuery({

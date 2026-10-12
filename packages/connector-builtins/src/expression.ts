@@ -631,24 +631,24 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     connector: 'expression',
     credentialKeys: [],
     description:
-      'List species available in the Bgee healthy wild-type expression atlas, or retrieve one species by its NCBI taxonomy id.',
+      'List species available in the Bgee healthy wild-type expression atlas, or retrieve one species by its NCBI taxonomy id. Single-species queries load data-source metadata to determine expression-data availability. List queries return null for availability because their metadata does not load data sources.',
     input: {
       type: 'object',
       properties: { species_id: { type: 'integer', minimum: 1, maximum: 2147483647 } }
     },
     returns:
-      '`{ "species": [ { "taxon_id": int, "name": str, "scientific_name": str, "genome_version": str, "has_expression_data": bool } ] }` — Bgee species metadata from the official JSON API.',
+      '`{ "species": [ { "taxon_id": int, "name": str, "scientific_name": str, "genome_version": str, "has_expression_data": bool|null } ] }` — taxon_id identifies the species, not the species supplying its reference genome. has_expression_data is null when data-source metadata was not loaded or is unavailable.',
     exampleArgs: {},
     url: (a) => {
       const params = new URLSearchParams({
         page: 'species',
-        action: 'name',
         display_type: 'json'
       })
       if (a.species_id != null) params.set('species_id', String(a.species_id))
+      else params.set('action', 'name')
       return `${BGEE_API}?${params.toString()}`
     },
-    parse: (raw) => {
+    parse: (raw, args) => {
       const root = raw as { data?: Record<string, unknown> }
       const data = root.data ?? {}
       const rawSpecies = data.species
@@ -657,13 +657,18 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
           const s = item as Record<string, unknown>
           const dataTypes = s.dataSourcesForDataByDataTypes
           return {
-            taxon_id: s.genomeSpeciesId ?? s.id,
+            taxon_id: s.id,
             name: s.name ?? s.speciesName,
             scientific_name: `${s.genus ?? ''} ${s.speciesName ?? ''}`.trim(),
             genome_version: s.genomeVersion,
-            has_expression_data: Boolean(
-              dataTypes && typeof dataTypes === 'object' && Object.keys(dataTypes).length
-            )
+            // Name-only listings leave this map empty even for species with expression data.
+            has_expression_data:
+              args.species_id != null &&
+              dataTypes != null &&
+              typeof dataTypes === 'object' &&
+              !Array.isArray(dataTypes)
+                ? Object.keys(dataTypes).length > 0
+                : null
           }
         }
       )

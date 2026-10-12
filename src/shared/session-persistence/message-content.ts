@@ -1,30 +1,30 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import {
-  type PersistedArtifactKind,
-  type PersistedArtifact,
-  type MessagePart,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  sanitizeAcpMessageImage
+} from '../acp'
+import {
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../conversation-graph'
+import type { PersistedUploadedAttachment } from '../uploads'
+import {
   MAX_LITERATURE_SCOPE_ID_LENGTH,
   MAX_LITERATURE_SCOPE_NAME_LENGTH,
-  type SessionReference,
   MAX_SESSION_REFERENCES_PER_MESSAGE,
   MAX_SESSION_REFERENCE_ID_LENGTH,
   MAX_SESSION_REFERENCE_TITLE_LENGTH,
+  type MessagePart,
+  type PersistedArtifact,
+  type PersistedArtifactKind,
+  type PersistedChatMessage,
   type PersistedMessageImage,
-  type PersistedChatMessage
+  type SessionReference
 } from './message'
-import { asString, isRecord, asNumber } from './primitives'
-import type { PersistedUploadedAttachment } from '../uploads'
-import { literatureItemInputSchema } from '../literature'
-import {
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  sanitizeAcpMessageImage,
-  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_SESSION_IMAGE_BYTES
-} from '../acp'
+import { asNumber, asString, isRecord } from './primitives'
 import type { MaterializedPersistedChatSession, PersistedChatSession } from './session'
-import {
-  resolveActiveConversationMessages,
-  projectConversationMessage
-} from '../conversation-graph'
 
 const ARTIFACT_KINDS = new Set<PersistedArtifactKind>([
   'workspace-file',

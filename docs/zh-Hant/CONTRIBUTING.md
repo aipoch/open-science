@@ -72,12 +72,13 @@ Git worktree 只能建立在程式碼庫的 `.worktree/<name>` 目錄下，每�
 
 ## 專案結構
 
-這是以 electron-vite、React 與 TypeScript 建構的 Electron 應用程式。三個執行環境行程層和一個共用模組位於 `src/` 下：
+Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
-- `src/main/` — Electron 主行程（ACP 執行環境、會話持久化、產物、Notebook、專案、IPC 處理常式）。
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — preload 橋接，向 renderer 公開具型別的 `window.api`。
 - `src/renderer/` — React UI（頁面、store、元件）。
 - `src/shared/` — 跨行程共用的型別與輔助工具。
+- `packages/` — 收納獨立領域套件及原生輔助程式。隔離驗證會把宣告的 tarball 安裝到乾淨的使用端環境；預設連線安裝，`--offline` 需要完整快取。穩定版本提供五種獨立 CLI 壓縮檔；自動發布 npm 仍暫緩。
 
 ## 開發工作流程
 
@@ -249,8 +250,6 @@ ci(review): unify automated AI reviews
 - 保持拉取請求大小合理、範圍集中，方便審查。
 - 確保最終測試影響集通過；需要完整備援時，確保完整備援通過。
 - 對適用的變更，確認已完成[模組影響註冊清單](#模組影響註冊)，並回報新檔案加入 Git 追蹤後執行的註冊檢查。
-- 拉取請求檢查通過後，只能使用 **squash merge** 直接合併。不要只因 `main` 推進而更新分支；僅在發生合併衝突或維護者要求時更新。squash 提交主旨必須保留拉取請求標題的 Conventional Commit 格式。
-- 合併至 `main` 的非文件變更會觸發 [Nightly 工作流程](../../.github/workflows/nightly.yml)，在產生的提交上執行合併後驗證與跨平台套件認證。
 
 ## 回報問題
 
@@ -264,3 +263,23 @@ ci(review): unify automated AI reviews
 ## 授權條款
 
 參與貢獻即表示你同意，你的貢獻會依與本專案相同的 [Apache License 2.0](../../LICENSE) 授權。
+
+## 目前開發與 CI 基準
+
+完整規則以[英文貢獻指南](../../CONTRIBUTING.md)為準；以下同步目前工作流程。
+
+- `npm run dev` 建置 Node 後端、準備執行檔並開啟 Electron。監看器會自動重建套件與後端；建置成功後，正常結束應用程式並重新執行命令，才會載入 backend/Main/Preload 變更。轉譯器使用 HMR。
+
+- `src/` 與 `packages/` 中每個新增檔案（含資源與測試資料）都必須在 `scripts/ci/module-impact/<module-id>.json` 中有且僅有一個擁有者。保留擁有者、契約、使用端測試與動態相依證據。執行 `git add` 後，執行英文指南列出的註冊檢查及 `node scripts/ci/audit-module-ownership.mjs`。
+
+- 必要檢查與審查通過後，在原生合併佇列啟用時加入佇列；佇列先驗證整合後的版本，再進行 squash merge。保留 Conventional Commit 標題，不略過失敗的必要檢查。
+
+- Nightly 每天於 15:17 UTC 排程執行，也能手動啟動，不會在每次合併後觸發。Source Regression 每天兩次補充完整 Mac、委派與套件驗證；PR 和佇列各自執行選定的檢查群組。
+
+- `npm test` 持續執行完整測試。`npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` 說明 PR 選測，`--tier queue` 說明佇列選測。證據不完整時保留較廣的測試範圍。受保護的 CI 政策需要程式碼擁有者審查；註冊資料不得縮減既有覆蓋範圍。
+
+- `packages/` 收納獨立領域套件及原生輔助程式。隔離驗證會把宣告的 tarball 安裝到乾淨的使用端環境；預設連線安裝，`--offline` 需要完整快取。穩定版本提供五種獨立 CLI 壓縮檔；自動發布 npm 仍暫緩。
+
+- 必須提供全部八種翻譯：de、es、fr、zh-Hans、zh-Hant、ja、ko、ru。術語與 context 規則見 [AGENTS.md](../../AGENTS.md) 及[詞彙表](../i18n-glossary.md)。
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
+import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { JournalAlignment } from './JournalAlignment'
 import { JournalAttributes } from '../JournalAttributes'
-import { literatureItemInputSchema } from '../../../../../shared/literature'
-import type { JournalResult, JournalRequest } from '@aipoch/journal-catalog/contracts'
+import { JournalAlignment } from './JournalAlignment'
 
 afterEach(cleanup)
 const report: NonNullable<JournalResult['alignment']> = {

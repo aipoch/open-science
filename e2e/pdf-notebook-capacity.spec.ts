@@ -1,10 +1,10 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import { PDFDocument } from 'pdf-lib'
-import { dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { test } from './fixtures/electron-app'
+import { dirname, join } from 'node:path'
+import { PDFDocument } from 'pdf-lib'
 import { createProjectDbClient } from '../src/main/projects/prisma-client'
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { test } from './fixtures/electron-app'
 
 // Opt in: production Electron reader + SQLite + IPC. Seed costs are excluded from UI timings.
 test('measures large notebooks in the full reader and sidebar', async ({ app }, testInfo) => {

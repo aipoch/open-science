@@ -1,6 +1,7 @@
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import { DispatchTracker } from './dispatch-tracker'
+import { DISPATCH_DEFINITELY_NOT_STARTED, dispatchMayHaveStarted } from './compute-job-lifecycle'
 import { probeRemoteLaunch } from './remote-launch-recovery'
 
 import { projectJobStatus } from './compute-job-status'
@@ -190,6 +191,12 @@ class ComputeJobCancellationReaper {
         await this.scheduleRetry(claim, 'dispatch-in-flight')
         return
       }
+      if (!handle && job.last_poll_error === DISPATCH_DEFINITELY_NOT_STARTED) {
+        // The dispatcher proved launch never occurred. Directory absence is a separate fact;
+        // leave remote cleanup to its owner and settle only through the current claim CAS.
+        await this.confirm(claim)
+        return
+      }
       const connection = await this.connectionBroker.acquire(job.provider_id, {
         intent: 'job_cleanup'
       })
@@ -199,6 +206,12 @@ class ComputeJobCancellationReaper {
       }
       if (!handle && job.execution_mode !== 'slurm' && job.remote_workdir) {
         const observation = await probeRemoteLaunch(connection, job.remote_workdir)
+        if (observation.kind === 'not_started' && dispatchMayHaveStarted(job)) {
+          // A missing directory after a possible launch is not evidence that the process stopped.
+          // Keep the cancellation claim retryable; do not mark results harvested or cleaned.
+          await this.scheduleRetry(claim, 'handle-unavailable')
+          return
+        }
         if (observation.kind === 'running') {
           handle = observation.handle
           await this.jobs.recordCancellationHandle(job.job_id, JSON.stringify(handle))

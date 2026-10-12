@@ -120,6 +120,41 @@ describe('module test impact commands', () => {
     }
   })
 
+  it.each(['package.json', 'src/shared/unregistered.ts'])(
+    'blocks unexpected full execution for %s in an explicitly selective job',
+    async (source) => {
+      const spawn = vi.fn(() => ({ status: 0 }))
+      const options = {
+        execute: (command: string, args: string[]) => {
+          if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+          if (command === 'git' && args[0] === 'diff') return Buffer.from(`M\0${source}\0`)
+          throw new Error('CodeGraph unavailable in CI')
+        },
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+      }
+      const args = ['affected', '--base', 'base', '--head', 'head']
+      await expect(runModuleTestCli([...args, '--require-selective'], options)).rejects.toThrow(
+        'Selective test plan required; refusing full execution.'
+      )
+      expect(spawn).not.toHaveBeenCalled()
+      // Local and explicit full callers retain the existing fallback.
+      expect(await runModuleTestCli(args, options)).toBe(0)
+      expect(spawn).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each([1, null])('preserves failed or interrupted selective test status %s', (status) => {
+    const spawn = vi.fn(() => ({ status }))
+    expect(
+      executeModuleTestPlan(createModuleTestPlan('artifact_storage'), {
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+      })
+    ).toBe(1)
+    expect(spawn).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['--shard=2/3', '--reporter=blob', '--outputFile=vitest-reports/blob-2.json'],
     ['--merge-reports=vitest-reports', '--passWithNoTests']
@@ -143,6 +178,7 @@ describe('module test impact commands', () => {
             'head',
             '--coverage-changed',
             'base',
+            '--require-selective',
             '--',
             ...vitestArguments
           ],

@@ -1,8 +1,6 @@
-import {
-  createLiteratureAttachmentVersionReference,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
 import type { PdfReadingDocument } from '@/stores/navigation-store'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../../workspace/preview-file-item'
 
 export const literatureReadingDocument = (

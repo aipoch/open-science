@@ -1,12 +1,12 @@
+import { type JournalImportRow, type JournalRequest } from '@aipoch/journal-catalog/contracts'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { Prisma, PrismaClient } from '@prisma/client'
-import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { JournalAttributes } from './journal-attributes'
-import { type JournalImportRow, type JournalRequest } from '@aipoch/journal-catalog/contracts'
 
 // Entirely fictional fixtures, authored independently of user-supplied files and headings.
 const fields = [
@@ -156,7 +156,7 @@ it.each(['issn', 'other'] as const)(
   'clears confirmations on %s identity edits but preserves them for title and author edits',
   async (scheme) => {
     const { LiteratureCatalog } = await import('./catalog')
-    const { literatureItemInputSchema } = await import('../../shared/literature')
+    const { literatureItemInputSchema } = await import('@aipoch/literature-library/contracts')
     const { service, client } = await setup()
     const catalog = new LiteratureCatalog(async () => client)
     const draft = await preview(service)
