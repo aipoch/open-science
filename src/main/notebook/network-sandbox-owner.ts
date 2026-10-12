@@ -1074,8 +1074,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     return true
   }
 
-  async installWindows(): Promise<{ cancelled: boolean }> {
-    if (this.protectionChangeInProgress)
+  async installWindows(
+    options: { admissionAlreadyHeld?: boolean } = {}
+  ): Promise<{ cancelled: boolean }> {
+    if (this.protectionChangeInProgress && options.admissionAlreadyHeld !== true)
       throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (this.windowsSetupController)
       throw new Error('Notebook protection setup is already running.')

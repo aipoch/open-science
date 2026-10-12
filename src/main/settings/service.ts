@@ -209,9 +209,11 @@ export type UninstallResult = {
   activeBackendAffected: boolean
 }
 
-export type NotebookNetworkRemovalOptions = Readonly<{
+export type NotebookNetworkProtectionOperationOptions = Readonly<{
   admissionAlreadyHeld?: boolean
 }>
+
+export type NotebookNetworkRemovalOptions = NotebookNetworkProtectionOperationOptions
 
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
@@ -271,7 +273,9 @@ export type SettingsServiceOptions = {
   applyPackageMirror?: (settings: PackageMirror) => Promise<void>
   beforePackageMirrorCaBundleChange?: () => Promise<void>
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
-  installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  installNotebookNetwork?: (
+    options?: NotebookNetworkProtectionOperationOptions
+  ) => Promise<{ cancelled: boolean }>
   cancelNotebookNetworkSetup?: () => boolean
   removeNotebookNetwork?: (
     options?: NotebookNetworkRemovalOptions
@@ -466,7 +470,9 @@ class SettingsService {
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
   private readonly packageMirror: PackageMirrorSettingsOwner
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
-  private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly installNotebookNetworkImpl: (
+    options?: NotebookNetworkProtectionOperationOptions
+  ) => Promise<{ cancelled: boolean }>
   private readonly cancelNotebookNetworkSetupImpl: () => boolean
   private readonly removeNotebookNetworkImpl: (
     options?: NotebookNetworkRemovalOptions
@@ -784,7 +790,7 @@ class SettingsService {
             })
           } catch (error) {
             try {
-              const restore = await this.installNotebookNetworkImpl()
+              const restore = await this.installNotebookNetworkImpl({ admissionAlreadyHeld: true })
               if (restore.cancelled)
                 throw new Error('Notebook protection restoration was cancelled.')
             } catch (restoreError) {

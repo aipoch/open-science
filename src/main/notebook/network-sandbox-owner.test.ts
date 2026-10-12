@@ -1131,6 +1131,10 @@ describe('NotebookNetworkSandboxOwner', () => {
     })
     const release = owner.beginProtectionChange()
     try {
+      await expect(owner.installWindows()).rejects.toThrow('mode is changing')
+      await expect(owner.installWindows({ admissionAlreadyHeld: true })).resolves.toEqual({
+        cancelled: false
+      })
       await expect(owner.removeWindows()).rejects.toThrow('mode is changing')
       await expect(owner.removeWindows({ admissionAlreadyHeld: true })).resolves.toEqual({
         cancelled: false

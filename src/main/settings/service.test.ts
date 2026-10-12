@@ -8997,7 +8997,7 @@ describe('Notebook protection Shell capability switch', () => {
     })
 
     await expect(service.removeNotebookNetwork()).rejects.toThrow('standard policy failed')
-    expect(install).toHaveBeenCalledOnce()
+    expect(install).toHaveBeenCalledWith({ admissionAlreadyHeld: true })
     await expect(repository.getSettings()).resolves.toMatchObject({
       notebookNetwork: { windowsProtectionEnabled: true }
     })
