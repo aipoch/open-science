@@ -1298,7 +1298,8 @@
       "src/shared/session-persistence/turn-outcome.test.ts",
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
-      "src/shared/uploads.test.ts"
+      "src/shared/uploads.test.ts",
+      "src/shared/artifact-version-locator.test.ts"
     ]
   },
   "capabilityOverlays": [],

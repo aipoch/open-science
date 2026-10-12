@@ -175,7 +175,7 @@ describe('PR Gate workflow', () => {
     const selected = shards.steps?.find(({ id }) => id === 'unit_macos_related_shard')
     expect(selected?.run).toContain('npm run test:affected')
     expect(selected?.run).toContain('--coverage-changed "$BASE_SHA" --')
-    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/4')
+    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/6')
     expect(selected?.run).toContain('--reporter=dot')
     expect(selected?.run).toContain('--reporter=blob')
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
@@ -1170,12 +1170,12 @@ describe('PR Gate workflow', () => {
         VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
         VITEST_PORTABLE_CI: '1'
       },
-      name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
+      name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/6)',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
       strategy: {
         'fail-fast': false,
-        matrix: { shard: [1, 2, 3, 4] }
+        matrix: { shard: [1, 2, 3, 4, 5, 6] }
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
@@ -1189,7 +1189,7 @@ describe('PR Gate workflow', () => {
         '--coverage',
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
-        '--shard=${{ matrix.shard }}/4',
+        '--shard=${{ matrix.shard }}/6',
         '--reporter=dot',
         '--reporter=blob',
         '--reporter=github-actions',

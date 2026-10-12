@@ -3,6 +3,7 @@
 Repository-local npm package for reference identity, import and Inbox decisions, collection and item lifecycle, metadata commit receipts, duplicate merges, and headless client state.
 
 - `@aipoch/literature-library`: `LibraryTransaction`, duplicate algorithms and batch merge orchestration.
+- `@aipoch/literature-library/item`: lightweight item snapshot validation without catalog, discovery, journal or screening workflows.
 - `@aipoch/literature-library/contracts`: validated inputs, outputs and public domain types.
 - `@aipoch/literature-library/client`: injected client workflows for paging, selection, metadata editing, creation recovery and exports. Safe to bundle for browsers; no React or transport dependency.
 

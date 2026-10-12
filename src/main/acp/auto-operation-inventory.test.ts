@@ -155,7 +155,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         'artifacts/mcp-server.ts':
           '6b43e2b69387c7310dee65d97674b94e608a349f987ef90d7dd5cee7ff675c7f',
         'literature/library-mcp-server.ts':
-          'dea4b19e7e952f971affe1ea57393c901e1c1a41d3fe962794b7bad436eccfbe',
+          '3ee3013dd0775d3b8b3c1190ab75d1fd18941d70f45dc5fea9a25d3e837ce738',
         'literature/mcp-server.ts':
           'd7baeae460b294940d198e2a16f701c399b7630da945f31226260f19decdae72',
         'notebook/mcp-server.ts':

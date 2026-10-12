@@ -33,7 +33,8 @@
     "src/main/skills/diagnostics.ts",
     "src/main/skills/helper-validation.ts",
     "src/main/skills/package-boundary.architecture.test.ts",
-    "src/main/skills/host-skills-service.test.ts"
+    "src/main/skills/host-skills-service.test.ts",
+    "scripts/check-skill-package-boundary.mjs"
   ],
   "interfacePaths": [
     "src/main/skills/user-skill-repository.ts",
@@ -51,7 +52,8 @@
     "src/main/skills/catalog.ts",
     "src/main/skills/diagnostics.ts",
     "src/main/skills/helper-validation.ts",
-    "src/main/skills/resource-path.ts"
+    "src/main/skills/resource-path.ts",
+    "scripts/check-skill-package-boundary.mjs"
   ],
   "consumerModules": ["settings_service_facade"],
   "testFiles": {

@@ -714,7 +714,7 @@ jobs:
           selection: ci
 
   unit_shard:
-    name: Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Portable tests (Ubuntu, shard ${{ matrix.shard }}/6)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
@@ -726,7 +726,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -758,7 +758,7 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/6
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
@@ -775,7 +775,7 @@ jobs:
           npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/6
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
