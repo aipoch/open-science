@@ -638,8 +638,8 @@ platform capabilities and downstream routing, and retains every reachable or unc
 the old execution plan. Explicit contracts, non-host evidence and explicit tests without a
 provable old source dependency follow the split as well. Moved owner tests keep their owner
 classification in the new module; tests still reaching the remaining owner, or with incomplete
-or unproven old source evidence, must also remain registered there. Shared/full owners, existing-module transfers and
-mixed source/policy edits do not qualify. An old consumer registration may follow a verified split
+or unproven old source evidence, must also remain registered there. Original owners containing shared/preload/package sources, full owners (before or after the split), existing-module transfers and
+mixed source/policy edits do not qualify. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.

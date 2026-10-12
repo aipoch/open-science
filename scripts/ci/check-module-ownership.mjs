@@ -304,6 +304,10 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   const baseManifest = baseFiles.some(isModuleImpactRegistrationPath)
     ? loadModuleImpactManifestAtRevision(mergeBase, { cwd })
     : headManifest
+  // Reject malformed registration before any exception helper inspects candidate fields.
+  validateModuleImpactManifest(baseManifest)
+  const existing = new Set(headFiles)
+  validateModuleImpactManifest(headManifest, { pathExists: (path) => existing.has(path) })
   const hostSplits = verifiedHostOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
   return checkModuleOwnership({
     baseManifest,

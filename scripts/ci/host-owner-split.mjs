@@ -14,38 +14,44 @@ export function verifiedHostOwnerSplits(
   { cwd = process.cwd() } = {}
 ) {
   const empty = () => ({ paths: new Set(), ownerTests: new Set(), consumers: new Set() })
-  const candidates = Object.entries(headManifest.modules).flatMap(([id, target]) => {
-    if (baseManifest.modules[id]) return []
-    const originals = Object.entries(baseManifest.modules).filter(
-      ([, original]) =>
-        target.ownerPaths.length &&
-        target.ownerPaths.every((path) => original.ownerPaths.includes(path))
-    )
-    if (originals.length !== 1) return []
-    const [originalId, original] = originals[0]
-    const remaining = headManifest.modules[originalId]
-    if (
-      !remaining ||
-      original.fullTestReason ||
-      target.fullTestReason ||
-      target.ownerPaths.some(
-        (path) => !/^src\/(?:main|renderer)\//.test(path) || remaining.ownerPaths.includes(path)
-      ) ||
-      !target.ownerPaths.every((path) => /\.[cm]?[jt]sx?$/.test(path)) ||
-      target.fallbackCapability !== original.fallbackCapability ||
-      !original.capabilityOverlays.every((overlay) =>
-        target.capabilityOverlays.includes(overlay)
-      ) ||
-      !original.consumerModules.every((consumer) => target.consumerModules.includes(consumer)) ||
-      !original.interfacePaths
-        .filter((path) => target.ownerPaths.includes(path))
-        .every((path) => target.interfacePaths.includes(path))
-    )
-      return []
-    return [{ id, target, originalId, original, remaining }]
-  })
-  if (!candidates.length) return empty()
   try {
+    const candidates = Object.entries(headManifest.modules).flatMap(([id, target]) => {
+      if (baseManifest.modules[id]) return []
+      const originals = Object.entries(baseManifest.modules).filter(
+        ([, original]) =>
+          target.ownerPaths.length &&
+          target.ownerPaths.every((path) => original.ownerPaths.includes(path))
+      )
+      if (originals.length !== 1) return []
+      const [originalId, original] = originals[0]
+      const remaining = headManifest.modules[originalId]
+      if (
+        !remaining ||
+        original.fullTestReason ||
+        remaining.fullTestReason ||
+        target.fullTestReason ||
+        // Host composition can own build scripts and test harnesses, but shared, preload
+        // and package source boundaries require their own reviewed policy.
+        [...original.ownerPaths, ...remaining.ownerPaths].some((path) =>
+          /^(?:src\/(?!main\/|renderer\/)|packages\/)/.test(path)
+        ) ||
+        target.ownerPaths.some(
+          (path) => !/^src\/(?:main|renderer)\//.test(path) || remaining.ownerPaths.includes(path)
+        ) ||
+        !target.ownerPaths.every((path) => /\.[cm]?[jt]sx?$/.test(path)) ||
+        target.fallbackCapability !== original.fallbackCapability ||
+        !original.capabilityOverlays.every((overlay) =>
+          target.capabilityOverlays.includes(overlay)
+        ) ||
+        !original.consumerModules.every((consumer) => target.consumerModules.includes(consumer)) ||
+        !original.interfacePaths
+          .filter((path) => target.ownerPaths.includes(path))
+          .every((path) => target.interfacePaths.includes(path))
+      )
+        return []
+      return [{ id, target, originalId, original, remaining }]
+    })
+    if (!candidates.length) return empty()
     const changed = execFileSync('git', ['diff', '--name-only', '-z', base, head], { cwd })
       .toString()
       .split('\0')

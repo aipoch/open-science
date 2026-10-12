@@ -302,3 +302,52 @@ it('keeps an unproven moved owner test registered on the remaining owner as well
   state.manifest.modules.host.testFiles.consumer.push(leafTest)
   expect(state.check(base).ok).toBe(true)
 })
+
+it.each(['src/shared/contract.ts', 'src/preload/bridge.ts', 'packages/example/src/index.ts'])(
+  'rejects original owners mixing host and protected source: %s',
+  (path) => {
+    const state = fixture()
+    state.put(path, 'export {}')
+    state.manifest.modules.host.ownerPaths.push(path)
+    state.save()
+    const base = state.commit()
+    state.split()
+    state.manifest.modules.host.ownerPaths.push(path)
+    expect(state.check(base).ok).toBe(false)
+  }
+)
+
+it('permits host build and test harness paths to remain on the original owner', () => {
+  const state = fixture()
+  const paths = ['scripts/build-host.mjs', 'test/runtime-host.ts', 'build/runtime.json']
+  for (const path of paths) state.put(path, path.endsWith('.json') ? '{}' : 'export {}')
+  state.manifest.modules.host.ownerPaths.push(...paths)
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.manifest.modules.host.ownerPaths.push(...paths)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it('rejects a split that adds a full marker to the remaining owner', () => {
+  const state = fixture()
+  state.split()
+  state.manifest.modules.host.fullTestReason = 'New full owner'
+  expect(state.check().ok).toBe(false)
+})
+
+it('validates malformed new modules before invoking ownership exception helpers', () => {
+  const state = fixture()
+  state.manifest.modules.foundation = {} as typeof state.manifest.modules.host
+  expect(() => state.check()).toThrow('foundation.ownerPaths must be an array of strings')
+})
+
+it('rejects a remaining owner that acquires shared source during the split', () => {
+  const state = fixture()
+  const shared = 'src/shared/existing.ts'
+  state.put(shared, 'export {}')
+  const base = state.commit()
+  state.split()
+  state.manifest.modules.host.ownerPaths.push(shared)
+  expect(state.check(base).ok).toBe(false)
+})
