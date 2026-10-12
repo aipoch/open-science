@@ -171,6 +171,10 @@ jobs:
           if git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" > "$trusted_dir/module-impact-inputs.mjs"
           fi
+          # The ownership helper is additive; older trusted bases keep their legacy module reader.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" > "$trusted_dir/module-ownership-paths.mjs"
+          fi
           # Older trusted bases predate the loader; retain their original classifier.
           if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$trusted_dir/package-test-impact.mjs"
