@@ -1,3 +1,4 @@
+import type { SpecialistsView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
@@ -68,7 +69,8 @@ import { specialistPackageReportFromPreview } from '@aipoch/specialists'
 import type { SpecialistDeletePreview, SpecialistDeleteResult } from '@aipoch/specialists'
 import { SpecialistEditor } from './SpecialistEditor'
 import { MarketplaceManagedSpecialistDetail } from './MarketplaceManagedSpecialistDetail'
-import { SpecialistMarketplace, type SpecialistMarketplaceView } from './SpecialistMarketplace'
+import type { SpecialistMarketplaceView } from '@/lib/settings-navigation'
+import { SpecialistMarketplace } from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAppearancePicker } from './SpecialistAppearancePicker'
 import { SpecialistAvatar } from './specialist-avatar'
@@ -87,14 +89,7 @@ import {
 } from './ResourceTagControls'
 
 // Sub-view for the Specialists panel (parallels SkillsView).
-export type SpecialistsView =
-  | { kind: 'list' }
-  | { kind: 'create'; draft?: CreateSpecialistInput }
-  | { kind: 'edit'; id: string }
-  | { kind: 'export'; id: string }
-  | { kind: 'import' }
-  | { kind: 'builtin'; id: string }
-  | SpecialistMarketplaceView
+export type { SpecialistsView } from '../../lib/settings-navigation'
 
 type CategoryFilter = 'all' | 'custom' | 'marketplace' | 'builtin'
 

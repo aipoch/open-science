@@ -7,11 +7,8 @@ import type { Annotation } from '../../../../shared/annotations'
 import type { SessionPdfContextSource } from '../../../../shared/session-persistence'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
-import {
-  stageComposerFile,
-  type ComposerUploadTransfer,
-  type UploadStagingApi
-} from './composer-upload-transfer'
+import { stageUploadFile as stageComposerFile, type UploadStagingApi } from '@/lib/upload-transfer'
+import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   insertPastedTextNodeAtLogicalOffset,
   pastedTextLogicalOffset,

@@ -988,7 +988,12 @@
       "src/shared/renderer-contract-catalog.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

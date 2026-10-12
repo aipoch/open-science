@@ -1,3 +1,4 @@
+import type { ConnectorsView } from '../../lib/settings-navigation'
 import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -25,11 +26,7 @@ import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type {
-  ConnectorTemplateDefinition,
-  ConnectorView,
-  CustomServerView
-} from '../../../../shared/settings'
+import type { ConnectorView, CustomServerView } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -72,18 +69,7 @@ import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the catalog list.
-export type ConnectorsView =
-  | { kind: 'list' }
-  | { kind: 'detail'; id: string }
-  | {
-      kind: 'add'
-      transport: 'local' | 'remote'
-      template?: ConnectorTemplateDefinition
-      credentialView?: 'create'
-    }
-  | { kind: 'edit'; id: string; credentialView?: 'create' }
-  | { kind: 'import' }
-  | { kind: 'export'; id: string }
+export type { ConnectorsView } from '../../lib/settings-navigation'
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
 const MAIN_AGENT_FILTER = '__main-agent__'

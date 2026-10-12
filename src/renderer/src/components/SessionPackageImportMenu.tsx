@@ -6,11 +6,11 @@ import {
   useActionMenuTarget
 } from './action-menu'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import {
   PACKAGE_IMPORT_ACTIONS,
   createPackageImportBindings,
-  PACKAGE_IMPORT_RECIPE,
-  sessionPackageImportAvailable
+  PACKAGE_IMPORT_RECIPE
 } from './session-package-import-menu-model'
 
 const ImportMenuItems = (): React.JSX.Element => {

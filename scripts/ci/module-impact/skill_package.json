@@ -1413,7 +1413,9 @@
       "src/main/notebook/environment-process.contract.test.ts",
       "cli/connector-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -42,7 +42,7 @@ import type {
 } from '../../../../shared/storage'
 import { PdfParsingCacheAction } from './PdfParsingCacheAction'
 import { SettingsSection } from './SettingsLayout'
-import { isAgentRepairCheck } from './settings-navigation'
+import { isAgentRepairCheck } from '@/lib/settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
 
 // Formats a byte count as a human-readable size (1000-based, one decimal place).

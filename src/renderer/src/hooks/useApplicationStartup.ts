@@ -7,7 +7,7 @@ import {
   type SessionPersistenceState
 } from '@/lib/session-persistence/session-persistence'
 import { resolveStartupView, type StartupView } from '@/pages/onboarding/startup-gate'
-import type { ProvisionUiState } from '@/pages/workspace/provisioning-view'
+import type { ProvisionUiState } from '@/lib/notebook-provisioning'
 import {
   useQuitPersistenceFlush,
   type QuitPersistenceFlushProjection

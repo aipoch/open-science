@@ -1,4 +1,4 @@
-import { uploadFileChunks } from '../pages/workspace/composer-upload-transfer'
+import { uploadFileChunks } from '@/lib/upload-transfer'
 import type { SpecialistPackageCandidatePreview } from '@aipoch/specialists'
 import type { UploadTransferProgress } from '../../../shared/uploads'
 

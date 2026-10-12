@@ -17,7 +17,7 @@ import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 
 import { type LiteratureDetailController } from '@aipoch/literature-library/client'
 import { formatUploadSizeLimit } from '../../../../../shared/uploads'
-import { stageComposerFile } from '../../workspace/composer-upload-transfer'
+import { stageUploadFile as stageComposerFile } from '@/lib/upload-transfer'
 import { type RecordImportDraft } from './LiteratureRecordImportDialog'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200

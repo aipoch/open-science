@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { Button } from './ui/button'
 import { FileDropOverlay } from './FileDropOverlay'
-import { sessionPackageImportAvailable } from './session-package-import-menu-model'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { importSessionPackage } from '@/lib/session-package-import'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 

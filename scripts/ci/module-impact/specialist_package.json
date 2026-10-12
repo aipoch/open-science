@@ -661,7 +661,12 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/shared/specialist.test.ts"
+      "src/shared/specialist.test.ts",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

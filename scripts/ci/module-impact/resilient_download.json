@@ -1038,7 +1038,6 @@
       "src/renderer/src/stores/session-store.archive-order.test.ts",
       "src/renderer/src/stores/session-store.test.ts",
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
-      "src/renderer/src/stores/settings-navigation-slice.test.ts",
       "src/renderer/src/stores/settings-preferences-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/src/stores/update-store.test.ts",
@@ -1052,7 +1051,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/shared/run-error-classification.test.ts",
       "src/shared/runtime-session-projection.test.ts",
-      "src/shared/update.test.ts"
+      "src/shared/update.test.ts",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
     ]
   },
   "capabilityOverlays": [
