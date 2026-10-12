@@ -813,7 +813,23 @@ class AcpPromptContentOwner {
         imageMimeType,
         size,
         descriptor.trustedLease ? () => this.readPromptFileBytes(descriptor) : undefined
-      )
+      ).catch((error: unknown) => {
+        if (
+          error instanceof ImageContentError &&
+          error.code === 'IMAGE_PROCESSING_FAILED' &&
+          error.sourceBytes === 0
+        ) {
+          const recovery = isHistoryUpload
+            ? 'Start a new conversation and upload a non-empty image.'
+            : 'Remove this attachment or select a non-empty image.'
+          throw new ImageContentError(
+            error.code,
+            `Image "${name}" is empty (0 bytes). ${recovery}`,
+            { sourceBytes: 0, limitBytes: error.limitBytes, cause: error }
+          )
+        }
+        throw error
+      })
 
       if (!input.imageCompatibilityRelay) {
         const alreadyInlined = this.getSessionInlineImageBytes(input)
