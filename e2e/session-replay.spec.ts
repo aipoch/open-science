@@ -7,7 +7,7 @@ test.use({ windowMode: 'normal' })
 test('discusses and replays an ordinary Session directly from its menu', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Ordinary replay')
   await create.getByRole('button', { name: 'Create project' }).click()
@@ -92,7 +92,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Replay research')
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -572,7 +572,7 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Replay Office preview')
   await create.getByRole('button', { name: 'Create project' }).click()

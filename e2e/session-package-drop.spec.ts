@@ -9,7 +9,7 @@ test('drops a native package into the current Project without adding an attachme
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   const archive = await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const project = page.getByRole('dialog', { name: 'New project' })
   await project.getByLabel('Name').fill('Research exchange')
   await project.getByRole('button', { name: 'Create project' }).click()
@@ -79,7 +79,7 @@ test('attaches native files across the conversation and excludes both sidebars',
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const project = page.getByRole('dialog', { name: 'New project' })
   await project.getByLabel('Name').fill('Workspace file drop')
   await project.getByRole('button', { name: 'Create project' }).click()

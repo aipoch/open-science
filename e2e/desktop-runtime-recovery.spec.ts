@@ -141,7 +141,7 @@ for (const borrowed of [false, true])
       ) as RuntimeOwner
       await page.evaluate(() => window.api.settings.markOnboardingComplete())
       await page.reload({ waitUntil: 'domcontentloaded' })
-      await page.getByRole('button', { name: 'New project' }).click()
+      await page.locator('header').getByRole('button', { name: 'New project' }).click()
       const projectDialog = page.getByRole('dialog', { name: 'New project' })
       await projectDialog.getByLabel('Name').fill('Recovery file fixture')
       await projectDialog.getByRole('button', { name: 'Create project' }).click()
@@ -614,7 +614,7 @@ test('exits from the recovery notice when the original backend has really stoppe
     ) as RuntimeOwner
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await expect(page.getByRole('button', { name: 'New project' })).toBeVisible()
+    await expect(page.locator('header').getByRole('button', { name: 'New project' })).toBeVisible()
     await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
       env,
       timeout: 30_000

@@ -53,7 +53,7 @@ const runLayoutStabilityJourney = async (
   const page = await app.configureFakeAgent()
   await page.setViewportSize({ width: 1008, height: 681 })
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -151,7 +151,7 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -233,7 +233,7 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
 
-    await page.getByRole('button', { name: 'New project' }).click()
+    await page.locator('header').getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill(PROJECT_NAME)
     await dialog.getByRole('button', { name: 'Create project' }).click()

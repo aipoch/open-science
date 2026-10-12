@@ -16,7 +16,7 @@ async function snapshot(page: Page): Promise<PersistedChatSession> {
 }
 
 async function createProject(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(name)
   await dialog.getByRole('button', { name: 'Create project' }).click()

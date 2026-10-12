@@ -8,7 +8,7 @@ const createProject = async (page: Page, name: string): Promise<string> => {
     }
     return (await bridge.api.projects.list()).map((project) => project.id)
   })
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(name)
   await dialog.getByRole('button', { name: 'Create project' }).click()

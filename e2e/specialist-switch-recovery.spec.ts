@@ -10,7 +10,7 @@ test('deterministic OpenCode Electron Notebook handoffs settle and repeated pick
   test.setTimeout(240_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Specialist switch recovery')
   await dialog.getByRole('button', { name: 'Create project' }).click()

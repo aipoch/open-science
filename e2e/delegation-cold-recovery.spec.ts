@@ -12,7 +12,7 @@ test('continues a child after force quit without rewriting persisted state', asy
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Delegation cold recovery')
   await dialog.getByRole('button', { name: 'Create project' }).click()

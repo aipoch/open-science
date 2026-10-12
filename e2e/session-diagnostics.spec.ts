@@ -14,7 +14,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const project = page.getByRole('dialog', { name: 'New project' })
   await project.getByLabel('Name').fill('Diagnostic research')
   await project.getByRole('button', { name: 'Create project' }).click()

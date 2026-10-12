@@ -210,7 +210,7 @@ test.describe('Windows window system', () => {
 
   test('opens the whole-window find overlay with Ctrl+F in a workspace', async ({ app }) => {
     const page = await app.completeOnboarding()
-    await page.getByRole('button', { name: 'New project' }).click()
+    await page.locator('header').getByRole('button', { name: 'New project' }).click()
     const projectDialog = page.getByRole('dialog', { name: 'New project' })
     await projectDialog.getByLabel('Name').fill('Windows find project')
     await projectDialog.getByRole('button', { name: 'Create project' }).click()

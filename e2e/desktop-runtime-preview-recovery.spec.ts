@@ -24,7 +24,7 @@ test('reacquires a mounted managed image capability after recovery', async () =>
       .toMatchObject({ phase: 'ready' })
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.getByRole('button', { name: 'New project' }).click()
+    await page.locator('header').getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill('Preview recovery')
     await dialog.getByRole('button', { name: 'Create project' }).click()

@@ -96,7 +96,7 @@ test('keeps the desktop connected after stopping several active chats through th
       await window.api.settings.setAgentFramework({ id: 'opencode' })
     })
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.getByRole('button', { name: 'New project' }).click()
+    await page.locator('header').getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill('Desktop stop connection regression')
     await dialog.getByRole('button', { name: 'Create project' }).click()
