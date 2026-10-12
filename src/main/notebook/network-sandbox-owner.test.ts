@@ -22,6 +22,7 @@ const backend = vi.hoisted(() => ({
   request: undefined as
     | ((request: { host: string; port?: number; purpose?: 'probe' | 'block' }) => Promise<boolean>)
     | undefined,
+  create: vi.fn(),
   initialize: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn().mockResolvedValue({
     processesTerminated: true,
@@ -61,6 +62,10 @@ vi.mock('@aipoch/environment', async (importOriginal) => ({
 
 vi.mock('@aipoch/notebook-network-sandbox', () => ({
   NotebookNetworkSandbox: class {
+    constructor(options: { windowsProtectionEnabled?: boolean }) {
+      backend.create(options)
+    }
+
     status = backend.status
     initialize = backend.initialize
     wrap = backend.wrap
@@ -195,6 +200,26 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('keeps a mode update that races the initial settings read', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const pending = owner.initialize()
+    owner.applySettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      windowsProtectionEnabled: false
+    })
+    await pending
+    expect(backend.create).toHaveBeenCalledWith(
+      expect.objectContaining({ windowsProtectionEnabled: false })
+    )
+    await owner.dispose()
+  })
+
   it('keeps the initializing sandbox when a domain setting changes concurrently', async () => {
     let finish!: () => void
     backend.initialize.mockImplementationOnce(

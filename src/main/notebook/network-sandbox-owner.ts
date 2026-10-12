@@ -1588,9 +1588,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       fields: { platform: this.platform }
     })
     try {
-      this.settings = normalizeNotebookNetworkSettings(
-        this.settings ?? (await this.options.getSettings())
-      )
+      this.settings = await this.readSettings()
       const parentProxy = await this.options.getParentProxy?.()
       this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
       this.sandbox = this.createSandbox(this.settings, parentProxy)
