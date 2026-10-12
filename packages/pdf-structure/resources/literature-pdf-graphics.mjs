@@ -676,6 +676,9 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
     lineCap = 0,
     solidStroke = true,
     unprovedClip = false,
+    fillAlpha = 1,
+    fillBlendMode = true,
+    fillSoftMask = true,
     opaqueFill = true,
     fillColor = '#000000'
   const stack = [],
@@ -801,6 +804,9 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
         lineCap,
         solidStroke,
         unprovedClip,
+        fillAlpha,
+        fillBlendMode,
+        fillSoftMask,
         opaqueFill,
         fillColor
       })
@@ -811,6 +817,9 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       lineCap = state ? state.lineCap : 0
       solidStroke = state ? state.solidStroke : true
       unprovedClip = state ? state.unprovedClip : false
+      fillAlpha = state ? state.fillAlpha : 1
+      fillBlendMode = state ? state.fillBlendMode : true
+      fillSoftMask = state ? state.fillSoftMask : true
       opaqueFill = state ? state.opaqueFill : true
       fillColor = state ? state.fillColor : '#000000'
     } else if (op === OPS.transform) transform = Util.transform(transform, args)
@@ -826,6 +835,9 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
     else if (op === OPS.clip || op === OPS.eoClip) unprovedClip = true
     else if (op === OPS.setGState) {
       if (!Array.isArray(args[0])) {
+        fillAlpha = NaN
+        fillBlendMode = false
+        fillSoftMask = false
         opaqueFill = false
         lineWidth = NaN
         lineCap = NaN
@@ -833,18 +845,23 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       } else {
         for (const entry of args[0]) {
           if (!Array.isArray(entry)) {
+            fillAlpha = NaN
+            fillBlendMode = false
+            fillSoftMask = false
             opaqueFill = false
             lineWidth = NaN
             lineCap = NaN
             solidStroke = false
           } else if (entry[0] === 'LW') lineWidth = entry[1]
-          else if (entry[0] === 'ca' || entry[0] === 'CA') opaqueFill &&= entry[1] === 1
-          else if (entry[0] === 'BM') opaqueFill &&= ['Normal', 'source-over'].includes(entry[1])
-          else if (entry[0] === 'SMask') opaqueFill &&= entry[1] === 'None'
+          else if (entry[0] === 'ca') fillAlpha = entry[1]
+          else if (entry[0] === 'BM') fillBlendMode = ['Normal', 'source-over'].includes(entry[1])
+          else if (entry[0] === 'SMask')
+            fillSoftMask = entry[1] === false || entry[1] === null || entry[1] === 'None'
           else if (entry[0] === 'LC') lineCap = entry[1]
           else if (entry[0] === 'D')
             solidStroke = Array.isArray(entry[1]?.[0]) && entry[1][0].length === 0
         }
+        opaqueFill = fillAlpha === 1 && fillBlendMode && fillSoftMask
       }
     } else if (
       [

@@ -65,6 +65,38 @@ it('measures the actual unit rectangle painted by a solid-color mask as a thin n
   }
 })
 
+it('recomputes solid-color mask eligibility from independent fill graphics state', () => {
+  const operators = {
+    fnArray: [OPS.save, OPS.transform, OPS.paintSolidColorImageMask, OPS.restore],
+    argsArray: [[], [200, 0, 0, -0.5, 20, 40], [], []]
+  }
+  const viewport = { transform: [1, 0, 0, 1, 0, 0], width: 500, height: 500 }
+  const expected = [[20, 39.75, 220, 39.75]]
+
+  for (const [name, entries] of [
+    ['stroke alpha', [['CA', 0.5]]],
+    ['inactive false soft mask', [['SMask', false]]],
+    ['inactive null soft mask', [['SMask', null]]],
+    ['inactive None soft mask', [['SMask', 'None']]]
+  ]) {
+    const input = structuredClone(operators)
+    input.fnArray.unshift(OPS.setGState)
+    input.argsArray.unshift([entries] as never)
+    expect(collectTableRules(input, viewport), name).toEqual(expected)
+  }
+
+  for (const [name, invalid, valid] of [
+    ['alpha', ['ca', 0.5], ['ca', 1]],
+    ['blend mode', ['BM', 'Multiply'], ['BM', 'Normal']],
+    ['soft mask', ['SMask', {}], ['SMask', false]]
+  ]) {
+    const input = structuredClone(operators)
+    input.fnArray.unshift(OPS.setGState, OPS.setGState)
+    input.argsArray.unshift([[invalid]] as never, [[valid]] as never)
+    expect(collectTableRules(input, viewport), `recovers ${name}`).toEqual(expected)
+  }
+})
+
 it('excludes repeated running headers near an image but keeps labels inside its bounds', () => {
   const header = { text: 'A. Author et al.', x: 36, y: 34, width: 72, height: 8 }
   const journal = { text: 'Journal 146 (2025)', x: 420, y: 34, width: 144, height: 8 }
