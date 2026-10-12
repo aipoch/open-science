@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { chmod, cp, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, posix, resolve } from 'node:path'
+import { basename, dirname, join, posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeTargets } from '../packages/open-science/runtime-package.mjs'
 
@@ -58,7 +58,7 @@ export async function preparePackage(archive, expectedDigest, expectedSha, targe
   assert.ok(Object.hasOwn(linuxTargets, target), 'Unsupported Linux target')
   assert.equal(await digest(archive), expectedDigest, 'Source archive checksum mismatch')
   const match = /^open-science-(\d+\.\d+\.\d+)-(linux-(?:x64|arm64)-gnu)\.tar\.gz$/.exec(
-    posix.basename(archive)
+    basename(archive)
   )
   assert.ok(match && match[2] === target, 'Source archive filename mismatch')
   const stem = `open-science-${match[1]}-${target}`
@@ -115,7 +115,7 @@ export async function preparePackage(archive, expectedDigest, expectedSha, targe
     })
     const provenance = {
       ...metadata,
-      sourceArchive: posix.basename(archive),
+      sourceArchive: basename(archive),
       sourceArchiveSha256: expectedDigest
     }
     await writeFile(join(destination, 'source.json'), JSON.stringify(provenance, null, 2) + '\n', {

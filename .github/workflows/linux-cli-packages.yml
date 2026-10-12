@@ -79,8 +79,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - name: Install existing extraction dependencies
-        run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
+      - name: Install packaging and existing smoke-fixture dependencies
+        run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
       - name: Download current-run verified CLI archive
         if: inputs.source_release == ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -118,6 +118,8 @@ jobs:
           export OPEN_SCIENCE_TEST_PYTHON="$RUNNER_TEMP/cli-package-python/bin/python"
           export OPEN_SCIENCE_TEST_FAKE_AGENT="$PWD/e2e/fixtures/fake-opencode.mjs"
           export OPEN_SCIENCE_PACKAGE_PAYLOAD="$PWD/out/cli-prepared/payload"
+          # The inner shell expands its own variables after entering the D-Bus session.
+          # shellcheck disable=SC2016
           dbus-run-session -- bash -euo pipefail -c '
             printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
             node scripts/test-linux-cli-package.mjs deb "$PWD"/out/linux-cli-packages/*.deb

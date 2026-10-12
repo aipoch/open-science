@@ -101,6 +101,11 @@ try {
     PATH: `${packageRoot}/node-runtime:${process.env.PATH}`,
     OPEN_SCIENCE_TEST_PACKAGE: `${packageRoot}/backend`
   }
+  // Fail with the actual fixture import error rather than a later agent-detection assertion.
+  assert.match(
+    invoke(node, [env.OPEN_SCIENCE_TEST_FAKE_AGENT, '--version'], { env }),
+    /\d+\.\d+\.\d+/
+  )
   console.log(invoke(node, [join(import.meta.dirname, 'test-backend-installed.mjs')], { env }))
   // A desktop candidate has priority 100; our candidate must preserve its automatic/manual choice.
   const desktop = join(temporary, 'desktop-cli')

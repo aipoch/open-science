@@ -246,7 +246,7 @@ describe('Linux package workflow publication boundary', () => {
   const workflow = async (name: string): Promise<Record<string, any>> =>
     load(
       await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    ) as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    ) as Record<string, any>
   it('uses the real reusable packaging workflow without publishing in the manual dry-run', async () => {
     const dispatch = await workflow('publish-npm.yml')
     expect(dispatch.on.workflow_dispatch.inputs.distribution.options).toContain('linux-packages')
@@ -254,6 +254,7 @@ describe('Linux package workflow publication boundary', () => {
     const flow = await workflow('linux-cli-packages.yml')
     expect(flow.permissions).toEqual({ contents: 'read', actions: 'read' })
     const content = JSON.stringify(flow)
+    expect(content).not.toContain('--omit=dev')
     expect(content).toContain('gh attestation verify')
     expect(content).toContain('test-linux-cli-package.mjs deb')
     expect(content).toContain('test-linux-cli-package.mjs rpm')
