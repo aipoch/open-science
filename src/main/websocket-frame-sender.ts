@@ -50,11 +50,13 @@ export function createWebSocketFrameSender(
   socket: WebSocket,
   onFailure: (failure: OutboundFailure) => void,
   options: {
+    maxFrameBytes?: number
     budget?: ReturnType<typeof createWebSocketFrameBudget>
     isAuthorized?: () => boolean
     writeTimeoutMs?: number
   } = {}
 ): { send(frame: string, onSent?: () => void): boolean } {
+  const maxFrameBytes = options.maxFrameBytes ?? MAX_FRAME_BYTES
   const queue: PendingFrame[] = []
   let active: PendingFrame | undefined
   let retainedBytes = 0
@@ -117,12 +119,12 @@ export function createWebSocketFrameSender(
     send(frame, onSent) {
       if (closed || socket.readyState !== WebSocket.OPEN) return false
       const bytes = Buffer.byteLength(frame)
-      if (bytes > MAX_FRAME_BYTES || socket.bufferedAmount > MAX_FRAME_BYTES + 64 * 1024) {
+      if (bytes > maxFrameBytes || socket.bufferedAmount > maxFrameBytes) {
         fail({
           reason: 'single-frame-too-large',
-          frameBytes: Math.min(bytes, MAX_FRAME_BYTES + 1),
-          bufferedBytes: Math.min(socket.bufferedAmount, MAX_FRAME_BYTES + 1),
-          byteBudget: MAX_FRAME_BYTES
+          frameBytes: Math.min(bytes, maxFrameBytes + 1),
+          bufferedBytes: Math.min(socket.bufferedAmount, maxFrameBytes + 1),
+          byteBudget: maxFrameBytes
         })
         return false
       }

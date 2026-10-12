@@ -5139,3 +5139,50 @@ it('rechecks remote authorization before draining a queued Web event', async () 
     socket.terminate()
   }
 })
+
+it('preserves the existing Web single-frame framing allowance', async () => {
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    rpc: { channels: () => [], invoke: vi.fn() },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: process.platform,
+      versions: { node: process.versions.node }
+    }
+  })
+  servers.push(server)
+  const socket = new WebSocket(
+    `ws://127.0.0.1:${server.port}/events?token=test-token&client=frame-allowance`
+  )
+  try {
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const result = new Promise<string>((resolve) => {
+      socket.once('close', (code) => resolve(`closed:${code}`))
+      socket.once('message', (data) => resolve(JSON.parse(data.toString()).payload[0].text))
+    })
+    const text = 'x'.repeat(16 * 1024 * 1024 + 32 * 1024)
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'allowance',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        role: 'assistant',
+        text
+      }
+    ])
+    const actual = await result
+    expect(actual.length, actual.startsWith('closed:') ? actual : 'received text length').toBe(
+      text.length
+    )
+    expect(actual === text).toBe(true)
+  } finally {
+    socket.terminate()
+  }
+})

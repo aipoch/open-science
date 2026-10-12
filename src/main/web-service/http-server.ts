@@ -1773,6 +1773,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           log.warn('web event transport terminated', failure)
         },
         {
+          // Preserve the HTTP event stream’s existing framing allowance.
+          maxFrameBytes: 16 * 1024 * 1024 + 64 * 1024,
           budget: outboundBudget,
           isAuthorized: () => isWebSocketAuthorizationCurrent(socket),
           writeTimeoutMs: 30_000
