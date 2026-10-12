@@ -1135,8 +1135,13 @@ describe('PR Gate workflow', () => {
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
-    // Temporary PR shard budget; build.yml verify_tests keeps its own budget.
-    expect(shards['timeout-minutes']).toBe(30)
+    const sourceRegressionWorkflow = load(
+      readFileSync(join(process.cwd(), '.github/workflows/source-regression.yml'), 'utf8')
+    ) as Workflow
+    // Complete portable shards share the scheduled regression budget.
+    expect(shards['timeout-minutes']).toBe(
+      sourceRegressionWorkflow.jobs.portable['timeout-minutes']
+    )
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
     const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
     const download = unit.steps?.find(({ name }) => name === 'Download full-suite blob reports')
