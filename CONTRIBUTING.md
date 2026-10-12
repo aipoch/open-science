@@ -646,6 +646,13 @@ mixed source/policy edits do not qualify. Host build scripts and test harnesses 
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.
+This registration-only proof follows source imports (including type and test-mock imports) and
+explicit runtime-consumer edges. Host globals such as `process` or `window`, Node built-ins and
+external libraries do not by themselves make the repository dependency graph incomplete. Unresolved
+local/package imports and computed loading remain uncertain. IPC, event and filesystem relationships
+must be represented by runtime edges or explicit contract tests; historical tests without a provable
+old source dependency remain protected. This exception does not relax ordinary consumer retirement
+or runtime test-pruning proofs, and it cannot accompany source or runtime-edge changes.
 The split still receives full PR validation; ordinary selective runs acquire no extra graph scan.
 
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete

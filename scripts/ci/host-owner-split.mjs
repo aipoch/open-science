@@ -63,7 +63,9 @@ export function verifiedHostOwnerSplits(
     const edges = [before, after].flatMap((source) =>
       Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json')))
     )
-    const inspect = createConsumerDependencyReader(after, edges, { staticOnly: true })
+    // Registration moves preserve source bytes. Use import/runtime relationships, including
+    // type and mock edges; host globals alone do not make those relationships incomplete.
+    const inspect = createConsumerDependencyReader(after, edges)
     const result = empty()
     const verifiedOriginals = new Map()
     for (const { target, originalId, original, remaining } of candidates) {
