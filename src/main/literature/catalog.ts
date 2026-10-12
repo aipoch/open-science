@@ -1586,10 +1586,12 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     if (!this.content) throw new Error('Literature content operations are unavailable.')
     // The session barrier protects reference confirmation and the deletion transaction only.
-    const { contentIds, annotationsDeleted } = await this.withAttachmentRemoval(
-      (assertUnreferenced) => this.deleteUnreferencedAttachment(command, assertUnreferenced)
-    )
-    if (annotationsDeleted) await this.publishTagAssignmentsChanged()
+    const { contentIds, annotationsDeleted, sourceBindingsDeleted } =
+      await this.withAttachmentRemoval((assertUnreferenced) =>
+        this.deleteUnreferencedAttachment(command, assertUnreferenced)
+      )
+    // Source removal also changes the tagged note's navigation route while its bytes are retained.
+    let tagsChanged = annotationsDeleted > 0 || sourceBindingsDeleted > 0
     let cleanupPending = false
     try {
       const sweep = await this.content.sweep({
@@ -1597,16 +1599,20 @@ class LiteratureCatalog {
         createdBefore: new Date(Date.now() + 1)
       })
       cleanupPending = sweep.failedIds.length > 0
+      // Verified PDF notes survive source removal while their blob still exists. The sweep can
+      // remove their tag assignments when it deletes the last blob, after the catalog commit.
+      tagsChanged ||= sweep.removedIds.length > 0
     } catch {
       cleanupPending = true
     }
+    if (tagsChanged) await this.publishTagAssignmentsChanged()
     return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
   }
 
   private async deleteUnreferencedAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>,
     assertUnreferenced: (attachmentIds: readonly string[]) => void
-  ): Promise<{ contentIds: string[]; annotationsDeleted: number }> {
+  ): Promise<{ contentIds: string[]; annotationsDeleted: number; sourceBindingsDeleted: number }> {
     const client = await this.getClient()
     return this.commit(
       client,
@@ -1621,14 +1627,19 @@ class LiteratureCatalog {
         })
         if (!attachment) throw new Error('Literature Attachment is unavailable.')
         assertUnreferenced([command.attachmentId])
-        const annotationsDeleted = await deletePdfAnnotations(transaction, {
+        const sourceScope = {
           sourceKind: 'literature-attachment-version',
           sourceFileId: command.attachmentId
+        }
+        const sourceBindingsDeleted = await transaction.pdfAnnotationSourceBinding.count({
+          where: sourceScope
         })
+        const annotationsDeleted = await deletePdfAnnotations(transaction, sourceScope)
         await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
         return {
           contentIds: attachment.versions.map(({ contentBlobId }) => contentBlobId),
-          annotationsDeleted
+          annotationsDeleted,
+          sourceBindingsDeleted
         }
       },
       { itemIds: [command.itemId] }

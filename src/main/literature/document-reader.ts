@@ -112,25 +112,39 @@ class LiteratureDocumentReader {
   async classificationEvidence(
     request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>
   ): Promise<{
-    coverage: 'full-text' | 'passages'
+    coverage: 'full-text' | 'passages' | 'unavailable'
     passages: { pageStart: number; pageEnd: number; content: string }[]
   }> {
-    if (request.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES) throw new Error('PDF_SIZE_LIMIT_EXCEEDED')
-    return this.reader('').classificationEvidence(
-      {
-        version: 1,
-        bindingId: request.attachmentVersionId,
-        sourceKind: 'literature-attachment-version',
-        sourceFileId: request.attachmentId,
-        sourceVersionId: request.attachmentVersionId,
-        name: request.filename,
-        mimeType: 'application/pdf',
-        sizeBytes: request.sizeBytes,
-        checksum: request.checksum,
-        linkedAt: 0
-      },
-      request.query
-    )
+    if (request.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES)
+      return { coverage: 'unavailable', passages: [] }
+    try {
+      return await this.reader('').classificationEvidence(
+        {
+          version: 1,
+          bindingId: request.attachmentVersionId,
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: request.attachmentId,
+          sourceVersionId: request.attachmentVersionId,
+          name: request.filename,
+          mimeType: 'application/pdf',
+          sizeBytes: request.sizeBytes,
+          checksum: request.checksum,
+          linkedAt: 0
+        },
+        request.query
+      )
+    } catch (error) {
+      // Screening can persist deterministic evidence gaps; failed reads must remain retryable.
+      if (
+        error instanceof Error &&
+        /^(PDF_TEXT_UNAVAILABLE|PDF_PAGE_COUNT_UNSUPPORTED|PDF_SIZE_LIMIT_EXCEEDED|PDF_TEXT_LIMIT_EXCEEDED)(?::|$)/.test(
+          error.message
+        )
+      ) {
+        return { coverage: 'unavailable', passages: [] }
+      }
+      throw error
+    }
   }
 
   private selectSearchBindings(

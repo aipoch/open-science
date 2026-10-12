@@ -3672,6 +3672,219 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it.each(['success', 'failure'] as const)(
+    'keeps record import open until delayed destination linking settles with %s',
+    async (outcome) => {
+      const linking = Promise.withResolvers<LiteratureCatalogReceipt>()
+      transact.mockImplementationOnce(() => linking.promise)
+      const file = new File(['references'], 'references.bib')
+      Object.defineProperty(file, 'text', { value: async () => '@article{x,title={Example}}' })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Retrieval research' }))
+      fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+      const dialog = await screen.findByRole('dialog')
+      const submit = await within(dialog).findByRole('button', { name: 'Import references' })
+      await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+      fireEvent.click(submit)
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+      const done = within(dialog).getByRole('button', { name: 'Done' })
+      expect(done).toHaveProperty('disabled', true)
+      fireEvent.click(done)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      fireEvent.keyDown(dialog, { key: 'Escape' })
+      expect(screen.getByRole('dialog')).toBe(dialog)
+      await act(async () => {
+        if (outcome === 'success') linking.resolve({ kind: 'item', id: libraryItem.id })
+        else linking.reject(new Error('Destination unavailable'))
+      })
+      if (outcome === 'failure')
+        expect(
+          await within(dialog).findByText(
+            'References were saved, but the destination could not be updated. You can find them in All references.'
+          )
+        ).not.toBeNull()
+      await waitFor(() => expect(done).toHaveProperty('disabled', false))
+      expect(
+        importRecords.mock.calls.filter(([request]) => request.mode === 'commit')
+      ).toHaveLength(1)
+      fireEvent.click(done)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    }
+  )
+
+  it('keeps the committed records and only the linked project subset after a later import batch fails', async () => {
+    const importedItems = Array.from({ length: 201 }, (_, index) => {
+      const item = createLibraryItem(index)
+      return {
+        ...item,
+        item: {
+          ...item.item,
+          title: `Partial import reference ${index}`,
+          identifiers: [
+            { scheme: 'doi' as const, value: `10.0000/import-${index}`, isPrimary: true }
+          ]
+        }
+      }
+    })
+    const savedItems = new Map<string, LiteratureItemView>()
+    const linkedIds = new Set<string>()
+    const secondBatch = Promise.withResolvers<LiteratureCatalogReceipt>()
+    let revision = 0
+    const broadcastSavedItems = (itemIds: string[]): void => {
+      // Successful catalog writes publish itemIds before returning their receipt.
+      const event = { revision: ++revision, itemIds }
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) => listener(event))
+    }
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.scope === 'project-counts')
+        return { entries: [{ projectId: 'project-1', itemCount: linkedIds.size }] }
+      if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+      const matching = [...savedItems.values()]
+        .filter((item) => !request.projectId || item.projectIds.includes(request.projectId))
+        .sort((a, b) => b.createdAt - a.createdAt)
+      const offset = request.offset ?? 0
+      const limit = request.limit ?? 50
+      return {
+        entries: request.countOnly ? [] : matching.slice(offset, offset + limit),
+        totalCount: matching.length,
+        nextOffset:
+          !request.countOnly && offset + limit < matching.length ? offset + limit : undefined
+      }
+    })
+    importRecords.mockImplementation(async (request: { mode: 'commit' | 'preview' }) => {
+      if (request.mode === 'commit') {
+        importedItems.forEach((item) => savedItems.set(item.id, item))
+        broadcastSavedItems(importedItems.map((item) => item.id))
+      }
+      return {
+        format: 'bibtex',
+        items: importedItems.map((item) => item.item),
+        entries: importedItems.map((item, index) => ({
+          index,
+          title: item.item.title,
+          status: 'ready',
+          warnings: [],
+          item: item.item
+        })),
+        errors: [],
+        truncated: false,
+        scannedEntries: importedItems.length,
+        ...(request.mode === 'commit'
+          ? {
+              imported: {
+                itemIds: importedItems.map((item) => item.id),
+                createdCount: importedItems.length,
+                reusedCount: 0
+              }
+            }
+          : {})
+      }
+    })
+    transact.mockImplementation((command) => {
+      if (command.kind !== 'set-project-items') throw new Error('Unexpected catalog command')
+      if (transact.mock.calls.length === 2) return secondBatch.promise
+      command.itemIds.forEach((id: string) => {
+        linkedIds.add(id)
+        savedItems.set(id, { ...savedItems.get(id)!, projectIds: [command.projectId] })
+      })
+      broadcastSavedItems(command.itemIds)
+      return Promise.resolve({ kind: 'item', id: command.itemIds[0], state: 'linked' })
+    })
+    useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: 'Retrieval research' })
+    const projectButton = screen.getByRole('button', { name: 'Retrieval research' })
+    const libraryButton = screen.getByRole('button', { name: 'All references' })
+    await within(projectButton).findByText('0')
+    const content = '@article{example, title={Example}}'
+    const file = new File([content], 'references.bib')
+    Object.defineProperty(file, 'text', { value: async () => content })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    const dialog = await screen.findByRole('dialog')
+    const submit = await within(dialog).findByRole('button', { name: 'Import references' })
+    await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+    fireEvent.click(submit)
+    await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+    expect(transact.mock.calls.map(([command]) => command)).toEqual([
+      {
+        kind: 'set-project-items',
+        projectId: 'project-1',
+        itemIds: importedItems.slice(0, 200).map((item) => item.id),
+        included: true,
+        source: 'library'
+      },
+      {
+        kind: 'set-project-items',
+        projectId: 'project-1',
+        itemIds: [importedItems[200].id],
+        included: true,
+        source: 'library'
+      }
+    ])
+    await within(projectButton).findByText('200')
+    await within(libraryButton).findByText('201')
+    const done = within(dialog).getByRole('button', { name: 'Done' })
+    const close = within(dialog).getByRole('button', { name: 'Close' })
+    expect(done).toHaveProperty('disabled', true)
+    expect(close).toHaveProperty('disabled', true)
+    fireEvent.click(done)
+    fireEvent.click(close)
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    await act(async () => secondBatch.reject(new Error('Second project batch unavailable')))
+    expect(
+      await within(dialog).findByText(
+        'References were saved, but the destination could not be updated. You can find them in All references.'
+      )
+    ).not.toBeNull()
+    expect(within(dialog).getByText('Created').parentElement?.textContent).toBe('201Created')
+    expect(within(dialog).getByText('Failed').parentElement?.textContent).toBe('0Failed')
+    await waitFor(() => expect(done).toHaveProperty('disabled', false))
+    expect(close).toHaveProperty('disabled', false)
+    expect(within(dialog).queryByRole('button', { name: 'Import references' })).toBeNull()
+    expect(importRecords.mock.calls.filter(([request]) => request.mode === 'commit')).toEqual([
+      [{ mode: 'commit', content }]
+    ])
+    expect(savedItems.size).toBe(201)
+    expect(linkedIds).toEqual(new Set(importedItems.slice(0, 200).map((item) => item.id)))
+    fireEvent.click(done)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(projectButton).getByText('200')).not.toBeNull()
+    expect(screen.getByText(/200 references/)).not.toBeNull()
+    fireEvent.click(screen.getByLabelText('References per page'))
+    fireEvent.click(screen.getByRole('option', { name: '100' }))
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 199' })
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      ).toHaveLength(100)
+    )
+    const firstPage = screen
+      .getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      .map((checkbox) => checkbox.getAttribute('aria-label'))
+    expect(
+      screen.queryByRole('checkbox', { name: 'Select Partial import reference 200' })
+    ).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 99' })
+    const secondPage = screen
+      .getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      .map((checkbox) => checkbox.getAttribute('aria-label'))
+    expect(new Set([...firstPage, ...secondPage])).toEqual(
+      new Set(importedItems.slice(0, 200).map((item) => `Select ${item.item.title}`))
+    )
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveProperty('disabled', true)
+    fireEvent.click(libraryButton)
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 200' })
+    expect(screen.getByText(/201 references/)).not.toBeNull()
+    expect(within(libraryButton).getByText('201')).not.toBeNull()
+    expect(within(projectButton).getByText('200')).not.toBeNull()
+    expect(transact).toHaveBeenCalledTimes(2)
+    expect(importRecords.mock.calls.filter(([request]) => request.mode === 'commit')).toHaveLength(
+      1
+    )
+  })
+
   it('cleans up a cancelled desktop stage that returns a managed file late', async () => {
     search.mockImplementation(async (request: { scope: string }) =>
       request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
@@ -10322,6 +10535,502 @@ describe('LiteratureLibraryPage', () => {
     const closeDetail = (): void => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     }
+
+    it.each(
+      (['project', 'collection'] as const).flatMap((kind) =>
+        (['broadcast first', 'receipt first'] as const).flatMap((order) =>
+          [true, false].map((included) => ({ kind, order, included }))
+        )
+      )
+    )(
+      'reads authoritative $kind counts after linking=$included with $order',
+      async ({ kind, order, included }) => {
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        const targetId = kind === 'project' ? 'project-1' : 'collection-1'
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        const relation = kind === 'project' ? 'projectIds' : 'collectionIds'
+        let serverItems: LiteratureItemView[] = [libraryItem, createLibraryItem(2)].map((item) => ({
+          ...item,
+          [relation]: included ? [] : [targetId]
+        }))
+        const count = (): number =>
+          serverItems.filter((item) => item[relation].includes(targetId)).length
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'project-counts')
+            return {
+              entries: [{ projectId: 'project-1', itemCount: kind === 'project' ? count() : 0 }]
+            }
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: kind === 'collection' ? count() : 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+          const entries = serverItems.filter(
+            (item) =>
+              (!request.projectId || item.projectIds.includes(request.projectId)) &&
+              (!request.collectionId || item.collectionIds.includes(request.collectionId))
+          )
+          return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+        })
+        get.mockImplementation(async () => serverItems[0])
+        const broadcast = (): void => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({
+              revision: 1,
+              itemIds: [libraryItem.id],
+              ...(kind === 'collection' ? { collectionIds: [targetId] } : {})
+            })
+          )
+        }
+        transact.mockImplementationOnce(() => {
+          serverItems = serverItems.map((item) =>
+            item.id === libraryItem.id ? { ...item, [relation]: included ? [targetId] : [] } : item
+          )
+          if (order === 'broadcast first') broadcast()
+          return gate.promise
+        })
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          const targetButton = await screen.findByRole('button', { name: targetName })
+          await within(targetButton).findByText(included ? '0' : '2')
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          expect(transact).toHaveBeenCalledWith(
+            kind === 'project'
+              ? {
+                  kind: 'set-project-item',
+                  projectId: targetId,
+                  itemId: libraryItem.id,
+                  included,
+                  source: 'library'
+                }
+              : {
+                  kind: 'set-collection-item',
+                  collectionId: targetId,
+                  itemId: libraryItem.id,
+                  included
+                }
+          )
+          if (order === 'broadcast first') await within(targetButton).findByText('1')
+          await act(async () =>
+            gate.resolve({
+              kind: 'item',
+              id: libraryItem.id,
+              state: included ? 'linked' : 'unlinked'
+            })
+          )
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(count()).toBe(1)
+          expect(within(targetButton).getByText('1')).not.toBeNull()
+          if (order === 'receipt first') await act(async () => broadcast())
+          await waitFor(() => expect(within(targetButton).getByText('1')).not.toBeNull())
+          expect(
+            within(dialog).getByRole('checkbox', { name: targetName }).getAttribute('aria-checked')
+          ).toBe(String(included))
+          expect(transact).toHaveBeenCalledTimes(1)
+        } finally {
+          await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id }))
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'keeps a same-scope $kind link failure after changing locale',
+      async (kind) => {
+        const originalLanguage = i18next.language || 'en'
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        void gate.promise.catch(() => undefined)
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        get.mockResolvedValue(libraryItem)
+        transact.mockImplementationOnce(() => gate.promise)
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          await screen.findByRole('button', { name: targetName })
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          await act(async () => {
+            await i18next.changeLanguage('zh-Hans')
+          })
+          await act(async () => gate.reject(new Error('Link unavailable')))
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(
+            within(dialog).getByText(
+              i18next.t(
+                kind === 'project'
+                  ? 'Project link could not be updated.'
+                  : 'Collection link could not be updated.'
+              )
+            )
+          ).not.toBeNull()
+          expect(screen.getByRole('dialog')).toBe(dialog)
+        } finally {
+          await act(async () => {
+            gate.reject(new Error('Test cleanup'))
+            await i18next.changeLanguage(originalLanguage)
+          })
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'rejects an older $kind link failure after leaving and returning to the same query',
+      async (kind) => {
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        void gate.promise.catch(() => undefined)
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        transact.mockImplementationOnce(() => gate.promise)
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          await screen.findByRole('button', { name: targetName })
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          await act(async () =>
+            useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+          )
+          await screen.findByText('Retrieval research', { selector: 'h2' })
+          await act(async () =>
+            useNavigationStore.setState({ pendingLiteratureLibrarySection: 'library' })
+          )
+          await screen.findByText('All references', { selector: 'h2' })
+          await act(async () => gate.reject(new Error('Old visit unavailable')))
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(
+            within(dialog).queryByText(
+              kind === 'project'
+                ? 'Project link could not be updated.'
+                : 'Collection link could not be updated.'
+            )
+          ).toBeNull()
+          expect(screen.getByRole('dialog')).toBe(dialog)
+        } finally {
+          await act(async () => gate.reject(new Error('Test cleanup')))
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'keeps a committed $kind link when its authoritative count read fails',
+      async (kind) => {
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        let committed = false
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (
+            committed &&
+            request.scope === (kind === 'project' ? 'project-counts' : 'collections')
+          )
+            throw new Error('Count read unavailable')
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        transact.mockImplementationOnce(async () => {
+          committed = true
+          return { kind: 'item', id: libraryItem.id, state: 'linked' }
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await screen.findByRole('button', { name: targetName })
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+        await waitFor(() =>
+          expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+            'disabled',
+            false
+          )
+        )
+        expect(committed).toBe(true)
+        expect(
+          within(dialog).getByRole('checkbox', { name: targetName }).getAttribute('aria-checked')
+        ).toBe('true')
+        expect(
+          within(dialog).queryByText(
+            kind === 'project'
+              ? 'Project link could not be updated.'
+              : 'Collection link could not be updated.'
+          )
+        ).toBeNull()
+        expect(screen.getByText('Literature could not be loaded.')).not.toBeNull()
+        expect(transact).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('refreshes the same project after a no-op filter reset changes reload callbacks', async () => {
+      const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+      let linked = true
+      const other = { ...createLibraryItem(2), projectIds: ['project-1'] }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'project-counts')
+          return { entries: [{ projectId: 'project-1', itemCount: linked ? 2 : 1 }] }
+        if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+        const entries = [...(linked ? [{ ...libraryItem, projectIds: ['project-1'] }] : []), other]
+        return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+      })
+      transact.mockImplementationOnce(() => gate.promise)
+      useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+      try {
+        render(<LiteratureLibraryPage />)
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Retrieval research' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        closeDetail()
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+        await act(async () => {})
+        linked = false
+        await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id, state: 'unlinked' }))
+        // The receipt's own read must succeed before its delayed transport notification arrives.
+        await waitFor(() =>
+          expect(
+            screen.queryByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+          ).toBeNull()
+        )
+        expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+        expect(
+          within(screen.getByRole('button', { name: 'Retrieval research' })).getByText('1')
+        ).not.toBeNull()
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id] })
+          )
+        })
+      } finally {
+        await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id }))
+      }
+    })
+
+    it('keeps active collection rows and totals consistent when its unlink broadcast precedes the receipt', async () => {
+      const receipt = Promise.withResolvers<LiteratureCatalogReceipt>()
+      let linked = true
+      const other = { ...createLibraryItem(2), collectionIds: ['source'] }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return {
+            entries: [
+              {
+                id: 'source',
+                name: 'Source',
+                description: '',
+                itemCount: linked ? 2 : 1,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          }
+        if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+        const entries =
+          request.collectionId === 'source'
+            ? [...(linked ? [{ ...libraryItem, collectionIds: ['source'] }] : []), other]
+            : [{ ...libraryItem, collectionIds: linked ? ['source'] : [] }, other]
+        return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+      })
+      get.mockImplementation(async () => ({
+        ...libraryItem,
+        collectionIds: linked ? ['source'] : []
+      }))
+      transact.mockImplementationOnce(() => receipt.promise)
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'source' })
+      try {
+        render(<LiteratureLibraryPage />)
+        const sourceButton = await screen.findByRole('button', { name: 'Source' })
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Source' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        linked = false
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id], collectionIds: ['source'] })
+          )
+        })
+        await within(sourceButton).findByText('1')
+        await waitFor(() => expect(screen.getByText(/1 reference$/)).not.toBeNull())
+        await act(async () =>
+          receipt.resolve({ kind: 'item', id: libraryItem.id, state: 'unlinked' })
+        )
+        await waitFor(() =>
+          expect(within(dialog).getByRole('checkbox', { name: 'Source' })).toHaveProperty(
+            'disabled',
+            false
+          )
+        )
+        closeDetail()
+        expect(screen.getByText(/1 reference$/)).not.toBeNull()
+        expect(within(sourceButton).getByText('1')).not.toBeNull()
+        expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+        expect(
+          screen.queryByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+        ).toBeNull()
+      } finally {
+        await act(async () => {
+          receipt.resolve({ kind: 'item', id: libraryItem.id })
+        })
+      }
+    })
+
+    it('keeps the refreshed collection and selection when an older unlink receipt arrives', async () => {
+      const collections = ['Alpha', 'Beta'].map((name) => ({
+        id: name,
+        revision: 1,
+        name,
+        description: '',
+        itemCount: name === 'Alpha' ? 1 : 2,
+        createdAt: 1,
+        updatedAt: 1
+      }))
+      const shared = { ...libraryItem, collectionIds: ['Alpha', 'Beta'] }
+      const other = { ...createLibraryItem(2), collectionIds: ['Beta'] }
+      let committed = false
+      const pending = deferred<LiteratureCatalogReceipt>()
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections') return { entries: collections, totalCount: 2 }
+        if (request.scope !== 'library') return { entries: [] }
+        const entries =
+          request.collectionId === 'Alpha'
+            ? committed
+              ? []
+              : [shared]
+            : [{ ...shared, collectionIds: committed ? ['Beta'] : shared.collectionIds }, other]
+        return { entries, totalCount: entries.length }
+      })
+      transact.mockImplementationOnce(() => pending.promise)
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'Alpha' })
+      render(<LiteratureLibraryPage />)
+      await openReferenceDetail(await screen.findByText(shared.item.title))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Alpha' }))
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+      closeDetail()
+      fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+      await screen.findByRole('heading', { name: 'Beta' })
+      await screen.findByText(other.item.title)
+      fireEvent.click(screen.getByRole('checkbox', { name: `Select ${shared.item.title}` }))
+      committed = true
+      get.mockResolvedValue({ ...shared, collectionIds: ['Beta'] })
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, itemIds: [shared.id], collectionIds: ['Alpha'] })
+        )
+      })
+      await waitFor(() => expect(screen.getByText('1 selected')).not.toBeNull())
+      const reads = search.mock.calls.filter(
+        ([request]) => request.scope === 'library' && !request.countOnly
+      ).length
+      await act(async () => pending.resolve({ kind: 'item', id: shared.id, state: 'unlinked' }))
+      expect(screen.getByRole('heading', { name: 'Beta' })).not.toBeNull()
+      expect(screen.getByRole('checkbox', { name: `Select ${shared.item.title}` })).toHaveProperty(
+        'checked',
+        true
+      )
+      expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+      expect(screen.getByText(/2 references/)).not.toBeNull()
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      expect(
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
+      ).toHaveLength(reads)
+    })
+
+    it.each(['different item', 'same item reopened'] as const)(
+      'keeps the current detail after an older project unlink receipt: %s',
+      async (nextDetail) => {
+        const first = { ...libraryItem, projectIds: ['project-1'] }
+        const second = { ...createLibraryItem(2), projectIds: ['project-1'] }
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+          entries: request.scope === 'library' ? [first, second] : [],
+          totalCount: request.scope === 'library' ? 2 : 0
+        }))
+        const pending = deferred<LiteratureCatalogReceipt>()
+        transact.mockImplementationOnce(() => pending.promise)
+        useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+        render(<LiteratureLibraryPage />)
+        await openReferenceDetail(await screen.findByText(first.item.title))
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Retrieval research' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        closeDetail()
+        const current = nextDetail === 'different item' ? second : first
+        await openReferenceDetail(screen.getByText(current.item.title))
+        const dialog = screen.getByRole('dialog')
+        await act(async () => pending.resolve({ kind: 'item', id: first.id, state: 'unlinked' }))
+        expect(screen.getByRole('dialog')).toBe(dialog)
+        expect(within(dialog).getByRole('heading', { name: current.item.title })).not.toBeNull()
+      }
+    )
 
     it('returns to all references after the active collection is deleted externally', async () => {
       let removed = false

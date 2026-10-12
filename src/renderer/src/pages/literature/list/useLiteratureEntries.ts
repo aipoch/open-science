@@ -3,7 +3,14 @@ import {
   type LiteratureEntries,
   type LiteratureEntriesOptions
 } from '@aipoch/literature-library/client'
-import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { literatureClient } from '../literature-read-pages'
 export function useLiteratureEntries(
@@ -22,13 +29,29 @@ export function useLiteratureEntries(
     owner.subscribe,
     owner.getSnapshot
   )
-  const { reload, refreshItems } = useMemo(
+  const { reload: reloadBound, refreshItems } = useMemo(
     () => owner.bind({ enabled, request, scopeKey, onPage, onEmptyPage, onItems, onError }),
     [owner, enabled, request, scopeKey, onPage, onEmptyPage, onItems, onError]
   )
   const scheduledScopeRef = useRef<string | undefined>(undefined)
   const scheduledQueryRef = useRef(request.query)
   const pageKey = `${scopeKey}:${request.offset ?? 0}`
+  // Reject retained reloads before the owner changes the current cache or generation.
+  const context = useMemo(() => ({ pageKey, request, enabled }), [pageKey, request, enabled])
+  const currentContext = useRef<typeof context | undefined>(context)
+  useLayoutEffect(() => {
+    currentContext.current = context
+    return () => {
+      currentContext.current = undefined
+    }
+  }, [context])
+  const reload = useCallback(
+    async (force = false, preservePage = false): Promise<boolean | undefined> => {
+      if (currentContext.current !== context) return
+      return reloadBound(force, preservePage)
+    },
+    [context, reloadBound]
+  )
   useLayoutEffect(() => {
     owner.mount()
     return () => owner.unmount()

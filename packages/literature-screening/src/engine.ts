@@ -177,10 +177,15 @@ export class LiteratureSmartCollections {
     this.unsubscribeClassification?.()
     this.scopeReads.clear()
     clearTimeout(this.automaticTimer)
-    await this.automaticWork.catch(() => undefined)
     for (const controller of [...this.active.values(), ...this.previews.values()])
       controller.abort()
-    await Promise.allSettled([this.queue, ...this.previewWork])
+    // Reservations include initial scans that have not joined the queue yet.
+    await Promise.allSettled([
+      this.automaticWork,
+      this.queue,
+      ...this.work.values(),
+      ...this.previewWork
+    ])
   }
   async deleteCollection<T>(collectionId: string, remove: () => Promise<T>): Promise<T> {
     this.deleting.add(collectionId)
@@ -682,6 +687,8 @@ export class LiteratureSmartCollections {
     const input = await smartInput(client, item, mode)
     const evidence = await readSmartEvidence(input, description, mode, this.readEvidence)
     signal.throwIfAborted()
+    if (evidence.readFailed && !item.abstract.trim() && !evidence.passages.length)
+      throw new ClassificationEvaluationError('unknown')
     const evidenceInput =
       mode === 'full-text'
         ? { coverage: evidence.source.coverage, passages: evidence.passages }
@@ -1023,7 +1030,7 @@ export class LiteratureSmartCollections {
       command.action === 'recompute' ||
       command.action === 'preview'
     ) {
-      if (!this.active.has(id) && !this.deleting.has(id)) {
+      if (!this.disposed && !this.active.has(id) && !this.deleting.has(id)) {
         // Reserve before the first await: repeated requests must not start duplicate paid work.
         const controller = new AbortController()
         this.active.set(id, controller)
@@ -1034,9 +1041,12 @@ export class LiteratureSmartCollections {
         this.work.set(id, work)
         let releaseWriter: (() => void) | undefined
         let release: (() => void) | undefined = () => {
-          releaseWriter?.()
-          if (this.work.get(id) === work) this.work.delete(id)
-          finish()
+          try {
+            releaseWriter?.()
+          } finally {
+            if (this.work.get(id) === work) this.work.delete(id)
+            finish()
+          }
         }
         try {
           releaseWriter = this.acquireWriter()

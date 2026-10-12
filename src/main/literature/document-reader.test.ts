@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -546,6 +546,147 @@ describe('LiteratureDocumentReader', () => {
     })
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
       maxChars: 24 * 1024 * 1024
+    })
+  })
+
+  describe('classificationEvidence availability', () => {
+    const request = {
+      attachmentId: 'attachment-1',
+      attachmentVersionId: 'attachment-version-1',
+      filename: 'library-paper.pdf',
+      sizeBytes: 42,
+      checksum,
+      query: 'retrieval evaluator'
+    }
+    const createReader = (): {
+      resolveVersion: Mock<SessionPdfSourceResolver['resolveVersion']>
+      reader: LiteratureDocumentReader
+    } => {
+      const resolveVersion = vi.fn<SessionPdfSourceResolver['resolveVersion']>(async (source) => {
+        const version = {
+          sourceFileId: source.expectedSourceFileId!,
+          sourceVersionId: source.sourceVersionId,
+          filename: 'library-paper.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 42,
+          checksum,
+          path: join(root, 'library-paper.pdf')
+        }
+        if (source.sourceKind === 'literature-attachment-version')
+          return { ...version, sourceKind: 'literature-attachment-version' }
+        return { ...version, sourceKind: source.sourceKind, sourceSessionId: 'session-1' }
+      })
+      return {
+        resolveVersion,
+        reader: new LiteratureDocumentReader({
+          storageRoot: root,
+          sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
+          sources: { resolveVersion }
+        })
+      }
+    }
+
+    it.each([
+      {
+        name: 'empty text in a two-page PDF',
+        extraction: { text: '', pageCount: 2, truncated: false },
+        code: 'PDF_TEXT_UNAVAILABLE'
+      },
+      {
+        name: 'a single-page PDF',
+        extraction: { text: 'selectable text', pageCount: 1, truncated: false },
+        code: 'PDF_PAGE_COUNT_UNSUPPORTED'
+      },
+      {
+        name: 'text exceeding the extraction limit',
+        extraction: { text: 'partial text', pageCount: 2, truncated: true },
+        code: 'PDF_TEXT_LIMIT_EXCEEDED'
+      }
+    ])(
+      'returns unavailable for $name while reading tools remain strict',
+      async ({ extraction, code }) => {
+        vi.mocked(extractPdfText).mockResolvedValue(extraction)
+        const { reader } = createReader()
+
+        await expect(reader.classificationEvidence(request)).resolves.toEqual({
+          coverage: 'unavailable',
+          passages: []
+        })
+        await expect(
+          reader.readCurrent({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            promptMessageId: 'message-1',
+            input: { documentId: 'binding-1' }
+          })
+        ).rejects.toThrow(code)
+        await expect(
+          reader.searchAttachment({ ...request, projectId: 'project-1' })
+        ).rejects.toThrow(code)
+      }
+    )
+
+    it('returns unavailable for an oversized PDF without resolving or extracting it', async () => {
+      const { reader, resolveVersion } = createReader()
+      const oversized = { ...request, sizeBytes: MAX_AUTO_EXTRACT_PDF_BYTES + 1 }
+
+      await expect(reader.classificationEvidence(oversized)).resolves.toEqual({
+        coverage: 'unavailable',
+        passages: []
+      })
+      await expect(
+        reader.searchAttachment({ ...oversized, projectId: 'project-1' })
+      ).rejects.toThrow('PDF_SIZE_LIMIT_EXCEEDED')
+      expect(resolveVersion).not.toHaveBeenCalled()
+      expect(extractPdfText).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      'PDF_TEXT_UNAVAILABLE',
+      'PDF_PAGE_COUNT_UNSUPPORTED',
+      'PDF_SIZE_LIMIT_EXCEEDED',
+      'PDF_TEXT_LIMIT_EXCEEDED'
+    ])('returns unavailable for a deterministic %s extraction error', async (code) => {
+      vi.mocked(extractPdfText).mockRejectedValue(new Error(`${code}: extraction rejected`))
+      const { reader } = createReader()
+
+      await expect(reader.classificationEvidence(request)).resolves.toEqual({
+        coverage: 'unavailable',
+        passages: []
+      })
+    })
+
+    it.each([
+      'EIO: temporary read failure',
+      'LINKED_PDF_UNAVAILABLE: immutable bytes changed',
+      'unknown extraction error',
+      'PDF_TEXT_UNAVAILABLE_RETRY: temporary failure'
+    ])('preserves the failed read for %s', async (message) => {
+      const error = new Error(message)
+      vi.mocked(extractPdfText).mockRejectedValue(error)
+      const { reader } = createReader()
+
+      await expect(reader.classificationEvidence(request)).rejects.toBe(error)
+    })
+
+    it('preserves a temporary source-resolution failure', async () => {
+      const { reader, resolveVersion } = createReader()
+      const error = new Error('EIO: source read failed')
+      resolveVersion.mockRejectedValue(error)
+
+      await expect(reader.classificationEvidence(request)).rejects.toBe(error)
+      expect(extractPdfText).not.toHaveBeenCalled()
+    })
+
+    it('preserves an unavailable immutable source', async () => {
+      const reader = new LiteratureDocumentReader({
+        storageRoot: root,
+        sessions: { loadSessionForContinuation: vi.fn() },
+        sources: { resolveVersion: vi.fn(async () => undefined) }
+      })
+
+      await expect(reader.classificationEvidence(request)).rejects.toThrow('LINKED_PDF_UNAVAILABLE')
+      expect(extractPdfText).not.toHaveBeenCalled()
     })
   })
 

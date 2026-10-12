@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
@@ -26,6 +26,8 @@ import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
 import { LiteratureCatalog } from './catalog'
+import { ContentRepository } from '../storage/content-repository'
+import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 
 const candidate = (
   overrides: {
@@ -1144,6 +1146,321 @@ describe('LiteratureCatalog', () => {
         expect.objectContaining({ ...input.source, savedAt: expect.any(Number) })
       ])
     })
+  })
+
+  it.each(['last-reference', 'shared-reference', 'cleanup-failure', 'blocked'] as const)(
+    'refreshes cached PDF tags after attachment cleanup while preserving retained notes: %s',
+    async (operation) => {
+      await setup()
+      const content = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      const publish = vi.fn()
+      const tags = new TagService(
+        new TagRepository(async () => client!),
+        new TagResourceCatalog({
+          listSkills: async () => [],
+          listConnectors: async () => ({ connectors: [], customServers: [] }),
+          listSpecialists: async () => [],
+          listPdfAnnotations: async () => client!.pdfAnnotation.findMany({ select: { id: true } }),
+          listLiteratureItems: async () => client!.literatureItem.findMany({ select: { id: true } })
+        }),
+        { publish }
+      )
+      let assignmentsAtNotification: number | undefined
+      const catalog = new LiteratureCatalog(
+        async () => client!,
+        async () => {
+          assignmentsAtNotification = await client!.tagAssignment.count({
+            where: { resourceType: 'pdf.annotation' }
+          })
+          await tags.notifyAssignmentsChanged()
+        },
+        content,
+        async (remove) =>
+          remove(() => {
+            if (operation === 'blocked') throw new Error('Attachment is still referenced')
+          })
+      )
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const path = join(storageRoot!, 'tagged.pdf')
+      await writeFile(path, createTestPdf())
+      const blob = await content.publish({ sourcePath: path, contentType: 'application/pdf' })
+      const attachment = await catalog.attachContent({
+        itemId: item.id,
+        contentBlobId: blob.id,
+        filename: 'tagged.pdf',
+        contentType: 'application/pdf',
+        checksum: blob.checksum,
+        sizeBytes: Number(blob.sizeBytes)
+      })
+      const source = {
+        kind: 'literature-attachment-version' as const,
+        sourceFileId: attachment.attachmentId,
+        versionId: attachment.versionId,
+        checksum: blob.checksum,
+        name: 'tagged.pdf',
+        path: `literature-attachment-version:${attachment.versionId}`
+      }
+      await tags.snapshot()
+      const annotations = new PdfAnnotationRepository(async () => client!)
+      await annotations.create({
+        id: 'tagged-note',
+        literatureVersionId: attachment.versionId,
+        kind: 'document-note',
+        tagIds: ['tag-favorite'],
+        note: 'Keep this evidence',
+        target: { source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+      })
+      const storedBlob = await client!.contentBlob.findUniqueOrThrow({ where: { id: blob.id } })
+      expect(storedBlob.verifiedAt).not.toBeNull()
+      expect(storedBlob.pdfDocumentId).not.toBeNull()
+      expect(await client!.pdfAnnotationDocument.findFirst()).toMatchObject({
+        id: storedBlob.pdfDocumentId,
+        pdfDocumentId: storedBlob.pdfDocumentId
+      })
+      let sharedVersionId: string | undefined
+      if (operation === 'shared-reference') {
+        const sharedItem = await catalog.transact({
+          kind: 'create-item',
+          item: { ...candidate().item, title: 'Shared PDF' },
+          duplicatePolicy: 'separate'
+        })
+        const shared = await catalog.attachContent({
+          itemId: sharedItem.id,
+          contentBlobId: blob.id,
+          filename: 'shared.pdf',
+          contentType: 'application/pdf',
+          checksum: blob.checksum,
+          sizeBytes: Number(blob.sizeBytes)
+        })
+        sharedVersionId = shared.versionId
+        await annotations.registerVerifiedSource(
+          {
+            ...source,
+            sourceFileId: shared.attachmentId,
+            versionId: shared.versionId,
+            name: 'shared.pdf',
+            path: `literature-attachment-version:${shared.versionId}`
+          },
+          Number(blob.sizeBytes)
+        )
+      }
+      if (operation === 'cleanup-failure') {
+        // An unsafe replacement must fail real byte cleanup without deleting canonical notes.
+        await rm(blob.path)
+        await mkdir(blob.path)
+      }
+      let cached = await tags.snapshot()
+      const before = cached
+      expect(before.assignments).toEqual([
+        expect.objectContaining({ resourceType: 'pdf.annotation', resourceId: 'tagged-note' })
+      ])
+      expect(before.pdfAnnotations).toEqual([
+        expect.objectContaining({ id: 'tagged-note', versionId: attachment.versionId })
+      ])
+      publish.mockClear()
+      let refresh: Promise<void> | undefined
+      publish.mockImplementation(() => {
+        refresh = tags.snapshot().then((snapshot) => {
+          cached = snapshot
+        })
+      })
+      const deletion = catalog.transact({
+        kind: 'delete-attachment',
+        itemId: item.id,
+        attachmentId: attachment.attachmentId
+      })
+      if (operation === 'blocked') await expect(deletion).rejects.toThrow('still referenced')
+      else
+        await expect(deletion).resolves.toMatchObject({
+          state: 'unlinked',
+          cleanupPending: operation === 'cleanup-failure'
+        })
+      // Check committed storage before any explicit reload could prune a stale assignment.
+      const retained = operation !== 'last-reference'
+      expect(await client!.tagAssignment.count({ where: { resourceType: 'pdf.annotation' } })).toBe(
+        retained ? 1 : 0
+      )
+      expect(await client!.pdfAnnotation.count()).toBe(retained ? 1 : 0)
+      expect(await client!.contentBlob.count()).toBe(retained ? 1 : 0)
+      expect(await client!.pdfDocument.count()).toBe(retained ? 1 : 0)
+      await refresh
+      if (operation === 'blocked') {
+        expect(publish).not.toHaveBeenCalled()
+        expect(cached).toBe(before)
+      } else {
+        expect(publish).toHaveBeenCalledExactlyOnceWith('tags:changed', {
+          revision: before.revision + 1
+        })
+        expect(assignmentsAtNotification).toBe(retained ? 1 : 0)
+        expect(cached.revision).toBe(before.revision + 1)
+        expect(cached.assignments).toEqual(retained ? before.assignments : [])
+        expect(cached.pdfAnnotations).toEqual(
+          sharedVersionId
+            ? [
+                expect.objectContaining({
+                  id: 'tagged-note',
+                  versionId: sharedVersionId,
+                  name: 'shared.pdf'
+                })
+              ]
+            : []
+        )
+        expect(
+          await client!.pdfAnnotationSourceBinding.count({
+            where: { sourceFileId: attachment.attachmentId }
+          })
+        ).toBe(0)
+        expect(
+          (await annotations.list({ literatureVersionId: attachment.versionId })).items
+        ).toEqual([])
+      }
+      if (sharedVersionId)
+        expect((await annotations.list({ literatureVersionId: sharedVersionId })).items).toEqual([
+          expect.objectContaining({ id: 'tagged-note', tagIds: ['tag-favorite'] })
+        ])
+    }
+  )
+
+  it('publishes one tag refresh after mixed cleanup of two versions of the same attachment', async () => {
+    await setup()
+    const content = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    const publish = vi.fn()
+    const tags = new TagService(
+      new TagRepository(async () => client!),
+      new TagResourceCatalog({
+        listSkills: async () => [],
+        listConnectors: async () => ({ connectors: [], customServers: [] }),
+        listSpecialists: async () => [],
+        listPdfAnnotations: async () => client!.pdfAnnotation.findMany({ select: { id: true } }),
+        listLiteratureItems: async () => client!.literatureItem.findMany({ select: { id: true } })
+      }),
+      { publish }
+    )
+    const readCleanupState = async (): Promise<{
+      blobs: { id: string; state: string; pdfDocumentId: string | null }[]
+      documents: { id: string }[]
+      annotations: { id: string; note: string }[]
+      assignments: { resourceId: string; tagId: string }[]
+    }> => ({
+      blobs: await client!.contentBlob.findMany({
+        select: { id: true, state: true, pdfDocumentId: true }
+      }),
+      documents: await client!.pdfDocument.findMany({ select: { id: true } }),
+      annotations: await client!.pdfAnnotation.findMany({ select: { id: true, note: true } }),
+      assignments: await client!.tagAssignment.findMany({
+        where: { resourceType: 'pdf.annotation' },
+        select: { resourceId: true, tagId: true }
+      })
+    })
+    let stateAtNotification: Awaited<ReturnType<typeof readCleanupState>> | undefined
+    const catalog = new LiteratureCatalog(
+      async () => client!,
+      async () => {
+        // Capture persisted state before the event listener's snapshot can reconcile assignments.
+        stateAtNotification = await readCleanupState()
+        await tags.notifyAssignmentsChanged()
+      },
+      content,
+      async (remove) => remove(() => {})
+    )
+    const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const annotations = new PdfAnnotationRepository(async () => client!)
+    await tags.snapshot()
+    const versions = []
+    let attachmentId: string | undefined
+    for (const label of ['a', 'b']) {
+      const filename = `tagged-${label}.pdf`
+      const path = join(storageRoot!, filename)
+      await writeFile(path, createTestPdf(label))
+      const blob = await content.publish({ sourcePath: path, contentType: 'application/pdf' })
+      const attachment = await catalog.attachContent({
+        itemId: item.id,
+        attachmentId,
+        contentBlobId: blob.id,
+        filename,
+        contentType: 'application/pdf',
+        checksum: blob.checksum,
+        sizeBytes: Number(blob.sizeBytes)
+      })
+      attachmentId = attachment.attachmentId
+      const noteId = `tagged-note-${label}`
+      const note = `Evidence from version ${label}`
+      await annotations.create({
+        id: noteId,
+        literatureVersionId: attachment.versionId,
+        kind: 'document-note',
+        tagIds: ['tag-favorite'],
+        note,
+        target: {
+          source: {
+            kind: 'literature-attachment-version',
+            sourceFileId: attachment.attachmentId,
+            versionId: attachment.versionId,
+            checksum: blob.checksum,
+            name: filename,
+            path: `literature-attachment-version:${attachment.versionId}`
+          },
+          selector: { kind: 'document-note', coordinateVersion: 1 }
+        }
+      })
+      const storedBlob = await client!.contentBlob.findUniqueOrThrow({ where: { id: blob.id } })
+      expect(storedBlob.verifiedAt).not.toBeNull()
+      expect(storedBlob.pdfDocumentId).not.toBeNull()
+      versions.push({ blob, attachment, noteId, note, documentId: storedBlob.pdfDocumentId })
+    }
+    const [a, b] = versions
+    expect(a.attachment.attachmentId).toBe(b.attachment.attachmentId)
+    expect(a.attachment.versionId).not.toBe(b.attachment.versionId)
+    expect(a.blob.id).not.toBe(b.blob.id)
+    expect(a.documentId).not.toBe(b.documentId)
+    expect(await client!.literatureAttachmentVersion.count({ where: { attachmentId } })).toBe(2)
+    let cached = await tags.snapshot()
+    const before = cached
+    expect(before.assignments.map(({ resourceId }) => resourceId).sort()).toEqual([
+      a.noteId,
+      b.noteId
+    ])
+    expect((before.pdfAnnotations ?? []).map(({ id }) => id).sort()).toEqual([a.noteId, b.noteId])
+    // Fail only B's real byte cleanup, after both canonical document notes have been registered.
+    await rm(b.blob.path)
+    await mkdir(b.blob.path)
+    publish.mockClear()
+    let refresh: Promise<void> | undefined
+    publish.mockImplementation(() => {
+      refresh = tags.snapshot().then((snapshot) => {
+        cached = snapshot
+      })
+    })
+    await expect(
+      catalog.transact({ kind: 'delete-attachment', itemId: item.id, attachmentId: attachmentId! })
+    ).resolves.toMatchObject({ state: 'unlinked', cleanupPending: true })
+    const expectedState = {
+      blobs: [{ id: b.blob.id, state: 'quarantined', pdfDocumentId: b.documentId }],
+      documents: [{ id: b.documentId }],
+      annotations: [{ id: b.noteId, note: b.note }],
+      assignments: [{ resourceId: b.noteId, tagId: 'tag-favorite' }]
+    }
+    expect(stateAtNotification).toEqual(expectedState)
+    expect(await readCleanupState()).toEqual(expectedState)
+    expect(await client!.literatureAttachment.count()).toBe(0)
+    expect(await client!.literatureAttachmentVersion.count()).toBe(0)
+    expect(await client!.pdfAnnotationSourceBinding.count()).toBe(0)
+    await refresh
+    expect(publish).toHaveBeenCalledExactlyOnceWith('tags:changed', {
+      revision: before.revision + 1
+    })
+    expect(cached.revision).toBe(before.revision + 1)
+    expect(cached.assignments).toEqual([
+      expect.objectContaining({ resourceType: 'pdf.annotation', resourceId: b.noteId })
+    ])
+    // Source-free notes keep their assignments but have no navigation summary in the snapshot.
+    expect(cached.pdfAnnotations).toEqual([])
   })
 
   it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(

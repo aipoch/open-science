@@ -1,4 +1,5 @@
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import type {
   LiteratureCollectionView,
   LiteratureItemView
@@ -10,32 +11,32 @@ import type { LiteratureSelectionStore } from '../list/literature-selection'
 /** Apply detail membership and inline metadata writes with the existing receipt and readback rules. */
 export function useLiteratureItemEdits({
   detailController,
+  scopeKey,
   setItems,
   setProjectLinkError,
-  setProjectItemCounts,
+  loadProjectCounts,
   projectId,
   closeSelectedItemDetail,
   loadEntries,
-  setCollections,
+  loadCollections,
   setCollectionLinkError,
   collectionId,
   selectionStore,
-  setEntriesTotalCount,
   refreshItems,
   setError
 }: {
   detailController: LiteratureDetailController
+  scopeKey: string
   setItems: React.Dispatch<React.SetStateAction<LiteratureItemView[]>>
   setProjectLinkError: React.Dispatch<React.SetStateAction<string | undefined>>
-  setProjectItemCounts: React.Dispatch<React.SetStateAction<Record<string, number>>>
+  loadProjectCounts: () => Promise<void>
   projectId: string | undefined
   closeSelectedItemDetail: () => void
   loadEntries: (force?: boolean, preservePage?: boolean) => Promise<boolean | undefined>
-  setCollections: React.Dispatch<React.SetStateAction<LiteratureCollectionView[]>>
+  loadCollections: () => Promise<LiteratureCollectionView[] | undefined>
   setCollectionLinkError: React.Dispatch<React.SetStateAction<string | undefined>>
   collectionId: string | undefined
   selectionStore: LiteratureSelectionStore
-  setEntriesTotalCount: React.Dispatch<React.SetStateAction<number>>
   refreshItems: (
     itemIds: string[],
     updatedItems?: LiteratureItemView[],
@@ -52,8 +53,22 @@ export function useLiteratureItemEdits({
   ) => Promise<void>
 } {
   const { t } = useTranslation()
+  // Each query visit owns an identity; locale/callback changes keep that visit intact.
+  const scope = useMemo(() => ({ key: scopeKey }), [scopeKey])
+  const currentScope = useRef<typeof scope | undefined>(scope)
+  const refresh = useRef({ loadEntries, loadProjectCounts, loadCollections, t })
+  useLayoutEffect(() => {
+    refresh.current = { loadEntries, loadProjectCounts, loadCollections, t }
+  }, [loadEntries, loadProjectCounts, loadCollections, t])
+  useLayoutEffect(() => {
+    currentScope.current = scope
+    return () => {
+      currentScope.current = undefined
+    }
+  }, [scope])
   const setProjectLink = async (targetProjectId: string, included: boolean): Promise<boolean> => {
-    const itemId = detailController.getSnapshot().item?.id
+    const detail = detailController.getSnapshot()
+    const itemId = detail.item?.id
     if (!itemId) return false
     const updateProjectLinkState = (nextIncluded: boolean): void => {
       const updateProjects = (item: LiteratureItemView): LiteratureItemView => ({
@@ -63,7 +78,11 @@ export function useLiteratureItemEdits({
           : item.projectIds.filter((id) => id !== targetProjectId)
       })
       const detailItem = detailController.getSnapshot().item
-      if (detailItem?.id === itemId) detailController.replace(updateProjects(detailItem))
+      if (
+        detailItem?.id === itemId &&
+        detailController.getSnapshot().generation === detail.generation
+      )
+        detailController.replace(updateProjects(detailItem))
       setItems((current) =>
         current.map((item) => (item.id === itemId ? updateProjects(item) : item))
       )
@@ -77,19 +96,25 @@ export function useLiteratureItemEdits({
         included,
         source: 'library'
       })
-      setProjectItemCounts((current) => ({
-        ...current,
-        [targetProjectId]: Math.max(0, (current[targetProjectId] ?? 0) + (included ? 1 : -1))
-      }))
-      if (!included && targetProjectId === projectId) {
-        closeSelectedItemDetail()
-        await loadEntries(true)
-      } else {
-        updateProjectLinkState(included)
+      if (!currentScope.current) return true
+      updateProjectLinkState(included)
+      if (!included && targetProjectId === projectId && currentScope.current === scope) {
+        const currentDetail = detailController.getSnapshot()
+        if (currentDetail.item?.id === itemId && currentDetail.generation === detail.generation)
+          closeSelectedItemDetail()
+        await refresh.current.loadEntries(true)
       }
+      // A broadcast may already have read the committed count before this receipt arrives.
+      await refresh.current
+        .loadProjectCounts()
+        .catch(() => setError(refresh.current.t('Literature could not be loaded.')))
       return true
     } catch {
-      setProjectLinkError(t('Project link could not be updated.'))
+      if (
+        currentScope.current === scope &&
+        detailController.getSnapshot().generation === detail.generation
+      )
+        setProjectLinkError(refresh.current.t('Project link could not be updated.'))
       return false
     }
   }
@@ -97,7 +122,8 @@ export function useLiteratureItemEdits({
     targetCollectionId: string,
     included: boolean
   ): Promise<boolean> => {
-    const itemId = detailController.getSnapshot().item?.id
+    const detail = detailController.getSnapshot()
+    const itemId = detail.item?.id
     if (!itemId) return false
     const updateCollectionLinkState = (nextIncluded: boolean): void => {
       const updateCollections = (item: LiteratureItemView): LiteratureItemView => ({
@@ -107,19 +133,13 @@ export function useLiteratureItemEdits({
           : item.collectionIds.filter((id) => id !== targetCollectionId)
       })
       const detailItem = detailController.getSnapshot().item
-      if (detailItem?.id === itemId) detailController.replace(updateCollections(detailItem))
+      if (
+        detailItem?.id === itemId &&
+        detailController.getSnapshot().generation === detail.generation
+      )
+        detailController.replace(updateCollections(detailItem))
       setItems((current) =>
         current.map((item) => (item.id === itemId ? updateCollections(item) : item))
-      )
-      setCollections((current) =>
-        current.map((collection) =>
-          collection.id === targetCollectionId
-            ? {
-                ...collection,
-                itemCount: Math.max(0, collection.itemCount + (nextIncluded ? 1 : -1))
-              }
-            : collection
-        )
       )
     }
     setCollectionLinkError(undefined)
@@ -130,16 +150,23 @@ export function useLiteratureItemEdits({
         itemId,
         included
       })
+      if (!currentScope.current) return true
       updateCollectionLinkState(included)
-      if (!included && targetCollectionId === collectionId) {
+      if (!included && targetCollectionId === collectionId && currentScope.current === scope) {
         selectionStore.remove(itemId)
         setItems((current) => current.filter((item) => item.id !== itemId))
-        setEntriesTotalCount((current) => Math.max(0, current - 1))
-        await loadEntries(true)
+        await refresh.current.loadEntries(true)
       }
+      await refresh.current
+        .loadCollections()
+        .catch(() => setError(refresh.current.t('Literature could not be loaded.')))
       return true
     } catch {
-      setCollectionLinkError(t('Collection link could not be updated.'))
+      if (
+        currentScope.current === scope &&
+        detailController.getSnapshot().generation === detail.generation
+      )
+        setCollectionLinkError(refresh.current.t('Collection link could not be updated.'))
       return false
     }
   }

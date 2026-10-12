@@ -180,6 +180,7 @@ export function useLiteratureImport({
   const recordImportRequest = useRef(0)
 
   const [isImportingRecords, setIsImportingRecords] = useState(false)
+  const importingRecordsRef = useRef(false)
   const importMetadataGenerationRef = useRef(0)
   const newMetadataDirtyRef = useRef(false)
   const trackNewMetadataDirty = useCallback((dirty: boolean) => {
@@ -364,7 +365,13 @@ export function useLiteratureImport({
   }
 
   const commitRecordImport = async (): Promise<void> => {
-    if (!recordImport?.preview || recordImport.preview.items.length === 0) return
+    if (
+      importingRecordsRef.current ||
+      !recordImport?.preview ||
+      recordImport.preview.items.length === 0
+    )
+      return
+    importingRecordsRef.current = true
     const { projectId, collectionId } = recordImport.destination
     setIsImportingRecords(true)
     setRecordImport((current) =>
@@ -433,6 +440,7 @@ export function useLiteratureImport({
           : current
       )
     } finally {
+      importingRecordsRef.current = false
       setIsImportingRecords(false)
     }
   }
@@ -448,6 +456,7 @@ export function useLiteratureImport({
     setIsCreatingItem(true)
   }
   const closeRecordImport = (): void => {
+    if (importingRecordsRef.current) return
     recordImportRequest.current += 1
     setRecordImport(undefined)
   }

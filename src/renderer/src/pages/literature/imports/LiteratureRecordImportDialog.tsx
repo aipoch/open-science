@@ -72,7 +72,7 @@ export const LiteratureRecordImportDialog = ({
       footer={
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border-300/80 px-5 py-4">
           {recordImport.preview?.imported ? (
-            <Button type="button" onClick={() => onClose()}>
+            <Button type="button" disabled={isImportingRecords} onClick={() => onClose()}>
               {t('Done')}
             </Button>
           ) : (
