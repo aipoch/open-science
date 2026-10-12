@@ -529,11 +529,25 @@ describe('SystemScpRunner', () => {
       expect(spawnMock).toHaveBeenCalledWith(
         '/usr/bin/ssh',
         ['cluster', "head -c 4 -- ~/'.openscience/jobs/job-1/growing.log'"],
-        { stdio: ['ignore', 'pipe', 'pipe'] }
+        { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
       )
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('hides the Windows console during SCP uploads and preserves the authentication environment', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child)
+    const env = { SSH_ASKPASS_REQUIRE: 'force' }
+    const pending = runner.copy('scp', ['local.csv', 'cluster:/remote/data.csv'], 5000, { env })
+    child.emit('close', 0)
+    await expect(pending).resolves.toEqual({ exitCode: 0, stderr: '', timedOut: false })
+    expect(execFileMock).toHaveBeenCalledWith(
+      'scp',
+      ['local.csv', 'cluster:/remote/data.csv'],
+      expect.objectContaining({ windowsHide: true, env })
+    )
   })
 
   it('returns exitCode 0 and the captured stderr on a clean child close', async () => {

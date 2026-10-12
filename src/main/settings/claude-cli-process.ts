@@ -10,10 +10,10 @@ export const spawnClaudeCli = (
 ): ReturnType<typeof spawn> => {
   if (/\.(js|mjs)$/i.test(resolvedPath)) {
     const env = { ...(options.env as NodeJS.ProcessEnv), ...nodeRuntimeEnvironment() }
-    return spawn(process.execPath, [resolvedPath, ...args], { ...options, env })
+    return spawn(process.execPath, [resolvedPath, ...args], { ...options, env, windowsHide: true })
   }
 
-  return spawn(resolvedPath, args, options)
+  return spawn(resolvedPath, args, { ...options, windowsHide: true })
 }
 
 const abortError = (signal: AbortSignal): Error => {
