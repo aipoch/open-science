@@ -3447,11 +3447,16 @@ describe('R startup authorization admission', () => {
     ])
     try {
       await vi.waitFor(() => expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce())
+      expect(() => owner.beginProtectionChange()).toThrow(
+        'Wait for Notebook protection setup or runtime authorization to finish.'
+      )
       settle({ cancelled: true })
       const outcomes = await results
       expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'rejected'])
       expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce()
       expect(backend.wrap).toHaveBeenCalledTimes(2)
+      const release = owner.beginProtectionChange()
+      release()
     } finally {
       settle?.({ cancelled: true })
       await results

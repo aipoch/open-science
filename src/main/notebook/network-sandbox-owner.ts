@@ -1155,6 +1155,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     })
     diagnostic.phase('queued')
     let started = false
+    this.pendingRuntimeAccessChanges += 1
     const operation = this.runtimeAccessQueue.then(async () => {
       started = true
       diagnostic.phase('access-status')
@@ -1242,17 +1243,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       () => undefined,
       () => undefined
     )
-    const trackedOperation = operation.then(
-      (admission) => {
-        diagnostic.complete()
-        return admission
-      },
-      (error) => {
-        if (error instanceof NotebookRuntimeAccessCancelledError) diagnostic.cancel()
-        else diagnostic.fail(error)
-        throw error
-      }
-    )
+    const trackedOperation = operation
+      .then(
+        (admission) => {
+          diagnostic.complete()
+          return admission
+        },
+        (error) => {
+          if (error instanceof NotebookRuntimeAccessCancelledError) diagnostic.cancel()
+          else diagnostic.fail(error)
+          throw error
+        }
+      )
+      .finally(() => {
+        this.pendingRuntimeAccessChanges -= 1
+      })
     const signal = request.signal
     if (!signal) return trackedOperation
     // A waiting session can stop immediately. Once elevation starts, keep the native owner and
