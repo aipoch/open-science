@@ -23,6 +23,7 @@ import {
   type CallerContext
 } from '../caller-context'
 import { createApplicationCommandClient } from '../application-command-client'
+import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
@@ -68,8 +69,6 @@ const MAX_WEB_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
-// The replay stream retains 16 MiB. Keep 64 KiB for its mandatory ready frame and framing overhead.
-const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const MAX_WEBSOCKET_INBOUND_BYTES = 1_024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
@@ -444,24 +443,6 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
   if (error.code === 'session-details-conflict') return 409
   if (error.code === 'session-revision-conflict') return 409
   return 500
-}
-
-const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
-  if (socket.readyState !== WebSocket.OPEN) return false
-  if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_WEBSOCKET_BUFFERED_BYTES) {
-    socket.terminate()
-    return false
-  }
-
-  try {
-    socket.send(message, (error) => {
-      if (error) socket.terminate()
-    })
-    return true
-  } catch {
-    socket.terminate()
-    return false
-  }
 }
 
 export type ExternalWebAccessAuthorization = {
@@ -1364,6 +1345,8 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
+  const outboundBudget = createWebSocketFrameBudget()
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
   const externalSockets = new Map<WebSocket, ExternalWebSocketAccess>()
   const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
@@ -1429,7 +1412,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   }
 
   const sendCurrentWebSocketMessage = (socket: WebSocket, message: string): boolean =>
-    isWebSocketAuthorizationCurrent(socket) && sendWebSocketMessage(socket, message)
+    isWebSocketAuthorizationCurrent(socket) && (senders.get(socket)?.send(message) ?? false)
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -1782,6 +1765,20 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   wsServer.on('connection', (socket, request) => {
+    senders.set(
+      socket,
+      createWebSocketFrameSender(
+        socket,
+        (failure) => {
+          log.warn('web event transport terminated', failure)
+        },
+        {
+          budget: outboundBudget,
+          isAuthorized: () => isWebSocketAuthorizationCurrent(socket),
+          writeTimeoutMs: 30_000
+        }
+      )
+    )
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientNonce = parseClientNonce(url.searchParams.getAll('client'))
     const externalAuthorization = externalSockets.get(socket)

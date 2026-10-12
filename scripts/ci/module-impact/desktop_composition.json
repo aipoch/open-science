@@ -219,8 +219,8 @@
     "scripts/windows-signing-policy.test.ts",
     "src/main/desktop-event-delivery.test.ts",
     "src/main/desktop-event-delivery.ts",
-    "src/main/desktop-frame-sender.test.ts",
-    "src/main/desktop-frame-sender.ts",
+    "src/main/websocket-frame-sender.test.ts",
+    "src/main/websocket-frame-sender.ts",
     "src/main/desktop-runtime-backpressure.integration.test.ts",
     "src/main/desktop-runtime-client-diagnostics.test.ts",
     "src/main/desktop-runtime-recovery.test.ts",
@@ -282,7 +282,8 @@
     "src/main/desktop-preview-proxy.ts",
     "src/main/desktop-runtime-lifecycle.ts",
     "src/main/desktop-startup-contract.ts",
-    "src/main/composition/notebook-approvals.ts"
+    "src/main/composition/notebook-approvals.ts",
+    "src/main/websocket-frame-sender.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -372,7 +373,7 @@
       "scripts/dev-build-watch.integration.test.ts",
       "scripts/dev-build-watch.test.ts",
       "src/main/desktop-event-delivery.test.ts",
-      "src/main/desktop-frame-sender.test.ts",
+      "src/main/websocket-frame-sender.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-client-diagnostics.test.ts",
       "src/main/desktop-runtime-recovery.test.ts",

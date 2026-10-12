@@ -33,7 +33,7 @@ import { listenForDesktop } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { InternalWebEventStream } from './web-service/internal-web-event-stream'
 import { createLogger } from '@aipoch/diagnostics/node'
-import { createDesktopFrameSender } from './desktop-frame-sender'
+import { createWebSocketFrameSender } from './websocket-frame-sender'
 
 const logger = createLogger('desktop-runtime-transport')
 
@@ -143,9 +143,10 @@ export async function startDesktopRuntimeTransport(options: {
         signal?: AbortSignal
       ) => Promise<unknown>)
     | undefined
-  const senders = new WeakMap<WebSocket, ReturnType<typeof createDesktopFrameSender>>()
-  const send = (socket: WebSocket, frame: string, onSent?: () => void): void =>
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
+  const send = (socket: WebSocket, frame: string, onSent?: () => void): void => {
     senders.get(socket)?.send(frame, onSent)
+  }
   const unsubscribe = options.events.subscribe((event) => {
     const frame = stream.publish(event)
     if (active) send(active, frame)
@@ -154,7 +155,7 @@ export async function startDesktopRuntimeTransport(options: {
     const listener = await listenForDesktop(options.version, (socket) => {
       senders.set(
         socket,
-        createDesktopFrameSender(socket, (failure) => {
+        createWebSocketFrameSender(socket, (failure) => {
           logger.warn('desktop runtime transport terminated', failure)
         })
       )
