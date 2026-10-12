@@ -71,15 +71,27 @@ const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
   'src/main/session-plan/plan-context-file.shell.integration.test.ts'
 ] as const
 
+function portableTestScopeFor(env: NodeJS.ProcessEnv): 'host' | 'packages' | undefined {
+  if (env.VITEST_PORTABLE_CI !== '1' || !env.OPEN_SCIENCE_CI_PORTABLE_SCOPE) return undefined
+  const scope = env.OPEN_SCIENCE_CI_PORTABLE_SCOPE
+  if (scope !== 'host' && scope !== 'packages') throw new Error('Invalid CI portable test scope')
+  return scope
+}
+
 function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
+  const scope = portableTestScopeFor(env)
   return [
     ...BASE_VITEST_EXCLUDE_PATTERNS,
     ...packageTestExcludePatterns(env),
+    ...(scope === 'host' ? ['packages/**'] : []),
+    // Exclude every non-package root, including root-level tests and future host directories.
+    ...(scope === 'packages' ? ['!(packages)/**', '*.{test,spec}.?(c|m)[jt]s?(x)'] : []),
     ...(env.VITEST_PORTABLE_CI === '1' ? VITEST_PORTABLE_CI_EXCLUDE_PATTERNS : [])
   ]
 }
 
 const VITEST_EXCLUDE_PATTERNS = vitestExcludePatternsFor(process.env)
+const portableTestScope = portableTestScopeFor(process.env)
 const VITEST_COVERAGE_EXCLUDE_PATTERNS = [
   '**/*.test.{ts,tsx}',
   '**/*.d.ts',
@@ -208,14 +220,17 @@ export default defineConfig({
       ? 1
       : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
-      ...(packageTestExcludePatterns(process.env).includes('packages/resilient-download/**')
+      ...(portableTestScope === 'host' ||
+      packageTestExcludePatterns(process.env).includes('packages/resilient-download/**')
         ? []
         : ['packages/resilient-download/vitest.config.ts']),
-      ...(packageTestExcludePatterns(process.env).includes('packages/durable-files/**')
+      ...(portableTestScope === 'host' ||
+      packageTestExcludePatterns(process.env).includes('packages/durable-files/**')
         ? []
         : ['packages/durable-files/vitest.config.ts']),
       // Standalone package configuration owns its setup, concurrency and native shell tests.
-      ...(packageTestExcludePatterns(process.env).includes('packages/compute/**')
+      ...(portableTestScope === 'host' ||
+      packageTestExcludePatterns(process.env).includes('packages/compute/**')
         ? []
         : ['packages/compute/vitest.config.ts']),
       {
@@ -316,5 +331,6 @@ export {
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
   VITEST_EXCLUDE_PATTERNS,
   VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
-  vitestExcludePatternsFor
+  vitestExcludePatternsFor,
+  portableTestScopeFor
 }

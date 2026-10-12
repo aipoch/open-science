@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
@@ -26,7 +26,13 @@ type Job = {
   'runs-on': string
   'continue-on-error'?: boolean
   steps: Step[]
-  strategy?: { matrix: { group?: string; shard?: string } }
+  strategy?: {
+    matrix: {
+      group?: string
+      shard?: string
+      include?: Array<{ scope: string; shard: number; total: number }>
+    }
+  }
 }
 type Workflow = {
   on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
@@ -586,16 +592,20 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
   ).toEqual({ selection: '${{ inputs.packages }}' })
 })
 
-it('runs complete portable discovery with no package exclusions and defers thresholds until all four reports', () => {
+it('runs complete portable discovery with no package exclusions and defers thresholds until all host and package reports', () => {
   const portable = scheduled.jobs.portable
   expect(portable.if).toContain("github.event_name == 'schedule'")
   expect(portable.if).toContain("inputs.mode == 'portable'")
   expect(portable['continue-on-error']).toBeUndefined()
-  expect(portable.strategy?.matrix.shard).toEqual([1, 2, 3, 4])
+  expect(portable.strategy?.matrix.include).toEqual([
+    ...[1, 2, 3, 4].map((shard) => ({ scope: 'host', shard, total: 4 })),
+    ...[1, 2].map((shard) => ({ scope: 'packages', shard, total: 2 }))
+  ])
   expect(portable.env).toMatchObject({
     OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]',
     OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]',
-    VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+    VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
+    OPEN_SCIENCE_CI_PORTABLE_SCOPE: '${{ matrix.scope }}'
   })
   const test = portable.steps.find(({ name }) => name === 'Test complete portable shard')!
   expect(test.run).toContain('npm test -- --coverage')
@@ -609,6 +619,7 @@ it('runs complete portable discovery with no package exclusions and defers thres
     OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]'
   })
   expect(report.env).not.toHaveProperty('VITEST_DEFER_COVERAGE_THRESHOLDS')
+  expect(report.env).not.toHaveProperty('OPEN_SCIENCE_CI_PORTABLE_SCOPE')
   for (const step of report.steps)
     expect(step.env ?? {}).not.toHaveProperty('VITEST_DEFER_COVERAGE_THRESHOLDS')
   expect(report.if).toContain('always()')
@@ -616,9 +627,9 @@ it('runs complete portable discovery with no package exclusions and defers thres
   expect(report.steps.find(({ name }) => name === 'Require every portable shard')?.run).toBe(
     'test "$PORTABLE_RESULT" = success'
   )
-  expect(report.steps.find(({ name }) => name === 'Require all four reports')?.run).toContain(
-    'for shard in 1 2 3 4'
-  )
+  expect(
+    report.steps.find(({ name }) => name === 'Require all host and package reports')?.run
+  ).toContain('for shard in 1 2 3 4')
   expect(report.steps.find(({ name }) => name === 'Merge complete coverage')?.run).toContain(
     '--merge-reports=vitest-reports --coverage'
   )
@@ -644,6 +655,34 @@ it.skipIf(process.platform === 'win32')(
         env: { ...process.env, PORTABLE_RESULT: result }
       })
       expect(run.status).toBe(result === 'success' ? 0 : 1)
+    }
+  }
+)
+
+it.skipIf(process.platform === 'win32')(
+  'rejects missing or empty host and package reports before merging coverage',
+  () => {
+    const step = scheduled.jobs.portable_report.steps.find(
+      ({ name }) => name === 'Require all host and package reports'
+    )!
+    const cwd = mkdtempSync(join(tmpdir(), 'portable-reports-'))
+    const reports = scheduled.jobs.portable.strategy!.matrix.include!.map(({ scope, shard }) =>
+      join(cwd, 'vitest-reports', `blob-${scope}-${shard}.json`)
+    )
+    const run = (): number | null => spawnSync('bash', ['-e', '-c', step.run!], { cwd }).status
+    try {
+      mkdirSync(join(cwd, 'vitest-reports'))
+      for (const file of reports) writeFileSync(file, '{}')
+      expect(run()).toBe(0)
+      for (const file of reports) {
+        rmSync(file)
+        expect(run(), `missing ${file}`).not.toBe(0)
+        writeFileSync(file, '')
+        expect(run(), `empty ${file}`).not.toBe(0)
+        writeFileSync(file, '{}')
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
   }
 )

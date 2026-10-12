@@ -9,7 +9,7 @@ import {
   symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, normalize } from 'node:path'
+import { join, normalize, sep } from 'node:path'
 import { parse } from 'yaml'
 import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
@@ -262,7 +262,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       join(fixture, 'packages/resilient-download/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/resilient-download'))}, test: {name:'resilient-download',include:['src/**/*.test.ts']}}`
     )
-    const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
+    const list = (portable: string, excluded = [core], scope = ''): Array<{ file: string }> =>
       JSON.parse(
         execFileSync(
           process.execPath,
@@ -282,6 +282,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
             env: {
               ...process.env,
               VITEST_PORTABLE_CI: portable,
+              OPEN_SCIENCE_CI_PORTABLE_SCOPE: scope,
               OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(excluded)
             }
           }
@@ -315,6 +316,29 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         .sort()
     )
     expect(list('0')).toHaveLength(11)
+    // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
+    for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
+      const file = join(fixture, path)
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, 'import { it } from "vitest"; it("fixture", () => {})\n')
+    }
+    for (const excluded of [[], [core, 'packages/compute']]) {
+      const files = (scope: string): string[] =>
+        list('1', excluded, scope)
+          .map(({ file }) => normalize(file))
+          .sort()
+      const baseline = files('')
+      const host = files('host')
+      const packages = files('packages')
+      expect(host).toHaveLength(3)
+      expect(packages.length).toBeGreaterThan(0)
+      expect(host.every((file) => !file.startsWith(join(fixture, 'packages') + sep))).toBe(true)
+      expect(packages.every((file) => file.startsWith(join(fixture, 'packages') + sep))).toBe(true)
+      expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
+      expect([...host, ...packages].sort()).toEqual(baseline)
+    }
+    expect(list('0', [], 'host')).toHaveLength(13)
+    expect(list('0', [], 'packages')).toHaveLength(13)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

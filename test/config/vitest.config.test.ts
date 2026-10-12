@@ -11,6 +11,7 @@ import vitestConfig, {
   FULL_COVERAGE_THRESHOLDS,
   fullSuiteShardAllowsEmptyProjects,
   resolveVitestMaxWorkers,
+  portableTestScopeFor,
   VITEST_ARCHITECTURE_TEST_GLOBS,
   VITEST_COVERAGE_EXCLUDE_PATTERNS,
   VITEST_DATABASE_TEST_GLOBS,
@@ -44,6 +45,18 @@ describe('Vitest discovery boundaries', () => {
     expect(vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })).toEqual(
       expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
     )
+  })
+
+  it('limits partition selection to portable CI and rejects unknown scopes', () => {
+    expect(portableTestScopeFor({ OPEN_SCIENCE_CI_PORTABLE_SCOPE: 'host' })).toBeUndefined()
+    for (const scope of ['host', 'packages']) {
+      expect(
+        portableTestScopeFor({ VITEST_PORTABLE_CI: '1', OPEN_SCIENCE_CI_PORTABLE_SCOPE: scope })
+      ).toBe(scope)
+    }
+    expect(() =>
+      portableTestScopeFor({ VITEST_PORTABLE_CI: '1', OPEN_SCIENCE_CI_PORTABLE_SCOPE: 'other' })
+    ).toThrow('Invalid CI portable test scope')
   })
 
   it('assigns the Plan context Shell sandbox check to the native isolation lanes', () => {
@@ -150,6 +163,7 @@ it.each([
         env: {
           ...process.env,
           VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_PORTABLE_SCOPE: '',
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
             hostOnly
               ? ['packages/resilient-download', 'packages/durable-files', 'packages/compute']
@@ -328,6 +342,7 @@ it.each([false, true])(
         env: {
           ...process.env,
           VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_PORTABLE_SCOPE: '',
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
             excluded ? ['packages/durable-files'] : []
           ),
@@ -381,6 +396,7 @@ it.each([false, true])(
         env: {
           ...process.env,
           VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_PORTABLE_SCOPE: '',
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
             excluded ? ['packages/resilient-download'] : []
           ),

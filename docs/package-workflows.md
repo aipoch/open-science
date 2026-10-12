@@ -22,7 +22,13 @@ npm run check:packages -- --ci
 ```
 
 Explicit package names select exactly those consumers, plus prerequisite builds. Ordinary PR updates
-run affected package unit tests and host integration tests; installed tarball verification runs in
+run bounded affected package unit tests and host integration tests on separate Ubuntu runners.
+PR Gate uses four host shards and two package shards; `packages/` test files run only in the package
+group, while host, CLI and repository-policy tests run in the host group. Both groups retain the
+trusted package/module selection and feed one blocking coverage aggregate. Pure host changes omit
+package runners entirely; package fixture readers and shared runtime/build inputs still select
+package checks. Full portable plans defer to scheduled/manual Source Regression on both PRs and
+merge queue. Its complete acceptance runs the same separate host/package groups without exclusions. Installed tarball verification runs in
 **merge queue** as a separate blocking job. Static checks no longer install or execute package tarballs;
 CLI/SDK, Node 22 compatibility and published-runtime checks have their own job with unchanged selection.
 
