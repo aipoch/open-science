@@ -15,6 +15,7 @@ const allServices = {
   agents: true,
   skills: true,
   artifacts: true,
+  managedExecution: true,
   lineage: true,
   frames: true,
   sessions: true,
@@ -48,13 +49,14 @@ const project = (
   })
 
 describe('Host capability projection', () => {
-  it('owns the complete 20-key project-native catalog', () => {
+  it('owns the complete 21-key project-native catalog', () => {
     expect(HOST_CAPABILITY_KEYS).toEqual([
       'mcp',
       'compute',
       'agents',
       'skills',
       'artifacts',
+      'managedExecution',
       'lineage',
       'frames',
       'sessions',
@@ -86,6 +88,7 @@ describe('Host capability projection', () => {
     })
     expect(project({ callerRole: 'delegate' })).toMatchObject({
       sessions: false,
+      managedExecution: false,
       delegate: false,
       children: false,
       collect: false,

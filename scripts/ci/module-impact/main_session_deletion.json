@@ -16,7 +16,8 @@
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-persistence/deletion-integration.test.ts",
-      "src/main/session-persistence/ipc.test.ts"
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

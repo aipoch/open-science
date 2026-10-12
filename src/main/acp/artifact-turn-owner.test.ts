@@ -1104,3 +1104,44 @@ describe('ArtifactTurnOwner', () => {
     expect(revoked).toEqual(['failed-open-capability'])
   })
 })
+
+it('drains tracked native Artifact writes through the original finalizer and refuses late admission', async () => {
+  const dataRoot = await createRoot()
+  const repository = new ArtifactRepository(dataRoot)
+  const owner = new ArtifactTurnOwner({
+    dataRoot,
+    repository,
+    runRegistry: new ArtifactRunRegistry()
+  })
+  const turn = await openRootExecution(owner, {
+    appSessionId: 'session-1',
+    artifactStorageSessionId: 'session-1',
+    projectId: 'project-1',
+    agentName: 'Main'
+  })
+  const entered = createDeferred()
+  const release = createDeferred()
+  const accepted = owner.trackWrite(turn, async (scope) => {
+    expect(Object.isFrozen(scope)).toBe(true)
+    expect(Object.isFrozen(scope.messageAncestry)).toBe(true)
+    expect(scope.artifactRunId).toBe(owner.snapshot(turn).runId)
+    entered.resolve()
+    await release.promise
+    return artifactVersion()
+  })
+  await entered.promise
+  let finalized = false
+  const closing = owner.finalize(turn).then(() => {
+    finalized = true
+  })
+  await Promise.resolve()
+  expect(finalized).toBe(false)
+  expect(owner.snapshot(turn).outstandingWrites).toBe(1)
+  await expect(owner.trackWrite(turn, async () => artifactVersion())).rejects.toThrow('not open')
+  release.resolve()
+  await accepted
+  await closing
+  expect(finalized).toBe(true)
+  await owner.dispose(turn)
+  await expect(owner.trackWrite(turn, async () => artifactVersion())).rejects.toThrow('not open')
+})

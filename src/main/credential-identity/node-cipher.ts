@@ -1,4 +1,11 @@
-import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto'
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  pbkdf2Sync,
+  randomBytes,
+  timingSafeEqual
+} from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import {
@@ -110,6 +117,68 @@ export function createNodeSecureStorageCipher(
   }
   const prefix =
     identity.backend === 'mac-keychain' || identity.backend === 'windows-dpapi' ? 'v10' : 'v11'
+  const decryptValue = <T>(value: Buffer, consume: (plaintext: Buffer) => T): T => {
+    if (disposed) throw new CredentialIdentityError('cipher-disposed')
+    if (identity.backend === 'file') throw new CredentialIdentityError('os-access-in-file-mode')
+    const consumeDecryption = (
+      decipher: ReturnType<typeof createDecipheriv>,
+      encrypted: Buffer
+    ): T => {
+      let first: Buffer | undefined, last: Buffer | undefined, plaintext: Buffer | undefined
+      try {
+        first = decipher.update(encrypted)
+        last = decipher.final()
+        plaintext = Buffer.concat([first, last])
+        return consume(plaintext)
+      } finally {
+        first?.fill(0)
+        last?.fill(0)
+        plaintext?.fill(0)
+      }
+    }
+    if (identity.backend === 'windows-dpapi') {
+      if (value.subarray(0, 3).toString() !== 'v10') {
+        const plaintext = operations.unprotect(value)
+        try {
+          return consume(plaintext)
+        } finally {
+          plaintext.fill(0)
+        }
+      }
+      if (value.length < 31) throw new CredentialIdentityError('invalid-ciphertext')
+      const decipher = createDecipheriv('aes-256-gcm', derive(false), value.subarray(3, 15))
+      decipher.setAuthTag(value.subarray(-16))
+      return consumeDecryption(decipher, value.subarray(15, -16))
+    }
+    if (!value.length) return consume(Buffer.alloc(0))
+    const version = value.subarray(0, 3).toString()
+    const linux =
+      identity.backend === 'linux-secret-service' || identity.backend === 'linux-kwallet'
+    if (version !== prefix && !(linux && version === 'v10'))
+      throw new CredentialIdentityError('unsupported-ciphertext-version')
+    const secureKey = derive(false)
+    const decrypt = (secret: Buffer): T => {
+      const decipher = createDecipheriv('aes-128-cbc', secret, iv)
+      return consumeDecryption(decipher, value.subarray(3))
+    }
+    // Read-only compatibility with Chromium's historical Linux v10 and empty-password records.
+    // The OS-vault access guard still applies, and every new Linux write uses its selected v11 key.
+    const legacyKey =
+      linux && version === 'v10' ? pbkdf2Sync('peanuts', 'saltysalt', 1, 16, 'sha1') : undefined
+    try {
+      return decrypt(legacyKey ?? secureKey)
+    } catch (error) {
+      if (!linux) throw error
+      const emptyKey = pbkdf2Sync('', 'saltysalt', 1, 16, 'sha1')
+      try {
+        return decrypt(emptyKey)
+      } finally {
+        emptyKey.fill(0)
+      }
+    } finally {
+      legacyKey?.fill(0)
+    }
+  }
   return {
     isEncryptionAvailable() {
       if (identity.backend === 'file') return false
@@ -142,61 +211,29 @@ export function createNodeSecureStorageCipher(
       return Buffer.concat([Buffer.from(prefix), cipher.update(value, 'utf8'), cipher.final()])
     },
     decryptString(value) {
-      if (identity.backend === 'windows-dpapi') {
-        if (value.subarray(0, 3).toString() !== 'v10') {
-          const plaintext = operations.unprotect(value)
-          try {
-            return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
-          } finally {
-            plaintext.fill(0)
-          }
+      return decryptValue(value, (plaintext) =>
+        new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+      )
+    },
+    validateEncryptedCookie(value, { hostKey, databaseVersion }) {
+      if (
+        typeof hostKey !== 'string' ||
+        !Number.isSafeInteger(databaseVersion) ||
+        databaseVersion < 1
+      )
+        throw new CredentialIdentityError('invalid-cookie-context')
+      decryptValue(value, (plaintext) => {
+        // Chromium cookie database v24+ encrypts SHA256(host_key) || value, not a UTF-8 string.
+        // net/extras/sqlite/sqlite_persistent_cookie_store.cc: MakeCookiesFromSQLStatement.
+        if (databaseVersion >= 24) {
+          const expected = createHash('sha256').update(hostKey, 'utf8').digest()
+          if (
+            plaintext.length < expected.length ||
+            !timingSafeEqual(plaintext.subarray(0, expected.length), expected)
+          )
+            throw new CredentialIdentityError('cookie-host-digest-mismatch')
         }
-        if (value.length < 31) throw new CredentialIdentityError('invalid-ciphertext')
-        const decipher = createDecipheriv('aes-256-gcm', derive(false), value.subarray(3, 15))
-        decipher.setAuthTag(value.subarray(-16))
-        const plaintext = Buffer.concat([
-          decipher.update(value.subarray(15, -16)),
-          decipher.final()
-        ])
-        try {
-          return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
-        } finally {
-          plaintext.fill(0)
-        }
-      }
-      if (!value.length) return ''
-      const version = value.subarray(0, 3).toString()
-      const linux =
-        identity.backend === 'linux-secret-service' || identity.backend === 'linux-kwallet'
-      if (version !== prefix && !(linux && version === 'v10'))
-        throw new CredentialIdentityError('unsupported-ciphertext-version')
-      const secureKey = derive(false)
-      const decrypt = (secret: Buffer): string => {
-        const decipher = createDecipheriv('aes-128-cbc', secret, iv)
-        const plaintext = Buffer.concat([decipher.update(value.subarray(3)), decipher.final()])
-        try {
-          return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
-        } finally {
-          plaintext.fill(0)
-        }
-      }
-      // Read-only compatibility with Chromium's historical Linux v10 and empty-password records.
-      // The OS-vault access guard still applies, and every new Linux write uses its selected v11 key.
-      const legacyKey =
-        linux && version === 'v10' ? pbkdf2Sync('peanuts', 'saltysalt', 1, 16, 'sha1') : undefined
-      try {
-        return decrypt(legacyKey ?? secureKey)
-      } catch (error) {
-        if (!linux) throw error
-        const emptyKey = pbkdf2Sync('', 'saltysalt', 1, 16, 'sha1')
-        try {
-          return decrypt(emptyKey)
-        } finally {
-          emptyKey.fill(0)
-        }
-      } finally {
-        legacyKey?.fill(0)
-      }
+      })
     },
     dispose() {
       disposed = true

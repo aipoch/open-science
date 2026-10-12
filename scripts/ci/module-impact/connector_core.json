@@ -283,7 +283,14 @@
       "packages/connector-builtins/src/contracts.test.ts",
       "packages/connector-builtins/src/encori/publication.test.ts",
       "src/main/connectors/custom-mcp-config.test.ts",
-      "src/main/connectors/molecule-artifact-adapter.test.ts"
+      "src/main/connectors/molecule-artifact-adapter.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

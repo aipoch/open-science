@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -24,7 +27,13 @@ import { createProjectHandlers } from '../projects/ipc'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { Project } from '../../shared/projects'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import { SessionRepository } from '../session-persistence/repository'
+import { SessionPersistenceStateOwner } from '../session-persistence/state-owner'
+import { initDataRoot } from '../storage-root'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -51,6 +60,209 @@ const emptySnapshot = (): AcpStateSnapshot => ({
   contextUsageBySession: {},
   promptInFlight: false,
   promptInFlightSessionIds: []
+})
+
+describe('ordinary application operation admission', () => {
+  const operationScope = { projectId: 'external-project', sessionId: 'external-session' }
+  it('reserves without starting an Agent and refuses competing external work', async () => {
+    const factory = vi.fn(
+      (callbacks: AcpRuntimeCallbacks) =>
+        createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks }).runtime
+    )
+    const coordinator = new AcpRuntimeCoordinator(factory)
+    const release = await coordinator.reserveSessionOperation(operationScope, vi.fn())
+    expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain('external-session')
+    expect(coordinator.hasActiveSessionOperation('external-project', 'external-session')).toBe(true)
+    expect(coordinator.hasActiveSessionOperation('other-project', 'external-session')).toBe(false)
+    expect(coordinator.hasActiveSessionOperation('external-project', 'other-session')).toBe(false)
+    expect(coordinator.getActivePromptSessions()).toEqual([])
+    expect(coordinator.hasLiveSession('external-project', 'external-session')).toBe(false)
+    await expect(coordinator.reserveSessionOperation(operationScope, vi.fn())).rejects.toThrow(
+      'active'
+    )
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain('external-session')
+    )
+    expect(coordinator.hasActiveSessionOperation('external-project', 'external-session')).toBe(
+      false
+    )
+    const next = await coordinator.reserveSessionOperation(operationScope, vi.fn())
+    next()
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(factory.mock.results[0].value.connect).not.toHaveBeenCalled()
+  })
+
+  it('cancels through the existing stop action but keeps admission until cleanup finishes', async () => {
+    const factory = vi.fn(
+      (callbacks: AcpRuntimeCallbacks) =>
+        createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks }).runtime
+    )
+    const coordinator = new AcpRuntimeCoordinator(factory)
+    const cancelled = vi.fn()
+    const release = await coordinator.reserveSessionOperation(operationScope, cancelled)
+    let finished = false
+    const cancellation = coordinator.cancelPrompt({ sessionId: 'external-session' }).then(() => {
+      finished = true
+    })
+    await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1))
+    expect(finished).toBe(false)
+    expect(coordinator.hasActiveSessionOperation('external-project', 'external-session')).toBe(true)
+    await expect(coordinator.reserveSessionOperation(operationScope, vi.fn())).rejects.toThrow(
+      'active'
+    )
+    release()
+    await cancellation
+    expect(coordinator.hasActiveSessionOperation('external-project', 'external-session')).toBe(
+      false
+    )
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(factory.mock.results[0].value.connect).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'keeps a real Session running during an operation lease and restores released authority (terminal commit: %s)',
+    async (terminalCommit) => {
+      const root = await mkdtemp(join(tmpdir(), 'operation-session-liveness-'))
+      initDataRoot(root)
+      const createCoordinator = (): AcpRuntimeCoordinator =>
+        new AcpRuntimeCoordinator(
+          (callbacks) =>
+            createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks }).runtime
+        )
+      const coordinator = createCoordinator()
+      const repositoryFor = (owner: AcpRuntimeCoordinator): SessionRepository =>
+        new SessionRepository(root, {
+          hasActiveRuntimePrompt: (projectId, sessionId) =>
+            owner.hasActiveSessionOperation(projectId, sessionId) ||
+            owner
+              .getActivePromptSessions()
+              .some((scope) => scope.projectId === projectId && scope.sessionId === sessionId),
+          hasLiveRuntimeSession: (projectId, sessionId) =>
+            owner.hasActiveSessionOperation(projectId, sessionId) ||
+            owner.hasLiveSession(projectId, sessionId)
+        })
+      const repository = repositoryFor(coordinator)
+      const persistence = new SessionPersistenceStateOwner({
+        repository,
+        fileIndex: { syncSession: vi.fn(async () => []) },
+        assertMutable: vi.fn(),
+        notifyFilesChanged: vi.fn(),
+        notifyRuntimeContextSessionUpdated: vi.fn(),
+        notifyRuntimeTranscriptSessionUpdated: vi.fn(),
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const release = await coordinator.reserveSessionOperation(operationScope, vi.fn())
+      try {
+        const admitted = await repository.saveSession(
+          materializeSessionConversationGraph({
+            id: operationScope.sessionId,
+            projectId: operationScope.projectId,
+            cwd: '/workspace',
+            title: 'External managed execution',
+            status: 'running',
+            runtimeTranscriptOwner: 'main',
+            activeRun: { promptMessageId: 'operation-prompt', startedAt: 2 },
+            messages: [
+              {
+                id: 'operation-prompt',
+                role: 'user',
+                content: 'Run prepared materials',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ],
+            createdAt: 1,
+            updatedAt: 2
+          })
+        )
+        const live = await repository.loadSession(
+          operationScope.projectId,
+          operationScope.sessionId
+        )
+        expect(live).toMatchObject({ status: 'running', activeRun: admitted.activeRun })
+        expect(live?.error).toBeUndefined()
+        expect(live?.resumeRecovery).toBeUndefined()
+        // Renderer preference saves use the StateOwner, which checks live runtime ownership
+        // before rebasing. A plain repository read alone does not cover this recovery path.
+        const preference = await persistence.saveSession(
+          {
+            ...live!,
+            agentConfiguration: {
+              providerId: 'provider-1',
+              model: 'alternate-model',
+              reasoningEffort: 'default'
+            }
+          },
+          { conflictRebaseFields: ['agentConfiguration'] }
+        )
+        expect(preference).toMatchObject({ status: 'running', activeRun: admitted.activeRun })
+        expect(preference.agentConfiguration?.model).toBe('alternate-model')
+        expect(preference.messages[0].turnOutcome).toBeUndefined()
+        expect(preference.resumeRecovery).toBeUndefined()
+        await persistence.prepareRuntimeResume(operationScope)
+        const readBack = await repository.loadSession(
+          operationScope.projectId,
+          operationScope.sessionId
+        )
+        expect(readBack).toMatchObject({ status: 'running', activeRun: admitted.activeRun })
+        expect(readBack?.resumeRecovery).toBeUndefined()
+
+        // A fresh process has no lease: durable "running" alone remains recovery evidence,
+        // never authorization to claim an operation survived a restart or to rerun it.
+        const afterCrash = await repositoryFor(createCoordinator()).loadSession(
+          operationScope.projectId,
+          operationScope.sessionId
+        )
+        expect(afterCrash).toMatchObject({
+          status: 'error',
+          resumeRecovery: { cause: 'app-restart', promptMessageId: 'operation-prompt' }
+        })
+        expect(afterCrash?.activeRun).toBeUndefined()
+
+        if (terminalCommit) {
+          await repository.saveSession({ ...readBack!, status: 'idle', activeRun: undefined })
+        }
+        release()
+        await vi.waitFor(() =>
+          expect(
+            coordinator.hasActiveSessionOperation(
+              operationScope.projectId,
+              operationScope.sessionId
+            )
+          ).toBe(false)
+        )
+        const released = await repository.loadSession(
+          operationScope.projectId,
+          operationScope.sessionId
+        )
+        expect(released?.status).toBe(terminalCommit ? 'idle' : 'error')
+        expect(released?.activeRun).toBeUndefined()
+        if (terminalCommit) expect(released?.resumeRecovery).toBeUndefined()
+        else expect(released?.resumeRecovery?.cause).toBe('app-restart')
+      } finally {
+        release()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('quit admission closes before another application request can start and can be resumed', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks }).runtime
+    )
+    const result = await coordinator.prepareForQuit()
+    expect(result).toBe('completed')
+    await expect(coordinator.reserveSessionOperation(operationScope, vi.fn())).rejects.toThrow(
+      'quitting'
+    )
+    coordinator.abortQuitPreparation()
+    const release = await coordinator.reserveSessionOperation(operationScope, vi.fn())
+    release()
+  })
 })
 
 const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>

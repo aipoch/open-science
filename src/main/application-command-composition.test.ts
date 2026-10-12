@@ -90,6 +90,7 @@ const project = (id: string): Project => ({
 
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
+    researchExecutionProfiles: EMPTY_OWNER,
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
     notebook: EMPTY_OWNER,
@@ -863,5 +864,29 @@ it('keeps PDF translation on the desktop view and passes its document lease to t
   expect(composition.localWeb.commandNames()).not.toContain('pdf-translation:begin')
   expect(composition.remoteWeb.commandNames()).not.toContain('pdf-translation:begin')
   expect(composition.task.commandNames()).not.toContain('pdf-translation:begin')
+  composition.dispose()
+})
+
+it('exposes research configuration through the Node desktop dispatcher without a web or task writer', async () => {
+  const saveExecutionProfile = vi.fn().mockResolvedValue({ profileId: 'public-profile' })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    researchExecutionProfiles: { saveExecutionProfile } as never
+  })
+  const base = invocation()
+  const caller = {
+    ...base,
+    callerContext: createCallerContext({ ...base.callerContext, surface: 'electron' }),
+    args: [{ credentials: { key: 'private-value' } }]
+  }
+  await expect(
+    composition.desktop.invoke('research-execution-profiles:save', caller)
+  ).resolves.toEqual({ profileId: 'public-profile' })
+  expect(saveExecutionProfile).toHaveBeenCalledWith(caller.args[0], caller.callerLease.signal)
+  for (const dispatcher of [composition.localWeb, composition.remoteWeb, composition.task]) {
+    expect(dispatcher.commandNames()).not.toContain('research-execution-profiles:save')
+    await expect(dispatcher.invoke('research-execution-profiles:save', base)).rejects.toThrow()
+  }
+  expect(saveExecutionProfile).toHaveBeenCalledOnce()
   composition.dispose()
 })

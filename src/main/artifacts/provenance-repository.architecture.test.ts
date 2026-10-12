@@ -229,6 +229,7 @@ describe('Artifact Provenance repository architecture', () => {
         'listRunVersions',
         'prepareProjectReconciliation',
         'readCodeReconstructionCache',
+        'readPublishedVersionForWrite',
         'reconcileSession',
         'recordLiteratureAbstractRead',
         'recordLiteraturePdfRead',
@@ -238,6 +239,7 @@ describe('Artifact Provenance repository architecture', () => {
         'releaseWriteReservation',
         'replayVersion',
         'reserveWrite',
+        'resolvePublishedSessionVersionsByContent',
         'resolveReviewerTurnFileEvidence',
         'resolveVersionDescriptors',
         'validateFinalizationOwnership',
@@ -307,6 +309,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(topLevelValues(facadeFile)).toEqual(
       [
         'SAFE_SEGMENT_PATTERN',
+        'assertExpectedArtifactContent',
         'assertSafeSegment',
         'hasServerInferredProducer',
         'journalRecoveryPlan',
@@ -510,7 +513,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/artifact-reproducibility-commands.test.ts',
       'src/main/artifacts/artifact-reproducibility-commands.ts',
       'src/main/artifacts/reproducibility-host.ts',
-      'src/main/artifacts/reproducibility-host.test.ts'
+      'src/main/artifacts/reproducibility-host.test.ts',
+      'src/main/artifacts/session-version-content-reader.test.ts',
+      'src/main/artifacts/session-version-content-reader.ts'
     ])
     expect(module.interfacePaths).toEqual([
       'src/main/artifacts/provenance-message-snapshot.ts',
@@ -547,7 +552,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
       'src/main/artifacts/ro-crate-export.ts',
       'src/main/artifacts/artifact-reproducibility-commands.ts',
-      'src/main/artifacts/reproducibility-host.ts'
+      'src/main/artifacts/reproducibility-host.ts',
+      'src/main/artifacts/session-version-content-reader.ts'
     ])
     expect(module.consumerModules).toEqual(['session_persistence'])
     expect(module.testFiles.owner).toEqual([
@@ -587,7 +593,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/session-reproducibility.test.ts',
       'src/main/artifacts/storage-access.context.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
-      'src/main/artifacts/artifact-reproducibility-commands.test.ts'
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+      'src/main/artifacts/session-version-content-reader.test.ts'
     ])
     expect(module.testFiles.contract).toEqual([
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
@@ -979,7 +986,24 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/agents/production-completion-handoff.test.ts',
       'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
       'src/main/notebook/environment-capture.contract.test.ts',
-      'src/main/session-package/research-reproduction.integration.test.ts'
+      'src/main/session-package/research-reproduction.integration.test.ts',
+      'src/main/composition/artifact-surfaces.test.ts',
+      'src/main/composition/handoff.test.ts',
+      'src/main/composition/managed-execution.integration.test.ts',
+      'src/main/composition/session-packages.test.ts',
+      'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+      'src/main/notebook/managed-auxiliary-output.test.ts',
+      'src/main/notebook/managed-execution-collection.integration.test.ts',
+      'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+      'src/main/notebook/managed-execution-output.test.ts',
+      'src/main/notebook/managed-execution-service.test.ts',
+      'src/main/notebook/managed-nested-generation.integration.test.ts',
+      'src/main/notebook/managed-output-publication.integration.test.ts',
+      'src/main/notebook/research-material-authority.test.ts',
+      'src/main/notebook/screened-auxiliary-output.test.ts',
+      'src/main/notebook/session-operation-owner.integration.test.ts',
+      'src/main/research-execution-profiles/ipc.test.ts',
+      'src/main/session-package/headless.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -2529,7 +2529,14 @@
       "packages/pdf-translation/test/pdf-cache.test.ts",
       "packages/pdf-translation/test/usage.test.ts",
       "packages/pdf-translation/test/workflow.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

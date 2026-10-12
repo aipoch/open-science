@@ -487,7 +487,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationPreparation.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationExport.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
+      "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

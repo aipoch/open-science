@@ -76,10 +76,15 @@ export async function composeSessionFoundation({
   }
   const sessionRepository = createDefaultSessionRepository(
     (projectId, sessionId) =>
+      (runtimeRef.current?.hasActiveSessionOperation(projectId, sessionId) ?? false) ||
       (runtimeRef.current?.getActivePromptSessions() ?? []).some(
         (session) => session.projectId === projectId && session.sessionId === sessionId
       ),
-    (projectId, sessionId) => runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
+    // Preference saves and Resume use this predicate directly before committing restart
+    // recovery, independently of the ordinary-read active-prompt predicate above.
+    (projectId, sessionId) =>
+      (runtimeRef.current?.hasActiveSessionOperation(projectId, sessionId) ?? false) ||
+      (runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false)
   )
   const auxiliaryUsageLog = createLogger('session-usage:auxiliary')
   const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(() =>

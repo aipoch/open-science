@@ -79,6 +79,8 @@ const createWebServiceController = (
     permissionApprovalPresence,
     taskAgent,
     taskControls,
+    managedExecution,
+    sessionPackageTransfer,
     computePreferences,
     detectActiveSessions
   }: {
@@ -90,6 +92,8 @@ const createWebServiceController = (
     permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
     taskControls?: TaskControlPorts
+    managedExecution?: import('../managed-execution-external-port').ManagedExecutionExternalPort
+    sessionPackageTransfer?: import('../session-package-external-port').SessionPackageExternalPort
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
   },
@@ -119,6 +123,8 @@ const createWebServiceController = (
       commands: applicationCommands.task,
       agent: taskAgent,
       controls: taskControls,
+      managedExecution,
+      sessionPackages: sessionPackageTransfer,
       computePreferences,
       detectActiveSessions
     },

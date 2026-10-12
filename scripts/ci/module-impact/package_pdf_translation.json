@@ -653,7 +653,10 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
       "src/main/literature/pdf-translation/cache-revision.test.ts",
-      "src/shared/pdf-translation.test.ts"
+      "src/shared/pdf-translation.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "capabilityOverlays": [],

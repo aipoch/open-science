@@ -1,4 +1,9 @@
 import {
+  researchExecutionProfileCommandGroup,
+  registerResearchExecutionProfileCommands,
+  type ResearchExecutionProfileCommands
+} from './research-execution-profiles/ipc'
+import {
   pdfTranslationApplicationCommandGroup,
   registerPdfTranslationApplicationCommands
 } from './literature/pdf-translation/application-commands'
@@ -143,6 +148,7 @@ type ApplicationCommandModuleDescriptor = Readonly<{
 }>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
+  researchExecutionProfiles: ResearchExecutionProfileCommands
   pdfTranslation: PdfTranslationOwner
   sideChat: SideChatCommandOwner
   acp: AcpApplicationCommandDependencies
@@ -176,6 +182,7 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  ...researchExecutionProfileCommandGroup.commands.map(({ name }) => name),
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
   'office-preview:attach-frame',
@@ -341,6 +348,9 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([researchExecutionProfileCommandGroup], (registrar) =>
+      registerResearchExecutionProfileCommands(registrar, dependencies.researchExecutionProfiles)
+    ),
     defineApplicationCommandModule([pdfTranslationApplicationCommandGroup], (registrar) =>
       registerPdfTranslationApplicationCommands(registrar, dependencies.pdfTranslation)
     ),

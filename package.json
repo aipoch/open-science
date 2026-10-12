@@ -181,7 +181,8 @@
     "@aipoch/durable-files": "file:packages/durable-files",
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
-    "@aipoch/literature-reading": "file:packages/literature-reading"
+    "@aipoch/literature-reading": "file:packages/literature-reading",
+    "semver": "^7.7.3"
   },
   "overrides": {
     "@huggingface/transformers": {
@@ -270,6 +271,7 @@
     "unified": "^11.0.5",
     "vite": "^7.2.6",
     "vitest": "^4.1.11",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@types/semver": "^7.7.0"
   }
 }

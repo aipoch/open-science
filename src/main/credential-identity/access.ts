@@ -105,6 +105,23 @@ export const createCredentialAccess = (options: {
         return fail('credential-write-failed')
       }
     },
+    ...(options.cipher.validateEncryptedCookie
+      ? {
+          validateEncryptedCookie(
+            value: Buffer,
+            context: { hostKey: string; databaseVersion: number }
+          ) {
+            check(true)
+            try {
+              if (options.identity.backend === 'file') return fail('os-access-in-file-mode')
+              options.cipher.validateEncryptedCookie!(value, context)
+              checked = true
+            } catch {
+              return fail('decryption-failed')
+            }
+          }
+        }
+      : {}),
     decryptString(value) {
       check(true)
       try {

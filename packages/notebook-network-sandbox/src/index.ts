@@ -1,3 +1,8 @@
+export {
+  normalizeExecutionConfinement,
+  executionConfinementAllowsHost
+} from '../runtime/src/gateway/execution-confinement.js'
+export type { ExecutionConfinement } from '../runtime/src/gateway/execution-confinement.js'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -232,6 +237,7 @@ class NotebookNetworkSandbox {
     let wrapped: Awaited<ReturnType<typeof NotebookNetworkRuntime.wrap>>
     try {
       wrapped = await this.#backend.wrap({
+        ...(command.confinement ? { confinement: command.confinement } : {}),
         target,
         command: command.command,
         ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),
