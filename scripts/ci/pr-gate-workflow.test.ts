@@ -326,6 +326,8 @@ describe('PR Gate workflow', () => {
       mkdirSync(join(root, 'scripts/ci'), { recursive: true })
       for (const file of [
         'module-impact-authority.mjs',
+        'windows-core-plan.mjs',
+        'windows-core-checks.json',
         'module-impact-shadow.mjs',
         'module-test-impact.mjs',
         'module-impact.json',
@@ -400,6 +402,8 @@ describe('PR Gate workflow', () => {
         git('config', 'user.name', 'CI Test')
         for (const name of [
           'module-impact-authority.mjs',
+          'windows-core-plan.mjs',
+          'windows-core-checks.json',
           'module-impact-inputs.mjs',
           'module-impact-shadow.mjs',
           'module-ownership-paths.mjs',
@@ -1191,16 +1195,27 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it('checks ownership and consumers for selective plans and deferred full PR/queue plans', () => {
+  it('checks selective source imports without duplicating the registration/full contract suite', () => {
     const guard = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Check complete module ownership and consumer evidence'
     )
     expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
     expect(guard?.run).toContain('scripts/ci/module-consumer-coverage.test.ts')
     expect(guard?.if).toBe(
-      "${{ (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full') || (contains(fromJSON('[\"pull_request\",\"merge_group\"]'), github.event_name) && fromJSON(needs.preflight.outputs.plan).mode == 'full') }}"
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}"
     )
     expect(guard?.['continue-on-error']).not.toBe(true)
+  })
+
+  it('runs manifest-reading contracts as a blocking check for registration and full plans', () => {
+    const step = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Check module registration policy and architecture contracts'
+    )
+    expect(step?.run).toBe('node scripts/ci/module-registration-tests.mjs')
+    expect(step?.if).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+    )
+    expect(step?.['continue-on-error']).not.toBe(true)
   })
 
   it('runs the i18n catalog guard as a named static check', () => {
@@ -1374,7 +1389,7 @@ describe('PR Gate workflow', () => {
     })
   })
 
-  it.each(['macos', 'windows'])(
+  it.each(['macos'])(
     'prepares %s E2E once and restores its exact artifact in every consumer',
     (platform) => {
       const bundle = `${platform}_e2e`
@@ -1486,7 +1501,7 @@ describe('PR Gate workflow', () => {
       )
     ).toHaveLength(2)
     expect(
-      workflow.jobs.windows_e2e_setup.steps?.filter(({ name }) => name === 'Install dependencies')
+      workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
     ).toEqual([
       expect.objectContaining({
         run: 'node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false'
@@ -1505,7 +1520,7 @@ describe('PR Gate workflow', () => {
     )
 
     const windowsRuns = workflow.jobs.windows_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
+    expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
@@ -1519,9 +1534,11 @@ describe('PR Gate workflow', () => {
   it('selects Windows mainline groups with trusted base policy on every entry point', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.env!.E2E_GREP).toBe('${{ needs.preflight.outputs.windows_e2e_grep }}')
-    expect(
-      typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.shard : undefined
-    ).toEqual([1])
+    expect(job.strategy).toBeUndefined()
+    expect(workflow.jobs.windows_e2e_setup).toBeUndefined()
+    expect(job.needs).toEqual(['preflight', 'windows_notebook_runtime'])
+    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot'))).toBe(false)
     const selector = workflow.jobs.preflight.steps!.find(({ id }) => id === 'windows_mainline')!
     expect(selector.run).toContain('git show "$TRUSTED_BASE_SHA:$selector"')
     expect(selector.run).toContain('node "$TRUSTED_DIR/windows-e2e-mainline.mjs"')
@@ -1550,9 +1567,11 @@ describe('PR Gate workflow', () => {
 
   it('runs affected Windows mainlines on one isolated desktop with the stable aggregate gate', () => {
     const job = workflow.jobs.windows_e2e
-    expect(
-      typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.shard : undefined
-    ).toEqual([1])
+    expect(job.strategy).toBeUndefined()
+    expect(workflow.jobs.windows_e2e_setup).toBeUndefined()
+    expect(job.needs).toEqual(['preflight', 'windows_notebook_runtime'])
+    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot'))).toBe(false)
     expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
       if: "${{ steps.setup.outcome == 'success' }}",
       run: expect.stringContaining(
@@ -1922,6 +1941,10 @@ describe('PR Gate workflow', () => {
         ...Object.fromEntries(
           Object.keys(enforceWindowsCore?.env ?? {}).map((key) => [key, 'success'])
         ),
+        WINDOWS_CORE_CHECKS: 'null',
+        WINDOWS_RUNTIME_SELECTED: 'true',
+        WINDOWS_PATH_SELECTED: 'true',
+        WINDOWS_PROCESS_ONLY: 'false',
         WINDOWS_WHEEL_EVIDENCE_OUTCOME: 'failure'
       },
       encoding: 'utf8'

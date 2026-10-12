@@ -1,0 +1,93 @@
+{
+  "windows_process": {
+    "tests": [
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/delegation/process-ownership.test.ts",
+      "src/main/delegation/production-composition.test.ts"
+    ],
+    "paths": [
+      "src/main/acp/",
+      "src/main/delegation/",
+      "src/main/agent-framework/",
+      "src/main/process-tree",
+      "packages/process-tree-native/"
+    ]
+  },
+  "windows_runtime": {
+    "tests": [
+      "scripts/ci/run-windows-browser-diagnostics.test.ts",
+      "scripts/windows-updater-certification.test.ts",
+      "src/main/windows.test.ts",
+      "src/main/windows-icon-assets.test.ts",
+      "src/main/windows-powershell.test.ts",
+      "src/main/delegation/acp-execution.test.ts",
+      "src/main/delegation/production-framework-runtime.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/file-save.test.ts",
+      "src/main/notebook/file-evidence-publication.integration.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+      "packages/specialists/src/repository.test.ts",
+      "packages/environment/src/micromamba-cache-powershell.test.ts",
+      "packages/environment/src/micromamba-cache-acl.integration.test.ts"
+    ]
+  },
+  "windows_regressions": {
+    "tests": [
+      "src/main/session-diagnostics/collector.test.ts",
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/literature/pdf-structure/owner.test.ts",
+      "src/main/notebook/kernel-startup-retry.integration.test.ts",
+      "packages/notebook-code-risk/src/code-risk-analysis.test.ts",
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/local-models/owner.test.ts"
+    ]
+  },
+  "windows_wheel_evidence": {
+    "tests": [
+      "packages/environment/src/pip-wheel-evidence.test.ts",
+      "packages/environment/src/pip-install-evidence.test.ts"
+    ],
+    "paths": ["packages/environment/"]
+  },
+  "windows_shell": {
+    "tests": [
+      "src/main/notebook/windows-shell.integration.test.ts",
+      "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
+      "src/main/notebook/shell-search-scope.test.ts"
+    ],
+    "paths": ["src/main/notebook/"]
+  },
+  "windows_service_timeout": {
+    "tests": ["src/main/notebook/runtime-service.test.ts"],
+    "paths": ["src/main/notebook/"]
+  },
+  "windows_sandbox": {
+    "tests": ["packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts"],
+    "paths": [
+      "packages/notebook-network-sandbox/",
+      "packages/process-tree-native/",
+      "packages/safe-file-publisher-native/",
+      "src/main/notebook/",
+      "src/main/permission",
+      "src/main/acp/restricted-runtime-profile",
+      "src/main/acp/permission-broker"
+    ]
+  },
+  "windows_path": {
+    "tests": [
+      "src/main/acp/workspace-path.test.ts",
+      "src/main/file-save.test.ts",
+      "src/main/notebook/run-document-data-paths.test.ts",
+      "packages/environment/src/runtime-paths.test.ts",
+      "src/main/session-persistence/conversation-export.test.ts",
+      "src/main/session-persistence/data-path-roundtrip.test.ts",
+      "src/main/settings/notebook-runtime-settings.test.ts",
+      "src/main/settings/preferences.test.ts",
+      "src/main/settings/shell-path.test.ts",
+      "packages/specialists/src/repository.test.ts",
+      "src/main/storage/data-path.test.ts",
+      "src/main/storage/normalize-legacy-paths.test.ts",
+      "src/main/storage/path-presence.test.ts"
+    ]
+  }
+}
