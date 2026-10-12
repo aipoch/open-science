@@ -281,6 +281,7 @@
       "src/main/credential-identity/probe.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/credential-identity/selection.test.ts",
+      "src/main/credential-identity/sqlite-snapshot.test.ts",
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/application-database.integration.test.ts",

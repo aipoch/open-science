@@ -117,6 +117,7 @@
       "src/renderer/src/pages/settings/general-sections-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/network-panel-i18n.render.test.tsx",
+      "src/renderer/src/pages/settings/settings-panel-loader.test.ts",
       "src/renderer/src/pages/settings/skill-editor-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/skill-upload-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/storage-i18n.render.test.tsx",
