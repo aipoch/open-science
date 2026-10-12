@@ -39,10 +39,10 @@
   },
   "dependencies": {
     "zod": "^4.6.5",
-    "@aipoch/literature-citations": "file:../literature-citations",
-    "@aipoch/literature-discovery": "file:../literature-discovery",
-    "@aipoch/literature-screening": "file:../literature-screening",
-    "@aipoch/journal-catalog": "file:../journal-catalog"
+    "@aipoch/literature-citations": "0.1.0",
+    "@aipoch/literature-discovery": "0.1.0",
+    "@aipoch/literature-screening": "0.1.0",
+    "@aipoch/journal-catalog": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

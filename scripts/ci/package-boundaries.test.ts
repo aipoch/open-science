@@ -39,6 +39,12 @@ for (const entry of manifests) {
       ...entry.manifest.optionalDependencies
     }
     const development = { ...production, ...entry.manifest.devDependencies }
+    for (const [name, specifier] of Object.entries(production)) {
+      // Consumer installs supply unpublished siblings as tarballs. A file: declaration can
+      // accidentally pass that setup while making the original archive depend on repo layout.
+      if (/^(?:file:|link:|workspace:|\.{0,2}\/|[A-Za-z]:[\\/])/.test(String(specifier)))
+        violations.push(`${entry.manifest.name} -> ${name}: non-portable dependency ${specifier}`)
+    }
     for (const file of files(entry.root).filter((path) => /\.[cm]?[jt]sx?$/.test(path))) {
       const runtime = /\/(src|resources)\//.test(file) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file)
       const declared = runtime ? production : development
