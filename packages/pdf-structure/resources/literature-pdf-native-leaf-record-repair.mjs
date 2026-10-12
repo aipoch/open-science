@@ -3670,6 +3670,8 @@ export function recoverNativeFencedPairedLiteralPlan(table, items, captions, rul
 // Independent complete decimal peers calibrate their right edges; the value
 // of a multiplier is never parsed or used to establish its leaf.
 export function recoverNativeAlignedLiteralLeafColumns(table, items, captions, rules, runs = []) {
+  const common = recoverCommonFencedLeafGutter(table, items, captions, rules, runs)
+  if (common) return common
   const frame = literalClosedFrame(table, items, captions, rules)
   if (!frame) return
   const { header, body, source, h, rect, edges, contained } = frame
@@ -3780,6 +3782,232 @@ export function recoverNativeAlignedLiteralLeafColumns(table, items, captions, r
   )
     return
   return { cuts }
+}
+
+// Independently printed headings constrain the corridor; all complete ruled
+// records must agree on one measured glyph gap inside it. Do not select a
+// convenient gap from a prefix of the records or parse a field's punctuation.
+function recoverCommonFencedLeafGutter(table, items, captions, rules, runs) {
+  const valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite)
+  const crop = table.cropRect
+  const columns = table.structure?.objects
+    ?.filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    !valid(crop) ||
+    crop[2] <= crop[0] ||
+    crop[3] <= crop[1] ||
+    table.readingRotation ||
+    !columns ||
+    columns.length < 3 ||
+    columns.length > 12 ||
+    columns.some((c) => !valid(c.rect) || c.rect[2] <= c.rect[0] || c.rect[3] <= c.rect[1]) ||
+    !runs?.length ||
+    rules.some((r) => !valid(r) || r[2] < r[0] || r[3] < r[1])
+  )
+    return
+  const near = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      valid(i.rect) &&
+      i.rect[0] < crop[2] &&
+      i.rect[2] > crop[0] &&
+      i.baseline > crop[1] &&
+      i.baseline < crop[3]
+  )
+  const h = median(near.map((i) => i.height))
+  if (
+    !(h > 0) ||
+    !Number.isFinite(h) ||
+    !captions.some((c) => captionKind(c.lines?.[0]) === 'table')
+  )
+    return
+  const edges = joinHorizontalTableRules(rules, 0.01, 0)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - crop[0]) < h &&
+        Math.abs(r[2] - crop[2]) < h &&
+        r[1] > crop[1] &&
+        r[1] < crop[3] + h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    edges.length < 4 ||
+    edges.some(
+      (r, n) =>
+        Math.abs(r[0] - edges[0][0]) > 0.02 ||
+        Math.abs(r[2] - edges[0][2]) > 0.02 ||
+        (n && r[1] - edges[n - 1][1] < h)
+    )
+  )
+    return
+  const source = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      valid(i.rect) &&
+      i.rect[0] < edges[0][2] &&
+      i.rect[2] > edges[0][0] &&
+      i.rect[3] > crop[1] - h &&
+      i.rect[1] < edges.at(-1)[1] &&
+      !(
+        i.baseline > edges.at(-1)[1] &&
+        captions.filter(
+          (c) =>
+            c.lines?.length === 1 &&
+            c.lines[0] === i.text &&
+            sameRect(c.rect, i.rect) &&
+            captionKind(c.lines[0]) === 'table'
+        ).length === 1
+      )
+  )
+  if (
+    !source.length ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        i.rect[2] <= i.rect[0] ||
+        i.rect[3] <= i.rect[1] ||
+        !Number.isFinite(i.baseline) ||
+        !Number.isFinite(i.height) ||
+        Math.abs(i.height - h) > 0.02 ||
+        Math.abs(i.rect[3] - i.baseline) > 0.02 ||
+        Math.abs(i.rect[3] - i.rect[1] - h) > 0.02 ||
+        i.rect[0] < edges[0][0] ||
+        i.rect[2] > edges[0][2] ||
+        i.rect[1] < crop[1] - h ||
+        i.rect[3] > edges.at(-1)[1] ||
+        edges.some((r) => i.rect[1] < r[1] && i.rect[3] > r[1]) ||
+        !literalProgramMatches(i, runs)
+    )
+  )
+    return
+  const header = source.filter((i) => i.rect[3] < edges[0][1]).sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    header.length !== columns.length + 1 ||
+    header.some(
+      (i, n) =>
+        !i.text.trim() ||
+        Math.abs(i.baseline - header[0].baseline) > 0.02 ||
+        (n && i.rect[0] - header[n - 1].rect[2] < h * 0.2)
+    )
+  )
+    return
+  const cuts = [
+    crop[0],
+    ...columns.slice(1).map((c, n) => crop[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+    crop[2]
+  ]
+  if (cuts.some((x, n) => !Number.isFinite(x) || (n && x <= cuts[n - 1]))) return
+  const headLanes = columns.map((_, c) =>
+    header.filter(
+      (i) => (i.rect[0] + i.rect[2]) / 2 > cuts[c] && (i.rect[0] + i.rect[2]) / 2 < cuts[c + 1]
+    )
+  )
+  const merged = headLanes.flatMap((g, n) => (g.length === 2 ? [n] : []))
+  if (merged.length !== 1 || headLanes.some((g) => g.length !== 1 && g.length !== 2)) return
+  const lane = merged[0],
+    pair = headLanes[lane],
+    corridor = [pair[0].rect[2], pair[1].rect[0]]
+  if (
+    lane === 0 ||
+    lane === columns.length - 1 ||
+    corridor[0] <= cuts[lane] ||
+    corridor[1] >= cuts[lane + 1]
+  )
+    return
+  const records = edges
+    .slice(1)
+    .map((r, n) =>
+      source
+        .filter((i) => i.rect[1] > edges[n][1] && i.rect[3] < r[1])
+        .sort((a, b) => a.rect[0] - b.rect[0])
+    )
+  if (
+    records.some(
+      (g) =>
+        !g.length ||
+        g.some((i) => Math.abs(i.baseline - g[0].baseline) > 0.02) ||
+        columns.some(
+          (_, c) =>
+            !g.some(
+              (i) =>
+                (i.rect[0] + i.rect[2]) / 2 > cuts[c] && (i.rect[0] + i.rect[2]) / 2 < cuts[c + 1]
+            )
+        )
+    ) ||
+    header.length + records.flat().length !== source.length
+  )
+    return
+  let common = [corridor]
+  for (const record of records) {
+    const spaces = []
+    for (let n = 1; n < record.length; n++)
+      if (record[n].rect[0] > record[n - 1].rect[2])
+        spaces.push([record[n - 1].rect[2], record[n].rect[0]])
+    for (const item of record) {
+      const run = runs.find((r) => r.text === item.text && sameRect(r.rect, item.rect))
+      const glyphs = [...item.text.replace(/\s/gu, '')]
+      if (
+        !Array.isArray(run.gaps) ||
+        !Array.isArray(run.glyphRuns) ||
+        run.glyphRuns.length !== glyphs.length ||
+        run.glyphRuns.some((n) => !Number.isInteger(n)) ||
+        new Set(run.gaps.map((g) => g.index)).size !== run.gaps.length ||
+        run.gaps.some(
+          (g) =>
+            !Number.isInteger(g.index) ||
+            g.index <= 0 ||
+            g.index >= glyphs.length ||
+            !Number.isFinite(g.left) ||
+            !Number.isFinite(g.right) ||
+            g.left >= g.right ||
+            g.left < item.rect[0] ||
+            g.right > item.rect[2]
+        )
+      )
+        return
+      const orderedGaps = [...run.gaps].sort((a, b) => a.index - b.index)
+      if (orderedGaps.some((g, n) => n && g.left < orderedGaps[n - 1].right)) return
+      for (const gap of run.gaps) {
+        if (run.glyphRuns[gap.index - 1] !== run.glyphRuns[gap.index]) continue
+        spaces.push([gap.left, gap.right])
+      }
+    }
+    common = common.flatMap((a) =>
+      spaces.map((b) => [Math.max(a[0], b[0]), Math.min(a[1], b[1])]).filter((b) => b[1] > b[0])
+    )
+    common = common.filter(
+      (a, n) =>
+        !common
+          .slice(0, n)
+          .some((b) => Math.abs(a[0] - b[0]) < 0.002 && Math.abs(a[1] - b[1]) < 0.002)
+    )
+    if (!common.length) return
+  }
+  if (common.length !== 1 || common[0][1] - common[0][0] < h * 0.15) return
+  if (
+    rules.some(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > corridor[0] &&
+        r[0] < corridor[1] &&
+        r[3] > edges[0][1] &&
+        r[1] < edges.at(-1)[1] &&
+        (r[0] < common[0][0] || r[0] > common[0][1])
+    )
+  )
+    return
+  const x = (common[0][0] + common[0][1]) / 2
+  for (const record of records) {
+    if (!record.some((i) => i.rect[0] < x) || !record.some((i) => i.rect[2] > x)) return
+    for (const item of record.filter((i) => i.rect[0] < x && i.rect[2] > x)) {
+      const run = runs.find((r) => r.text === item.text && sameRect(r.rect, item.rect)),
+        gaps = run.gaps.filter((g) => g.left < x && g.right > x)
+      if (gaps.length !== 1 || !splitObserved(item, runs, [[gaps[0].left, gaps[0].right]], h))
+        return
+    }
+  }
+  return { cuts: [...cuts.slice(0, lane + 1), x, ...cuts.slice(lane + 1)] }
 }
 
 // A rowless detector can still own one complete ordinary record. This is a
@@ -4124,6 +4352,36 @@ function splitObserved(item, runs, gutters, h) {
 
 export function recoverNativePrintedLaneTokens(table, items, captions, rules, runs = []) {
   if (!runs.length) return items
+  const common = recoverCommonFencedLeafGutter(table, items, captions, rules, runs)
+  if (common) {
+    const columns = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const oldCuts = [
+      table.cropRect[0],
+      ...columns.slice(1).map((c, n) => table.cropRect[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+      table.cropRect[2]
+    ]
+    const x = common.cuts.find((c) => !oldCuts.includes(c))
+    const replacements = new Map()
+    for (const item of items) {
+      if (!(
+        item.baseline > table.cropRect[1] &&
+        item.baseline < table.cropRect[3] &&
+        item.rect[0] < x &&
+        item.rect[2] > x
+      ))
+        continue
+      const observed = runs.filter((r) => r.text === item.text && sameRect(r.rect, item.rect))
+      const gaps =
+        observed.length === 1 ? observed[0].gaps.filter((g) => g.left < x && g.right > x) : []
+      if (gaps.length !== 1) return items
+      const parts = splitObserved(item, runs, [[gaps[0].left, gaps[0].right]], item.height)
+      if (!parts || parts.length !== 2) return items
+      replacements.set(item, parts)
+    }
+    if (replacements.size) return items.flatMap((i) => replacements.get(i) ?? [i])
+  }
   const frame = nativeHeaderFrame(table, items, rules)
   if (!frame) return items
   const { h, opening, closing, header, body } = frame
@@ -7097,6 +7355,8 @@ function fencedSingleLineStubOwners(table, items, captions, rules, completePeerS
 // Complete horizontal group fences can prove multiline stub ownership without
 // rebuilding any independently printed record or inheriting a blank label.
 export function proveNativeFencedMultilineStubOwners(table, items, captions, rules) {
+  const partial = provePartialRuleStubFaces(table, items, captions, rules)
+  if (partial) return partial
   const { cells, grid } = table
   const columns = grid?.[0]?.length
   if (
@@ -7390,6 +7650,228 @@ export function proveNativeFencedMultilineStubOwners(table, items, captions, rul
   }
   if (!replacements.length) return
   return { replacements, baselineHeight: h, scriptParents }
+}
+
+// Peer-only separators leave a multiline stub in one physical group face.
+// Reconcile only complete existing owners; peer records are never rebuilt.
+function provePartialRuleStubFaces(table, items, captions, rules) {
+  const { cells, grid, cropRect: crop } = table
+  const valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite)
+  if (
+    !valid(crop) ||
+    crop[2] <= crop[0] ||
+    crop[3] <= crop[1] ||
+    table.notes?.length ||
+    table.unassigned?.length ||
+    table.readingRotation ||
+    !cells?.length ||
+    !grid?.length ||
+    grid[0].length < 3 ||
+    grid.some((r) => r.length !== grid[0].length) ||
+    rules.some((r) => !valid(r) || r[2] < r[0] || r[3] < r[1])
+  )
+    return
+  const near = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      valid(i.rect) &&
+      i.rect[0] >= crop[0] &&
+      i.rect[2] <= crop[2] &&
+      i.baseline > crop[1] &&
+      i.baseline < crop[3]
+  )
+  const h = median(near.map((i) => i.height))
+  if (
+    !(h > 0) ||
+    !Number.isFinite(h) ||
+    !captions.some((c) => captionKind(c.lines?.[0]) === 'table')
+  )
+    return
+  const sourceTop = Math.min(
+    crop[1],
+    ...cells
+      .filter((c) => c.row === 0)
+      .flatMap((c) => c.sourceRects ?? [])
+      .map((r) => (valid(r) ? r[1] : NaN))
+  )
+  if (!Number.isFinite(sourceTop) || crop[1] - sourceTop >= h) return
+  const hs = joinHorizontalTableRules(rules, 0.01, 0)
+  const fences = hs
+    .filter(
+      (r) =>
+        r[1] > crop[1] &&
+        r[1] < crop[3] + h &&
+        Math.abs(r[0] - crop[0]) < h &&
+        Math.abs(r[2] - crop[2]) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    fences.length < 3 ||
+    fences.some(
+      (r, n) =>
+        Math.abs(r[0] - fences[0][0]) > 0.02 ||
+        Math.abs(r[2] - fences[0][2]) > 0.02 ||
+        (n && r[1] - fences[n - 1][1] < h * 2)
+    )
+  )
+    return
+  const source = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      valid(i.rect) &&
+      i.rect[0] < fences[0][2] &&
+      i.rect[2] > fences[0][0] &&
+      i.rect[3] > sourceTop &&
+      i.rect[1] < fences.at(-1)[1] &&
+      !(
+        i.baseline > fences.at(-1)[1] &&
+        captions.filter(
+          (c) =>
+            c.lines?.length === 1 &&
+            c.lines[0] === i.text &&
+            sameRect(c.rect, i.rect) &&
+            captionKind(c.lines[0]) === 'table'
+        ).length === 1
+      )
+  )
+  if (
+    !source.length ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        !valid(i.rect) ||
+        i.rect[2] <= i.rect[0] ||
+        i.rect[3] <= i.rect[1] ||
+        !Number.isFinite(i.baseline) ||
+        Math.abs(i.height - h) > 0.02 ||
+        i.rect[0] < fences[0][0] ||
+        i.rect[2] > fences[0][2] ||
+        i.rect[1] < sourceTop ||
+        i.rect[3] > fences.at(-1)[1] ||
+        fences.some((r) => i.rect[1] < r[1] && i.rect[3] > r[1])
+    )
+  )
+    return
+  const owned = new Map(),
+    seen = new Set()
+  for (const cell of cells) {
+    if (
+      !valid(cell.rect) ||
+      cell.rect[2] <= cell.rect[0] ||
+      cell.rect[3] <= cell.rect[1] ||
+      !Number.isInteger(cell.row) ||
+      !Number.isInteger(cell.column) ||
+      cell.row < 0 ||
+      cell.row >= grid.length ||
+      cell.column < 0 ||
+      cell.column >= grid[0].length ||
+      grid[cell.row][cell.column] !== cell.text ||
+      cell.textRuns?.some((r) => r.position !== 'normal')
+    )
+      return
+    const tokens = source.filter((i) =>
+      cell.sourceTokens?.some((t) => t.text === i.text && sameRect(t.rect, i.rect))
+    )
+    if (!literalOwnerMatches(cell, tokens) || tokens.some((i) => seen.has(i))) return
+    tokens.forEach((i) => seen.add(i))
+    owned.set(cell, tokens)
+  }
+  if (seen.size !== source.length || cells.length !== grid.length * grid[0].length) return
+  const header = source.filter((i) => i.rect[3] < fences[0][1])
+  if (
+    physicalRows(header, h).length !== 1 ||
+    cells.filter((c) => c.row === 0).some((c) => owned.get(c).some((i) => !header.includes(i)))
+  )
+    return
+  const replacements = []
+  let nextRow = 1
+  for (let g = 1; g < fences.length; g++) {
+    const top = fences[g - 1][1],
+      bottom = fences[g][1]
+    const ink = source.filter((i) => i.rect[1] > top && i.rect[3] < bottom)
+    const donors = cells
+      .filter((c) => c.column === 0 && owned.get(c).some((i) => ink.includes(i)))
+      .sort((a, b) => a.row - b.row)
+    if (
+      donors.length !== 2 ||
+      donors.some((c, n) => c.row !== nextRow + n || owned.get(c).length !== 1)
+    )
+      return
+    const labels = donors.flatMap((c) => owned.get(c)).sort((a, b) => a.baseline - b.baseline)
+    if (
+      labels.some((i) => !ink.includes(i)) ||
+      Math.abs(labels[0].rect[0] - labels[1].rect[0]) > 0.02 ||
+      labels[1].baseline - labels[0].baseline < h
+    )
+      return
+    const peers = [nextRow, nextRow + 1].map((r) =>
+      cells.filter((c) => c.row === r && c.column > 0).sort((a, b) => a.column - b.column)
+    )
+    if (
+      peers.some(
+        (row) =>
+          row.length !== grid[0].length - 1 ||
+          row.some((c) => !owned.get(c).length || owned.get(c).some((i) => !ink.includes(i)))
+      )
+    )
+      return
+    const peerInk = peers.map((row) => row.flatMap((c) => owned.get(c)))
+    const gap = [
+      Math.max(...peerInk[0].map((i) => i.rect[3])),
+      Math.min(...peerInk[1].map((i) => i.rect[1]))
+    ]
+    if (gap[1] <= gap[0] || ink.length !== labels.length + peerInk.flat().length) return
+    const walls = rules.filter(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > Math.max(...labels.map((i) => i.rect[2])) &&
+        r[0] < Math.min(...peerInk.flat().map((i) => i.rect[0])) &&
+        r[1] <= Math.min(...labels.map((i) => i.rect[1])) &&
+        r[3] >= Math.max(...labels.map((i) => i.rect[3])) &&
+        r[1] > top &&
+        r[3] < bottom
+    )
+    if (walls.length !== 1) return
+    const separators = hs.filter(
+      (r) => r[1] > top && r[1] < bottom && r[2] > fences[0][0] && r[0] < fences[0][2]
+    )
+    if (
+      !separators.length ||
+      separators.some(
+        (r) =>
+          r[1] <= gap[0] ||
+          r[1] >= gap[1] ||
+          r[0] <= walls[0][0] ||
+          Math.abs(r[1] - separators[0][1]) > 0.02
+      ) ||
+      !labels.some((i) => i.rect[1] < separators[0][1] && i.rect[3] > separators[0][1])
+    )
+      return
+    for (let c = 0; c < peers[0].length; c++) {
+      const parts = [...owned.get(peers[0][c]), ...owned.get(peers[1][c])]
+      if (
+        separators.filter(
+          (r) =>
+            r[0] <= Math.min(...parts.map((i) => i.rect[0])) &&
+            r[2] >= Math.max(...parts.map((i) => i.rect[2]))
+        ).length !== 1
+      )
+        return
+    }
+    const rect = box(donors.map((c) => ({ rect: c.rect })))
+    if (
+      labels.some(
+        (i) =>
+          i.rect[0] < rect[0] || i.rect[1] < rect[1] || i.rect[2] > rect[2] || i.rect[3] > rect[3]
+      ) ||
+      !nativeChangedCellOrigins(donors, items, labels)
+    )
+      return
+    replacements.push({ row: nextRow, rowSpan: 2, donors, sourceTokens: labels, rect })
+    nextRow += 2
+  }
+  if (nextRow !== grid.length) return
+  return { replacements, baselineHeight: h, scriptParents: new Map() }
 }
 
 // Three separate native underlines can prove two faulty upper parents without

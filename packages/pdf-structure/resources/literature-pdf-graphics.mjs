@@ -550,6 +550,121 @@ export function collectClosedFigureFrames(operators, viewport) {
   )
 }
 
+// Some ruled grids are painted as separate rectangles, including square
+// junctions. Recover their continuous axes from the actual filled cross-section;
+// a center-line gap alone never supplies the missing paint.
+function filledGridRules(rectangles) {
+  const thin = rectangles.filter(
+    ({ rect: r }) => Math.max(r[2] - r[0], r[3] - r[1]) >= Math.min(r[2] - r[0], r[3] - r[1]) * 8
+  )
+  if (!thin.length) return []
+  const cornerSize = Math.max(...thin.map(({ rect: r }) => Math.min(r[2] - r[0], r[3] - r[1])))
+  // A broad filled background is not a junction. Only a slender carrier or
+  // a small block no larger than the observed carrier width can join axes.
+  rectangles = rectangles.filter(
+    (r) =>
+      thin.includes(r) ||
+      (r.rect[2] - r.rect[0] <= cornerSize + 0.01 && r.rect[3] - r.rect[1] <= cornerSize + 0.01)
+  )
+  const candidates = [],
+    slices = new Map()
+  const slice = (color, axis, center) => {
+    const key = `${color}:${axis}:${center}`
+    if (slices.has(key)) return slices.get(key)
+    const cross = 1 - axis
+    const intervals = rectangles
+      .filter((r) => r.color === color && r.rect[cross] <= center && r.rect[cross + 2] >= center)
+      .map((r) => [r.rect[axis], r.rect[axis + 2]])
+      .sort((a, b) => a[0] - b[0])
+    const joined = []
+    for (const range of intervals) {
+      const previous = joined.at(-1)
+      if (previous && range[0] <= previous[1] + 0.01) previous[1] = Math.max(previous[1], range[1])
+      else joined.push([...range])
+    }
+    slices.set(key, joined)
+    return joined
+  }
+  const filled = (rect, color, axis) => {
+    const cross = 1 - axis
+    const cuts = [
+      ...new Set([
+        rect[cross],
+        rect[cross + 2],
+        ...rectangles
+          .filter((r) => r.color === color)
+          .flatMap((r) => [r.rect[cross], r.rect[cross + 2]])
+          .filter((v) => v > rect[cross] && v < rect[cross + 2])
+      ])
+    ].sort((a, b) => a - b)
+    return cuts
+      .slice(1)
+      .every((end, n) =>
+        slice(color, axis, (cuts[n] + end) / 2).some(
+          (r) => r[0] <= rect[axis] && r[1] >= rect[axis + 2]
+        )
+      )
+  }
+  for (const { rect, color } of rectangles) {
+    const w = rect[2] - rect[0],
+      h = rect[3] - rect[1]
+    if (Math.max(w, h) < 4 || Math.max(w, h) < Math.min(w, h) * 8) continue
+    const axis = w > h ? 0 : 1,
+      cross = 1 - axis,
+      center = (rect[cross] + rect[cross + 2]) / 2
+    const joined = slice(color, axis, center)
+    const span = joined.find((range) => range[0] <= rect[axis] && range[1] >= rect[axis + 2])
+    if (!span) continue
+    const rule =
+      axis === 0 ? [span[0], center, span[1], center] : [center, span[0], center, span[1]]
+    if (
+      !candidates.some(
+        (c) => c.color === color && c.rule.every((v, n) => Math.abs(v - rule[n]) < 0.01)
+      )
+    )
+      candidates.push({
+        rule,
+        color,
+        paint:
+          axis === 0 ? [span[0], rect[1], span[1], rect[3]] : [rect[0], span[0], rect[2], span[1]]
+      })
+  }
+  const result = []
+  for (const candidate of candidates.filter((c) => c.rule[1] === c.rule[3])) {
+    const horizontal = candidates
+      .filter(
+        (c) =>
+          c.color === candidate.color &&
+          c.rule[1] === c.rule[3] &&
+          Math.abs(c.rule[0] - candidate.rule[0]) <=
+            Math.max(c.paint[3] - c.paint[1], candidate.paint[3] - candidate.paint[1]) / 2 + 0.01 &&
+          Math.abs(c.rule[2] - candidate.rule[2]) <=
+            Math.max(c.paint[3] - c.paint[1], candidate.paint[3] - candidate.paint[1]) / 2 + 0.01
+      )
+      .sort((a, b) => a.rule[1] - b.rule[1])
+    if (horizontal.length < 4) continue
+    if (horizontal.some((c, n) => horizontal[n + 1] && c.paint[3] > horizontal[n + 1].paint[1]))
+      continue
+    const top = horizontal[0].rule[1],
+      bottom = horizontal.at(-1).rule[1]
+    const vertical = candidates.filter(
+      (c) =>
+        c.color === candidate.color &&
+        c.rule[0] === c.rule[2] &&
+        c.rule[0] > candidate.rule[0] &&
+        c.rule[0] < candidate.rule[2] &&
+        c.rule[1] <= top &&
+        c.rule[3] >= bottom
+    )
+    if (vertical.length < 2) continue
+    for (const c of [...horizontal, ...vertical]) if (!result.includes(c)) result.push(c)
+  }
+  return result.map((c) => ({
+    ...c,
+    paint: filled(c.paint, c.color, c.rule[1] === c.rule[3] ? 0 : 1) ? c.paint : undefined
+  }))
+}
+
 export function collectTableRules(operators, viewport, rulePaintBounds) {
   const fillThickness =
     1.1 *
@@ -561,10 +676,38 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
     lineWidth = 1,
     lineCap = 0,
     solidStroke = true,
-    unprovedClip = false
+    unprovedClip = false,
+    opaqueFill = true,
+    fillColor = '#000000'
   const stack = [],
     rules = [],
-    unknownPaint = new Set()
+    unknownPaint = new Set(),
+    filledRectangles = [],
+    nativeMaskRules = []
+  // Only the new mask-derived rules need this lifecycle. Later foreign or
+  // unknown paint makes their complete original stroke unproved.
+  const invalidateMaskRules = (cover, color) => {
+    if (
+      !Array.isArray(cover) ||
+      cover.length !== 4 ||
+      !cover.every(Number.isFinite) ||
+      cover[0] >= cover[2] ||
+      cover[1] >= cover[3]
+    )
+      cover = undefined
+    for (let n = nativeMaskRules.length - 1; n >= 0; n--) {
+      const previous = nativeMaskRules[n]
+      if (color === previous.color) continue
+      const p = previous.paint
+      if (cover && !(cover[0] < p[2] && cover[2] > p[0] && cover[1] < p[3] && cover[3] > p[1]))
+        continue
+      const index = rules.indexOf(previous.rule)
+      if (index >= 0) rules.splice(index, 1)
+      rulePaintBounds?.delete(previous.rule.join(','))
+      unknownPaint.add(previous.rule.join(','))
+      nativeMaskRules.splice(n, 1)
+    }
+  }
   // The public rules retain their original center lines. This optional private
   // map records only paint proved by native state and an axis-aligned transform.
   const rememberPaint = (rule, bounds) => {
@@ -630,10 +773,38 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       rule[3] + (horizontal || (cap && endCap) ? radiusY : 0)
     ]
   }
-  for (const [i, op] of operators.fnArray.entries()) {
-    const args = operators.argsArray[i]
+  for (const [i, operation] of operators.fnArray.entries()) {
+    let op = operation,
+      args = operators.argsArray[i]
+    // PDF.js paints this operation with fillRect(0, 0, 1, 1). Reuse the
+    // existing rectangular-fill/paint proof instead of trusting an image AABB.
+    if (op === OPS.paintSolidColorImageMask) {
+      const matrix = Util.transform(viewport.transform, transform)
+      if (
+        !opaqueFill ||
+        unprovedClip ||
+        !fillColor ||
+        fillColor === '#ffffff' ||
+        !matrix.every(Number.isFinite) ||
+        !((matrix[1] === 0 && matrix[2] === 0) || (matrix[0] === 0 && matrix[3] === 0))
+      ) {
+        filledRectangles.length = 0
+        invalidateMaskRules()
+        continue
+      }
+      op = OPS.constructPath
+      args = [OPS.fill, [[0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 4]], [0, 0, 1, 1]]
+    }
     if (op === OPS.save)
-      stack.push({ transform: [...transform], lineWidth, lineCap, solidStroke, unprovedClip })
+      stack.push({
+        transform: [...transform],
+        lineWidth,
+        lineCap,
+        solidStroke,
+        unprovedClip,
+        opaqueFill,
+        fillColor
+      })
     else if (op === OPS.restore) {
       const state = stack.pop()
       transform = state?.transform ?? [1, 0, 0, 1, 0, 0]
@@ -641,30 +812,110 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       lineCap = state ? state.lineCap : 0
       solidStroke = state ? state.solidStroke : true
       unprovedClip = state ? state.unprovedClip : false
+      opaqueFill = state ? state.opaqueFill : true
+      fillColor = state ? state.fillColor : '#000000'
     } else if (op === OPS.transform) transform = Util.transform(transform, args)
     else if (op === OPS.setLineWidth) lineWidth = args[0]
     else if (op === OPS.setLineCap) lineCap = args[0]
     else if (op === OPS.setDash) solidStroke = Array.isArray(args[0]) && args[0].length === 0
+    else if (op === OPS.setFillRGBColor)
+      fillColor = typeof args[0] === 'string' ? args[0] : undefined
+    else if (
+      [OPS.setFillColor, OPS.setFillColorN, OPS.setFillGray, OPS.setFillCMYKColor].includes(op)
+    )
+      fillColor = undefined
     else if (op === OPS.clip || op === OPS.eoClip) unprovedClip = true
     else if (op === OPS.setGState) {
       if (!Array.isArray(args[0])) {
+        opaqueFill = false
         lineWidth = NaN
         lineCap = NaN
         solidStroke = false
       } else {
         for (const entry of args[0]) {
           if (!Array.isArray(entry)) {
+            opaqueFill = false
             lineWidth = NaN
             lineCap = NaN
             solidStroke = false
           } else if (entry[0] === 'LW') lineWidth = entry[1]
+          else if (entry[0] === 'ca' || entry[0] === 'CA') opaqueFill &&= entry[1] === 1
+          else if (entry[0] === 'BM') opaqueFill &&= ['Normal', 'source-over'].includes(entry[1])
+          else if (entry[0] === 'SMask') opaqueFill &&= entry[1] === 'None'
           else if (entry[0] === 'LC') lineCap = entry[1]
           else if (entry[0] === 'D')
             solidStroke = Array.isArray(entry[1]?.[0]) && entry[1][0].length === 0
         }
       }
+    } else if (
+      [
+        OPS.paintImageXObject,
+        OPS.paintInlineImageXObject,
+        OPS.paintImageMaskXObject,
+        OPS.paintImageXObjectRepeat,
+        OPS.paintImageMaskXObjectRepeat,
+        OPS.paintInlineImageXObjectGroup
+      ].includes(op)
+    ) {
+      filledRectangles.length = 0
+      const matrix = Util.transform(viewport.transform, transform)
+      const unitImage = [
+        OPS.paintImageXObject,
+        OPS.paintInlineImageXObject,
+        OPS.paintImageMaskXObject
+      ].includes(op)
+      const corners =
+        unitImage && matrix.every(Number.isFinite)
+          ? [
+              [0, 0],
+              [0, 1],
+              [1, 0],
+              [1, 1]
+            ]
+          : undefined
+      if (corners) for (const p of corners) Util.applyTransform(p, matrix)
+      const cover = corners && [
+        Math.min(...corners.map((p) => p[0])),
+        Math.min(...corners.map((p) => p[1])),
+        Math.max(...corners.map((p) => p[0])),
+        Math.max(...corners.map((p) => p[1]))
+      ]
+      invalidateMaskRules(cover)
     } else if (op === OPS.constructPath) {
       if (args[0] === OPS.clip || args[0] === OPS.eoClip) unprovedClip = true
+      if ([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke].includes(args[0])) {
+        const box = args[2],
+          matrix = Util.transform(viewport.transform, transform)
+        const corners =
+          box?.length === 4 && Array.from(box).every(Number.isFinite)
+            ? [
+                [box[0], box[1]],
+                [box[0], box[3]],
+                [box[2], box[1]],
+                [box[2], box[3]]
+              ]
+            : undefined
+        if (corners) for (const p of corners) Util.applyTransform(p, matrix)
+        const cover = corners && [
+          Math.min(...corners.map((p) => p[0])),
+          Math.min(...corners.map((p) => p[1])),
+          Math.max(...corners.map((p) => p[0])),
+          Math.max(...corners.map((p) => p[1]))
+        ]
+        invalidateMaskRules(cover, opaqueFill && !unprovedClip ? fillColor : undefined)
+        for (let n = filledRectangles.length - 1; n >= 0; n--) {
+          const previous = filledRectangles[n]
+          if (
+            (!opaqueFill || !fillColor || fillColor !== previous.color) &&
+            (!cover ||
+              (cover[0] < previous.rect[2] &&
+                cover[2] > previous.rect[0] &&
+                cover[1] < previous.rect[3] &&
+                cover[3] > previous.rect[1]))
+          )
+            filledRectangles.splice(n, 1)
+        }
+      }
       // PDF.js DrawOPS: exactly moveTo(x, y), lineTo(x, y); a compound path
       // can have gaps even when its bounding box looks like one continuous rule.
       const path = args[1]?.[0]
@@ -773,6 +1024,23 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       if (filled && new Set(points.map((point) => point.join(','))).size !== 4) continue
       if (
         filled &&
+        [OPS.fill, OPS.eoFill].includes(args[0]) &&
+        points.every((p, n) => {
+          const next = points[(n + 1) % 4]
+          return p[0] === next[0] || p[1] === next[1]
+        })
+      ) {
+        const rect = [
+          Math.min(...points.map((p) => p[0])),
+          Math.min(...points.map((p) => p[1])),
+          Math.max(...points.map((p) => p[0])),
+          Math.max(...points.map((p) => p[1]))
+        ]
+        if (opaqueFill && !unprovedClip && fillColor && fillColor !== '#ffffff')
+          filledRectangles.push({ color: fillColor, rect })
+      }
+      if (
+        filled &&
         points.some((point, index) => {
           const next = points[(index + 1) % points.length]
           const dx = Math.abs(point[0] - next[0]),
@@ -825,8 +1093,15 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
         }
         rules.push(rect)
         rememberPaint(rect, paint)
+        if (operation === OPS.paintSolidColorImageMask && paint)
+          nativeMaskRules.push({ rule: rect, paint, color: fillColor })
       }
     }
+  }
+  for (const { rule, paint } of filledGridRules(filledRectangles)) {
+    if (rules.some((r) => r.every((v, n) => Math.abs(v - rule[n]) < 0.01))) continue
+    rules.push(rule)
+    rememberPaint(rule, paint)
   }
   return rules
 }
