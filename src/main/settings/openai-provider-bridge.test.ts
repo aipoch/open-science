@@ -1,5 +1,8 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { gzipSync } from 'node:zlib'
+
+import { fetch as nodeFetch } from 'undici'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -56,6 +59,60 @@ describe('OpenAiProviderBridge', () => {
     await Promise.all(bridges.splice(0).map((bridge) => bridge.close()))
     await Promise.all(servers.splice(0).map(close))
   })
+
+  it.each([false, true])(
+    'decodes upstream compression when the client accepts zstd (stream=%s)',
+    async (stream) => {
+      const json = '{"type":"message_stop"}'
+      const payload = stream ? `event: message_stop\ndata: ${json}\n\n` : json
+      // Real Zstandard frames: reproduces the '(' (0x28) JSON error without a zstd runtime dependency.
+      const zstd = Buffer.from(
+        stream
+          ? 'KLUv/SAzfQEAdAJldmVudDogbWVzc2FnZV9zdG9wCmRhdGE6IHsidHlwZSI6IiJ9CgoBAHtuPgE='
+          : 'KLUv/SAXuQAAeyJ0eXBlIjoibWVzc2FnZV9zdG9wIn0=',
+        'base64'
+      )
+      const upstream = createServer((request, response) => {
+        request.resume()
+        request.on('end', () => {
+          const encoding = request.headers['accept-encoding']?.includes('zstd') ? 'zstd' : 'gzip'
+          response.writeHead(200, {
+            'content-type': stream ? 'text/event-stream' : 'application/json',
+            'content-encoding': encoding
+          })
+          response.end(encoding === 'zstd' ? zstd : gzipSync(payload))
+        })
+      })
+      servers.push(upstream)
+      const target: OpenAiProviderBridgeTarget = {
+        id: 'compressed-provider',
+        wire: 'chat-completions',
+        endpoint: `${await listen(upstream)}/v1/chat/completions`,
+        model: 'model-a'
+      }
+      const bridge = new OpenAiProviderBridge(
+        [target],
+        target.id,
+        nodeFetch as unknown as typeof fetch
+      )
+      const requestPath = '/v1/chat/completions'
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      const response = await fetch(`${connection.baseUrl}${requestPath}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          'accept-encoding': 'gzip, deflate, br, zstd'
+        },
+        body: JSON.stringify({ model: 'model-a', messages: [], stream })
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-encoding')).toBeNull()
+      if (stream) expect(await response.text()).toBe(payload)
+      else expect(await response.json()).toEqual({ type: 'message_stop' })
+    }
+  )
 
   it('retargets endpoint, credential, and model without replacing the loopback connection', async () => {
     const first = createUpstream()

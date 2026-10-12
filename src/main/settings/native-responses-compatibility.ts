@@ -361,6 +361,8 @@ const upstreamHeaders = (
     // rejects callers that pass them explicitly to Electron net.fetch with ERR_INVALID_ARGUMENT.
     if (
       HOP_BY_HOP_HEADERS.has(name) ||
+      // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
+      name === 'accept-encoding' ||
       name === 'authorization' ||
       name.startsWith('sec-fetch-') ||
       value === undefined
