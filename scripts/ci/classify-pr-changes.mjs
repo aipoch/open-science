@@ -407,6 +407,7 @@ export function toGitHubOutputPlan(plan) {
     lanes: [...plan.lanes],
     macosGroups: macosGroupsForPlan(plan)
   }
+  if (plan.windowsCoreChecks) output.windowsCoreChecks = [...plan.windowsCoreChecks]
   if (plan.macosProfile) output.macosProfile = plan.macosProfile
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output

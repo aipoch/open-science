@@ -168,6 +168,12 @@ jobs:
           for file in "${required[@]}"; do
             git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
           done
+          # Optional on older bases; a missing selection retains every legacy check.
+          for file in windows-core-plan.mjs windows-core-checks.json; do
+            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
+              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
+            fi
+          done
           # Newer trusted selectors validate additive registration blobs as data.
           if git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" > "$trusted_dir/module-impact-inputs.mjs"
@@ -1031,7 +1037,9 @@ jobs:
           path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
           merge-multiple: true
       - name: Test delegated Windows process ownership
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        id: windows_process
+        continue-on-error: true
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_process')) }}
         run: >-
           npx vitest run
           src/main/process-tree.windows.integration.test.ts
@@ -1042,12 +1050,12 @@ jobs:
           --hookTimeout=30000
       - name: Test Windows sandbox native source
         id: windows_sandbox_source
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox_source')) }}
         continue-on-error: true
         run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
       - name: Build Windows sandbox native host
         id: windows_sandbox_build
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox_build')) }}
         continue-on-error: true
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Upload rebuilt Windows sandbox native host
@@ -1061,7 +1069,7 @@ jobs:
           if-no-files-found: error
       - name: Test Windows-specific behavior
         id: windows_runtime
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -1080,7 +1088,9 @@ jobs:
           packages/environment/src/micromamba-cache-powershell.test.ts
           packages/environment/src/micromamba-cache-acl.integration.test.ts
       - name: Test scheduled Windows validation regressions
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        id: windows_regressions
+        continue-on-error: true
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_regressions')) }}
         env:
           # Inline Vitest projects inherit worker/hook limits before root CLI overrides.
           VITEST_WINDOWS_FULL_TEST: '1'
@@ -1099,7 +1109,7 @@ jobs:
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
       - name: Test Windows wheel evidence recovery
         id: windows_wheel_evidence
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_wheel_evidence')) }}
         continue-on-error: true
         shell: pwsh
         env:
@@ -1111,7 +1121,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_shell')) }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -1120,7 +1130,7 @@ jobs:
           src/main/notebook/shell-search-scope.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_service_timeout')) }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -1129,7 +1139,7 @@ jobs:
           "kills a command that outlasts the timeout and returns a non-normal result"
       - name: Test Windows AppContainer ownership and removal lifecycle
         id: windows_sandbox
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox')) }}
         continue-on-error: true
         shell: powershell
         run: |
@@ -1146,7 +1156,7 @@ jobs:
           }
       - name: Test Windows path portability
         id: windows_path
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_path')) }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -1170,6 +1180,12 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          WINDOWS_CORE_CHECKS: ${{ toJSON(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks) }}
+          WINDOWS_RUNTIME_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+          WINDOWS_PATH_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
+          WINDOWS_PROCESS_ONLY: ${{ inputs.dry_run == 'windows-process' }}
+          WINDOWS_PROCESS_OUTCOME: ${{ steps.windows_process.outcome }}
+          WINDOWS_REGRESSIONS_OUTCOME: ${{ steps.windows_regressions.outcome }}
           WINDOWS_PATH_OUTCOME: ${{ steps.windows_path.outcome }}
           WINDOWS_RUNTIME_OUTCOME: ${{ steps.windows_runtime.outcome }}
           WINDOWS_SANDBOX_BUILD_OUTCOME: ${{ steps.windows_sandbox_build.outcome }}
@@ -1182,11 +1198,23 @@ jobs:
           set -euo pipefail
           failed=0
           check() {
-            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+            selected=false
+            if [[ "$WINDOWS_PROCESS_ONLY" == "true" ]]; then
+              [[ "$1" == "windows_process" ]] && selected=true
+            elif [[ -n "$WINDOWS_CORE_CHECKS" && "$WINDOWS_CORE_CHECKS" != "null" ]]; then
+              if [[ "$WINDOWS_CORE_CHECKS" == *\"$1\"* ]]; then selected=true; fi
+            elif [[ "$1" == "windows_path" ]]; then
+              selected="$WINDOWS_PATH_SELECTED"
+            else
+              selected="$WINDOWS_RUNTIME_SELECTED"
+            fi
+            if [[ "$2" == "failure" || "$2" == "cancelled" || ( "$selected" == "true" && "$2" != "success" ) ]]; then
               echo "$1 ended with $2" >&2
               failed=1
             fi
           }
+          check windows_process "$WINDOWS_PROCESS_OUTCOME"
+          check windows_regressions "$WINDOWS_REGRESSIONS_OUTCOME"
           check windows_runtime "$WINDOWS_RUNTIME_OUTCOME"
           check windows_sandbox_source "$WINDOWS_SANDBOX_SOURCE_OUTCOME"
           check windows_sandbox_build "$WINDOWS_SANDBOX_BUILD_OUTCOME"
@@ -1232,51 +1260,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-setup-macos-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/e2e-setup/
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-
-  windows_e2e_setup:
-    name: Prepare Windows E2E
-    needs: [preflight, windows_notebook_runtime]
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
-    runs-on: windows-latest
-    timeout-minutes: 15
-    outputs:
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
-      node_version: ${{ steps.node.outputs.node-version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        id: node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: 24
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Download Windows Notebook runtime
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
-          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
-          merge-multiple: true
-      - name: Test snapshot transport
-        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
-      - name: Pack E2E setup
-        shell: bash
-        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
-      - name: Upload E2E setup
-        id: upload
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-setup/
           retention-days: 1
           compression-level: 0
@@ -1520,17 +1503,13 @@ jobs:
           exit "$failed"
 
   windows_e2e:
-    name: Windows E2E (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [preflight, windows_e2e_setup]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_e2e_setup.result == 'success' }}
+    name: Windows mainline E2E
+    needs: [preflight, windows_notebook_runtime]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_notebook_runtime.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 35
     env:
       E2E_GREP: ${{ needs.preflight.outputs.windows_e2e_grep }}
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1539,18 +1518,19 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
-          package-manager-cache: false
-      - name: Download E2E setup
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Download Windows Notebook runtime
+        id: setup
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
-          path: ${{ runner.temp }}/e2e-setup/
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
           merge-multiple: true
-      - name: Restore E2E setup
-        id: setup
-        shell: bash
-        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Run mainline journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' }}
@@ -1567,7 +1547,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: functional-e2e-windows-failure-${{ matrix.shard }}
+          name: functional-e2e-windows-failure
           path: |
             playwright-report/
             test-results/
@@ -1578,7 +1558,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-reports-windows-${{ matrix.shard }}
+          name: e2e-reports-windows
           overwrite: true
           path: |
             blob-report/

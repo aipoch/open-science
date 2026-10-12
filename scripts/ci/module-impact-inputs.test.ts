@@ -248,6 +248,8 @@ describe('trusted additive module registrations', () => {
         'module-test-impact.mjs',
         'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
+        'windows-core-plan.mjs',
+        'windows-core-checks.json',
         'module-impact-shadow.mjs',
         'validate-module-impact.mjs'
       ])

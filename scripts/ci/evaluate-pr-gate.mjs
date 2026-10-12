@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { macosGroupsForPlan } from './classify-pr-changes.mjs'
+import { validWindowsCoreChecks } from './windows-core-plan.mjs'
 
 const gateManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
@@ -26,6 +27,13 @@ function expectedBundlesForLanes(lanes) {
 
 export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = {}) {
   const failures = []
+  if (plan.windowsCoreChecks !== undefined && !validWindowsCoreChecks(plan)) {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: 'invalid Windows core selection or missing native prerequisites'
+    })
+  }
   if (plan.macosProfile !== undefined && !['smoke', 'expanded'].includes(plan.macosProfile)) {
     failures.push({ lane: 'preflight', conclusion: 'invalid', reason: 'unsupported macOS profile' })
   }

@@ -24,9 +24,20 @@ Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resump
 Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
 complete scheduled/manual regression; adding a mainline tag requires CI policy review.
 The discovery guard asserts these five exact test identities to prevent silent growth.
-Selection uses the trusted base module owners and consumer graph and explains every chosen group
+PR Windows E2E installs, builds and runs on one runner; the three-runner scheduled regression
+retains its shared setup snapshot. Selection uses the trusted base module owners and consumer graph and explains every chosen group
 in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
-E2E suites. Windows core checks remain blocking. Complete Windows business/browser variants run
+E2E suites. Windows core checks remain blocking when selected. The trusted selector uses the existing module
+owner/contract evidence for early PR checks and adds indirect integration evidence in merge queue.
+Direct process/framework, Notebook/sandbox and environment changes retain their corresponding native
+checks in PRs. The bounded check inventory is `scripts/ci/windows-core-checks.json`; its explicit input
+prefixes preserve security/runtime boundaries beyond static imports. Path and general Windows behavior
+checks also retain affected consumer evidence in PRs. Other affected consumer-only integration groups
+run in queue. Unknown/full plans or missing selection metadata retain all existing lane checks; a
+platform overlay without mapped check evidence also retains its complete inventory. The selected
+set and deferred groups appear in preflight reason chains. Checks retain complete test files within
+each selected group, so this is group selection rather than individual-test pruning. Native supervisor
+consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate. Complete Windows business/browser variants run
 in the independent Windows E2E Regression workflow.
 Automatic PR checks do not allocate Mac runners, including for platform-sensitive changes;
 Mac validation happens in merge queue.
@@ -44,7 +55,17 @@ pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
 Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
-selected Windows core checks remain blocking.
+selected Windows core checks remain blocking when selected. The trusted selector uses the existing module
+owner/contract evidence for early PR checks and adds indirect integration evidence in merge queue.
+Direct process/framework, Notebook/sandbox and environment changes retain their corresponding native
+checks in PRs. The bounded check inventory is `scripts/ci/windows-core-checks.json`; its explicit input
+prefixes preserve security/runtime boundaries beyond static imports. Path and general Windows behavior
+checks also retain affected consumer evidence in PRs. Other affected consumer-only integration groups
+run in queue. Unknown/full plans or missing selection metadata retain all existing lane checks; a
+platform overlay without mapped check evidence also retains its complete inventory. The selected
+set and deferred groups appear in preflight reason chains. Checks retain complete test files within
+each selected group, so this is group selection rather than individual-test pruning. Native supervisor
+consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate.
 
 ### Platform profiles
 

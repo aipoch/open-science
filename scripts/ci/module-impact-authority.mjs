@@ -18,6 +18,7 @@ import {
 } from './module-impact-shadow.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
+import { selectWindowsCoreChecks } from './windows-core-plan.mjs'
 
 const manifestOnlyGraph = Object.freeze({
   status: 'unavailable-manifest-only',
@@ -75,10 +76,17 @@ export function runModuleImpactAuthorityCli(
     ? createAffectedTestPlan(changes, manifestOnlyGraph, manifest, registrationModules)
     : unusedModulePlan
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
-  const plan =
+  const platformPlan =
     environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
       ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
       : report.resolved
+  const plan = selectWindowsCoreChecks(
+    platformPlan,
+    modulePlan,
+    changes,
+    manifest,
+    environment.EVENT_NAME
+  )
   const planJson = JSON.stringify(plan)
   const outputPlanJson = JSON.stringify(toGitHubOutputPlan(plan))
   const lanesJson = JSON.stringify(plan.lanes)
