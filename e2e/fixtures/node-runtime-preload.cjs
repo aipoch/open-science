@@ -11,7 +11,7 @@ if (process.versions.electron) {
   const showMessageBox = dialog.showMessageBox.bind(dialog)
   dialog.showMessageBox = (...args) => {
     const options = args.at(-1)
-    if (options.buttons?.at(-1) === 'Receive package') {
+    if (options.buttons?.includes('Receive package')) {
       try {
         const response = Number(readFileSync(join(root, 'e2e-browser-import-consent'), 'utf8'))
         require('node:fs').appendFileSync(

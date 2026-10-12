@@ -49,6 +49,8 @@
     "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境"
   },
   "native": {
+    "Always allow this website": "始终允许此网站",
+    "Choosing Always allow this website remembers this origin until you revoke it.": "选择“始终允许此网站”后，将记住此来源，直到您撤销授权。",
     "Receive package": "接收包",
     "Allow {{origin}} to send {{filename}} to Open-Science?": "允许 {{origin}} 将 {{filename}} 发送到 Open-Science 吗？",
     "The file will be received locally. You can review it before importing.": "文件将接收到本机。你可以在导入前查看其内容。",

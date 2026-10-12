@@ -47,11 +47,13 @@ it.each(['update', 'quit'])(
     try {
       expect(surfaces.sessionPackageDesktop.operations.active).toBe(false)
       expect(kind === 'update' ? lifecycle.isActive() : canBlockQuit()).toBe(true)
+      await vi.waitFor(() => expect(answer).toBeTypeOf('function'))
       answer({ response: 0 })
       await opening
       expect(lifecycle.isActive()).toBe(false)
       expect(canBlockQuit()).toBe(false)
     } finally {
+      await vi.waitFor(() => expect(answer).toBeTypeOf('function'))
       answer({ response: 0 })
       await opening
       await lifecycle.close()

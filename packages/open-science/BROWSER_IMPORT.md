@@ -3,68 +3,156 @@
 The `@aipoch/open-science/browser-import` entry point runs in a browser. The website downloads a
 complete `Blob` or `File`, launches the installed desktop app through `open-science://`, and sends
 the bytes to a temporary receiver on `127.0.0.1`. Open-Science never downloads a remote package URL.
-The user approves the sending website, chooses a destination project, and reviews the package
-before importing it.
+The user can remember approval for the sending website. Destination selection and final package
+review stay in Open-Science after receipt.
 
 ## Website integration
 
-Bundle the browser entry point with your website. Do not import the Node SDK's root entry point.
-This example expects `downloadButton`, `openButton`, `cancelButton`, and `status` DOM elements.
-Show the open button after downloading: a second click preserves the browser's user activation for
-launching an external application. Keep the page open until local receipt is acknowledged.
+Use `@aipoch/open-science/browser-import`, not the Node SDK root. The supported automatic path is:
+check the already-running app, download the complete Blob in the website, prepare the transfer,
+try the launch URL, then send. An unavailable app must be opened first. Discovery does not launch
+an app and cannot determine whether it is installed.
+
+The example below expects `continueButton`, `openButton`, `cancelButton`, `status`, and a visible
+`downloadLink` pointing to `/open-science/download`. Keep the original page open. The manual open
+button is a fresh user gesture if browser policy blocks automatic navigation after downloading.
+A browser's local-network/external-app prompts cannot be bypassed. Opening a placeholder tab before
+an `await` does **not** preserve transient user activation across an arbitrary download.
 
 ```js
-import { prepareBrowserImport } from '@aipoch/open-science/browser-import'
+import {
+  checkBrowserImportAvailability,
+  prepareBrowserImport
+} from '@aipoch/open-science/browser-import'
 
 let transfer
 let controller
-openButton.disabled = true
+openButton.hidden = true
 cancelButton.disabled = true
 
-downloadButton.onclick = async () => {
-  downloadButton.disabled = true
+async function launchAndSend() {
+  // On retry this executes directly in the manual button's click handler.
+  openButton.hidden = true
   try {
-    status.textContent = 'Downloading package…'
-    const response = await fetch('/packages/study.science')
-    if (!response.ok) throw new Error(`Download failed (${response.status})`)
-    const file = await response.blob()
-    transfer = prepareBrowserImport(file, { filename: 'study.science' })
-    openButton.disabled = false
-    status.textContent = 'Ready. Open Open-Science to import.'
-  } catch (error) {
-    status.textContent = error.message
-  } finally {
-    downloadButton.disabled = false
-  }
-}
-
-openButton.onclick = async () => {
-  // Do this synchronously in the click handler, before any await.
-  window.location.href = transfer.url
-  controller = new AbortController()
-  openButton.disabled = true
-  cancelButton.disabled = false
-  try {
+    window.location.href = transfer.url
     await transfer.send({
       signal: controller.signal,
+      readinessAttempts: 5,
+      attemptTimeoutMs: 2000,
+      readyTimeoutMs: 15000,
       onProgress: ({ sentBytes, totalBytes }) => {
         status.textContent = `Sending ${Math.round((sentBytes / totalBytes) * 100)}%`
       }
     })
     status.textContent = 'Received by Open-Science. Review and confirm the import there.'
   } catch (error) {
-    status.textContent = error.message
-    openButton.disabled = false
+    if (controller.signal.aborted) {
+      status.textContent = 'Transfer cancelled. Click Continue to prepare a new transfer.'
+    } else {
+      status.textContent = 'Could not open Open-Science. Please open the app and try again.'
+      openButton.hidden = false
+      downloadLink.hidden = false
+    }
+  }
+}
+
+continueButton.onclick = async () => {
+  continueButton.disabled = true
+  controller = new AbortController()
+  cancelButton.disabled = false
+  try {
+    const availability = await checkBrowserImportAvailability({ signal: controller.signal })
+    if (availability.status !== 'available') {
+      if (availability.status === 'aborted') return
+      status.textContent =
+        'Could not connect to Open-Science. If you have not installed it yet, download Open-Science first.'
+      downloadLink.hidden = false
+      // Best effort: an asynchronous popup can be blocked; the visible link always remains.
+      window.open('/open-science/download', '_blank', 'noopener,noreferrer')
+      return
+    }
+    status.textContent = availability.authorized
+      ? 'Downloading package…'
+      : 'Downloading package… Approve this website in Open-Science when prompted.'
+    const response = await fetch('/packages/study.science', { signal: controller.signal })
+    if (!response.ok) throw new Error(`Download failed (${response.status})`)
+    const file = await response.blob()
+    transfer = prepareBrowserImport(file, { filename: 'study.science' })
+    await launchAndSend()
+  } catch (error) {
+    status.textContent = controller.signal.aborted ? 'Cancelled.' : error.message
   } finally {
+    continueButton.disabled = false
     cancelButton.disabled = true
   }
+}
+openButton.onclick = () => {
+  cancelButton.disabled = false
+  // Keep the same in-memory transfer so a still-live receiver can resume. For expired receivers,
+  // use Continue again to prepare a fresh transfer and protocol secret.
+  void launchAndSend().finally(() => {
+    cancelButton.disabled = true
+  })
 }
 cancelButton.onclick = () => controller?.abort()
 ```
 
-`send()` returns `{ received: true }` when the entire file has reached the local import queue.
-It does **not** indicate that the user confirmed import, that package validation succeeded, or that
-a session was created. No website receives desktop session data or general API credentials.
+`send()` returns `{ received: true }` after the entire file reaches the local import queue. Project
+selection and final package review happen separately and do not block this acknowledgment. It does
+not mean package validation succeeded or a session was created. No website receives desktop data
+or general API credentials. The website owns fetching bytes; do not put a remote URL, blob URL or
+file contents in the protocol. Never log, persist, send to analytics, or publish `transfer.url`.
+
+### Availability and errors
+
+`checkBrowserImportAvailability({ signal?, timeoutMs?, origin?, port? })` probes exactly one
+endpoint, `http://127.0.0.1:49151/v1/browser-import/capabilities`, with a default 2,000 ms budget,
+including the response body. It returns:
+
+- `{ status: 'available', authorized: boolean }`: compatible running receiver; `authorized` says
+  whether this exact origin has persistent receipt approval.
+- `unavailable`: no reachable receiver, including opaque network/CORS/local-network denials.
+- `permission-denied`: an explicit denial the platform exposes.
+- `unsupported-browser`, `incompatible`, `timeout`, or `aborted`.
+
+An unreachable receiver is not proof that Open-Science is uninstalled. Browser privacy rules often
+make permission denial indistinguishable from connection refusal. Local-network access may prompt,
+so availability is not guaranteed to be silent. Discovery is advisory and unauthenticated: a local
+port occupant can forge it. **Only** the secret-bound readiness proof authenticates the receiver;
+the SDK never sends credentials or plaintext file bytes based on discovery alone.
+
+`send()` accepts `readinessAttempts` (1–5, default 5), `attemptTimeoutMs` (default 2,000 ms, at most
+30,000 ms), `readyTimeoutMs` (overall readiness deadline, default 120,000 ms, capped at 300,000 ms),
+and `signal`. Attempts have 1,000 ms gaps, stop after the first verified response, and dispose all
+readiness timers. The attempt timeout covers headers and body reads. The overall deadline can stop
+an attempt or a gap. These budgets end at readiness and **do not limit the subsequent file transfer**.
+Failures use `BrowserImportError.code`: `readiness-exhausted`, `timeout`, `incompatible`, or
+`unsupported-browser`; caller cancellation preserves the abort signal's reason. Identity failures
+stop immediately. Browser prompt time may exceed readiness attempts; retry after approving.
+
+### Persistent website approval and revocation
+
+The first receipt asks in Open-Science. **Receive package** approves one transfer; **Always allow
+this website** persists the exact origin (scheme, hostname and port), including across restarts.
+Only native consent can create a grant. It permits receipt and queueing, never final import.
+Previously approved websites can use the automatic path without a receipt/destination prompt
+blocking transport. First use still requires native consent and may require a manual retry.
+
+The browser SDK's `revokeBrowserImportAuthorization(options?)` removes only the calling website's
+grant and returns `{ status: 'revoked' }` or the availability failure statuses. Put it on the
+website's Disconnect/Forget action. It affects future transfers, not an already authorized one.
+To clear **all** website grants locally, close Open-Science and remove
+`<OPEN_SCIENCE_CONFIG_ROOT>/browser-package-imports/trusted-origins.json` (the app's configuration
+folder when the environment override is unset). Corrupt/missing authorization files fail closed.
+Temporary transfer secrets are never persisted in this file.
+
+Discovery starts when an authenticated Electron desktop attaches to the Node receiver, and closes
+with that runtime. A surviving background runtime can still answer discovery; the protocol launch
+brings the desktop forward. The headless general API is unchanged. `OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT` can override the single discovery
+port for isolated development; pass the same `port` to discovery/revocation SDK calls. `port` in
+`prepareBrowserImport` remains the separate ephemeral **transfer** port. If another profile owns
+the discovery port, discovery is unavailable for this profile; existing protocol imports still work.
+Do not scan ports or substitute the general desktop API.
 
 ## Requirements and recovery
 

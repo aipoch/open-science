@@ -49,6 +49,8 @@
     "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認"
   },
   "native": {
+    "Always allow this website": "このウェブサイトを常に許可",
+    "Choosing Always allow this website remembers this origin until you revoke it.": "「このウェブサイトを常に許可」を選択すると、取り消すまでこのオリジンへの許可が保存されます。",
     "Receive package": "パッケージを受信",
     "Allow {{origin}} to send {{filename}} to Open-Science?": "{{origin}} が {{filename}} を Open-Science に送信することを許可しますか？",
     "The file will be received locally. You can review it before importing.": "ファイルはローカルで受信されます。インポート前に内容を確認できます。",

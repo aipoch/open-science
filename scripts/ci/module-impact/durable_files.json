@@ -54,6 +54,8 @@
       "test/config/vitest.config.test.ts"
     ],
     "consumer": [
+      "src/main/session-package/browser-import.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/composition/session-packages.test.ts",
       "cli/config-root.test.ts",
       "packages/skills/src/agent-home-skill-catalog.test.ts",

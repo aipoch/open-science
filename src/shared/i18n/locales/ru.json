@@ -49,6 +49,8 @@
     "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook"
   },
   "native": {
+    "Always allow this website": "Всегда разрешать этому сайту",
+    "Choosing Always allow this website remembers this origin until you revoke it.": "При выборе «Всегда разрешать этому сайту» разрешение для этого источника сохраняется до его отзыва.",
     "Receive package": "Получить пакет",
     "Allow {{origin}} to send {{filename}} to Open-Science?": "Разрешить {{origin}} отправить {{filename}} в Open-Science?",
     "The file will be received locally. You can review it before importing.": "Файл будет получен локально. Его можно просмотреть перед импортом.",

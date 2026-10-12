@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
-import { prepareBrowserImport } from './browser-import.mjs'
+import { checkBrowserImportAvailability, prepareBrowserImport } from './browser-import.mjs'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -136,4 +136,127 @@ it('keeps bytes and the secret private if the listener is replaced after a valid
   expect(
     Buffer.from(requests[1].body as Uint8Array).includes(Buffer.from('private research'))
   ).toBe(false)
+})
+
+it('bounds readiness to five attempts with one-second gaps and leaves no retry timers', async () => {
+  vi.useFakeTimers()
+  const starts: number[] = []
+  vi.stubGlobal('fetch', async () => {
+    starts.push(Date.now())
+    throw new TypeError('Network unavailable')
+  })
+  try {
+    const transfer = prepareBrowserImport(new Blob(['hello']), {
+      filename: 'study.science',
+      origin: 'https://research.example'
+    })
+    const result = expect(transfer.send()).rejects.toMatchObject({ code: 'readiness-exhausted' })
+    await vi.advanceTimersByTimeAsync(5000)
+    await result
+    expect(starts).toHaveLength(5)
+    expect(starts.slice(1).map((time, index) => time - starts[index])).toEqual([
+      1000, 1000, 1000, 1000
+    ])
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('checks one discovery endpoint without downloading a package or exposing credentials', async () => {
+  const requests: { url: string; init: RequestInit }[] = []
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    requests.push({ url, init })
+    return Response.json({ service: 'open-science-browser-import', version: 1, authorized: true })
+  })
+  await expect(
+    checkBrowserImportAvailability({ origin: 'https://research.example' })
+  ).resolves.toEqual({ status: 'available', authorized: true })
+  expect(requests.map((request) => request.url)).toEqual([
+    'http://127.0.0.1:49151/v1/browser-import/capabilities'
+  ])
+  expect(new Headers(requests[0].init.headers).has('Authorization')).toBe(false)
+  expect(requests[0].init.body).toBeUndefined()
+})
+
+it.each([
+  [403, {}, 'permission-denied'],
+  [200, { service: 'another-app', version: 1 }, 'incompatible'],
+  [200, { service: 'open-science-browser-import', version: 2 }, 'incompatible']
+])('classifies discovery response %s %j', async (status, body, expected) => {
+  vi.stubGlobal('fetch', async () => Response.json(body, { status }))
+  await expect(
+    checkBrowserImportAvailability({ origin: 'https://research.example' })
+  ).resolves.toMatchObject({ status: expected })
+})
+
+it('aborts an in-flight readiness request without another attempt or remaining timers', async () => {
+  vi.useFakeTimers()
+  const controller = new AbortController()
+  let requestSignal: AbortSignal | undefined
+  let attempts = 0
+  vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+    attempts++
+    requestSignal = init.signal!
+    return new Promise((_resolve, reject) =>
+      requestSignal!.addEventListener('abort', () => reject(requestSignal!.reason), { once: true })
+    )
+  })
+  try {
+    const transfer = prepareBrowserImport(new Blob(['hello']), {
+      filename: 'study.science',
+      origin: 'https://research.example'
+    })
+    const result = expect(transfer.send({ signal: controller.signal })).rejects.toThrow(
+      'User cancelled'
+    )
+    await vi.advanceTimersByTimeAsync(1)
+    controller.abort(new Error('User cancelled'))
+    await result
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(requestSignal?.aborted).toBe(true)
+    expect(attempts).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('reports discovery timeout while reading a stalled body', async () => {
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => ({
+    status: 200,
+    ok: true,
+    json: () =>
+      new Promise((_resolve, reject) =>
+        init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+      )
+  }))
+  await expect(
+    checkBrowserImportAvailability({ origin: 'https://research.example', timeoutMs: 10 })
+  ).resolves.toEqual({ status: 'timeout' })
+})
+
+it('does not confuse unreachable with an installation check', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+  await expect(
+    checkBrowserImportAvailability({ origin: 'https://research.example' })
+  ).resolves.toEqual({ status: 'unavailable' })
+})
+
+it('rejects malformed readiness immediately instead of treating it as a network retry', async () => {
+  let requests = 0
+  vi.stubGlobal('fetch', async () => {
+    requests++
+    return Response.json(null)
+  })
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  await expect(transfer.send({ readyTimeoutMs: 50 })).rejects.toMatchObject({
+    code: 'incompatible'
+  })
+  expect(requests).toBe(1)
 })

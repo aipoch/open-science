@@ -49,6 +49,8 @@
     "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境"
   },
   "native": {
+    "Always allow this website": "一律允許此網站",
+    "Choosing Always allow this website remembers this origin until you revoke it.": "選擇「一律允許此網站」後，將記住此來源，直到您撤銷授權。",
     "Receive package": "接收套件",
     "Allow {{origin}} to send {{filename}} to Open-Science?": "允許 {{origin}} 將 {{filename}} 傳送至 Open-Science 嗎？",
     "The file will be received locally. You can review it before importing.": "檔案將接收到本機。你可以在匯入前檢視其內容。",

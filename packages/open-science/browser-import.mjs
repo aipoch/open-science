@@ -19,14 +19,22 @@ const wait = (ms, signal) =>
     signal?.addEventListener('abort', abort, { once: true })
   })
 
-/** Prepare a transfer from bytes already downloaded by the website. Open url from a user click,
- * then call send(). Its result acknowledges local receipt, not the user's eventual import decision.
- */
-export function prepareBrowserImport(file, options = {}) {
-  const origin = options.origin ?? globalThis.location?.origin
+/** Stable codes let websites show recovery guidance without parsing English messages. */
+export class BrowserImportError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'BrowserImportError'
+    this.code = code
+  }
+}
+
+const supported = () =>
+  typeof Blob === 'function' &&
+  typeof fetch === 'function' &&
+  !!globalThis.crypto?.subtle &&
+  typeof globalThis.AbortSignal?.any === 'function'
+const validOrigin = (origin) => {
   const site = new URL(origin)
-  const filename = options.filename ?? file?.name
-  const port = options.port ?? 49152 + (crypto.getRandomValues(new Uint16Array(1))[0] % 16384)
   if (
     site.origin !== origin ||
     (site.protocol !== 'https:' &&
@@ -35,6 +43,97 @@ export function prepareBrowserImport(file, options = {}) {
     throw new Error('Browser import requires an HTTPS website or loopback development origin.')
   if (globalThis.location && globalThis.location.origin !== origin)
     throw new Error('The import origin must match this page.')
+  return origin
+}
+// Explicitly dispose timers after every request/deadline; response body reads share the budget.
+const bounded = async (signal, timeoutMs, work) => {
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new BrowserImportError('timeout', 'Open-Science did not become ready in time.')
+      ),
+    timeoutMs
+  )
+  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  try {
+    combined.throwIfAborted()
+    return await work(combined)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+const discoveryRequest = async (options, method, path) => {
+  validOrigin(options.origin ?? globalThis.location?.origin)
+  const port = options.port ?? 49151
+  const timeoutMs = options.timeoutMs ?? 2000
+  if (
+    !Number.isInteger(port) ||
+    port < 1024 ||
+    port > 65535 ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > 300_000
+  )
+    throw new Error('Invalid discovery options.')
+  return bounded(options.signal, timeoutMs, async (signal) => {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/browser-import/${path}`, {
+      method,
+      signal,
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+      targetAddressSpace: 'loopback'
+    })
+    if (response.status === 403) return { status: 'permission-denied' }
+    if (method === 'DELETE') return { status: response.status === 204 ? 'revoked' : 'incompatible' }
+    const value = await response.json()
+    if (
+      !response.ok ||
+      !value ||
+      value.service !== 'open-science-browser-import' ||
+      value.version !== 1 ||
+      typeof value.authorized !== 'boolean'
+    )
+      return { status: 'incompatible' }
+    return { status: 'available', authorized: value.authorized }
+  })
+}
+const discover = async (options, method, path) => {
+  if (!supported()) return { status: 'unsupported-browser' }
+  try {
+    return await discoveryRequest(options, method, path)
+  } catch (error) {
+    if (options.signal?.aborted) return { status: 'aborted' }
+    if (error.code === 'timeout' || error.name === 'TimeoutError') return { status: 'timeout' }
+    if (error.name === 'NotAllowedError') return { status: 'permission-denied' }
+    if (error instanceof SyntaxError) return { status: 'incompatible' }
+    // Browsers deliberately conflate connection refusal, CORS and local-network denial.
+    if (error instanceof TypeError) return { status: 'unavailable' }
+    throw error
+  }
+}
+/** Advisory discovery only; the secret-bound handshake still authenticates every transfer. */
+export const checkBrowserImportAvailability = (options = {}) =>
+  discover(options, 'GET', 'capabilities')
+/** A website may revoke its own stored grant, never create one or revoke another origin. */
+export const revokeBrowserImportAuthorization = (options = {}) =>
+  discover(options, 'DELETE', 'authorization')
+
+/** Prepare a transfer from bytes already downloaded by the website. Open url from a user click,
+ * then call send(). Its result acknowledges local receipt, not the user's eventual import decision.
+ */
+export function prepareBrowserImport(file, options = {}) {
+  const origin = options.origin ?? globalThis.location?.origin
+  if (!supported())
+    throw new BrowserImportError(
+      'unsupported-browser',
+      'This browser cannot transfer packages to Open-Science.'
+    )
+  validOrigin(origin)
+  const filename = options.filename ?? file?.name
+  const port = options.port ?? 49152 + (crypto.getRandomValues(new Uint16Array(1))[0] % 16384)
   if (!(file instanceof Blob) || file.size <= 0 || file.size > MAX_BYTES)
     throw new Error('Choose a nonempty .science package no larger than 2 GiB.')
   if (
@@ -75,9 +174,24 @@ export function prepareBrowserImport(file, options = {}) {
 
   return Object.freeze({
     url,
-    async send({ signal, onProgress, readyTimeoutMs = 120_000 } = {}) {
+    async send({
+      signal,
+      onProgress,
+      readyTimeoutMs = 120_000,
+      readinessAttempts = 5,
+      attemptTimeoutMs = 2000
+    } = {}) {
       if (!Number.isFinite(readyTimeoutMs) || readyTimeoutMs <= 0)
         throw new Error('Invalid receiver timeout.')
+      if (
+        !Number.isInteger(readinessAttempts) ||
+        readinessAttempts < 1 ||
+        readinessAttempts > 5 ||
+        !Number.isFinite(attemptTimeoutMs) ||
+        attemptTimeoutMs <= 0 ||
+        attemptTimeoutMs > 30_000
+      )
+        throw new Error('Invalid readiness retry options.')
       if (sending) throw new Error('This browser transfer is already running.')
       if (received) return { received: true }
       signal?.throwIfAborted()
@@ -92,46 +206,70 @@ export function prepareBrowserImport(file, options = {}) {
           targetAddressSpace: 'loopback',
           ...init,
           signal: AbortSignal.any(
-            [signal, init.signal, AbortSignal.timeout(30_000)].filter(Boolean)
+            [signal, init.signal ?? AbortSignal.timeout(30_000)].filter(Boolean)
           )
         })
       try {
-        const deadline = Date.now() + Math.max(1, Math.min(readyTimeoutMs, 300_000))
-        // The readiness budget also bounds a stalled response body, not just polling attempts.
-        const readySignal = AbortSignal.timeout(Math.ceil(Math.min(readyTimeoutMs, 300_000)))
-        const notReady = new Error(
-          'Open-Science did not become ready. Open the app, allow local network access, and retry.'
-        )
-        const challenge = randomHex()
-        let response
-        while (Date.now() < deadline) {
-          signal?.throwIfAborted()
-          try {
-            response = await request(`/ready?challenge=${challenge}`, { signal: readySignal })
-            break
-          } catch {
-            signal?.throwIfAborted()
-            if (readySignal.aborted) break
-            await wait(Math.max(0, Math.min(250, deadline - Date.now())), signal)
+        const deadline = Date.now() + Math.min(readyTimeoutMs, 300_000)
+        const ready = await bounded(
+          signal,
+          Math.min(readyTimeoutMs, 300_000),
+          async (readySignal) => {
+            for (let attempt = 0; attempt < readinessAttempts; attempt++) {
+              readySignal.throwIfAborted()
+              try {
+                return await bounded(readySignal, attemptTimeoutMs, async (attemptSignal) => {
+                  const challenge = randomHex()
+                  const response = await request(`/ready?challenge=${challenge}`, {
+                    signal: attemptSignal
+                  })
+                  const value = await response.json()
+                  if (
+                    !value ||
+                    typeof value !== 'object' ||
+                    typeof value.accepted !== 'boolean' ||
+                    !Number.isSafeInteger(value.offset) ||
+                    value.offset < 0 ||
+                    value.offset > file.size ||
+                    value.chunkBytes !== CHUNK_BYTES
+                  )
+                    throw new BrowserImportError(
+                      'incompatible',
+                      'Could not verify the local receiver identity.'
+                    )
+                  const expected = await sign(
+                    `open-science-import-v1:${challenge}:${value.offset}:${value.accepted ? 1 : 0}`
+                  )
+                  attemptSignal.throwIfAborted()
+                  if (Date.now() >= deadline)
+                    throw new BrowserImportError(
+                      'timeout',
+                      'Open-Science did not become ready in time.'
+                    )
+                  if (!response.ok || value.proof !== expected)
+                    throw new BrowserImportError(
+                      'incompatible',
+                      'Could not verify the local receiver identity. Prepare a new transfer and reopen Open-Science.'
+                    )
+                  return value
+                })
+              } catch (error) {
+                readySignal.throwIfAborted()
+                if (error.code === 'incompatible') throw error
+                if (error instanceof SyntaxError)
+                  throw new BrowserImportError(
+                    'incompatible',
+                    'Could not verify the local receiver identity.'
+                  )
+                if (attempt + 1 < readinessAttempts) await wait(1000, readySignal)
+              }
+            }
+            throw new BrowserImportError(
+              'readiness-exhausted',
+              'Open-Science did not become ready. Open the app, allow local network access, and retry.'
+            )
           }
-        }
-        if (!response) throw notReady
-        let ready
-        try {
-          ready = await response.json()
-        } catch {
-          signal?.throwIfAborted()
-          if (readySignal.aborted || Date.now() >= deadline) throw notReady
-          throw new Error('Could not verify the local receiver identity.')
-        }
-        const expected = await sign(
-          `open-science-import-v1:${challenge}:${ready.offset}:${ready.accepted ? 1 : 0}`
         )
-        if (readySignal.aborted || Date.now() >= deadline) throw notReady
-        if (!response.ok || ready.proof !== expected)
-          throw new Error(
-            'Could not verify the local receiver identity. Prepare a new transfer and reopen Open-Science.'
-          )
         verified = true
         if (
           !Number.isSafeInteger(ready.offset) ||

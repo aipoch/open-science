@@ -4,6 +4,7 @@ import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, open, readdir, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
+import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
 
 // Version 1 deliberately bounds browser staging independently of the research archive format.
 const MAX_BYTES = 2 * 1024 ** 3
@@ -13,7 +14,7 @@ const HEX_SECRET = /^[a-f0-9]{64}$/
 type BrowserImportOptions = {
   root: string
   receive: (path: string, consumed: () => void) => void | boolean | Promise<boolean>
-  confirm: (request: BrowserImportRequest) => Promise<boolean>
+  confirm: (request: BrowserImportRequest) => Promise<boolean | 'remember'>
   idleMs?: number
 }
 type Transfer = {
@@ -49,6 +50,120 @@ export class BrowserPackageImport {
   private readonly transfers = new Map<string, Transfer>()
   private initialized?: Promise<void>
   private closed = false
+  private discovery?: Server
+  private discoveryStarting?: Promise<void>
+  private authorizationWrites: Promise<void> = Promise.resolve()
+
+  private async trustedOrigins(): Promise<string[]> {
+    try {
+      const value = JSON.parse(
+        await readFileWithinLimit(join(this.options.root, 'trusted-origins.json'), 64 * 1024)
+      )
+      return value.version === 1 &&
+        Array.isArray(value.origins) &&
+        value.origins.length <= 100 &&
+        value.origins.every((origin: unknown) => this.validOrigin(origin))
+        ? value.origins
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  private validOrigin(origin: unknown): origin is string {
+    if (typeof origin !== 'string' || origin.length > 2048) return false
+    try {
+      const site = new URL(origin)
+      return (
+        site.origin === origin &&
+        (site.protocol === 'https:' ||
+          (site.protocol === 'http:' &&
+            ['127.0.0.1', 'localhost', '[::1]'].includes(site.hostname)))
+      )
+    } catch {
+      return false
+    }
+  }
+
+  private saveAuthorization(origin: string, allow: boolean): Promise<void> {
+    // Serialize grants/revocations so concurrent native consent cannot overwrite another origin.
+    const write = this.authorizationWrites.then(async () => {
+      const origins = new Set(await this.trustedOrigins())
+      if (allow) origins.add(origin)
+      else if (!origins.delete(origin)) return
+      if (origins.size > 100) throw new Error('Too many approved browser origins.')
+      await mkdir(this.options.root, { recursive: true, mode: 0o700 })
+      await writeDurableJsonFile(
+        join(this.options.root, 'trusted-origins.json'),
+        JSON.stringify({ version: 1, origins: [...origins] })
+      )
+    })
+    this.authorizationWrites = write.catch(() => undefined)
+    return write
+  }
+
+  startDiscovery(port = 49151): Promise<void> {
+    if (this.closed) return Promise.reject(new Error('Browser import is closed.'))
+    if (!Number.isInteger(port) || port < 1024 || port > 65535)
+      return Promise.reject(new Error('Invalid browser discovery port.'))
+    if (this.discoveryStarting) return this.discoveryStarting
+    const server = createServer((request, response) => {
+      void this.handleDiscovery(port, request, response).catch(() => {
+        if (!response.headersSent) reply(response, 500)
+        else response.destroy()
+      })
+    })
+    this.discovery = server
+    server.requestTimeout = 5000
+    server.headersTimeout = 5000
+    server.maxHeadersCount = 24
+    this.discoveryStarting = new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(port, '127.0.0.1', () => {
+        server.removeListener('error', reject)
+        resolve()
+      })
+    })
+    return this.discoveryStarting
+  }
+
+  private async handleDiscovery(
+    port: number,
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    const origin = request.headers.origin
+    if (this.closed || request.headers.host !== `127.0.0.1:${port}` || !this.validOrigin(origin)) {
+      reply(response, 403)
+      request.resume()
+      return
+    }
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Vary', 'Origin')
+    // Discovery can reveal only protocol compatibility and this origin's grant, never user data.
+    const path = request.url
+    if (path !== '/v1/browser-import/capabilities' && path !== '/v1/browser-import/authorization') {
+      reply(response, 404)
+    } else if (request.method === 'OPTIONS') {
+      response.setHeader(
+        'Access-Control-Allow-Methods',
+        path.endsWith('/capabilities') ? 'GET' : 'DELETE'
+      )
+      response.setHeader('Access-Control-Allow-Private-Network', 'true')
+      reply(response, 204)
+    } else if (request.method === 'GET' && path.endsWith('/capabilities')) {
+      await this.authorizationWrites
+      reply(response, 200, {
+        service: 'open-science-browser-import',
+        version: 1,
+        authorized: (await this.trustedOrigins()).includes(origin)
+      })
+    } else if (request.method === 'DELETE' && path.endsWith('/authorization')) {
+      await this.saveAuthorization(origin, false)
+      reply(response, 204)
+    } else reply(response, 405)
+    request.resume()
+  }
   constructor(private readonly options: BrowserImportOptions) {}
 
   get active(): boolean {
@@ -81,10 +196,16 @@ export class BrowserPackageImport {
   }
 
   private async start(transfer: Transfer): Promise<void> {
-    if (!(await this.options.confirm(transfer.request)) || this.closed) {
+    await this.authorizationWrites
+    const trusted = (await this.trustedOrigins()).includes(transfer.request.origin)
+    if (this.closed) return
+    const decision = trusted || (await this.options.confirm(transfer.request))
+    if (!decision || this.closed) {
       await this.remove(transfer)
       return
     }
+    if (decision === 'remember') await this.saveAuthorization(transfer.request.origin, true)
+    if (this.closed) return
     transfer.resources = this.acquire(transfer)
     await transfer.resources
   }
@@ -342,6 +463,8 @@ export class BrowserPackageImport {
 
   stop(): void {
     this.closed = true
+    this.discovery?.closeAllConnections()
+    if (this.discovery?.listening) this.discovery.close()
     for (const transfer of this.transfers.values()) {
       clearTimeout(transfer.timer)
       transfer.server?.closeAllConnections()
@@ -351,6 +474,12 @@ export class BrowserPackageImport {
 
   async close(): Promise<void> {
     this.stop()
+    await this.discoveryStarting?.catch(() => undefined)
+    if (this.discovery?.listening) {
+      this.discovery.closeAllConnections()
+      await new Promise<void>((resolve) => this.discovery!.close(() => resolve()))
+    }
+    await this.authorizationWrites
     // Consent dialogs may still be open. start() rechecks closed before opening any resource.
     await Promise.all([...this.transfers.values()].map((transfer) => this.remove(transfer)))
   }

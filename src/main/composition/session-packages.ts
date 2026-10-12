@@ -238,12 +238,21 @@ export function composeSessionPackageSurfaces({
           origin,
           filename: name
         }),
-        detail: translate('The file will be received locally. You can review it before importing.'),
-        buttons: [translate('Cancel'), translate('Receive package')],
+        detail:
+          translate('The file will be received locally. You can review it before importing.') +
+          '\n\n' +
+          translate(
+            'Choosing Always allow this website remembers this origin until you revoke it.'
+          ),
+        buttons: [
+          translate('Cancel'),
+          translate('Receive package'),
+          translate('Always allow this website')
+        ],
         defaultId: 0,
         cancelId: 0
       })
-      return result.response === 1
+      return result.response === 2 ? 'remember' : result.response === 1
     }
   })
   // Browser receipt precedes the desktop queue and must survive quit/update preparation too.

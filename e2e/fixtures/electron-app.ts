@@ -345,7 +345,7 @@ type ElectronApp = {
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
-  configureBrowserImportConsent: (accept: boolean) => Promise<void>
+  configureBrowserImportConsent: (accept: boolean | 'remember') => Promise<void>
   emitBrowserImport: (url: string) => Promise<void>
   emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
   emitSkillImportApprovalRequest: (request: ConversationSkillImportApprovalRequest) => Promise<void>
@@ -1122,10 +1122,13 @@ class ElectronAppHarness implements ElectronApp {
     }, path)
   }
 
-  async configureBrowserImportConsent(accept: boolean): Promise<void> {
+  async configureBrowserImportConsent(accept: boolean | 'remember'): Promise<void> {
     if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
       throw new Error('Browser consent fixture requires source E2E.')
-    await writeFile(join(this.roots.storageRoot, 'e2e-browser-import-consent'), accept ? '1' : '0')
+    await writeFile(
+      join(this.roots.storageRoot, 'e2e-browser-import-consent'),
+      accept === 'remember' ? '2' : accept ? '1' : '0'
+    )
   }
 
   async emitBrowserImport(url: string): Promise<void> {

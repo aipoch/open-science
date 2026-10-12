@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import { stat, writeFile, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
+import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
 
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
@@ -647,7 +648,11 @@ for (const launch of ['cold', 'warm'] as const) {
     browser
   }, testInfo) => {
     await app.completeOnboarding()
-    await app.configureBrowserImportConsent(true)
+    await app.configureBrowserImportConsent(launch === 'warm' ? 'remember' : true)
+    const discoveryPort = await findBrowserImportPort()
+    const previousDiscoveryPort = process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+    process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = String(discoveryPort)
+    await app.restart()
     const inspection = await app.createTestDirectory('browser-import-inspection')
     const storage = join(dirname(inspection), 'storage')
     const context = await browser.newContext()
@@ -675,12 +680,20 @@ for (const launch of ['cold', 'warm'] as const) {
     })
     try {
       await website.goto('https://research.example/')
+      // Discovery precedes the website's only remote package fetch.
+      expect(
+        await website.evaluate(async (port) => {
+          const sdkPath = '/browser-import.mjs'
+          const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
+          return checkBrowserImportAvailability({ port })
+        }, discoveryPort)
+      ).toEqual({ status: 'available', authorized: false })
       const url = await website.evaluate(async () => {
         const sdkPath = '/browser-import.mjs'
         const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
         const blob = await (await fetch('/study.science')).blob()
         const transfer = prepareBrowserImport(blob, { filename: 'study.science' })
-        Object.assign(window, { browserPackageTransfer: transfer })
+        Object.assign(window, { browserPackageTransfer: transfer, browserPackageBlob: blob })
         return transfer.url as string
       })
       const page = launch === 'cold' ? await app.restartWithPackage(url) : app.page
@@ -718,7 +731,13 @@ for (const launch of ['cold', 'warm'] as const) {
         timeout: 60_000
       })
       await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-imported.png`) })
-      await expect.poll(() => readdir(join(storage, 'browser-package-imports'))).toEqual([])
+      await expect
+        .poll(async () =>
+          (await readdir(join(storage, 'browser-package-imports'))).filter((name) =>
+            name.startsWith('transfer-')
+          )
+        )
+        .toEqual([])
       await dialog.getByRole('button', { name: 'Open imported Session', exact: true }).click()
       await expect(
         page.getByRole('region', { name: 'Imported research history', exact: true })
@@ -726,7 +745,59 @@ for (const launch of ['cold', 'warm'] as const) {
       await expect(page.getByTestId('replay-panel')).toBeVisible()
       await page.getByRole('button', { name: 'All projects', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Projects', exact: true })).toBeVisible()
+      if (launch === 'warm') {
+        await app.configureBrowserImportConsent(false)
+        const restarted = await app.restart()
+        expect(
+          await website.evaluate(async (port) => {
+            const sdkPath = '/browser-import.mjs'
+            const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
+            return checkBrowserImportAvailability({ port })
+          }, discoveryPort)
+        ).toEqual({ status: 'available', authorized: true })
+        const nextUrl = await website.evaluate(async () => {
+          const sdkPath = '/browser-import.mjs'
+          const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
+          const blob = (window as unknown as { browserPackageBlob: Blob }).browserPackageBlob
+          const transfer = prepareBrowserImport(blob, { filename: 'again.science' })
+          Object.assign(window, { browserPackageTransfer: transfer })
+          return transfer.url as string
+        })
+        await app.emitBrowserImport(nextUrl)
+        expect(
+          await website.evaluate(() =>
+            (
+              window as unknown as {
+                browserPackageTransfer: { send: () => Promise<{ received: true }> }
+              }
+            ).browserPackageTransfer.send()
+          )
+        ).toEqual({ received: true })
+        // Receipt completes before choosing a project; persistent consent avoids another native prompt.
+        expect(
+          (await readFile(join(storage, 'e2e-browser-import-prompts.jsonl'), 'utf8'))
+            .trim()
+            .split('\n')
+        ).toHaveLength(1)
+        await expect(
+          restarted
+            .getByRole('dialog', { name: 'Import Session package', exact: true })
+            .getByText('again.science', { exact: true })
+        ).toBeVisible()
+        expect(
+          await website.evaluate(async (port) => {
+            const sdkPath = '/browser-import.mjs'
+            const { revokeBrowserImportAuthorization, checkBrowserImportAvailability } =
+              await import(/* @vite-ignore */ sdkPath)
+            await revokeBrowserImportAuthorization({ port })
+            return checkBrowserImportAvailability({ port })
+          }, discoveryPort)
+        ).toEqual({ status: 'available', authorized: false })
+      }
     } finally {
+      if (previousDiscoveryPort === undefined)
+        delete process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+      else process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = previousDiscoveryPort
       await context.close()
     }
   })

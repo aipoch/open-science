@@ -485,6 +485,12 @@ async function startDesktop(): Promise<void> {
             showMainWindow?.()
             void client!.invokeHost('desktop:open-package', [path]).catch(reportError)
           })
+          // The Node owner holds the receiver; only an authenticated desktop host enables discovery.
+          await client!
+            .invokeHost('desktop:browser-import-discovery', [
+              Number(process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT ?? 49151)
+            ])
+            .catch(() => webServiceLog.warn('Browser import discovery is unavailable.'))
           browserImports.bind((url) => {
             showMainWindow?.()
             void client!.invokeHost('desktop:browser-import', [url]).catch(reportError)

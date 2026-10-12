@@ -6,7 +6,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { BrowserPackageImport } from './browser-import'
 import type { BrowserImportTransfer } from '../../../packages/open-science/browser-import'
 // @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
-import { prepareBrowserImport } from '../../../packages/open-science/browser-import.mjs'
+import * as browserSdk from '../../../packages/open-science/browser-import.mjs'
+const { checkBrowserImportAvailability, revokeBrowserImportAuthorization, prepareBrowserImport } =
+  browserSdk
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -30,6 +32,15 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
     return realFetch(input, { ...init, headers: { ...init.headers, Origin: origin } })
   })
   try {
+    const discoveryPort = await findBrowserImportPort()
+    await bridge.startDiscovery(discoveryPort)
+    expect(await checkBrowserImportAvailability({ origin, port: discoveryPort })).toEqual({
+      status: 'available',
+      authorized: false
+    })
+    expect(await revokeBrowserImportAuthorization({ origin, port: discoveryPort })).toEqual({
+      status: 'revoked'
+    })
     const bytes = new Uint8Array(4 * 1024 ** 2 + 17).fill(73)
     const transfer: BrowserImportTransfer = prepareBrowserImport(new Blob([bytes]), {
       filename: 'study.science',
@@ -43,7 +54,13 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
     ).toEqual({ received: true })
     expect((await readFile(received!)).equals(Buffer.from(bytes))).toBe(true)
     expect(progress.at(-1)).toBe(bytes.length)
-    expect(destinations.every((url) => url.startsWith(`http://127.0.0.1:${port}/`))).toBe(true)
+    expect(
+      destinations.every(
+        (url) =>
+          url.startsWith(`http://127.0.0.1:${port}/`) ||
+          url.startsWith(`http://127.0.0.1:${discoveryPort}/`)
+      )
+    ).toBe(true)
   } finally {
     await bridge.close()
     await rm(root, { recursive: true, force: true })

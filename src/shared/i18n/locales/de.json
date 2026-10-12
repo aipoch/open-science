@@ -49,6 +49,8 @@
     "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen"
   },
   "native": {
+    "Always allow this website": "Diese Website immer zulassen",
+    "Choosing Always allow this website remembers this origin until you revoke it.": "Wenn Sie Diese Website immer zulassen wählen, wird diese Herkunft gespeichert, bis Sie die Berechtigung widerrufen.",
     "Receive package": "Paket empfangen",
     "Allow {{origin}} to send {{filename}} to Open-Science?": "Darf {{origin}} die Datei {{filename}} an Open-Science senden?",
     "The file will be received locally. You can review it before importing.": "Die Datei wird lokal empfangen. Sie können sie vor dem Import prüfen.",
