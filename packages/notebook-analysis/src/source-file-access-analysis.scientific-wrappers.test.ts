@@ -852,33 +852,43 @@ describe('qualified readLines helper first inputs', () => {
   )
 
   it.each([
-    '',
-    'stdin',
-    'stdout',
-    'stderr',
-    'clipboard',
-    'clipboard-128',
-    'X11_primary',
-    'X11_secondary',
-    'X11_clipboard',
-    '|consumer',
-    ' |consumer',
-    'https://example.invalid/observations.txt',
-    'file:///inputs/observations.txt',
-    '/vsicurl/https://example.invalid/observations.txt',
-    'custom:observations'
-  ])('does not invent a local file for connection description %j', async (path) => {
-    for (const source of [
-      `${helper}\nreader(${JSON.stringify(path)})`,
-      `reader <- function() { lines <- base::readLines(con=${JSON.stringify(path)}); lines }\nreader()`
-    ]) {
-      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
-        reads: [],
-        readState: 'partial',
-        writeState: 'partial',
-        externalState: 'partial'
-      })
-    }
+    `${helper}\nreader("")`,
+    `${helper}\nreader("stdin")`,
+    `${helper}\nreader("stdout")`,
+    `${helper}\nreader("stderr")`,
+    `${helper}\nreader("clipboard")`,
+    `${helper}\nreader("clipboard-128")`,
+    `${helper}\nreader("X11_primary")`,
+    `${helper}\nreader("X11_secondary")`,
+    `${helper}\nreader("X11_clipboard")`,
+    `${helper}\nreader("|consumer")`,
+    `${helper}\nreader(" |consumer")`,
+    `${helper}\nreader("https://example.invalid/observations.txt")`,
+    `${helper}\nreader("file:///inputs/observations.txt")`,
+    `${helper}\nreader("/vsicurl/https://example.invalid/observations.txt")`,
+    `${helper}\nreader("custom:observations")`,
+    'reader <- function() { lines <- base::readLines(con=""); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="stdin"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="stdout"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="stderr"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="clipboard"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="clipboard-128"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="X11_primary"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="X11_secondary"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="X11_clipboard"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="|consumer"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con=" |consumer"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="https://example.invalid/observations.txt"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="file:///inputs/observations.txt"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="/vsicurl/https://example.invalid/observations.txt"); lines }\nreader()',
+    'reader <- function() { lines <- base::readLines(con="custom:observations"); lines }\nreader()'
+  ])('does not invent a local file for a non-file connection description', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
   })
 
   it.each([
