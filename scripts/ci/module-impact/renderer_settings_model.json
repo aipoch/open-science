@@ -195,7 +195,6 @@
       "src/renderer/src/pages/workspace/composer/ComposerEditor.interaction.test.tsx",
       "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/notebook-tool-presentation.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx",
       "src/renderer/src/pages/workspace/preview-draft-lifecycle.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewFileContent.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewTextAnnotationSurface.test.tsx",
