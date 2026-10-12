@@ -178,6 +178,11 @@ class LiteratureMetadataEnricher<Item extends DiscoveryReference = DiscoveryRefe
         merged.conflicts.push(identifierConflict)
       }
     }
+    // Fills and source provenance must agree with the identity actually being saved.
+    if (!identitiesAgree(merged.item, review.proposal))
+      throw new Error(
+        'Reference identifiers disagree. Review the DOI and PMID before searching again.'
+      )
     const persistedItem = await this.catalog.applyMetadata({
       operationId,
       itemId: current.id,

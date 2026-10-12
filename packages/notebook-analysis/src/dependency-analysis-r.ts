@@ -826,7 +826,12 @@ const analyzeRSource = (
   expressions = expressions.map(normalizeRPipes)
   const packageInspections = rPackageInspections(expressions)
   const consoleRedirected = expressions.some(rRedirectsConsole)
-  const localFileWrappers = rLocalFileWrappers(expressions)
+  const localFileWrappers = rLocalFileWrappers(
+    expressions,
+    false,
+    undefined,
+    contextualFileWrappers.map(({ name }) => name)
+  )
   const baseLabelFormatCalls = ['format', 'format.default', 'formatC', 'pretty', 'prettyNum']
   const pureSafeCalls = [
     ...baseLabelFormatCalls,
@@ -1785,7 +1790,8 @@ const analyzeRSource = (
     'close'
   ])
   const summarizeOpaqueLexicalCallback = (
-    expr: RExpr | undefined
+    expr: RExpr | undefined,
+    sameSourceBfgs = false
   ): NotebookDependencyTypeSummary['methods'][number] | undefined => {
     if (!isCall(expr) || callOperator(expr) !== 'function') return undefined
     const formals = expr.args[0]
@@ -1814,6 +1820,53 @@ const analyzeRSource = (
       if (op && localCallBindings.has(op)) return false
       // A nested function's body/default promises are deferred, not reads now.
       if (op === 'function') return !functions.has(op) && contractAvailable(op, undefined, 'base')
+      if (sameSourceBfgs && op === '<<-') {
+        const target = value.args[0]
+        const rhs = value.args[1]
+        if (
+          !allowLocalAssignment ||
+          value.args.length !== 2 ||
+          !isSymbol(target) ||
+          !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(target.name) ||
+          locals.has(target.name) ||
+          functions.has(target.name) ||
+          opaqueCallbackSyntax.has(target.name) ||
+          opaqueCallbackBaseCalls.has(target.name) ||
+          ['t', '%*%'].includes(target.name) ||
+          functions.has(op) ||
+          !contractAvailable(op, undefined, 'base') ||
+          !isCall(rhs) ||
+          callOperator(rhs) !== '+' ||
+          rhs.args.length !== 2 ||
+          rhs.names.some(Boolean) ||
+          !isSymbol(rhs.args[0]) ||
+          rhs.args[0].name !== target.name ||
+          rhs.args[1]?.kind !== 'atomic' ||
+          !Number.isInteger(rhs.args[1].number) ||
+          !(rhs.args[1].number! > 0) ||
+          !visit(rhs, false)
+        )
+          return false
+        // Read the old counter, without locating its nonlocal write environment.
+        // It does not establish a local; it may still replace a later callee.
+        localCallBindings.add(target.name)
+        return true
+      }
+      if (sameSourceBfgs && (op === '%*%' || op === 't')) {
+        if (
+          locals.has(op) ||
+          functions.has(op) ||
+          !contractAvailable(op, undefined, 'base') ||
+          (op === '%*%'
+            ? value.args.length !== 2 || value.names.some(Boolean)
+            : value.args.length !== 1 || Boolean(value.names[0] && value.names[0] !== 'x'))
+        )
+          return false
+        // These generics can dispatch user methods. Retain lexical reads only;
+        // keep them out of the default alphabet and all safe-call/return proofs.
+        reads.add(op)
+        return value.args.every((argument) => visit(argument, false))
+      }
       if (
         op &&
         [
@@ -2670,8 +2723,13 @@ const analyzeRSource = (
       ? pkg === expected || (expected === 'tidyselect' && pkg === 'dplyr')
       : !defined.includes(name) && !localNames.includes(name) && !shadowedCallbackCalls.has(name)
 
-  const consumeOpaqueSolverCallback = (expr: RExpr | undefined): boolean => {
+  const consumeOpaqueSolverCallback = (
+    expr: RExpr | undefined,
+    sameSourceBfgs = false
+  ): boolean => {
     const definition = isSymbol(expr) ? callbackDefinitions.get(expr.name) : expr
+    // The extended matrix/counter authority is invocation-local, never stored.
+    if (sameSourceBfgs && !definition) return false
     const stored = isSymbol(expr) ? functions.get(expr.name)?.methods[0] : undefined
     // Stored opaque summaries omit operator identities. Recheck the whole bounded
     // alphabet against current bindings rather than promoting usedNames to purity.
@@ -2692,7 +2750,9 @@ const analyzeRSource = (
             : contractAvailable(name, undefined, 'base') && !functions.has(name)
         })
       )
-    let summary = definition ? summarizeOpaqueLexicalCallback(definition) : undefined
+    let summary = definition
+      ? summarizeOpaqueLexicalCallback(definition, sameSourceBfgs)
+      : undefined
     if (!summary && definition) {
       const formals = isCall(definition) ? definition.args[0] : undefined
       const readSummary = summarizeCallback(definition)
@@ -2736,17 +2796,129 @@ const analyzeRSource = (
 
   const opaqueSolverCallbackIndex = (
     expr: Extract<RExpr, { kind: 'call' }>,
-    contract: { keyword: string; position: number }
+    contract: { keyword: string; position: number },
+    sameSourceBfgs = false
   ): number => {
     const names = expr.names.filter((name): name is string => Boolean(name))
+    const prefix = ['par', 'fn', 'gr']
     if (
       new Set(names).size !== names.length ||
-      expr.args.some((arg) => isSymbol(arg) && arg.name === '...')
+      expr.args.some(
+        (arg) => isSymbol(arg) && (arg.name === '...' || (sameSourceBfgs && !arg.name))
+      ) ||
+      (sameSourceBfgs &&
+        names.some((name) => prefix.some((formal) => formal !== name && formal.startsWith(name))))
     )
       return -1
     const named = expr.names.indexOf(contract.keyword)
     if (named >= 0) return named
+    if (sameSourceBfgs) {
+      // Do not implement R's full named/partial/positional matching here. Only
+      // an unshifted par/fn/gr prefix proves a raw positional callback index.
+      if (
+        expr.args.length <= contract.position ||
+        expr.names
+          .slice(0, contract.position + 1)
+          .some((name, index) => name && name !== prefix[index]) ||
+        expr.names.some((name, index) => name && prefix.includes(name) && name !== prefix[index])
+      )
+        return -1
+    }
     return !expr.names[contract.position] ? contract.position : -1
+  }
+
+  const directOpaqueSolver = (
+    expr: RExpr | null | undefined
+  ): [string, NonNullable<ReturnType<typeof R_OPAQUE_CALLBACK_CAPTURE_CALLS.get>>] | undefined =>
+    isCall(expr)
+      ? [...R_OPAQUE_CALLBACK_CAPTURE_CALLS].find(
+          ([name, contract]) =>
+            (isSymbol(expr.callee) &&
+              expr.callee.name === name &&
+              !expr.staticBuiltinShadowed &&
+              !functions.has(name) &&
+              contractAvailable(name, undefined, contract.package)) ||
+            (isCall(expr.callee) &&
+              callOperator(expr.callee) === '::' &&
+              contractAvailable('::', undefined, 'base') &&
+              !functions.has('::') &&
+              isSymbol(expr.callee.args[0]) &&
+              expr.callee.args[0].name === contract.package &&
+              isSymbol(expr.callee.args[1]) &&
+              expr.callee.args[1].name === name)
+        )
+      : undefined
+
+  const opaqueSolverArgumentsPreserveCallbacks = (
+    expr: Extract<RExpr, { kind: 'call' }>
+  ): boolean => {
+    const containsAssignment = (
+      value: RExpr,
+      invocationDepth = 0,
+      lexicalNames: ReadonlySet<string> = new Set()
+    ): boolean => {
+      if (value.kind === 'formals')
+        return (
+          invocationDepth > 0 &&
+          value.values.some(
+            (argument) =>
+              argument && containsAssignment(argument, invocationDepth - 1, lexicalNames)
+          )
+        )
+      if (!isCall(value)) return false
+      const quoted = quotedDataCall(value)
+      const quotationBinding = quoted?.qualified ? callOperator(value.callee) : quoted?.name
+      if (
+        quoted &&
+        quotationBinding &&
+        !lexicalNames.has(quotationBinding) &&
+        (!quoted.qualified ||
+          (contractAvailable(quotationBinding, undefined, 'base') &&
+            !functions.has(quotationBinding)))
+      )
+        return false
+      if (callOperator(value) === 'function') {
+        const formals = value.args[0]
+        // Escaped backtick names have runtime identities this syntax walker has
+        // not decoded. An invoked helper may therefore shadow quotation calls.
+        if (
+          invocationDepth > 0 &&
+          formals?.kind === 'formals' &&
+          formals.names.some((name) => name.includes('\\'))
+        )
+          return true
+        // Defaults can refer to later formals. Keep this invocation's bindings
+        // separate from the outer walker and from sibling argument expressions.
+        const nestedNames = new Set([
+          ...lexicalNames,
+          ...(formals?.kind === 'formals'
+            ? formals.names.map((name) => name.replace(/^`|`$/gu, ''))
+            : [])
+        ])
+        return (
+          invocationDepth > 0 &&
+          value.args.some((argument, index) =>
+            containsAssignment(
+              argument,
+              index === 0 ? invocationDepth : invocationDepth - 1,
+              nestedNames
+            )
+          )
+        )
+      }
+      return (
+        ['<-', '=', '->', '<<-', '->>'].includes(callOperator(value) ?? '') ||
+        containsAssignment(value.callee, invocationDepth + 1, lexicalNames) ||
+        value.args.some((argument) => containsAssignment(argument, invocationDepth, lexicalNames))
+      )
+    }
+    // R promises can force another argument before consuming the callback. A
+    // visible assignment may replace its binding or body, so do not borrow the
+    // earlier summary. Carry immediate-call depth through potentially returned
+    // literals, including defaults; an uninvoked function body stays deferred.
+    // Callback argument expressions can replace a sibling callback as well.
+    // This checks syntax, not general effects, returned values, or forcing order.
+    return expr.args.every((arg) => !containsAssignment(arg))
   }
 
   const ordinaryFunctionalArguments = (
@@ -5092,7 +5264,7 @@ const analyzeRSource = (
       walkDataMask(arg, true)
     }
   }
-  const prepareAssignment = (name: string): void => {
+  const prepareAssignment = (name: string, deferCallable = false): void => {
     themeIndependentPlots.delete(name)
     const conditional = controlDepth > 0
     isolatedConditionallyDefined.delete(name)
@@ -5106,8 +5278,10 @@ const analyzeRSource = (
     localInputHandleNames.delete(name)
     characterLoopNames.delete(name)
     namespaceProbePackages.delete(name)
-    functions.delete(name)
-    callbackDefinitions.delete(name)
+    if (!deferCallable) {
+      functions.delete(name)
+      callbackDefinitions.delete(name)
+    }
     typeBindings = typeBindings.filter((binding) => binding.target !== name)
     copyOnModify = copyOnModify.filter((item) => item !== name)
     copyOnModifyBindings = copyOnModifyBindings.filter((binding) => binding.target !== name)
@@ -5316,33 +5490,34 @@ const analyzeRSource = (
       unknown.push('opaque-call')
       return
     }
-    const directSolver = [...R_OPAQUE_CALLBACK_CAPTURE_CALLS].find(
-      ([name, contract]) =>
-        (isSymbol(expr.callee) &&
-          expr.callee.name === name &&
-          !expr.staticBuiltinShadowed &&
-          !functions.has(name) &&
-          contractAvailable(name, undefined, contract.package)) ||
-        (isCall(expr.callee) &&
-          callOperator(expr.callee) === '::' &&
-          contractAvailable('::', undefined, 'base') &&
-          !functions.has('::') &&
-          isSymbol(expr.callee.args[0]) &&
-          expr.callee.args[0].name === contract.package &&
-          isSymbol(expr.callee.args[1]) &&
-          expr.callee.args[1].name === name)
-    )
+    const directSolver = directOpaqueSolver(expr)
     if (directSolver) {
       const [name, captureContract] = directSolver
       const solverName = qualified ? `${captureContract.package}::${name}` : name
       used.push(solverName)
       if (!defined.includes(solverName)) priorUsed.push(solverName)
       unknown.push('opaque-call', 'dynamic-namespace')
-      const index = opaqueSolverCallbackIndex(expr, captureContract)
-      const consumed = index >= 0 && consumeOpaqueSolverCallback(expr.args[index])
-      if (!consumed) unknown.push('function-scope')
+      const sameSourceBfgs = captureContract.method === 'BFGS'
+      const method = expr.args[expr.names.indexOf('method')]
+      const methodAvailable =
+        !captureContract.method || (isCharacter(method) && method.value === captureContract.method)
+      const argumentsPreserveCallbacks = opaqueSolverArgumentsPreserveCallbacks(expr)
+      const consumed = new Set<number>()
+      for (const slot of captureContract.callbacks) {
+        const index = methodAvailable ? opaqueSolverCallbackIndex(expr, slot, sameSourceBfgs) : -1
+        // gr=NULL or an absent gradient grants no extra capture authority.
+        if (sameSourceBfgs && slot.keyword === 'gr' && (index < 0 || isNull(expr.args[index])))
+          continue
+        if (
+          index >= 0 &&
+          argumentsPreserveCallbacks &&
+          consumeOpaqueSolverCallback(expr.args[index], sameSourceBfgs)
+        )
+          consumed.add(index)
+        else unknown.push('function-scope')
+      }
       expr.args.forEach((arg, argumentIndex) => {
-        if (argumentIndex !== index || !consumed) walk(arg, false)
+        if (!consumed.has(argumentIndex)) walk(arg, false)
       })
       return
     }
@@ -6105,6 +6280,22 @@ const analyzeRSource = (
       const target = rightward ? expr.args[1] : expr.args[0]
       const value = rightward ? expr.args[0] : expr.args[1]
       const name = rootName(target) ?? baseReplacementRoot(target)
+      const deferCallable = (() => {
+        if (nonlocal || !isSymbol(target) || !isCall(value)) return false
+        const solver = directOpaqueSolver(value)
+        if (!solver) return false
+        const contract = solver[1]
+        if (!opaqueSolverArgumentsPreserveCallbacks(value)) return false
+        const sameSourceBfgs = contract.method === 'BFGS'
+        const method = value.args[value.names.indexOf('method')]
+        if (contract.method && (!isCharacter(method) || method.value !== contract.method))
+          return false
+        return contract.callbacks.some((slot) => {
+          const index = opaqueSolverCallbackIndex(value, slot, sameSourceBfgs)
+          const callback = value.args[index]
+          return isSymbol(callback) && callback.name === target.name
+        })
+      })()
       const aliasedFunction = isSymbol(value) ? functions.get(value.name) : undefined
       const aliasedCallbackDefinition = isSymbol(value)
         ? callbackDefinitions.get(value.name)
@@ -6139,7 +6330,9 @@ const analyzeRSource = (
               ? typeBindings.find((binding) => binding.target === rootName(value.args[0]))?.typeName
               : undefined
           defined.push(name)
-          prepareAssignment(name)
+          // A direct solver consumes the old same-name callback before replacing
+          // the binding. Defer only callable authority, never other value knowledge.
+          prepareAssignment(name, deferCallable)
           if (controlDepth === 0 && independentTheme) themeIndependentPlots.add(name)
           if (controlDepth === 0 && literalLabel) literalLabelNames.add(name)
           if (controlDepth === 0 && atomicValue) atomicValueNames.add(name)
@@ -6453,6 +6646,19 @@ const analyzeRSource = (
             if (!isCharacter(arg) && !isDesignFormula) walk(arg, false)
           }
         }
+      }
+      if (deferCallable && name) {
+        functions.delete(name)
+        callbackDefinitions.delete(name)
+      }
+      if (!name) {
+        // An unknown replacement can change a callable body or environment. Keep
+        // its RHS reads, then withdraw old authority without certifying a new body.
+        const callableTypes = new Set([...functions.values()].map((summary) => summary.name))
+        for (const callableName of functions.keys()) shadowedCallbackCalls.add(callableName)
+        functions.clear()
+        callbackDefinitions.clear()
+        typeBindings = typeBindings.filter((binding) => !callableTypes.has(binding.typeName))
       }
       if (used.length > usedBefore) {
         const assignmentReads = used.slice(usedBefore)
@@ -7077,6 +7283,25 @@ const analyzeRSource = (
       op === 'for' &&
       expr.args.length >= 3 &&
       isSymbol(expr.args[0]) &&
+      !expr.staticBuiltinShadowed &&
+      contractAvailable('for', undefined, 'base') &&
+      rReliableCollectionExpression(
+        expr.args[1],
+        new Set([...defined, ...localNames, ...shadowedCallbackCalls])
+      ) &&
+      rStaticLoopValues(expr.args[1], staticStrings, staticCollections)?.length === 0
+    ) {
+      // Even zero iterations assign NULL to the target. The unreachable body
+      // cannot change other names or revoke their context in subsequent cells.
+      walk(expr.args[1], false)
+      prepareAssignment(expr.args[0].name)
+      defined.push(expr.args[0].name)
+      return
+    }
+    if (
+      op === 'for' &&
+      expr.args.length >= 3 &&
+      isSymbol(expr.args[0]) &&
       staticNonemptyIterable(expr.args[1]) &&
       deterministicLoopBody(expr.args[2])
     ) {
@@ -7685,6 +7910,26 @@ const resolveRStaticCallIdentities = (
       for (const argument of targetOptions) visit(argument, false)
       return
     }
+    if (
+      name === 'for' &&
+      !expr.staticBuiltinShadowed &&
+      isSymbol(expr.args[0]) &&
+      isCall(expr.args[1]) &&
+      ['c', 'list'].includes(rCalledName(expr.args[1]) ?? '') &&
+      expr.args[1].args.length === 0 &&
+      (rQualifiedCall(expr.args[1])
+        ? rQualifiedCall(expr.args[1])?.package === 'base' &&
+          isCall(expr.args[1].callee) &&
+          !assigned.has(expr.args[1].callee.operator ?? '')
+        : !assigned.has(rCalledName(expr.args[1])!))
+    ) {
+      // The constructor observes its entry binding before the target becomes
+      // NULL. Literal empty bodies cannot shadow later static call identities.
+      visit(expr.args[1], false)
+      known.delete(expr.args[0].name)
+      assigned.add(expr.args[0].name)
+      return
+    }
     if (['if', 'for', 'while', 'repeat', 'switch'].includes(name ?? '')) {
       const before = new Map(known)
       if (name === 'for' && isSymbol(expr.args[0])) {
@@ -8211,6 +8456,23 @@ const rStaticLoopValues = (
   return rStaticStringCollection(expr, bindings, collections)?.values.slice()
 }
 
+// A replaced constructor, lookup or namespace operator cannot establish an
+// empty collection. Both variable facts and file traversal use this boundary.
+const rReliableCollectionExpression = (
+  value: RExpr | null | undefined,
+  shadowedNamespaces: ReadonlySet<string>
+): boolean => {
+  if (!isCall(value)) return true
+  if (
+    (value.staticBuiltinShadowed && !rIsGlueCall(value)) ||
+    (rQualifiedCall(value) &&
+      isCall(value.callee) &&
+      shadowedNamespaces.has(value.callee.operator ?? ''))
+  )
+    return false
+  return value.args.every((argument) => rReliableCollectionExpression(argument, shadowedNamespaces))
+}
+
 // A small, deliberately strict contract for the anonymous callbacks commonly
 // emitted by scientific notebooks (for example,
 // `lapply(files, function(path) readr::read_csv(path))`).  Do not inline
@@ -8425,12 +8687,87 @@ const rLiteralNamedKeys = (expr: RExpr | null | undefined): string[] | undefined
     : undefined
 }
 
+const R_CSV_TABLE_WRITERS = new Set(['write.csv', 'write.csv2', 'write.table'])
+const R_CSV_IGNORED_OPTIONS = new Set(['append', 'col.names', 'sep', 'dec', 'qmethod'])
+const R_TABLE_WRITER_PARAMETERS = [
+  'x',
+  'file',
+  'append',
+  'quote',
+  'sep',
+  'eol',
+  'na',
+  'dec',
+  'row.names',
+  'col.names',
+  'qmethod',
+  'fileEncoding'
+]
+
+const rCsvTableWriterCall = (
+  expr: Extract<RExpr, { kind: 'call' }>,
+  effect: NotebookFileCallEffect
+): boolean => {
+  const name = rCalledName(expr)
+  const qualified = rQualifiedCall(expr)
+  return Boolean(
+    name &&
+    R_CSV_TABLE_WRITERS.has(name) &&
+    effect === R_FILE_CALL_EFFECTS.get(name) &&
+    (!qualified || qualified.package === 'utils')
+  )
+}
+
+const rFileCallLookupDependencies = (expr: RExpr): string[] => {
+  if (!isCall(expr)) return []
+  const qualified = rQualifiedCall(expr)
+  const dependencies =
+    qualified && isCall(expr.callee) && expr.callee.operator
+      ? [expr.callee.operator]
+      : isSymbol(expr.callee)
+        ? [expr.callee.name]
+        : []
+  const name = rCalledName(expr)
+  const effect = name ? rFileCallEffect(name, qualified?.package) : undefined
+  // CSV wrappers evaluate a reconstructed utils::write.table call in the caller.
+  // Even a bare or triple-colon CSV call therefore depends on the caller's ::.
+  if (name !== 'write.table' && effect && rCsvTableWriterCall(expr, effect)) {
+    dependencies.push('::')
+  }
+  return [...new Set(dependencies)]
+}
+
+// Match x/file together so forced input traversal and output attribution agree.
+// Exact names precede positionals; options never consume an x/file slot.
+const rCsvTableWriterArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>
+): { x: RExpr | undefined; file: RExpr | undefined } | undefined => {
+  const named = expr.names.filter((name): name is string => Boolean(name))
+  if (
+    new Set(named).size !== named.length ||
+    named.some((name) => name !== 'file' && 'file'.startsWith(name)) ||
+    expr.args.some(
+      (argument) =>
+        isSymbol(argument) && (!argument.name || /^(?:\.\.\.|\.\.[1-9]\d*)$/.test(argument.name))
+    )
+  )
+    return undefined
+  const xIndex = expr.names.indexOf('x')
+  const fileIndex = expr.names.indexOf('file')
+  const positional = expr.args.filter((_argument, index) => !expr.names[index])
+  return {
+    x: xIndex >= 0 ? expr.args[xIndex] : positional[0],
+    file: fileIndex >= 0 ? expr.args[fileIndex] : positional[xIndex >= 0 ? 0 : 1]
+  }
+}
+
 // R matches named arguments before positional arguments. Both direct calls and
 // wrapper summaries must use this rule, including options preceding the input.
 const rFileCallArgument = (
   expr: Extract<RExpr, { kind: 'call' }>,
   effect: NotebookFileCallEffect
 ): RExpr | undefined => {
+  if (rCsvTableWriterCall(expr, effect)) return rCsvTableWriterArguments(expr)?.file
   if (effect === R_FILE_CALL_EFFECTS.get('write')) {
     const named = rOptionArgumentIndex(expr.names, 'file')
     if (named >= 0) return expr.args[named]
@@ -8460,6 +8797,57 @@ const rFileCallArgument = (
 const rOptionArgumentIndex = (names: readonly (string | null)[], parameter: string): number => {
   const exact = names.indexOf(parameter)
   return exact >= 0 ? exact : names.findIndex((name) => Boolean(name && parameter.startsWith(name)))
+}
+
+// CSV wrappers discard only these exact names before evaluating write.table.
+const rCsvIgnoredArgument = (expr: Extract<RExpr, { kind: 'call' }>, index: number): boolean =>
+  ['write.csv', 'write.csv2'].includes(rCalledName(expr) ?? '') &&
+  R_CSV_IGNORED_OPTIONS.has(expr.names[index] ?? '')
+
+const rCsvTableComplexEarlyOption = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+  if (rCalledName(expr) !== 'write.table') {
+    const matched = rCsvTableWriterArguments(expr)
+    // CSV inserts fixed named options before matching delegated positionals.
+    // Without modeling that rewrite, a complex extra positional may run before
+    // the file opens even when its original table slot appears to be later.
+    if (
+      expr.args.some(
+        (argument, index) =>
+          !expr.names[index] &&
+          argument !== matched?.x &&
+          argument !== matched?.file &&
+          isCall(argument)
+      )
+    )
+      return true
+  }
+  const options =
+    rCalledName(expr) === 'write.table'
+      ? ['qmethod', 'quote', 'row.names', 'col.names', 'fileEncoding', 'append']
+      : ['row.names', 'quote', 'fileEncoding']
+  const remaining = R_TABLE_WRITER_PARAMETERS.filter(
+    (parameter) => rOptionArgumentIndex(expr.names, parameter) < 0
+  )
+  const positional = expr.args.filter((_argument, index) => !expr.names[index])
+  return options.some((option) => {
+    const named = rOptionArgumentIndex(expr.names, option)
+    return isCall(named >= 0 ? expr.args[named] : positional[remaining.indexOf(option)])
+  })
+}
+
+// A single-path writer summary cannot represent nested I/O or binding changes.
+// Deferred function bodies are not evaluated merely by supplying the function.
+const rWriterArgumentHasEffects = (
+  expr: RExpr | null | undefined,
+  localCallNames?: ReadonlySet<string> | ReadonlyMap<string, NotebookFileCallEffectSummary>
+): boolean => {
+  if (!isCall(expr) || expr.operator === 'function') return false
+  const name = rCalledName(expr) ?? ''
+  if (['<-', '=', '->', '<<-', '->>'].includes(name)) return true
+  if (!rQualifiedCall(expr) && localCallNames?.has(name)) return true
+  const effect = rFileCallEffect(name, rQualifiedCall(expr)?.package)
+  if (effect) return true
+  return expr.args.some((argument) => rWriterArgumentHasEffects(argument, localCallNames))
 }
 
 const rWriterDisposition = (
@@ -8503,7 +8891,13 @@ const rWriterDisposition = (
 
 const rLocalFileWrappers = (
   expressions: RExpr[],
-  includeDeviceBodies = false
+  includeDeviceBodies = false,
+  onDefinition?: (
+    definition: RExpr,
+    summary: NotebookFileCallEffectSummary,
+    unqualifiedCallee: boolean
+  ) => void,
+  contextualWrapperNames: readonly string[] = []
 ): {
   effects: Map<string, NotebookFileCallEffectSummary>
   names: Set<string>
@@ -8511,8 +8905,9 @@ const rLocalFileWrappers = (
 } => {
   const effects = new Map<string, NotebookFileCallEffectSummary>()
   const names = new Set<string>()
-  const localNames = new Set(
-    expressions.flatMap((expr) =>
+  const localNames = new Set([
+    ...contextualWrapperNames,
+    ...expressions.flatMap((expr) =>
       isCall(expr) &&
       ['<-', '='].includes(expr.operator ?? '') &&
       isSymbol(expr.args[0]) &&
@@ -8521,7 +8916,7 @@ const rLocalFileWrappers = (
         ? [expr.args[0].name]
         : []
     )
-  )
+  ])
   let complete = true
   for (const expr of expressions) {
     if (!isCall(expr) || !['<-', '='].includes(expr.operator ?? '')) continue
@@ -8530,6 +8925,7 @@ const rLocalFileWrappers = (
     names.add(target.name)
     const formals = value.args[0]
     let body = value.args[1]
+    let deviceNamespaceDependencies: string[] = []
     // File extraction may summarize several device alternatives with the same
     // path parameter. Dependency analysis must still inspect the entire body;
     // discovering a device does not make an arbitrary function a safe call.
@@ -8582,18 +8978,46 @@ const rLocalFileWrappers = (
           )
           return isSymbol(argument) && argument.name === path.name
         })
-      )
+      ) {
+        deviceNamespaceDependencies = devices.flatMap((device) =>
+          rFileCallLookupDependencies(device).filter((name) => ['::', ':::'].includes(name))
+        )
         body = devices[0]
+      }
     }
     if (isCall(body) && body.operator === '{' && body.args.length === 1) body = body.args[0]
     const name = rCalledName(body)
     const qualified = isCall(body) ? rQualifiedCall(body) : undefined
     const effect = name ? rFileCallEffect(name, qualified?.package) : undefined
     const parameters = formals?.kind === 'formals' ? formals.names : []
+    const dependencyNames = [
+      ...new Set([...deviceNamespaceDependencies, ...rFileCallLookupDependencies(body)])
+    ]
     const argument = isCall(body) && effect ? rFileCallArgument(body, effect) : undefined
     const parameterIndex = isSymbol(argument) ? parameters.indexOf(argument.name) : -1
     if (
       !effect ||
+      // A formal callee resolves inside the helper, not against utils' writer.
+      (!qualified && name && R_CSV_TABLE_WRITERS.has(name) && parameters.includes(name)) ||
+      dependencyNames.some(
+        (dependency) =>
+          ['::', ':::'].includes(dependency) &&
+          parameters.some((parameter) =>
+            [dependency, `\`${dependency}\``, `"${dependency}"`, `'${dependency}'`].includes(
+              parameter
+            )
+          )
+      ) ||
+      (isCall(body) &&
+        effect &&
+        rCsvTableWriterCall(body, effect) &&
+        (rCsvTableComplexEarlyOption(body) ||
+          body.args.some(
+            (argument, index) =>
+              !rCsvIgnoredArgument(body, index) && rWriterArgumentHasEffects(argument, localNames)
+          ) ||
+          (formals?.kind === 'formals' &&
+            formals.values.some((value) => rWriterArgumentHasEffects(value, localNames))))) ||
       // cat's optional destination may be stdout or a pipe. A single-path
       // wrapper summary cannot preserve that destination contract.
       name === 'cat' ||
@@ -8623,19 +9047,19 @@ const rLocalFileWrappers = (
       complete = false
       continue
     }
-    effects.set(target.name, {
+    const summary: NotebookFileCallEffectSummary = {
       name: target.name,
       kind: effect.kind,
       position: parameterIndex,
       keywords: [parameters[parameterIndex]!],
       ...(effect.inputForm ? { inputForm: effect.inputForm } : {}),
       dependencyNames:
-        isCall(body) && isSymbol(body.callee)
-          ? [body.callee.name]
-          : includeDeviceBodies && name && R_GRAPHICS_FILE_DEVICES.has(name)
-            ? [name]
-            : []
-    })
+        includeDeviceBodies && name && R_GRAPHICS_FILE_DEVICES.has(name)
+          ? [...new Set([...dependencyNames, name])]
+          : dependencyNames
+    }
+    effects.set(target.name, summary)
+    onDefinition?.(expr, summary, isCall(body) && isSymbol(body.callee))
   }
   return { effects, names, complete }
 }
@@ -8698,7 +9122,107 @@ const analyzeRFileAccessTree = (
   expressions = expressions.map(normalizeRPipes)
   const packageInspections = rPackageInspections(expressions)
   const consoleRedirected = expressions.some(rRedirectsConsole)
-  const localWrappers = rLocalFileWrappers(expressions, true)
+  // Keep each declaration's existing contract, then activate it only when visited.
+  // The final pre-scan map cannot describe calls before a later replacement.
+  const wrapperDefinitions = new Map<RExpr, NotebookFileCallEffectSummary>()
+  const unqualifiedWrapperDefinitions = new Set<RExpr>()
+  const aliasableWrapperParameters = new Map<NotebookFileCallEffectSummary, string[]>()
+  const localWrappers = rLocalFileWrappers(
+    expressions,
+    true,
+    (definition, summary, unqualifiedCallee) => {
+      wrapperDefinitions.set(definition, summary)
+      if (unqualifiedCallee) unqualifiedWrapperDefinitions.add(definition)
+      if (!isCall(definition) || !isCall(definition.args[1])) return
+      const [formals, originalBody] = definition.args[1].args
+      const body =
+        isCall(originalBody) && originalBody.operator === '{' && originalBody.args.length === 1
+          ? originalBody.args[0]
+          : originalBody
+      const qualified = isCall(body) ? rQualifiedCall(body) : undefined
+      // Alias retention is narrower than the general wrapper contract: no
+      // device expansion, streams, reader text overrides, or opaque promises.
+      if (
+        formals?.kind !== 'formals' ||
+        formals.names.includes('...') ||
+        new Set(formals.names).size !== formals.names.length ||
+        formals.values.some(
+          (value) => value && !['character', 'atomic', 'null'].includes(value.kind)
+        ) ||
+        !isCall(body) ||
+        !isCall(body.callee) ||
+        body.callee.operator !== '::' ||
+        qualified?.package !== 'utils' ||
+        ![
+          'read.csv',
+          'read.csv2',
+          'read.delim',
+          'read.delim2',
+          'read.table',
+          'write.csv',
+          'write.csv2',
+          'write.table'
+        ].includes(qualified.name) ||
+        body.names.includes('text') ||
+        new Set(body.names.filter(Boolean)).size !== body.names.filter(Boolean).length ||
+        body.args.some(
+          (argument) =>
+            !['character', 'atomic', 'null'].includes(argument.kind) &&
+            !(isSymbol(argument) && formals.names.includes(argument.name))
+        )
+      )
+        return
+      const required = summary.kind === 'write' ? ['x', 'file'] : ['file']
+      const options =
+        summary.kind === 'write'
+          ? [
+              'append',
+              'quote',
+              'sep',
+              'eol',
+              'na',
+              'dec',
+              'row.names',
+              'col.names',
+              'qmethod',
+              'fileEncoding'
+            ]
+          : [
+              'header',
+              'sep',
+              'quote',
+              'dec',
+              'na.strings',
+              'row.names',
+              'col.names',
+              'colClasses',
+              'nrows',
+              'skip',
+              'check.names',
+              'stringsAsFactors',
+              'comment.char',
+              'strip.white',
+              'blank.lines.skip',
+              'fill',
+              'flush',
+              'allowEscapes',
+              'encoding',
+              'skipNul'
+            ]
+      if (body.names.some((name) => name && !required.includes(name) && !options.includes(name)))
+        return
+      const missing = required.filter((name) => !body.names.includes(name))
+      const positional = body.args.filter((_argument, index) => !body.names[index])
+      if (positional.length !== missing.length) return
+      const fileIndex = body.names.indexOf('file')
+      const file = fileIndex >= 0 ? body.args[fileIndex] : positional[missing.indexOf('file')]
+      // Named options can shift the general summary's physical argument index.
+      // Retain an alias only when R's named-first matching agrees with it.
+      if (!isSymbol(file) || file.name !== summary.keywords[0]) return
+      aliasableWrapperParameters.set(summary, formals.names)
+    },
+    context?.localFileWrappers.map(({ name }) => name)
+  )
   const shadowedQuotationNames = new Set([
     ...localWrappers.names,
     ...(context?.resolvedKernelNames ?? []),
@@ -8716,9 +9240,42 @@ const analyzeRFileAccessTree = (
         : []
     ) ?? []
   )
-  const contextualWrappers = new Map(
+  const activeWrappers = new Map(
     context?.localFileWrappers.map((wrapper) => [wrapper.name, wrapper]) ?? []
   )
+  // Invocation-local candidates never enter the exported wrapper context.
+  const wrapperAliases = new Map<
+    string,
+    { wrapper: NotebookFileCallEffectSummary; parameters: string[] }
+  >()
+  const localWrapperNames = new Set<string>()
+  const shadowedWrapperDependencies = new Set([
+    ...(context?.resolvedKernelNames ?? []),
+    ...(context?.staticStrings.map(({ name }) => name) ?? []),
+    ...(context?.staticCollections.map(({ name }) => name) ?? []),
+    ...(context?.rFunctions?.map(({ name }) => name) ?? []),
+    ...(context?.localFileWrappers.map(({ name }) => name) ?? [])
+  ])
+  const invalidatedWrapperEffects = new Map<string, Set<'read' | 'write'>>()
+  // A stored collection is trustworthy only when its constructor/lookups were
+  // known at materialization. In particular, a rebound names() or namespace
+  // operator must not manufacture an "empty" proof that skips loop rebinding.
+  const reliableCollectionExpression = (value: RExpr | null | undefined): boolean => {
+    return rReliableCollectionExpression(value, shadowedWrapperDependencies)
+  }
+  const invalidateWrapper = (name: string): void => {
+    for (const [binding, { wrapper }] of wrapperAliases) {
+      if (binding === name || wrapper.dependencyNames.includes(name)) wrapperAliases.delete(binding)
+    }
+    for (const [binding, wrapper] of activeWrappers) {
+      if (binding !== name && !wrapper.dependencyNames.includes(name)) continue
+      const effects = invalidatedWrapperEffects.get(binding) ?? new Set<'read' | 'write'>()
+      effects.add(wrapper.kind)
+      invalidatedWrapperEffects.set(binding, effects)
+      activeWrappers.delete(binding)
+      localWrapperNames.delete(binding)
+    }
+  }
   const unresolvedLocalEffects = new Map<string, Set<'read' | 'write'>>()
   const localDefinitions = new Map(
     expressions.flatMap((expression) => {
@@ -8733,7 +9290,15 @@ const analyzeRFileAccessTree = (
   // established in statement order and never exported into the wrapper context.
   const firstReadParameters = (
     value: RExpr | undefined
-  ): { names: string[]; file: Extract<RExpr, { kind: 'symbol' | 'character' }> } | undefined => {
+  ):
+    | {
+        names: string[]
+        file: Extract<RExpr, { kind: 'symbol' | 'character' }>
+        pathExpression?: Extract<RExpr, { kind: 'call' }>
+        compressed?: true
+        readLines?: true
+      }
+    | undefined => {
     if (!isCall(value) || value.operator !== 'function' || value.staticBuiltinShadowed)
       return undefined
     const [formals, body] = value.args
@@ -8748,22 +9313,94 @@ const analyzeRFileAccessTree = (
     )
       return undefined
     let first = body.args[0]
+    let localPath: { name: string; expression: Extract<RExpr, { kind: 'call' }> } | undefined
     if (isCall(first) && ['<-', '='].includes(first.operator ?? '')) {
       const [target, right] = first.args
       if (!isSymbol(target) || formals.names.includes(target.name)) return undefined
-      first = right
+      const composition = right && rQualifiedCall(right)
+      if (isCall(right) && composition?.package === 'base' && composition.name === 'file.path') {
+        if (
+          first.staticBuiltinShadowed ||
+          first.args.length !== 2 ||
+          first.names.some(Boolean) ||
+          !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(target.name) ||
+          target.name === '...' ||
+          /^\.\.\d+$/u.test(target.name) ||
+          formals.names.some((name) => /^\.\.\d+$/u.test(name)) ||
+          firstReadPrimitives.has(target.name)
+        )
+          return undefined
+        // Substitute only this fresh local into the immediately following reader.
+        // No preceding statements or unrelated outer bindings are evaluated.
+        localPath = { name: target.name, expression: right }
+        first = body.args[1]
+      } else first = right
     }
     if (!isCall(first)) return undefined
     const qualified = rQualifiedCall(first)
+    const readLines = qualified?.package === 'base' && qualified.name === 'readLines'
     if (
-      qualified?.package !== 'utils' ||
-      !['read.csv', 'read.table'].includes(qualified.name) ||
+      (!readLines &&
+        (qualified?.package !== 'utils' || !['read.csv', 'read.table'].includes(qualified.name))) ||
       !isCall(first.callee) ||
       first.callee.operator !== '::'
     )
       return undefined
+    if (!qualified) return undefined
     const effect = rFileCallEffect(qualified.name, qualified.package)
-    const file = effect && rFileCallArgument(first, effect)
+    const fileArgument = effect && rFileCallArgument(first, effect)
+    let file = fileArgument
+    let pathExpression: Extract<RExpr, { kind: 'call' }> | undefined
+    let compressed = false
+    if (!readLines && (isCall(file) || localPath) && formals.names.length > 0) {
+      // Only required scalar formals enter these invocation-local expressions.
+      // In particular, a lexical namespace/assignment primitive must not be
+      // mistaken for its builtin merely because the call spells base::.
+      if (formals.names.some((name) => !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(name))) return undefined
+      const connection = file && rQualifiedCall(file)
+      if (isCall(file) && connection?.package === 'base' && connection.name === 'gzfile') {
+        const connectionCall = file
+        const parameters = ['description', 'open']
+        const names = connectionCall.names.filter((name): name is string => Boolean(name))
+        if (
+          !isCall(connectionCall.callee) ||
+          connectionCall.callee.operator !== '::' ||
+          names.some((name) => !parameters.includes(name)) ||
+          new Set(names).size !== names.length ||
+          connectionCall.args.filter((_argument, index) => !connectionCall.names[index]).length >
+            parameters.filter((name) => !names.includes(name)).length
+        )
+          return undefined
+        const mode = connectionArgument(connectionCall, parameters, 'open')
+        if (mode && (!isCharacter(mode) || !['r', 'rt', 'rb'].includes(mode.value)))
+          return undefined
+        file = connectionArgument(connectionCall, parameters, 'description')
+        compressed = true
+      }
+      if (localPath) {
+        if (!isSymbol(file) || file.name !== localPath.name) return undefined
+        file = localPath.expression
+      }
+      if (isCall(file)) {
+        const composition = rQualifiedCall(file)
+        if (
+          composition?.package !== 'base' ||
+          composition.name !== 'file.path' ||
+          !isCall(file.callee) ||
+          file.callee.operator !== '::' ||
+          file.args.length !== 2 ||
+          file.names.some(Boolean) ||
+          !isSymbol(file.args[0]) ||
+          !formals.names.includes(file.args[0].name) ||
+          !isCharacter(file.args[1]) ||
+          !file.args[1].value
+        )
+          return undefined
+        pathExpression = file
+        file = file.args[0]
+      }
+      if (compressed && !pathExpression) return undefined
+    }
     if (formals.names.length === 0) {
       if (!isCharacter(file) || !file.value) return undefined
     } else if (!isSymbol(file) || !formals.names.includes(file.name)) return undefined
@@ -8777,18 +9414,37 @@ const analyzeRFileAccessTree = (
       'check.names',
       'stringsAsFactors'
     ])
+    const literalOption = (argument: RExpr, index: number): boolean => {
+      const name = first.names[index]
+      if (!name) return false
+      if (!readLines)
+        return fixedOptions.has(name) && ['character', 'atomic', 'null'].includes(argument.kind)
+      if (name === 'encoding')
+        return (
+          isCharacter(argument) && ['unknown', 'UTF-8', 'latin1', 'bytes'].includes(argument.value)
+        )
+      return (
+        ['warn', 'skipNul'].includes(name) &&
+        argument.kind === 'atomic' &&
+        argument.logical !== undefined
+      )
+    }
     if (
       new Set(namedOptions).size !== namedOptions.length ||
       first.args.some((argument, index) =>
-        argument === file
-          ? Boolean(first.names[index] && first.names[index] !== 'file')
-          : !first.names[index] ||
-            !fixedOptions.has(first.names[index]!) ||
-            !['character', 'atomic', 'null'].includes(argument.kind)
+        argument === fileArgument
+          ? Boolean(first.names[index] && first.names[index] !== (readLines ? 'con' : 'file'))
+          : !literalOption(argument, index)
       )
     )
       return undefined
-    return { names: formals.names, file }
+    return {
+      names: formals.names,
+      file,
+      ...(pathExpression ? { pathExpression } : {}),
+      ...(compressed ? { compressed: true as const } : {}),
+      ...(readLines ? { readLines: true as const } : {})
+    }
   }
   const firstReadCandidates = new Map<string, NonNullable<ReturnType<typeof firstReadParameters>>>()
   const firstReadPrimitives = new Set(['function', '{', '<-', '=', '->', '::'])
@@ -8817,9 +9473,23 @@ const analyzeRFileAccessTree = (
     invocation: Extract<RExpr, { kind: 'call' }>,
     parameters: NonNullable<ReturnType<typeof firstReadParameters>>
   ): string | undefined => {
+    const pathForReader = (path: string): string | undefined => {
+      if (!parameters.readLines && !parameters.compressed && !parameters.pathExpression) return path
+      // Character connections also name streams, selections, and remote resources.
+      // This prefix contract retains only an explicit local file description.
+      return !path ||
+        /^(?:stdin|stdout|stderr|clipboard(?:-\d+)?|X11_(?:primary|secondary|clipboard))$/iu.test(
+          path
+        ) ||
+        path.trimStart().startsWith('|') ||
+        isExternalNotebookPath(path) ||
+        (/^[a-z][a-z\d+.-]*:/iu.test(path) && !/^[a-z]:[\\/]/iu.test(path))
+        ? undefined
+        : path
+    }
     // A fixed-file zero-argument helper accepts no promises or unexpected arguments.
     if (isCharacter(parameters.file))
-      return invocation.args.length === 0 ? parameters.file.value : undefined
+      return invocation.args.length === 0 ? pathForReader(parameters.file.value) : undefined
     if (!invocation.args.every(literalArgument)) return undefined
     const matched = new Map<string, RExpr>()
     for (const [index, name] of invocation.names.entries()) {
@@ -8836,7 +9506,51 @@ const analyzeRFileAccessTree = (
     }
     if (matched.size !== parameters.names.length) return undefined
     const file = matched.get(parameters.file.name)
-    return isCharacter(file) && file.value ? file.value : undefined
+    if (!isCharacter(file) || !file.value) return undefined
+    // The qualified expression was checked when the candidate was declared.
+    // Use only this literal promise, never an unrelated outer path binding.
+    const path = parameters.pathExpression
+      ? rStaticString(
+          parameters.pathExpression,
+          new Map([[parameters.file.name, file.value]]),
+          new Map()
+        )
+      : file.value
+    return path ? pathForReader(path) : undefined
+  }
+  const wrapperAliasPath = (
+    invocation: Extract<RExpr, { kind: 'call' }>,
+    candidate: { wrapper: NotebookFileCallEffectSummary; parameters: string[] }
+  ): string | undefined => {
+    if (
+      !invocation.args.every(
+        (argument) =>
+          ['character', 'atomic', 'null', 'symbol'].includes(argument.kind) &&
+          !(
+            isSymbol(argument) &&
+            (!argument.name || argument.name === '...' || /^\.\.[1-9]\d*$/u.test(argument.name))
+          )
+      )
+    )
+      return undefined
+    const matched = new Map<string, RExpr>()
+    for (const [index, name] of invocation.names.entries()) {
+      if (!name) continue
+      if (!candidate.parameters.includes(name) || matched.has(name)) return undefined
+      matched.set(name, invocation.args[index]!)
+    }
+    const remaining = candidate.parameters.filter((name) => !matched.has(name))
+    for (const [index, argument] of invocation.args.entries()) {
+      if (invocation.names[index]) continue
+      const name = remaining.shift()
+      if (!name) return undefined
+      matched.set(name, argument)
+    }
+    if (matched.size !== candidate.parameters.length) return undefined
+    const file = matched.get(candidate.wrapper.keywords[0]!)
+    return isCharacter(file) && file.value && !file.value.trimStart().startsWith('|')
+      ? file.value
+      : undefined
   }
   for (const expression of expressions) {
     if (!isCall(expression) || !['<-', '='].includes(expression.operator ?? '')) continue
@@ -8851,9 +9565,18 @@ const analyzeRFileAccessTree = (
     const effects = new Set<'read' | 'write'>()
     const visited = new Set<string>()
     const collect = (node: RExpr): void => {
+      if (node.kind === 'formals') {
+        node.values.forEach((value) => {
+          if (value) collect(value)
+        })
+        return
+      }
       if (!isCall(node)) return
       const called = rCalledName(node) ?? ''
-      const effect = rFileCallEffect(called, rQualifiedCall(node)?.package)
+      const packageName = rQualifiedCall(node)?.package
+      const effect =
+        rFileCallEffect(called, packageName) ??
+        (!packageName ? activeWrappers.get(called) : undefined)
       if (effect) effects.add(effect.kind)
       // A single-path wrapper summary cannot preserve mixed I/O or directory scope.
       if (called === 'createArrowFiles') effects.add('write')
@@ -8986,7 +9709,19 @@ const analyzeRFileAccessTree = (
 
   const visit = (expr: RExpr, valueUsed = true): void => {
     if (!isCall(expr)) return
-    if (!['{', '<-', '=', '->'].includes(expr.operator ?? '')) {
+    // Builtin for evaluates its sequence before rebinding the loop target. A
+    // replacement can leave that promise unforced, so it must consume candidates.
+    const builtinFor =
+      expr.operator === 'for' &&
+      !expr.staticBuiltinShadowed &&
+      !shadowedWrapperDependencies.has('for')
+    const builtinBrace =
+      expr.operator === '{' && !expr.staticBuiltinShadowed && !shadowedWrapperDependencies.has('{')
+    if (!builtinFor && !['{', '<-', '=', '->'].includes(expr.operator ?? '')) {
+      const alias = isSymbol(expr.callee) ? wrapperAliases.get(expr.callee.name) : undefined
+      // Even a call without an explicit helper argument can replace its binding.
+      // Consume all candidates before visiting nested promises or later calls.
+      wrapperAliases.clear()
       const candidate = isSymbol(expr.callee)
         ? firstReadCandidates.get(expr.callee.name)
         : undefined
@@ -9000,6 +9735,26 @@ const analyzeRFileAccessTree = (
         if (path && isExternalNotebookPath(path)) unsupportedExternalState = true
       }
       firstReadNamespaceUncertain = true
+      if (alias && conditionalDepth === 0) {
+        const path = wrapperAliasPath(expr, alias)
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        if (path) {
+          if (alias.wrapper.kind === 'read') {
+            if (!definitelyWritten.has(path)) reads.add(path)
+          } else {
+            // A possible destination does not prove a successful replacement.
+            writes.add(path)
+          }
+        }
+        // An alias can replace for without forcing its sequence or body promises.
+        const argumentDepth = expr.operator === 'for' && !builtinFor ? 1 : 0
+        conditionalDepth += argumentDepth
+        expr.args.forEach((argument) => visit(argument))
+        conditionalDepth -= argumentDepth
+        return
+      }
     }
     if (packageInspections.has(expr)) return
     if (expr.operator === '|>' || expr.operator === '%>%') {
@@ -9102,22 +9857,80 @@ const analyzeRFileAccessTree = (
       return
     }
     if (expr.operator === '{') {
+      if (!builtinBrace) {
+        // A replacement need not force the block's promises or preserve helpers.
+        // Possible lexical paths cannot certify production or static bindings.
+        wrapperAliases.clear()
+        firstReadCandidates.clear()
+        firstReadNamespaceUncertain = true
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        conditionalDepth += 1
+        expr.args.forEach((argument) => visit(argument))
+        conditionalDepth -= 1
+        return
+      }
       expr.args.forEach((argument, index) =>
         visit(argument, valueUsed && index === expr.args.length - 1)
       )
       return
     }
     if (expr.operator === 'for') {
+      if (!builtinFor) {
+        // A replacement can ignore every promise. Retain possible paths without
+        // certifying writes, loop-target rebinding, or conditional path values.
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        conditionalDepth += 1
+        expr.args.forEach((argument) => visit(argument))
+        conditionalDepth -= 1
+        return
+      }
       const [variable, sequence, body] = expr.args
       if (sequence) visit(sequence)
+      // Only the sequence can consume existing invocation-local authority. Even
+      // an empty sequence must not carry it into the body or later statements.
+      wrapperAliases.clear()
+      firstReadCandidates.clear()
+      firstReadNamespaceUncertain = true
       const namedSequence =
         isCall(sequence) &&
+        reliableCollectionExpression(sequence) &&
         rCalledName(sequence) === 'names' &&
         isSymbol(sequence.args[0]) &&
         sequence.args.length === 1
           ? namedCollectionKeys.get(sequence.args[0].name)
           : undefined
-      const values = namedSequence ?? rStaticLoopValues(sequence, bindings, collections)
+      const values = reliableCollectionExpression(sequence)
+        ? (namedSequence ?? rStaticLoopValues(sequence, bindings, collections))
+        : undefined
+      if (isSymbol(variable) && values?.length === 0) {
+        // R assigns NULL even when the body never executes. Clear the target's
+        // old value/handle/callable, while leaving unrelated body names intact.
+        bindings.delete(variable.name)
+        collections.delete(variable.name)
+        namedCollectionKeys.delete(variable.name)
+        fileConnections.delete(variable.name)
+        inMemoryInputs.delete(variable.name)
+        if (activeWrappers.has(variable.name) || shadowedWrapperDependencies.has(variable.name))
+          invalidateWrapper(variable.name)
+        // An unshadowed namespace function still resolves through base after a
+        // NULL data binding; do not revoke its existing dependent wrappers.
+        return
+      }
+      // The sequence observes the old helper; each loop element can then replace
+      // a callable binding before the body and later statements use that name.
+      if (isSymbol(variable) && values?.length !== 0) {
+        // Elements replace any connection or in-memory input previously held by
+        // the target; the sequence above still observes its original value.
+        fileConnections.delete(variable.name)
+        inMemoryInputs.delete(variable.name)
+        invalidateWrapper(variable.name)
+        shadowedWrapperDependencies.add(variable.name)
+        shadowedQuotationNames.add(variable.name)
+      }
       if (
         isSymbol(variable) &&
         values &&
@@ -9127,10 +9940,22 @@ const analyzeRFileAccessTree = (
       ) {
         for (const value of values) {
           staticLoopIterations += 1
+          // The previous body can recreate handle metadata on this target.
+          fileConnections.delete(variable.name)
+          inMemoryInputs.delete(variable.name)
           bindings.set(variable.name, value)
           collections.delete(variable.name)
           namedCollectionKeys.delete(variable.name)
           visit(body)
+        }
+        if (conditionalDepth > 0 && values.length > 0) {
+          // Loop elements locate possible body effects, but a conditional loop
+          // cannot publish its final target as the value used by later calls.
+          bindings.delete(variable.name)
+          collections.delete(variable.name)
+          namedCollectionKeys.delete(variable.name)
+          inMemoryInputs.delete(variable.name)
+          fileConnections.delete(variable.name)
         }
       } else if (body) {
         if (isSymbol(variable)) {
@@ -9159,10 +9984,13 @@ const analyzeRFileAccessTree = (
       conditionalDepth -= 1
       return
     }
-    if (['<-', '=', '->'].includes(expr.operator ?? '') && expr.args.length >= 2) {
-      const left = expr.operator === '->' ? expr.args[1] : expr.args[0]
-      const right = expr.operator === '->' ? expr.args[0] : expr.args[1]
+    if (['<-', '=', '->', '<<-', '->>'].includes(expr.operator ?? '') && expr.args.length >= 2) {
+      const rightward = expr.operator === '->' || expr.operator === '->>'
+      const left = rightward ? expr.args[1] : expr.args[0]
+      const right = rightward ? expr.args[0] : expr.args[1]
+      let replacedWrapperName: string | undefined
       if (isCall(left)) {
+        wrapperAliases.clear()
         firstReadCandidates.clear()
         firstReadNamespaceUncertain = true
         // R replacement assignment updates its root binding (ordinary vectors/lists copy on
@@ -9170,6 +9998,7 @@ const analyzeRFileAccessTree = (
         let receiver: RExpr | undefined = left
         while (isCall(receiver)) receiver = receiver.args[0]
         if (isSymbol(receiver)) {
+          replacedWrapperName = receiver.name
           bindings.delete(receiver.name)
           collections.delete(receiver.name)
           namedCollectionKeys.delete(receiver.name)
@@ -9178,11 +10007,16 @@ const analyzeRFileAccessTree = (
         }
       }
       if (isSymbol(left)) {
+        replacedWrapperName = left.name
         if (firstReadPrimitives.has(left.name)) {
+          wrapperAliases.clear()
           firstReadCandidates.clear()
           firstReadNamespaceUncertain = true
         }
-        firstReadCandidates.delete(left.name)
+        // A direct RHS invokes the old helper before replacing its binding.
+        // Its normal visit consumes the candidate; no old identity survives.
+        if (!(isCall(right) && isSymbol(right.callee) && right.callee.name === left.name))
+          firstReadCandidates.delete(left.name)
         if (isSymbol(right) && firstReadCandidates.has(right.name)) firstReadCandidates.clear()
         const candidate =
           topLevelExpressions.has(expr) &&
@@ -9192,23 +10026,25 @@ const analyzeRFileAccessTree = (
           !expr.staticBuiltinShadowed
             ? firstReadParameters(right)
             : undefined
-        if (candidate && !localWrappers.effects.has(left.name))
+        if (candidate && !wrapperDefinitions.has(expr))
           firstReadCandidates.set(left.name, candidate)
         shadowedQuotationNames.add(left.name)
         const value = rStaticString(right, bindings, collections)
         const namedValues =
           isCall(right) &&
+          reliableCollectionExpression(right) &&
           rCalledName(right) === 'names' &&
           isSymbol(right.args[0]) &&
           right.args.length === 1
             ? namedCollectionKeys.get(right.args[0].name)
             : undefined
-        const collection =
-          rStaticStringCollection(right, bindings, collections) ??
-          (namedValues ? { values: namedValues } : undefined)
+        const collection = reliableCollectionExpression(right)
+          ? (rStaticStringCollection(right, bindings, collections) ??
+            (namedValues ? { values: namedValues } : undefined))
+          : undefined
         const connectionPath = fileConnection(right)
         const namedKeys =
-          rLiteralNamedKeys(right) ??
+          (reliableCollectionExpression(right) ? rLiteralNamedKeys(right) : undefined) ??
           (isSymbol(right) ? namedCollectionKeys.get(right.name) : undefined) ??
           collection?.entries?.map(([key]) => key)
         if (conditionalDepth > 0 || !namedKeys) namedCollectionKeys.delete(left.name)
@@ -9245,7 +10081,53 @@ const analyzeRFileAccessTree = (
           fileConnections.delete(left.name)
         }
       }
+      const aliasedWrapper =
+        topLevelExpressions.has(expr) &&
+        ['<-', '='].includes(expr.operator ?? '') &&
+        conditionalDepth === 0 &&
+        !firstReadNamespaceUncertain &&
+        !expr.staticBuiltinShadowed &&
+        isSymbol(right) &&
+        localWrapperNames.has(right.name)
+          ? activeWrappers.get(right.name)
+          : undefined
+      const aliasParameters = aliasedWrapper && aliasableWrapperParameters.get(aliasedWrapper)
       if (!(isCall(right) && right.operator === 'function')) visit(right)
+      // RHS calls observe the old function before the assignment replaces it.
+      if (replacedWrapperName) {
+        invalidateWrapper(replacedWrapperName)
+        shadowedWrapperDependencies.add(replacedWrapperName)
+      }
+      if (isSymbol(left) && isSymbol(right) && aliasedWrapper && aliasParameters) {
+        wrapperAliases.set(left.name, {
+          wrapper: {
+            ...aliasedWrapper,
+            name: left.name,
+            dependencyNames: [...new Set([right.name, ...aliasedWrapper.dependencyNames])]
+          },
+          parameters: aliasParameters
+        })
+      }
+      const wrapper = wrapperDefinitions.get(expr)
+      if (wrapper && conditionalDepth === 0) {
+        // A qualified member survives rebinding its name, but its namespace
+        // operator (including CSV's reconstructed call) must still be reliable.
+        if (
+          wrapper.dependencyNames.some(
+            (name) =>
+              shadowedWrapperDependencies.has(name) &&
+              (unqualifiedWrapperDefinitions.has(expr) || ['::', ':::'].includes(name))
+          )
+        ) {
+          invalidatedWrapperEffects.set(
+            wrapper.name,
+            new Set([...(invalidatedWrapperEffects.get(wrapper.name) ?? []), wrapper.kind])
+          )
+        } else {
+          activeWrappers.set(wrapper.name, wrapper)
+          localWrapperNames.add(wrapper.name)
+        }
+      }
       return
     }
     const name = rCalledName(expr)
@@ -9430,17 +10312,63 @@ const analyzeRFileAccessTree = (
       if (!qualified && shadowedQuotationNames.has(name)) unsupportedExternalState = true
       else if (valueUsed) directoryStateRead = true
     }
+    const wrapper = !qualified && name ? activeWrappers.get(name) : undefined
     let call: NotebookFileCallEffect | undefined = name
       ? qualified
         ? rFileCallEffect(name, qualified.package)
-        : (localWrappers.effects.get(name) ??
-          (localWrappers.names.has(name)
+        : (wrapper ??
+          (localWrappers.names.has(name) || invalidatedWrapperEffects.has(name)
             ? undefined
-            : (contextualWrappers.get(name) ?? R_FILE_CALL_EFFECTS.get(name))))
+            : R_FILE_CALL_EFFECTS.get(name)))
       : undefined
+    if (
+      call &&
+      name &&
+      rCsvTableWriterCall(expr, call) &&
+      rFileCallLookupDependencies(expr).some((name) => shadowedQuotationNames.has(name))
+    )
+      call = undefined
     if (!qualified && name && !call) {
       if (unresolvedLocalEffects.get(name)?.has('read')) unresolvedReads = true
       if (unresolvedLocalEffects.get(name)?.has('write')) unresolvedWrites = true
+      if (invalidatedWrapperEffects.get(name)?.has('read')) unresolvedReads = true
+      if (invalidatedWrapperEffects.get(name)?.has('write')) unresolvedWrites = true
+    }
+    // With the first formal still unmatched, the first unnamed argument supplies
+    // its path. A partial path keyword would consume that slot before positionals.
+    const firstPositionalWrapperPath =
+      wrapper?.position === 0 &&
+      expr.args.some((_argument, index) => !expr.names[index]) &&
+      !expr.names.some(
+        (name) => name && wrapper.keywords.some((keyword) => keyword.startsWith(name))
+      )
+    if (
+      wrapper &&
+      !expr.names.some((name) => name && wrapper.keywords.includes(name)) &&
+      expr.names.some(Boolean) &&
+      !firstPositionalWrapperPath
+    ) {
+      // A stored wrapper has only a path position, not every formal. Named arguments
+      // may consume earlier or later slots, so a mixed call cannot certify that path.
+      if (wrapper.kind === 'read') unresolvedReads = true
+      else unresolvedWrites = true
+      expr.args.forEach((argument) => visit(argument))
+      return
+    }
+    if (
+      wrapper?.kind === 'write' &&
+      expr.args.some((argument) => rWriterArgumentHasEffects(argument, activeWrappers))
+    ) {
+      // Retain explicit nested inputs without assigning arbitrary helpers an eager
+      // evaluation order. Only a literal destination is a reliable possible write;
+      // never let that possible write suppress a subsequent input.
+      const argument = rFileCallArgument(expr, wrapper)
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      expr.args.forEach((argument) => visit(argument))
+      if (isCharacter(argument) && argument.value) writes.add(argument.value)
+      return
     }
     let fileArgumentOverride: { value: RExpr | undefined } | undefined
     if (name === 'HDF5Array' || name === 'writeHDF5Array') {
@@ -9660,6 +10588,32 @@ const analyzeRFileAccessTree = (
         unsupportedExternalState = true
       }
     }
+    const canonicalCsvTableWriter = Boolean(call && rCsvTableWriterCall(expr, call))
+    if (canonicalCsvTableWriter) {
+      if (rCsvTableComplexEarlyOption(expr)) {
+        // These options run before the destination opens. Do not certify a writer
+        // or a dynamic destination using a partial promise-order model.
+        call = undefined
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+    }
+    // Standard CSV/table writers force x before opening their destination. Resolve
+    // the outer callee first: x can itself rebind that name or update the file path.
+    // This ordering does not establish an eager contract for arbitrary R helpers.
+    const forcedData =
+      call && rCsvTableWriterCall(expr, call) ? rCsvTableWriterArguments(expr)?.x : undefined
+    if (forcedData) visit(forcedData)
+    const visitRemainingArguments = (): void => {
+      expr.args.forEach((argument, index) => {
+        if (
+          argument !== forcedData &&
+          !(canonicalCsvTableWriter && rCsvIgnoredArgument(expr, index))
+        )
+          visit(argument)
+      })
+    }
     if (!call) {
       if (!referenceOnlyCall && name && isPotentialRFileWriteCall(name)) unresolvedWrites = true
     } else {
@@ -9852,7 +10806,7 @@ const analyzeRFileAccessTree = (
           unresolvedWrites = true
         }
         unsupportedExternalState = true
-        expr.args.forEach((argument) => visit(argument))
+        visitRemainingArguments()
         return
       }
       if (
@@ -9945,9 +10899,9 @@ const analyzeRFileAccessTree = (
       const graphicsFileDevice = Boolean(
         name &&
         (R_GRAPHICS_FILE_DEVICES.has(name) ||
-          (localWrappers.effects.get(name) ?? contextualWrappers.get(name))?.dependencyNames?.some(
-            (dependency) => R_GRAPHICS_FILE_DEVICES.has(dependency)
-          ))
+          activeWrappers
+            .get(name)
+            ?.dependencyNames?.some((dependency) => R_GRAPHICS_FILE_DEVICES.has(dependency)))
       )
       const devicePipe = graphicsFileDevice && path?.trimStart().startsWith('|')
       if (graphicsFileDevice && name === 'postscript') {
@@ -10067,7 +11021,7 @@ const analyzeRFileAccessTree = (
         }
       }
     }
-    expr.args.forEach((argument) => visit(argument))
+    visitRemainingArguments()
   }
   expressions.forEach((expression) => visit(expression, false))
 
@@ -10094,9 +11048,9 @@ const analyzeRFileAccessTree = (
             : {})
         }))
         .sort((left, right) => left.name.localeCompare(right.name)),
-      localFileWrappers: [...localWrappers.effects.values()].sort((left, right) =>
-        left.name.localeCompare(right.name)
-      )
+      localFileWrappers: [...activeWrappers.values()]
+        .filter(({ name }) => localWrapperNames.has(name))
+        .sort((left, right) => left.name.localeCompare(right.name))
     }
   }
 }
@@ -10150,11 +11104,21 @@ const analyzeRNotebookSource = async (
       context?.rCopyOnModifyNames,
       context?.verifiedSerializedValues
     )
+    const fileContext = fileContextForFacts ? fileContextForFacts(facts) : context
+    // The public caller filters whole-cell definitions from its other context.
+    // Wrapper replacement is handled in statement order, including earlier calls.
     return {
       facts,
       fileAccess: analyzeRFileAccessTree(
         root,
-        fileContextForFacts ? fileContextForFacts(facts) : context
+        context && fileContextForFacts
+          ? {
+              ...fileContext,
+              localFileWrappers: context.localFileWrappers,
+              staticStrings: fileContext?.staticStrings ?? [],
+              staticCollections: fileContext?.staticCollections ?? []
+            }
+          : fileContext
       )
     }
   })
