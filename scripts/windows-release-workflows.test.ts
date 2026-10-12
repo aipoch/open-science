@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, posix } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { load } from 'js-yaml'
@@ -1128,6 +1128,124 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
     expect(release.jobs.publish.if).toBe(stableTagCondition)
+  })
+
+  it
+    .skipIf(process.platform === 'win32')
+    .each([
+      { name: 'upload pin only', change: 'upload', source: false },
+      { name: 'runner with upload pin', change: 'runner', source: true },
+      { name: 'build action with upload pin', change: 'build', source: true },
+      { name: 'checkout with upload pin', change: 'checkout', source: true },
+      { name: 'upload path with upload pin', change: 'path', source: true },
+      { name: 'unpinned upload action', change: 'unpinned', source: true },
+      { name: 'catalog with upload pin', change: 'upload', source: false, catalog: true },
+      { name: 'runner with reviewed catalog', change: 'runner', source: true, catalog: true },
+      { name: 'first release', change: 'upload', source: true, firstRelease: true },
+      ...[
+        'packages/notebook-network-sandbox/vendor/windows-runtime/sources.json',
+        'packages/notebook-network-sandbox/vendor/windows-runtime/node.patch',
+        'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1',
+        'packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs',
+        'scripts/check-windows-notebook-runtime.mjs',
+        'scripts/stage-windows-notebook-components.mjs',
+        '.github/actions/windows-notebook-runtime/action.yml'
+      ].map((path) => ({ name: path, change: 'upload', source: true, path }))
+    ])('checks real release runtime diffs: $name', (scenario) => {
+    const { change, source } = scenario
+    const catalog = ('catalog' in scenario && scenario.catalog) || false
+    const firstRelease = ('firstRelease' in scenario && scenario.firstRelease) || false
+    const directory = mkdtempSync(join(tmpdir(), 'release-runtime-diff-'))
+    const workflowPath = '.github/workflows/windows-notebook-runtime.yml'
+    const original = readFileSync(workflowPath, 'utf8')
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Runtime test',
+      GIT_AUTHOR_EMAIL: 'runtime-test@example.invalid',
+      GIT_COMMITTER_NAME: 'Runtime test',
+      GIT_COMMITTER_EMAIL: 'runtime-test@example.invalid'
+    }
+    const git = (...args: string[]): string => {
+      const result = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], {
+        cwd: directory,
+        encoding: 'utf8',
+        env
+      })
+      expect(result.status, result.stderr).toBe(0)
+      return result.stdout.trim()
+    }
+    const write = (path: string, contents: string): void => {
+      const target = join(directory, path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, contents)
+    }
+    try {
+      git('init')
+      write(workflowPath, original)
+      git('add', '.')
+      git('commit', '-m', 'baseline')
+      if (!firstRelease) git('-c', 'tag.gpgsign=false', 'tag', 'v0.0.1')
+      let updated = original.replace(
+        /actions\/upload-artifact@[0-9a-f]{40}/,
+        `actions/upload-artifact@${'a'.repeat(40)}`
+      )
+      if (change === 'runner') updated = updated.replace('windows-2022', 'windows-2025')
+      if (change === 'build')
+        updated = updated.replace(
+          'uses: ./.github/actions/windows-notebook-runtime',
+          'run: ./different-build.ps1'
+        )
+      if (change === 'checkout')
+        updated = updated.replace(
+          /actions\/checkout@[0-9a-f]{40}/,
+          `actions/checkout@${'b'.repeat(40)}`
+        )
+      if (change === 'path')
+        updated = updated.replace('windows-runtime/x64/', 'windows-runtime/other/')
+      if (change === 'unpinned')
+        updated = updated.replace(
+          /actions\/upload-artifact@[0-9a-f]{40}/,
+          'actions/upload-artifact@main'
+        )
+      write(workflowPath, updated)
+      if ('path' in scenario) write(scenario.path, 'changed runtime input\n')
+      if (catalog) write('src/main/notebook/windows-runtime-catalog.json', '{}\n')
+      git('add', '.')
+      git('commit', '-m', 'candidate')
+      const output = join(directory, 'github-output')
+      writeFileSync(output, '')
+      const step = findStep(
+        readWorkflow('release.yml').jobs['release-preflight'],
+        'Detect Windows runtime changes'
+      )
+      const result = spawnSync(
+        'bash',
+        ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.run!],
+        {
+          cwd: directory,
+          encoding: 'utf8',
+          env: {
+            ...env,
+            GITHUB_EVENT_NAME: 'push',
+            GITHUB_REF: 'refs/tags/v0.0.2',
+            GITHUB_SHA: git('rev-parse', 'HEAD'),
+            GITHUB_OUTPUT: output
+          }
+        }
+      )
+      const blocked = source && !catalog && !firstRelease
+      expect(result.status, result.stderr).toBe(blocked ? 1 : 0)
+      if (blocked) {
+        expect(result.stderr).toContain('Runtime source changed without a catalog update')
+        expect(readFileSync(output, 'utf8')).toBe('')
+      } else {
+        expect(readFileSync(output, 'utf8')).toBe(
+          `source_changed=${source}\ncatalog_changed=${catalog || firstRelease}\n`
+        )
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('locks mirror dependencies and completes local transforms before configuring credentials', () => {

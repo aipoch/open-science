@@ -81,11 +81,16 @@ jobs:
               'scripts/check-windows-notebook-runtime.mjs'
               'scripts/stage-windows-notebook-components.mjs'
               '.github/actions/windows-notebook-runtime/action.yml'
-              '.github/workflows/windows-notebook-runtime.yml'
             )
             source_changed=false
             catalog_changed=false
             if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+              source_changed=true
+            fi
+            # Upload action pins do not change runtime bytes; retain every other workflow change.
+            if ! git diff --quiet \
+              --ignore-matching-lines='^[[:space:]]+uses: actions/upload-artifact@[0-9a-f]{40} # v[0-9]+$' \
+              "$previous_tag" "$GITHUB_SHA" -- '.github/workflows/windows-notebook-runtime.yml'; then
               source_changed=true
             fi
             if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- src/main/notebook/windows-runtime-catalog.json; then
