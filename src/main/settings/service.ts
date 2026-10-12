@@ -464,6 +464,7 @@ class SettingsService {
   private readonly cancelNotebookNetworkSetupImpl: () => boolean
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly refreshNotebookShellCapabilities: () => Promise<void>
+  private readonly beforeNotebookProtectionChange?: SettingsServiceOptions['beforeNotebookProtectionChange']
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
   private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
   private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
@@ -519,6 +520,7 @@ class SettingsService {
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
+    this.beforeNotebookProtectionChange = options.beforeNotebookProtectionChange
     this.notebookNetwork = new NotebookNetworkSettingsOwner({
       repository: this.repository,
       beforeProtectionChange: options.beforeNotebookProtectionChange,
@@ -757,11 +759,36 @@ class SettingsService {
   }
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
-    const result = await this.removeNotebookNetworkImpl()
-    if (!result.cancelled) {
-      if ((await this.notebookNetwork.get()).windowsProtectionEnabled === true)
-        await this.notebookNetwork.setWindowsProtectionEnabled(false)
-      else await this.refreshNotebookShellCapabilities()
+    const settings = await this.notebookNetwork.get()
+    const release =
+      settings.windowsProtectionEnabled === true
+        ? await this.beforeNotebookProtectionChange?.()
+        : undefined
+    try {
+      const result = await this.removeNotebookNetworkImpl()
+      if (!result.cancelled) {
+        if (settings.windowsProtectionEnabled === true) {
+          try {
+            await this.notebookNetwork.setWindowsProtectionEnabled(false, {
+              admissionAlreadyHeld: true
+            })
+          } catch (error) {
+            try {
+              const restore = await this.installNotebookNetworkImpl()
+              if (restore.cancelled)
+                throw new Error('Notebook protection restoration was cancelled.')
+            } catch (restoreError) {
+              throw new AggregateError(
+                [error, restoreError],
+                'Could not apply or restore Notebook network protection.'
+              )
+            }
+            throw error
+          }
+        } else await this.refreshNotebookShellCapabilities()
+      }
+    } finally {
+      release?.()
     }
     return this.getNotebookNetworkStatusImpl()
   }
@@ -853,7 +880,11 @@ class SettingsService {
     mutation: LocalShellRuntimeMutation
   }> {
     const status = await this.getNotebookNetworkStatusImpl()
-    if (status.kind === 'checking' || status.kind === 'error') {
+    if (
+      status.kind === 'checking' ||
+      status.kind === 'error' ||
+      (status.kind === 'setupRequired' && status.windowsProtectionEnabled === true)
+    ) {
       throw new Error(
         'Prepare Notebook protection in Settings before switching this Session runtime.'
       )

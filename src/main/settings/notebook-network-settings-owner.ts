@@ -18,6 +18,10 @@ type NotebookNetworkSettingsOwnerOptions = Readonly<{
   beforeProtectionChange?: () => Promise<(() => void) | void>
 }>
 
+type ProtectionChangeOptions = Readonly<{
+  admissionAlreadyHeld?: boolean
+}>
+
 class NotebookNetworkSettingsOwner {
   private writeTail: Promise<void> = Promise.resolve()
 
@@ -37,8 +41,14 @@ class NotebookNetworkSettingsOwner {
     return this.enqueue((current) => this.mergeRequest(current, request))
   }
 
-  setWindowsProtectionEnabled(enabled: boolean): Promise<NotebookNetworkSettings> {
-    return this.enqueue((current) => ({ ...current, windowsProtectionEnabled: enabled }))
+  setWindowsProtectionEnabled(
+    enabled: boolean,
+    options: ProtectionChangeOptions = {}
+  ): Promise<NotebookNetworkSettings> {
+    return this.enqueue(
+      (current) => ({ ...current, windowsProtectionEnabled: enabled }),
+      options.admissionAlreadyHeld === true
+    )
   }
 
   allowDomain(hostname: string): Promise<NotebookNetworkSettings> {
@@ -51,9 +61,10 @@ class NotebookNetworkSettingsOwner {
   private enqueue(
     update: (
       current: NotebookNetworkSettings
-    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
+    admissionAlreadyHeld = false
   ): Promise<NotebookNetworkSettings> {
-    const operation = this.writeTail.then(() => this.commit(update))
+    const operation = this.writeTail.then(() => this.commit(update, admissionAlreadyHeld))
     this.writeTail = operation.then(
       () => undefined,
       () => undefined
@@ -119,12 +130,13 @@ class NotebookNetworkSettingsOwner {
   private async commit(
     update: (
       current: NotebookNetworkSettings
-    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
+    admissionAlreadyHeld = false
   ): Promise<NotebookNetworkSettings> {
     const previous = await this.get()
     const next = await update(previous)
     const release =
-      previous.windowsProtectionEnabled !== next.windowsProtectionEnabled
+      !admissionAlreadyHeld && previous.windowsProtectionEnabled !== next.windowsProtectionEnabled
         ? await this.options.beforeProtectionChange?.()
         : undefined
     try {
