@@ -55,7 +55,8 @@
     "src/main/session-package/browser-import.ts",
     "src/main/session-package/browser-import.test.ts",
     "src/main/session-package/browser-import-protocol.ts",
-    "src/main/session-package/browser-import-protocol.test.ts"
+    "src/main/session-package/browser-import-protocol.test.ts",
+    "src/main/session-package/browser-import-sdk.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -95,7 +96,8 @@
       "src/main/session-package/sensitive-content.test.ts",
       "src/main/session-package/json-syntax.test.ts",
       "src/main/session-package/browser-import.test.ts",
-      "src/main/session-package/browser-import-protocol.test.ts"
+      "src/main/session-package/browser-import-protocol.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

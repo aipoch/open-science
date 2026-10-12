@@ -70,7 +70,8 @@
       "scripts/pack-npm-release.test.ts",
       "scripts/publish-npm-release.test.ts",
       "scripts/npm-runtime-workflow.test.ts",
-      "scripts/runtime-archives.test.ts"
+      "scripts/runtime-archives.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
