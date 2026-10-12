@@ -727,6 +727,7 @@
       "src/main/notebook/working-file-observer.write-scope.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/configured-shell-runtime.test.ts",
+      "src/main/notebook/managed-runtime-guard.test.ts",
       "src/main/notebook/managed-runtime-relocation.test.ts",
       "src/main/notebook/package-process-sandbox.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",

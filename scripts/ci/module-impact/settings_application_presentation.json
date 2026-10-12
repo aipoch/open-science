@@ -232,6 +232,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/notebook/mirror-probe.test.ts",
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/ConnectorAuthToast.test.tsx",
@@ -403,6 +404,7 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
       "src/renderer/src/stores/network-store.test.ts",
       "src/renderer/src/stores/settings-navigation-slice.test.ts",
+      "src/renderer/src/stores/settings-preferences-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
@@ -435,7 +437,8 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
+      "src/renderer/src/pages/settings/mirror-view.test.ts"
     ]
   },
   "capabilityOverlays": [],

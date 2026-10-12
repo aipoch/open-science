@@ -456,6 +456,7 @@
       "src/main/skills/catalog.python-availability.test.ts",
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/skills/catalog.test.ts",
+      "src/main/settings/transport-validation.test.ts",
       "src/main/settings/workflows.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/settings/xai-oauth-provider-bridge.test.ts",
