@@ -31,8 +31,17 @@ function applyPackageBoundary(plan, paths) {
   const boundaryPaths = paths.filter((path) => !path.startsWith('test/fixtures/'))
   if (boundaryPaths.length === 0) return plan
   const packages = createPackageTestPlan(boundaryPaths, packageRegistry)
-  const omitted = plan.testFiles.filter((path) =>
-    packages.excluded.some((root) => path.startsWith(root + '/'))
+  const fixturePatterns = paths.flatMap((path) => fixtureTestPatterns(path))
+  const fixtureTests = new Set(
+    plan.testFiles.filter((test) =>
+      fixturePatterns.some((pattern) =>
+        pattern.includes('*') ? matchesPath(test, pattern) : test === pattern
+      )
+    )
+  )
+  const omitted = plan.testFiles.filter(
+    (path) =>
+      packages.excluded.some((root) => path.startsWith(root + '/')) && !fixtureTests.has(path)
   )
   if (omitted.length) {
     plan.testFiles = plan.testFiles.filter((path) => !omitted.includes(path))

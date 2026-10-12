@@ -56,6 +56,16 @@ describe('module test impact commands', () => {
     const mixed = createAffectedTestPlan([source, fixture], graph)
     expect(mixed.mode).toBe(sourcePlan.mode)
     expect(mixed.testFiles).toEqual(expect.arrayContaining(sourcePlan.testFiles))
+    const packageFixture = createAffectedTestPlan(
+      [
+        { path: 'src/main/settings/provider-text-generation.ts', status: 'modified' },
+        { path: 'test/fixtures/pdf-translation/new-regression-case.jsonl', status: 'modified' }
+      ],
+      graph
+    )
+    expect(packageFixture.testFiles).toContain(
+      'packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts'
+    )
     const renamed = createAffectedTestPlan(
       [
         {

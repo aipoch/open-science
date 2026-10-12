@@ -8,7 +8,7 @@ const rootPattern = /^packages\/[a-z0-9][a-z0-9-]*$/
 // These inputs can change package compilation, discovery or the trusted package-test graph.
 // Keep this list explicit: unrelated scripts and regression data must not fan out every package.
 const packageGlobalInput =
-  /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|(?:vitest|vite|electron|tsconfig)[^/]*|test\/config\/|patches\/|build\/|resources\/|scripts\/(?:build-dev-packages|check-packages|check-package-isolation|check-(?:connector|diagnostics|environment|notebook)-packages|package-verification-plan)(?:\.[^/]+)?$|scripts\/ci\/(?:package-test-|module-test-impact\.)|\.github\/actions\/select-package-tests\/|\.github\/workflows\/(?:package-test-policy-dry-run|pr-gate)\.yml$)/
+  /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|(?:vitest|vite|electron|tsconfig)[^/]*|test\/config\/|patches\/|build\/|resources\/|scripts\/(?:build-dev-packages|check-packages|check-package-isolation|check-(?:connector|diagnostics|environment|notebook)-packages|package-verification-plan)(?:\.[^/]+)?$|scripts\/ci\/(?:npm-ci|package-test-|module-test-impact\.)|\.github\/actions\/select-package-tests\/|\.github\/workflows\/(?:package-test-policy-dry-run|pr-gate)\.yml$)/
 
 // Fixture records and unrelated scripts are test evidence for another lane. They do not alter
 // the independently published package contracts, so changing them must not run every package.

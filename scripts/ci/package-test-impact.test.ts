@@ -78,6 +78,9 @@ describe('independent package test direction', () => {
       })
     }
   )
+  it('keeps the CI install wrapper global', () => {
+    expect(createPackageTestPlan(['scripts/ci/npm-ci.mjs'], registry).excluded).toEqual([])
+  })
   it.each(['package.json', 'vitest.config.ts', 'README.md', 'src/provider.test.ts'])(
     'selects a package for its own input %s',
     (path) => {
