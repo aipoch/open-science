@@ -128,6 +128,111 @@ afterEach(async () => {
 })
 
 describe('AcpPromptContentOwner', () => {
+  it.each([
+    ['current-upload', 'empty'],
+    ['history-upload', 'empty'],
+    ['file-reference', 'empty'],
+    ['current-upload', 'valid'],
+    ['history-upload', 'valid'],
+    ['file-reference', 'valid'],
+    ['file-reference', 'corrupt'],
+    ['current-upload', 'empty-text']
+  ] as const)(
+    'issue #3499: identifies empty image files by name and accepts valid images (%s, %s)',
+    async (source, kind) => {
+      const root = await createRoot()
+      const uploads = new UploadRepository(root)
+      const name = kind === 'empty-text' ? 'empty.txt' : `${kind}-image.png`
+      const mimeType = kind === 'empty-text' ? 'text/plain' : 'image/png'
+      const bytes =
+        kind === 'empty' || kind === 'empty-text'
+          ? Buffer.alloc(0)
+          : kind === 'corrupt'
+            ? Buffer.from('not an image')
+            : imageBytes
+      const path = join(root, name)
+      await writeFile(path, bytes)
+      const staged =
+        source === 'file-reference'
+          ? []
+          : await stageUploadFixtures(uploads, {
+              files: [{ name, mimeType, content: bytes.toString('base64') }]
+            })
+      const owner = new AcpPromptContentOwner({
+        uploadRepository: uploads,
+        fileReferenceResolver:
+          source === 'file-reference'
+            ? new FileReferenceResolver([
+                {
+                  source: 'artifact',
+                  resolve: async () => ({
+                    absolutePath: path,
+                    name,
+                    mimeType,
+                    allowSkillImportReference: false
+                  })
+                }
+              ])
+            : createManagedFileReferenceResolver({ uploads })
+      })
+      const historyUploads =
+        source === 'history-upload'
+          ? await uploads.finalizePendingSessionUploads('source-session', staged, 'default-project')
+          : []
+
+      const preparation = owner.prepare({
+        appSessionId: 'target-session',
+        projectId: 'default-project',
+        text: 'Describe the attached image',
+        historyImages: [],
+        historyUploads,
+        currentUploads: source === 'current-upload' ? staged : [],
+        references:
+          source === 'file-reference' ? [{ id: 'empty-file', source: 'artifact', name, path }] : [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+      if (kind === 'empty') {
+        await expect(preparation).rejects.toMatchObject({
+          code: 'IMAGE_PROCESSING_FAILED',
+          sourceBytes: 0,
+          message: expect.stringContaining(`Image "${name}" is empty (0 bytes).`),
+          cause: expect.objectContaining({
+            code: 'IMAGE_PROCESSING_FAILED',
+            message: 'Failed to safely process 0-byte image.'
+          })
+        })
+        await expect(preparation).rejects.toThrow(
+          source === 'history-upload'
+            ? 'Start a new conversation and upload a non-empty image.'
+            : 'Remove this attachment or select a non-empty image.'
+        )
+      } else if (kind === 'corrupt') {
+        await expect(preparation).rejects.toMatchObject({
+          code: 'IMAGE_PROCESSING_FAILED',
+          sourceBytes: bytes.length,
+          message: `Failed to safely process ${bytes.length}-byte image.`
+        })
+      } else {
+        const prepared = await preparation
+        try {
+          if (kind === 'empty-text') {
+            expect(contentBlocks(prepared.content)).toContainEqual(
+              expect.objectContaining({ type: 'resource' })
+            )
+          } else {
+            expect(contentBlocks(prepared.content)).toContainEqual(
+              expect.objectContaining({ type: 'image', mimeType })
+            )
+          }
+        } finally {
+          prepared.close()
+        }
+      }
+      expect(await readFile(path)).toEqual(bytes)
+    }
+  )
+
   it('injects the send-time PDF page snapshot instead of a document-prefix preview', async () => {
     const root = await createRoot()
     const sourcePath = join(root, 'paper.pdf')
