@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModuleImpactManifest } from '../scripts/ci/load-module-impact.mjs'
 import {
+  expectBoundaryOwnerTests,
   expectModuleBoundary,
   expectTypeOnlyContract,
   runtimeModuleSpecifiers
@@ -28,6 +29,16 @@ function split(): ModuleImpactManifest {
 }
 
 describe('module boundary assertions', () => {
+  it('retains policy when checking moved owner tests independently of source paths', () => {
+    const manifest = split()
+    manifest.modules.original.fullTestReason = 'shared contracts'
+    manifest.modules.model.fullTestReason = 'shared contracts'
+    const check = (): void =>
+      expectBoundaryOwnerTests(manifest, 'original', boundary.testFiles.owner)
+    check()
+    delete manifest.modules.model.fullTestReason
+    expect(check).toThrow()
+  })
   it('retains domain invariants across unique owner and owner-test transfers', () => {
     expectModuleBoundary(split(), 'original', boundary)
     expectModuleBoundary(

@@ -43,6 +43,7 @@ export function expectBoundaryOwnerTests(
 ): void {
   for (const test of tests) {
     if (manifest.modules[id].testFiles.owner.includes(test)) continue
+    expectBoundaryPaths(manifest, id, [test])
     const owners = Object.values(manifest.modules).filter((module) =>
       module.ownerPaths.includes(test)
     )
