@@ -154,3 +154,156 @@ export function verifiedHostOwnerSplits(
     return empty()
   }
 }
+
+// Source-changing transfers retain relationships in both revisions. Host facilities are
+// represented by explicit contracts/runtime edges; retiring old evidence stays strict.
+export function verifiedHostSourceMoves(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  { cwd = process.cwd() } = {}
+) {
+  const empty = () => ({ paths: new Set(), ownerTests: new Set(), consumers: new Set() })
+  const hostPath = (path) => /^src\/(?:main|renderer)\/.*\.[cm]?[jt]sx?$/.test(path)
+  const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+  const protectedOwner = (module) =>
+    module.fullTestReason ||
+    module.ownerPaths.some((path) => /^(?:src\/(?!main\/|renderer\/)|packages\/)/.test(path))
+  const evidence = (module) => new Set(Object.values(module.testFiles).flat())
+  try {
+    const transfers = Object.entries(baseManifest.modules).flatMap(([id, original]) => {
+      const remaining = headManifest.modules[id]
+      if (!remaining || protectedOwner(original) || protectedOwner(remaining)) return []
+      const paths = original.ownerPaths.filter((path) => !remaining.ownerPaths.includes(path))
+      if (!paths.length || paths.some((path) => !hostPath(path))) return []
+      const targets = new Map()
+      for (const path of paths) {
+        const origins = Object.values(baseManifest.modules).filter((module) =>
+          module.ownerPaths.includes(path)
+        )
+        const destinations = Object.entries(headManifest.modules).filter(([, module]) =>
+          module.ownerPaths.includes(path)
+        )
+        if (origins.length !== 1 || destinations.length !== 1) return []
+        const [targetId, target] = destinations[0]
+        if (protectedOwner(target) || !target.ownerPaths.every(hostPath)) return []
+        const move = targets.get(targetId) ?? { target, paths: [] }
+        move.paths.push(path)
+        targets.set(targetId, move)
+      }
+      return [{ id, original, remaining, targets }]
+    })
+    if (!transfers.length) return empty()
+    const changed = execFileSync('git', ['diff', '--name-only', '-z', base, head], { cwd })
+      .toString()
+      .split('\0')
+      .filter(Boolean)
+    // Keep the registration-only exception separate, and never accept candidate policy changes.
+    if (
+      !changed.some((path) => !isModuleImpactRegistrationPath(path)) ||
+      changed.some(
+        (path) =>
+          !isModuleImpactRegistrationPath(path) &&
+          !/^src\/(?:main|renderer|shared)\/.*\.[cm]?[jt]sx?$/.test(path)
+      )
+    )
+      return empty()
+    const before = sourceSnapshot(base, cwd)
+    const after = sourceSnapshot(head, cwd)
+    const registeredTests = new Set(
+      Object.values(baseManifest.modules).flatMap((module) => [...evidence(module)])
+    )
+    if (
+      changed.some(
+        (path) =>
+          !isModuleImpactRegistrationPath(path) &&
+          (after.read(path) === undefined ||
+            (before.files.has(path) && (isTest(path) || registeredTests.has(path))))
+      )
+    )
+      return empty()
+    const edges = [before, after].flatMap((source) =>
+      Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json')))
+    )
+    const inspectBefore = createConsumerDependencyReader(before, edges)
+    const inspectAfter = createConsumerDependencyReader(after, edges)
+    const retireBefore = createConsumerDependencyReader(before, edges, { staticOnly: true })
+    const retireAfter = createConsumerDependencyReader(after, edges, { staticOnly: true })
+    const result = empty()
+    for (const { id, original, remaining, targets } of transfers) {
+      const originalSources = new Set(original.ownerPaths.filter((path) => !isTest(path)))
+      const remainingSources = new Set(remaining.ownerPaths.filter((path) => !isTest(path)))
+      const canRetire = (test) => {
+        const previous = retireBefore(test, originalSources)
+        const current = retireAfter(test, remainingSources)
+        return previous.complete && previous.reachable && current.complete && !current.reachable
+      }
+      const remainingEvidence = evidence(remaining)
+      const verified = [...targets.values()].every(({ target, paths }) => {
+        if (
+          target.fallbackCapability !== original.fallbackCapability ||
+          !original.capabilityOverlays.every((overlay) =>
+            target.capabilityOverlays.includes(overlay)
+          ) ||
+          !original.consumerModules.every((consumer) =>
+            target.consumerModules.includes(consumer)
+          ) ||
+          !original.interfacePaths
+            .filter((path) => paths.includes(path))
+            .every((path) => target.interfacePaths.includes(path)) ||
+          paths.some((path) => before.read(path) === undefined || after.read(path) === undefined)
+        )
+          return false
+        const baseline = createAffectedTestPlan(
+          paths.map((path) => ({ path, status: 'modified' })),
+          { status: 'not-used', testFiles: [] },
+          baseManifest
+        )
+        if (baseline.mode !== 'selective') return false
+        const targetEvidence = evidence(target)
+        const movedSources = new Set(paths.filter((path) => !isTest(path)))
+        const targetSources = new Set(target.ownerPaths.filter((path) => !isTest(path)))
+        if (
+          baseline.testFiles.some((test) => {
+            if (targetEvidence.has(test)) return false
+            if (!test.startsWith('src/')) return true
+            const previous = inspectBefore(test, movedSources)
+            const current = inspectAfter(test, targetSources)
+            return (
+              previous.reachable || !previous.complete || current.reachable || !current.complete
+            )
+          }) ||
+          [...evidence(original)].some((test) => {
+            if (targetEvidence.has(test)) return false
+            if (original.testFiles.contract.includes(test) || !test.startsWith('src/')) return true
+            const previous = inspectBefore(test, originalSources)
+            return !previous.reachable || !previous.complete
+          })
+        )
+          return false
+        return original.testFiles.owner
+          .filter((test) => paths.includes(test))
+          .every(
+            (test) =>
+              target.testFiles.owner.includes(test) &&
+              (remainingEvidence.has(test) || canRetire(test))
+          )
+      })
+      // Retirement is authorized only once all surviving paths moved from this owner are covered.
+      if (!verified) continue
+      for (const { paths } of targets.values()) {
+        for (const path of paths) result.paths.add(`${id}:${path}`)
+        for (const test of original.testFiles.owner.filter((test) => paths.includes(test)))
+          result.ownerTests.add(`${id}:${test}`)
+      }
+      for (const test of original.testFiles.consumer) {
+        if (!remaining.testFiles.consumer.includes(test) && canRetire(test))
+          result.consumers.add(`${id}:${test}`)
+      }
+    }
+    return result
+  } catch {
+    return empty()
+  }
+}

@@ -214,6 +214,27 @@ mixed source/policy edits do not qualify. Host build scripts and test harnesses 
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.
+Source-changing host transfers have a separate, stricter proof. Exact surviving owner paths
+identify transfers into new or existing host modules, including targets assembled from several
+host owners. All transfers from an original owner must verify before any of its evidence can
+retire. Only registration and main/renderer/shared JavaScript or TypeScript additions/changes
+may accompany these transfers: changed existing tests, source deletions, package/preload edits,
+runtime-consumer declarations and CI policy changes do not qualify. Shared/full owners still
+use the ordinary complete-evidence preservation rules; this exception cannot narrow them.
+The target inherits moved interfaces, platform overlays, fallback routing and downstream module
+edges. Every old-plan test reaching the moved source before, or any target source after (including
+new contracts), stays registered. Incomplete evidence in either graph also stays, as do explicit
+contracts, non-host evidence and historical tests without a provable old dependency. Both inheritance graphs
+follow imports, type/mock edges and explicit runtime declarations, as for unchanged splits.
+Host globals alone do not create inferred dependencies; unresolved imports and opaque loaders
+retain coverage. IPC, events and filesystem relationships must remain represented by explicit
+contracts or runtime edges. Moved owner tests retain their classification;
+remaining-owner evidence may retire only with strict, complete old reachability and current
+non-reachability, retaining uncertainty from host globals and filesystem access. Tests and candidate source are read as Git blobs, never executed by the proof.
+This proves bounded registration coverage, not behavioral equivalence of the refactor. Required
+behavior tests, CI owner review of policy and trusted-base validation remain mandatory. Merge this
+policy before proposing source/registration cleanup that depends on it.
+
 This registration-only proof follows source imports (including type and test-mock imports) and
 explicit runtime-consumer edges. Host globals such as `process` or `window`, Node built-ins and
 external libraries do not by themselves make the repository dependency graph incomplete. Unresolved

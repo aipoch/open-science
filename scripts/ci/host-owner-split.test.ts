@@ -90,12 +90,11 @@ it('permits unchanged host owners to split while preserving reachable, uncertain
   expect(state.manifest.modules.foundation.testFiles.consumer).not.toContain(unrelated)
 })
 
-it.each(['source', 'runtime', 'policy', 'rename', 'test'])(
+it.each(['runtime', 'policy', 'rename', 'test'])(
   'rejects a split combined with %s changes',
   (kind) => {
     const state = fixture()
     state.split()
-    if (kind === 'source') state.put(leaf, 'export const value = 2')
     if (kind === 'runtime')
       state.put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [leaf]: [unrelated] }))
     if (kind === 'policy')
@@ -490,5 +489,294 @@ it('keeps a moved owner test on the old owner when it exercises host facilities'
   state.split()
   expect(state.check(base).ok).toBe(false)
   state.manifest.modules.host.testFiles.consumer.push(leafTest)
+  expect(state.check(base).ok).toBe(true)
+})
+
+function sourceSplit() {
+  const state = fixture()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  return state
+}
+
+it('permits source changes with a host split using old and new dependency evidence', () => {
+  const state = sourceSplit()
+  expect(state.check().ok).toBe(true)
+})
+
+it('allows an extracted contract alongside surviving moved paths', () => {
+  const state = sourceSplit()
+  const extracted = 'src/main/value-contract.ts'
+  state.put(extracted, 'export const value = 2')
+  state.put(leaf, "export { value } from './value-contract'")
+  state.manifest.modules.foundation.ownerPaths.push(extracted)
+  expect(state.check().ok).toBe(true)
+})
+
+it('requires baseline consumers after source rewiring removes their import path', () => {
+  const state = sourceSplit()
+  state.put(app, 'export const value = 2')
+  state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
+  expect(state.check().ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(appTest)
+  expect(state.check().ok).toBe(true)
+})
+
+it('requires consumers newly reaching an added target source', () => {
+  const state = fixture()
+  state.put(app, 'export const value = 1')
+  const base = state.commit()
+  state.split()
+  const extracted = 'src/main/value-contract.ts'
+  state.put(extracted, 'export const value = 2')
+  state.put(app, "export { value } from './value-contract'")
+  state.manifest.modules.foundation.ownerPaths.push(extracted)
+  state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(appTest)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it.each(['before', 'after'])(
+  'uses explicit dependencies for host facilities in the %s source graph',
+  (revision) => {
+    const state = fixture()
+    state.put(app, revision === 'before' ? 'window.api.readState()' : 'export const value = 1')
+    const base = state.commit()
+    state.split()
+    state.put(app, revision === 'after' ? 'window.api.readState()' : 'export const value = 2')
+    state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
+    expect(state.check(base).ok).toBe(true)
+    state.manifest.modules.foundation.testFiles.consumer.push(appTest)
+    expect(state.check(base).ok).toBe(true)
+  }
+)
+
+it.each([
+  'reachable',
+  'uncertain',
+  'contract',
+  'owner',
+  'overlay',
+  'fallback',
+  'consumers',
+  'interface'
+])('preserves %s obligations during source-changing transfers', (kind) => {
+  const state = sourceSplit()
+  const target = state.manifest.modules.foundation
+  if (kind === 'reachable') target.testFiles.consumer = [appTest, uncertain]
+  if (kind === 'uncertain') target.testFiles.consumer = [appTest, consumer]
+  if (kind === 'contract') target.testFiles.contract = []
+  if (kind === 'owner') {
+    target.testFiles.owner = []
+    target.testFiles.consumer.push(leafTest)
+  }
+  if (kind === 'overlay') target.capabilityOverlays = []
+  if (kind === 'fallback') target.fallbackCapability = 'windows_sensitive'
+  if (kind === 'consumers') target.consumerModules = []
+  if (kind === 'interface') target.interfacePaths = [leafTest]
+  expect(state.check().ok).toBe(false)
+})
+
+it.each([
+  'scripts/ci/host-owner-split.mjs',
+  'scripts/ci/module-runtime-consumers.json',
+  'packages/example/src/index.ts',
+  'src/preload/index.ts',
+  'tsconfig.node.json',
+  'e2e/browser/fixture/host.ts',
+  consumer,
+  leafTest
+])('rejects source-changing transfers mixed with changes to %s', (path) => {
+  const state = sourceSplit()
+  state.put(path, path.endsWith('.json') ? '{}' : 'export {}')
+  // The runtime registry must actually differ from its original empty value.
+  if (path.endsWith('module-runtime-consumers.json')) state.put(path, '{"src/main/leaf.ts":[]}')
+  expect(state.check().ok).toBe(false)
+})
+
+it('rejects source deletion even when the surviving target is registered', () => {
+  const state = sourceSplit()
+  state.git('rm', app)
+  state.manifest.modules.host.ownerPaths = [appTest, contract]
+  state.manifest.modules.host.interfacePaths = [appTest]
+  expect(state.check().ok).toBe(false)
+})
+
+it('permits transfers into an existing host owner without replacing its obligations', () => {
+  const state = fixture()
+  const other = 'src/main/other.ts'
+  const otherTest = 'src/main/other.test.ts'
+  state.put(other, 'export const other = 1')
+  state.put(otherTest, "import './other'")
+  state.manifest.modules.foundation = {
+    ...state.manifest.modules.consumers,
+    ownerPaths: [other, otherTest],
+    interfacePaths: [other],
+    testFiles: { owner: [otherTest], contract: [], consumer: [] }
+  }
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  const target = state.manifest.modules.foundation
+  target.ownerPaths.push(other, otherTest)
+  target.interfacePaths.push(other)
+  target.testFiles.owner.push(otherTest)
+  expect(state.check(base).ok).toBe(true)
+  target.testFiles.owner = [leafTest]
+  expect(state.check(base).ok).toBe(false)
+})
+
+it('verifies every origin when a host target combines paths from multiple owners', () => {
+  const state = fixture()
+  const other = 'src/main/other.ts'
+  const otherTest = 'src/main/other.test.ts'
+  state.put(other, 'export const other = 1')
+  state.put(otherTest, "import './other'")
+  state.manifest.modules.consumers.ownerPaths.push(other, otherTest)
+  state.manifest.modules.consumers.testFiles.owner.push(otherTest)
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  state.manifest.modules.consumers.ownerPaths = [consumer, uncertain, unrelated]
+  state.manifest.modules.consumers.testFiles.owner = [consumer, uncertain, unrelated]
+  const target = state.manifest.modules.foundation
+  target.ownerPaths.push(other, otherTest)
+  target.testFiles.owner.push(otherTest)
+  // Historical tests without an old source path are still explicit obligations.
+  target.testFiles.consumer.push(unrelated)
+  expect(state.check(base).ok).toBe(true)
+  target.testFiles.owner = [leafTest]
+  expect(state.check(base).ok).toBe(false)
+})
+
+it('retains historical evidence with no demonstrable baseline source dependency', () => {
+  const state = fixture()
+  state.manifest.modules.host.testFiles.consumer = [unrelated]
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(unrelated)
+  expect(state.check(base).ok).toBe(true)
+  state.manifest.modules.host.testFiles.consumer = []
+  expect(state.check(base).ok).toBe(false)
+})
+
+it('retires old consumer registration only after all moved paths have verified coverage', () => {
+  const state = fixture()
+  state.manifest.modules.host.testFiles.consumer = [consumer]
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  state.manifest.modules.host.testFiles.consumer = []
+  expect(state.check(base).retiredConsumers).toContain(`host:${consumer}`)
+  state.manifest.modules.foundation.testFiles.consumer = [appTest, uncertain]
+  const result = state.check(base)
+  expect(result.ok).toBe(false)
+  expect(result.retiredConsumers).not.toContain(`host:${consumer}`)
+})
+
+it.each(['remaining', 'opaque', 'historical'])(
+  'retains %s moved owner tests on the original owner',
+  (kind) => {
+    const state = fixture()
+    state.put(
+      leafTest,
+      kind === 'remaining'
+        ? "import './app'"
+        : kind === 'opaque'
+          ? "import './leaf'; window.api.readState()"
+          : 'export {}'
+    )
+    const base = state.commit()
+    state.split()
+    state.put(leaf, 'export const value = 2')
+    expect(state.check(base).ok).toBe(false)
+    state.manifest.modules.host.testFiles.consumer.push(leafTest)
+    expect(state.check(base).ok).toBe(true)
+  }
+)
+
+it('requires declared dynamic consumers when transferring changed source', () => {
+  const state = fixture()
+  state.put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [leaf]: [unrelated] }))
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(unrelated)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it.each(['full', 'shared', 'package', 'preload'])(
+  'does not waive %s owner protection during source changes',
+  (kind) => {
+    const state = fixture()
+    if (kind === 'full') state.manifest.modules.host.fullTestReason = 'Cross-process contract'
+    else {
+      const path = kind === 'package' ? 'packages/example/index.ts' : `src/${kind}/index.ts`
+      state.put(path, 'export {}')
+      state.manifest.modules.host.ownerPaths.push(path)
+    }
+    state.save()
+    const base = state.commit()
+    state.split()
+    state.put(leaf, 'export const value = 2')
+    expect(state.check(base).ok).toBe(false)
+  }
+)
+
+it.each(['before', 'after'])(
+  'retains unresolved dependency evidence in the %s source graph',
+  (revision) => {
+    const state = fixture()
+    const opaque = 'const target = process.env.RUNTIME_MODULE; import(target)'
+    state.put(app, revision === 'before' ? opaque : 'export const value = 1')
+    const base = state.commit()
+    state.split()
+    state.put(app, revision === 'after' ? opaque : 'export const value = 2')
+    state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
+    expect(state.check(base).ok).toBe(false)
+    state.manifest.modules.foundation.testFiles.consumer.push(appTest)
+    expect(state.check(base).ok).toBe(true)
+  }
+)
+
+it('does not partially authorize an original owner with one unverified destination', () => {
+  const state = sourceSplit()
+  state.manifest.modules.application = {
+    ...state.manifest.modules.foundation,
+    ownerPaths: [app, appTest],
+    interfacePaths: [app],
+    testFiles: { owner: [appTest], contract: [contract], consumer: [uncertain] }
+  }
+  state.manifest.modules.host.ownerPaths = [contract]
+  state.manifest.modules.host.interfacePaths = [contract]
+  state.manifest.modules.host.testFiles.owner = []
+  expect(state.check().ok).toBe(true)
+  state.manifest.modules.application.testFiles.contract = []
+  const result = state.check()
+  expect(result.ok).toBe(false)
+  expect(result.boundedOwnerSplits).toEqual([])
+})
+
+it('retains strict consumer retirement when source changes accompany the transfer', () => {
+  const state = fixture()
+  state.put(consumer, "import './leaf'; window.api.readState()")
+  state.manifest.modules.host.testFiles.consumer = [consumer]
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  state.manifest.modules.host.testFiles.consumer = []
+  const result = state.check(base)
+  expect(result.ok).toBe(false)
+  expect(result.retiredConsumers).not.toContain(`host:${consumer}`)
+  state.manifest.modules.host.testFiles.consumer.push(consumer)
   expect(state.check(base).ok).toBe(true)
 })
