@@ -10,7 +10,7 @@ import {
   type JournalIdentity
 } from '@aipoch/journal-catalog/contracts'
 
-import type { LiteratureItemInput } from '../../../../../shared/literature'
+import type { LiteratureItemInput } from '../../../../../shared/literature-item'
 
 type ResolutionIdentity = Extract<JournalRequest, { action: 'resolve' }>['identities'][number]
 

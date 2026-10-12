@@ -36,10 +36,10 @@ import {
   createLiteratureIdentifierUrl,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import {
-  createLiteratureAttachmentVersionReference,
-  type LiteratureItemView,
-  type LiteratureCatalogSearchPage
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
+import type {
+  LiteratureItemView,
+  LiteratureCatalogSearchPage
 } from '../../../../../shared/literature'
 import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'

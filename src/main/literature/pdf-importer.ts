@@ -1,5 +1,5 @@
 import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { literatureItemInputSchema } from '../../shared/literature-item'
 import { nativeImportReceipt } from '../pdf-annotations/native-import'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import {
@@ -27,7 +27,7 @@ import type { LiteratureCatalog } from './catalog'
 import type { ContentRepository } from '../storage/content-repository'
 import type { UploadRepository } from '../uploads/repository'
 import type { PdfAnnotationRepository } from '../pdf-annotations/repository'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { CreatePdfAnnotationRequest } from '../../shared/pdf-annotations'
 
 type LiteraturePdfImporterOptions = Readonly<{

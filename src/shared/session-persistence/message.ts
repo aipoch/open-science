@@ -6,7 +6,7 @@ import {
   type AcpContextWindowSample,
   MAX_ACP_RUNTIME_EVENTS
 } from '../acp'
-import type { LiteratureItemInput } from '../literature'
+import type { LiteratureItemInput } from '../literature-item'
 import type { FileReference } from '../artifacts'
 import type { AgentFrameworkId, ReasoningEffort } from '../settings'
 import type { PersistedUploadedAttachment } from '../uploads'

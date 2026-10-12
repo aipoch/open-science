@@ -113,7 +113,7 @@ import type {
   LiteratureItemView
 } from '../../../../shared/literature'
 import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
-import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { FilePreviewDialog } from '../workspace/FilePreviewDialog'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../workspace/preview-file-item'

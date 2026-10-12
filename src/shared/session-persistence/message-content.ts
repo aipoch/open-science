@@ -13,7 +13,7 @@ import {
 } from './message'
 import { asString, isRecord, asNumber } from './primitives'
 import type { PersistedUploadedAttachment } from '../uploads'
-import { literatureItemInputSchema } from '../literature'
+import { literatureItemInputSchema } from '../literature-item'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   sanitizeAcpMessageImage,

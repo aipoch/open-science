@@ -1,7 +1,7 @@
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { PdfAnnotationScope, PdfAnnotationSource } from '../../shared/pdf-annotations'

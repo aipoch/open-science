@@ -1,9 +1,9 @@
 import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
-import {
-  createLiteratureAttachmentVersionReference,
-  type LiteratureAttachmentVersionView,
-  type LiteratureCollectionView,
-  type LiteratureItemView
+import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
+import type {
+  LiteratureAttachmentVersionView,
+  LiteratureCollectionView,
+  LiteratureItemView
 } from '../../../../shared/literature'
 import type {
   LiteratureReference,

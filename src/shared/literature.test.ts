@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createLiteratureAttachmentVersionReference,
   literatureApplicationCommandContracts,
+  literatureItemInputSchema,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
   literatureCollectionViewSchema,
@@ -11,6 +12,12 @@ import {
   literatureFormatReferencesRequestSchema,
   parseLiteratureAttachmentVersionReference
 } from './literature'
+
+import { literatureItemInputSchema as itemSchema } from './literature-item'
+
+it('keeps the public literature item schema identical to the snapshot contract', () => {
+  expect(literatureItemInputSchema).toBe(itemSchema)
+})
 
 describe('Literature identifier draft lookup contract', () => {
   it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {

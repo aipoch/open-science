@@ -8,7 +8,7 @@ import {
   type JournalAttribute
 } from '@aipoch/journal-catalog/contracts'
 
-import type { LiteratureItemInput } from '../../../../shared/literature'
+import type { LiteratureItemInput } from '../../../../shared/literature-item'
 import { TAG_COLORS } from '@/pages/settings/tag-presentation'
 import type { TagColorKey } from '../../../../shared/tags'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'

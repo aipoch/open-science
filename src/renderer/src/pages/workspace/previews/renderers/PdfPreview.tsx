@@ -95,7 +95,7 @@ import {
   type Annotation,
   type PdfAnnotation
 } from '../../../../../../shared/annotations'
-import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature-attachment-reference'
 import {
   sanitizePdfDocumentSource,
   type PdfDocumentSource

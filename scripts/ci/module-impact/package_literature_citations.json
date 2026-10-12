@@ -1336,7 +1336,8 @@
       "packages/literature-discovery/test/reference-resolver.test.ts",
       "packages/literature-discovery/test/contracts.test.ts",
       "packages/literature-discovery/test/scale.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/shared/literature-item.test.ts"
     ]
   },
   "capabilityOverlays": [],

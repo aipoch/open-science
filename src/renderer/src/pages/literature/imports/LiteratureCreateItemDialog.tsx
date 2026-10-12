@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureItemInput } from '../../../../../shared/literature'
+import type { LiteratureItemInput } from '../../../../../shared/literature-item'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import {

@@ -5,7 +5,6 @@ import {
   literatureFullTextRequestSchema
 } from '@aipoch/literature-discovery/contracts'
 import {
-  bibliographicRecordSchema,
   LITERATURE_ITEM_TYPES,
   LITERATURE_CITATION_LOCALES,
   LITERATURE_CSL_MAX_BYTES,
@@ -36,6 +35,7 @@ import {
   createLiteratureAttachmentVersionReference,
   parseLiteratureAttachmentVersionReference
 } from './literature-attachment-reference'
+import { literatureItemInputSchema, type LiteratureItemInput } from './literature-item'
 import { pdfAnnotationSchema, pdfAddToLiteratureRequestSchema } from './pdf-annotations'
 import { z } from 'zod'
 
@@ -80,12 +80,6 @@ const literatureFilterSchema = z
     ({ yearFrom, yearTo }) => yearFrom === undefined || yearTo === undefined || yearFrom <= yearTo,
     { message: 'The start year must not be after the end year.' }
   )
-const literatureItemInputSchema = bibliographicRecordSchema
-  .extend({
-    rating: z.number().int().min(0).max(5).optional(),
-    personalNote: z.string().trim().max(10_000).optional()
-  })
-  .strict()
 
 const literatureSourceInputSchema = z
   .object({
@@ -830,7 +824,6 @@ const literatureApplicationCommandContracts = Object.freeze({
 })
 type LiteratureInboxState = (typeof LITERATURE_INBOX_STATES)[number]
 
-type LiteratureItemInput = z.infer<typeof literatureItemInputSchema>
 type LiteratureSourceInput = z.infer<typeof literatureSourceInputSchema>
 type LiteratureCandidateOrigin = z.infer<typeof literatureCandidateOriginSchema>
 type LiteratureCandidateInput = z.infer<typeof literatureCandidateInputSchema>

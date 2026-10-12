@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { literatureItemInputSchema } from '../../shared/literature-item'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { PackageRecords } from './native-snapshot'
 import { LiteratureCatalog } from '../literature/catalog'
