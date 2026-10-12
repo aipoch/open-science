@@ -135,6 +135,8 @@ test('opens and completely reads three large Notebook runs without retaining pre
   await expect(cells).toHaveCount(100)
   await expect(cells.nth(96)).toContainText('print(0)')
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+  // Select the conversation first so its persisted graph is hydrated for Agent filtering.
+  await page.getByText(otherSession.title, { exact: true }).first().click()
   await page.getByText(otherSession.title, { exact: true }).first().click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'View notebook', exact: true }).click()
   await expect(cells).toHaveCount(1)
