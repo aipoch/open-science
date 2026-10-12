@@ -24,8 +24,12 @@ describe('artifact version locator contract', () => {
     }
     const stored = 'artifact-version:project%2Fone/session%20two/%E5%9B%BE%25%23/v%3A1'
     expect(createArtifactVersionLocator(identity)).toBe(stored)
-    const { cursor: _cursor, ...expected } = identity
-    expect(parseArtifactVersionLocator(stored)).toEqual(expected)
+    expect(parseArtifactVersionLocator(stored)).toEqual({
+      projectId: 'project/one',
+      appSessionId: 'session two',
+      artifactId: '图%#',
+      versionId: 'v:1'
+    })
     expect(parseArtifactVersionLocator('artifact-version:p/s/a/v')).toEqual({
       projectId: 'p',
       appSessionId: 's',
