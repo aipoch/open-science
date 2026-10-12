@@ -14,7 +14,6 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { finished } from 'node:stream/promises'
-import { load } from 'js-yaml'
 import micromatch from 'micromatch'
 
 import { describe, expect, it } from 'vitest'

@@ -31,9 +31,7 @@
   ],
   "testFiles": {
     "owner": [],
-    "contract": [
-      "src/main/notebook/package-boundaries.architecture.test.ts"
-    ],
+    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",

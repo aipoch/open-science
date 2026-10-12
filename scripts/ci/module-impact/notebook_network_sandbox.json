@@ -97,9 +97,7 @@
     "packages/notebook-network-sandbox/runtime/src/gateway/execution-confinement.cjs",
     "packages/notebook-network-sandbox/runtime/src/gateway/execution-confinement.d.cts"
   ],
-  "consumerModules": [
-    "notebook_execution"
-  ],
+  "consumerModules": ["notebook_execution"],
   "testFiles": {
     "owner": [
       "packages/notebook-network-sandbox/src/config.test.ts",

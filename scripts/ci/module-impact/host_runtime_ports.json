@@ -14,9 +14,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/renderer-broadcast.test.ts"
-    ],
+    "owner": ["src/main/renderer-broadcast.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -938,10 +936,6 @@
       "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

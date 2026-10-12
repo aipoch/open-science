@@ -10,9 +10,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/settings/mirror-view.test.ts"
-    ],
+    "owner": ["src/renderer/src/pages/settings/mirror-view.test.ts"],
     "contract": [],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",

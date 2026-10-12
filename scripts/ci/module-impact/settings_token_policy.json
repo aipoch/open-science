@@ -3,18 +3,10 @@
     "src/main/settings/provider-token-limits.ts",
     "src/main/settings/provider-token-limits.test.ts"
   ],
-  "interfacePaths": [
-    "src/main/settings/provider-token-limits.ts"
-  ],
-  "consumerModules": [
-    "settings_provider_accounts",
-    "settings_service_facade",
-    "compute_service"
-  ],
+  "interfacePaths": ["src/main/settings/provider-token-limits.ts"],
+  "consumerModules": ["settings_provider_accounts", "settings_service_facade", "compute_service"],
   "testFiles": {
-    "owner": [
-      "src/main/settings/provider-token-limits.test.ts"
-    ],
+    "owner": ["src/main/settings/provider-token-limits.test.ts"],
     "contract": [
       "src/shared/settings.test.ts",
       "src/preload/index.test.ts",
@@ -872,10 +864,6 @@
       "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

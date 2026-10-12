@@ -36,9 +36,7 @@
       "packages/connector-mcp-client/src/oauth-client.test.ts",
       "packages/connector-mcp-client/src/oauth-redirect.test.ts"
     ],
-    "contract": [
-      "src/main/connectors/boundaries.architecture.test.ts"
-    ],
+    "contract": ["src/main/connectors/boundaries.architecture.test.ts"],
     "consumer": [
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",

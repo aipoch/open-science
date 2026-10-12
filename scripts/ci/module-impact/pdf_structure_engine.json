@@ -2555,8 +2555,6 @@
       "src/renderer/replay-viewer/research-viewer.test.tsx"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
