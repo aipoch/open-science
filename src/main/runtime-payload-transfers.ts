@@ -133,7 +133,6 @@ export class RuntimePayloadTransfers {
       }
       try {
         return await this.use(entry, async () => {
-          this.touch(entry)
           if (request.kind === 'read') {
             if (
               entry.mode !== 'download' ||
@@ -181,6 +180,7 @@ export class RuntimePayloadTransfers {
           )
           if (!Array.isArray(uploaded)) throw new Error('Invalid uploaded command arguments.')
           this.authorize(caller, lease, entry)
+          this.reserve(entry, MAX_RUNTIME_PAYLOAD_BYTES)
           return this.publish(entry, await dispatch(uploaded), caller)
         })
       } catch (error) {
@@ -214,9 +214,12 @@ export class RuntimePayloadTransfers {
         }
         if (readBytes !== undefined) this.reserve(entry, Buffer.byteLength(readBytes))
         await this.activate(entry, caller)
-        return readBytes === undefined
-          ? this.publish(entry, await dispatch(args), caller)
-          : this.publish(entry, readResult, caller, readBytes)
+        if (readBytes === undefined) {
+          // Reserve the largest supported result before committing a domain mutation.
+          this.reserve(entry, MAX_RUNTIME_PAYLOAD_BYTES)
+          return this.publish(entry, await dispatch(args), caller)
+        }
+        return this.publish(entry, readResult, caller, readBytes)
       })
     } catch (error) {
       await this.release(entry)
@@ -279,17 +282,18 @@ export class RuntimePayloadTransfers {
   private async use<T>(entry: Transfer, operation: () => Promise<T>): Promise<T> {
     if (entry.busy) throw new Error('A payload operation is already in progress.')
     entry.busy = true
+    clearTimeout(entry.idleTimer)
     const pending = operation()
     entry.pending = pending
     try {
       return await pending
     } finally {
       entry.busy = false
+      if (!entry.closed) {
+        entry.idleTimer = setTimeout(entry.abort, IDLE_MS)
+        entry.idleTimer.unref()
+      }
     }
-  }
-
-  private touch(entry: Transfer): void {
-    entry.idleTimer.refresh()
   }
 
   private reserve(entry: Transfer, bytes: number): void {

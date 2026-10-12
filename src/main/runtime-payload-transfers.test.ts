@@ -422,3 +422,98 @@ it('bounds waiting reads, removes cancelled callers and rechecks authority befor
   expect(extra.dispatch).toHaveBeenCalledOnce()
   await expect(extra.invoke('notebook:state')).resolves.toEqual([])
 })
+
+it.each(['inline', 'upload'])(
+  'does not expire a busy %s mutation as an idle transfer',
+  async (mode) => {
+    vi.useFakeTimers()
+    const client = caller()
+    let finish!: () => void
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const ready = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    client.dispatch.mockImplementation(async () => {
+      entered()
+      await ready
+      return { text: 'x'.repeat(9 * 1024 * 1024) }
+    })
+    const channel = mode === 'inline' ? 'sessions:edit-details' : 'sessions:save-session'
+    let snapshotId: string | undefined
+    if (mode === 'upload') {
+      const descriptor = runtimePayloadDescriptorSchema.parse(
+        await client.invoke(channel, [], {
+          kind: 'upload',
+          byteLength: 2
+        })
+      )
+      snapshotId = descriptor.$payload.snapshotId
+      await client.invoke(channel, [], { kind: 'append', snapshotId, offset: 0, data: 'W10=' })
+    }
+    const pending = client.invoke(
+      channel,
+      [],
+      snapshotId ? { kind: 'commit', snapshotId } : undefined
+    )
+    const outcome = Promise.allSettled([pending])
+    await started
+    await vi.advanceTimersByTimeAsync(60_001)
+    finish()
+    const [settled] = await outcome
+    expect(settled.status).toBe('fulfilled')
+    if (settled.status !== 'fulfilled') throw settled.reason
+    const result = runtimePayloadDescriptorSchema.parse(settled.value)
+    expect(result.$payload.byteLength).toBeGreaterThan(9 * 1024 * 1024)
+    expect(client.dispatch).toHaveBeenCalledOnce()
+    // The idle clock resumes after work completes.
+    await vi.advanceTimersByTimeAsync(60_001)
+    await owner.settleReleased()
+    await expect(
+      client.invoke(channel, [], {
+        kind: 'read',
+        snapshotId: result.$payload.snapshotId,
+        offset: 0
+      })
+    ).rejects.toThrow('no longer available')
+  }
+)
+
+it.each(['inline', 'upload'])(
+  'reserves %s mutation result capacity before dispatching domain changes',
+  async (mode) => {
+    const client = caller('writer')
+    const channel = mode === 'inline' ? 'sessions:edit-details' : 'sessions:save-session'
+    let snapshotId: string | undefined
+    if (mode === 'upload') {
+      const descriptor = runtimePayloadDescriptorSchema.parse(
+        await client.invoke(channel, [], {
+          kind: 'upload',
+          byteLength: 2
+        })
+      )
+      snapshotId = descriptor.$payload.snapshotId
+      await client.invoke(channel, [], { kind: 'append', snapshotId, offset: 0, data: 'W10=' })
+    }
+    await caller('quota-a').invoke('sessions:save-session', [], {
+      kind: 'upload',
+      byteLength: 512 * 1024 * 1024
+    })
+    await caller('quota-b').invoke('sessions:save-session', [], {
+      kind: 'upload',
+      byteLength: 512 * 1024 * 1024 - (snapshotId ? 2 : 0)
+    })
+    let committed = false
+    client.dispatch.mockImplementation(async () => {
+      committed = true
+      return { text: 'x'.repeat(9 * 1024 * 1024) }
+    })
+    await expect(
+      client.invoke(channel, [], snapshotId ? { kind: 'commit', snapshotId } : undefined)
+    ).rejects.toThrow('byte budget')
+    expect(committed).toBe(false)
+    expect(client.dispatch).not.toHaveBeenCalled()
+  }
+)
