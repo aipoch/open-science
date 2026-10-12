@@ -510,6 +510,28 @@ describe('installed-consumer input selection', () => {
     expect(select([path]).selected).toEqual([])
     expect(select([path]).excluded).toHaveLength(actual.packages.length)
   })
+  it('does not install packages for the complete scheduled-regression repair from PR 3478', () => {
+    expect(
+      select([
+        'e2e/reproducibility-preview.spec.ts',
+        'e2e/session-diagnostics.spec.ts',
+        'e2e/vite.browser-test.config.ts',
+        'scripts/ci/module-test-impact.mjs',
+        'scripts/ci/module-test-impact.test.ts',
+        'scripts/ci/package-test-impact.test.ts',
+        'scripts/ci/windows-test-sequencer.test.ts',
+        'scripts/ci/windows-test-sequencer.ts',
+        'scripts/electron-vite-config.test.ts',
+        'scripts/runtime-archives.mjs',
+        'scripts/runtime-archives.test.ts',
+        'src/main/agents/completion-gate.execute-control.integration.test.ts',
+        'src/main/delegation/production-composition.test.ts',
+        'src/main/notebook/runtime-service.test.ts',
+        'src/main/session-package/service.test.ts',
+        'test/config/vite.browser-test.config.test.ts'
+      ]).selected
+    ).toEqual([])
+  })
   it('keeps mixed package/host edits directional and only builds upstream prerequisites', async () => {
     const { packageVerificationPlan } = await import('../package-verification-plan.mjs')
     const plan = select(['src/main/application-events.ts', 'packages/pdf-translation/src/index.ts'])

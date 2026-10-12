@@ -41,7 +41,7 @@ export const verificationFamilies = [
 const verificationSharedInput =
   /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|vitest[^/]*|tsconfig[^/]*|patches\/|scripts\/(?:(?:check-packages|package-verification-plan|build-dev-packages|build-packages)\.mjs$|ci\/(?:package-test-boundaries\.json$|(?:package-test-impact|npm-ci)\.mjs$))|\.github\/actions\/(?:select-package-tests|verify-packages)\/)/
 const verificationUnrelatedInput =
-  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/config\/|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-|consumer-retirement)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
+  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/config\/|scripts\/runtime-archives\.mjs$|scripts\/ci\/windows-test-sequencer\.ts$|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-|consumer-retirement)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
 
 function verificationPaths(paths, roots) {
   return paths.flatMap((path) => {

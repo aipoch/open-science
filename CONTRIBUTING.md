@@ -570,12 +570,8 @@ Ubuntu PR tests skip unchanged upstream packages while retaining host integratio
 shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
 Registry changes require CI owner review.
 
-Installed tarball checks are separate from static checks and run for affected packages plus downstream
-consumers in merge queue. Host-only changes skip installation; shared package toolchain/dependency
-changes and incomplete evidence retain broad verification. Source Regression runs the full installed
-package baseline twice daily, and the package policy dry-run is manual-only. All three use the same
-verification action. CLI/SDK and published-runtime execution have a separate blocking job, retaining
-their existing lane selection. See [Package workflows](docs/package-workflows.md).
+Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
+Use the manual package dry-run for focused diagnostics; see [Package workflows](docs/package-workflows.md).
 
 For pure registered-package edits, `test:affected` can further omit host tests added only
 by downstream module expansion. It preserves directly declared owner/contract/consumer
