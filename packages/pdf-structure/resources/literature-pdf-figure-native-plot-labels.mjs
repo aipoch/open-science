@@ -326,15 +326,15 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
   // ordinary paragraph lines and single tick labels remain excluded.
   const bottomTextLegend = /^native-raster-vector-/.test(figure.reason ?? '')
     ? boundaryText.filter(
-    (t) =>
-      t.horizontal &&
-      t.text.trim().length >= 12 &&
-      (t.text.trim().split(/\s+/u).length >= 3 || t.text.trim().length >= 24) &&
-      t.rect[1] < bounds[3] &&
-      t.rect[3] > bounds[3] &&
-      t.rect[3] - bounds[3] <= t.height * 1.2 &&
-      t.rect[0] >= bounds[0] - t.height &&
-      t.rect[2] <= bounds[2] + t.height * 2
+        (t) =>
+          t.horizontal &&
+          t.text.trim().length >= 12 &&
+          (t.text.trim().split(/\s+/u).length >= 3 || t.text.trim().length >= 24) &&
+          t.rect[1] < bounds[3] &&
+          t.rect[3] > bounds[3] &&
+          t.rect[3] - bounds[3] <= t.height * 1.2 &&
+          t.rect[0] >= bounds[0] - t.height &&
+          t.rect[2] <= bounds[2] + t.height * 2
       )
     : []
   const labels = [

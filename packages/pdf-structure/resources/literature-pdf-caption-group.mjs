@@ -49,7 +49,6 @@ function orderDelayedInlineScripts(items) {
   return ordered
 }
 
-
 // PDF.js can insert a zero-height space when small caps change font size even
 // though the next glyph starts at the previous glyph's advance. Join only that
 // typographic pattern; ordinary word spaces and raised/lowered text stay intact.
@@ -1295,11 +1294,11 @@ function findNativeSingleSpacedCaptionParagraph(start, runs, page, rules) {
         gap < em * 0.95 ||
         gap > em * 1.4 ||
         (leading && Math.abs(gap - leading) > em * 0.03) ||
-        captionKind(row.text) &&
-        !(
-          /^(?:Fig\.?|Figure|Tab\.?|Table)\s+[A-Z]?\d+(?:\.\d+)*[.:]/iu.test(row.text) &&
-          /\b(?:and|by|for|from|in|of|to|with)$/iu.test(previous.text.trim())
-        ) ||
+        (captionKind(row.text) &&
+          !(
+            /^(?:Fig\.?|Figure|Tab\.?|Table)\s+[A-Z]?\d+(?:\.\d+)*[.:]/iu.test(row.text) &&
+            /\b(?:and|by|for|from|in|of|to|with)$/iu.test(previous.text.trim())
+          )) ||
         /^Notes?\s*[:.]/iu.test(row.text)
       )
         break
@@ -1424,14 +1423,11 @@ function findNativeSingleSpacedCaptionParagraph(start, runs, page, rules) {
     const alignedOwners =
       owners.length >= 2 &&
       owners.every(
-        (r) =>
-          Math.abs(r[1] - owners[0][1]) < em * 0.1 &&
-          Math.abs(r[3] - owners[0][3]) < em * 0.1
+        (r) => Math.abs(r[1] - owners[0][1]) < em * 0.1 && Math.abs(r[3] - owners[0][3]) < em * 0.1
       ) &&
       owners.every((r, i) =>
         owners.every(
-          (other, j) =>
-            i === j || r[2] <= other[0] + em * 0.1 || other[2] <= r[0] + em * 0.1
+          (other, j) => i === j || r[2] <= other[0] + em * 0.1 || other[2] <= r[0] + em * 0.1
         )
       )
     const singleOwner =
@@ -1933,14 +1929,17 @@ function findNativeBoundedFigureParagraph(start, runs, page, rules) {
     !styled ||
     !/\([a-z]\)/iu.test(start.text) ||
     (runs.some(
-      (line) =>
-        line.y < start.y &&
-        /^\([a-z]\)(?:\s+\([a-z]\))*$/iu.test(line.text.trim())
+      (line) => line.y < start.y && /^\([a-z]\)(?:\s+\([a-z]\))*$/iu.test(line.text.trim())
     ) &&
       (() => {
         const owners = page.graphicsBounds.filter((graphic) => graphic?.kind === 'image')
-        const operationIndexes = owners.map((graphic) => graphic.operationIndex).filter(Number.isFinite)
-        return operationIndexes.length === 0 || new Set(operationIndexes).size === operationIndexes.length
+        const operationIndexes = owners
+          .map((graphic) => graphic.operationIndex)
+          .filter(Number.isFinite)
+        return (
+          operationIndexes.length === 0 ||
+          new Set(operationIndexes).size === operationIndexes.length
+        )
       })())
   if (
     page.lines.some(
@@ -6291,19 +6290,27 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         )
           return false
         const previous = runs
-          .filter((candidate) => candidate !== line && candidate.y < line.y && candidate.y >= start.y)
+          .filter(
+            (candidate) => candidate !== line && candidate.y < line.y && candidate.y >= start.y
+          )
           .sort((a, b) => b.y - a.y)[0]
         return /\b(?:and|by|for|from|in|of|to|with)$/iu.test(previous?.text.trim() ?? '')
       })
-      const referenceRows = referenceRow && [start, ...runs.filter((line) => line.y > start.y && line.y <= referenceRow.y)]
-      const referenceBottom = referenceRows?.reduce((bottom, line) => Math.max(bottom, line.bottom), 0) ?? 0
+      const referenceRows = referenceRow && [
+        start,
+        ...runs.filter((line) => line.y > start.y && line.y <= referenceRow.y)
+      ]
+      const referenceBottom =
+        referenceRows?.reduce((bottom, line) => Math.max(bottom, line.bottom), 0) ?? 0
       const referenceAfter = referenceRow && runs.find((line) => line.y > referenceBottom + 0.02)
       const referenceGraphicOverlap =
         referenceRow &&
         (page.graphicsBounds ?? []).some((graphic) => {
           const rect = graphic?.normalizedRect
           if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) return true
-          const [x0, y0, x1, y1] = rect.map((value, index) => value * (index % 2 ? page.height : page.width))
+          const [x0, y0, x1, y1] = rect.map(
+            (value, index) => value * (index % 2 ? page.height : page.width)
+          )
           return x0 < start.right && x1 > start.x && y0 < referenceBottom && y1 > start.y
         })
       const anyNumberedReferenceRow = runs.find(
@@ -6330,7 +6337,10 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           referenceRow.bottom <= referenceRow.y ||
           Math.abs(referenceRow.fontSize - start.fontSize) > start.fontSize * 0.015 ||
           start.bottom - start.y < start.fontSize - 0.02 ||
-          !referenceRows?.at(-2)?.text.trim().match(/\b(?:and|by|for|from|in|of|to|with)$/iu) ||
+          !referenceRows
+            ?.at(-2)
+            ?.text.trim()
+            .match(/\b(?:and|by|for|from|in|of|to|with)$/iu) ||
           referenceRulesBroken ||
           referenceGraphicOverlap ||
           !referenceAfter ||
