@@ -1295,6 +1295,9 @@ describe('PR Gate workflow', () => {
         "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-15' }}"
     })
     expect(unit.if).toContain('always()')
+    expect(unit.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).mode == 'full'"
+    )
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     expect(shards.env?.VITEST_MAX_WORKERS).toBeUndefined()
     expect(shards.env?.OPEN_SCIENCE_TEST_MAX_WORKERS).toBeUndefined()
@@ -1313,6 +1316,9 @@ describe('PR Gate workflow', () => {
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
+    expect(shards.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).mode == 'full'"
+    )
     expect(shards.if).toContain(
       "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')"
     )
