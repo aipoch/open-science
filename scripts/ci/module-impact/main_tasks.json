@@ -13,7 +13,10 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/tasks/task-run-journal.test.ts", "src/main/tasks/task-runner.test.ts"],
+    "owner": [
+      "src/main/tasks/task-run-journal.test.ts",
+      "src/main/tasks/task-runner.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -56,9 +59,14 @@
       "src/main/session-persistence/ipc.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

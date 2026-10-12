@@ -516,9 +516,14 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/session-diagnostics/collector.test.ts",
       "src/main/session-diagnostics/database.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

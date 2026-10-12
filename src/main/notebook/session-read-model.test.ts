@@ -283,6 +283,7 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      revision: 'test',
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({
           runId: `run-${index + 25}`,
@@ -359,6 +360,7 @@ describe('NotebookSessionReadModel', () => {
       latestDataKernel: 'r' as const
     }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      revision: 'test',
       runs: [],
       total: 125,
       latestRunEnvironments: {},
@@ -396,6 +398,7 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      revision: 'test',
       runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
       total: 125,
       latestRunEnvironments: {}

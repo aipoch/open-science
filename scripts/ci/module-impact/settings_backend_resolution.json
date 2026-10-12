@@ -66,7 +66,11 @@
     "src/main/settings/xai-protocol.ts",
     "src/main/settings/backend-target.ts"
   ],
-  "consumerModules": ["settings_service_facade", "reviewer_orchestrator", "artifact_provenance"],
+  "consumerModules": [
+    "settings_service_facade",
+    "reviewer_orchestrator",
+    "artifact_provenance"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -575,9 +579,14 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/settings/system-proxy.test.ts",
-      "src/main/settings/network-proxy-runtime.test.ts"
+      "src/main/settings/network-proxy-runtime.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

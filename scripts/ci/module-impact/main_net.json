@@ -1,9 +1,16 @@
 {
-  "ownerPaths": ["src/main/net/network-info.test.ts", "src/main/net/network-info.ts"],
-  "interfacePaths": ["src/main/net/network-info.ts"],
+  "ownerPaths": [
+    "src/main/net/network-info.test.ts",
+    "src/main/net/network-info.ts"
+  ],
+  "interfacePaths": [
+    "src/main/net/network-info.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/net/network-info.test.ts"],
+    "owner": [
+      "src/main/net/network-info.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -371,9 +378,14 @@
       "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
-      "src/main/notebook/environment-startup.contract.test.ts"
+      "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

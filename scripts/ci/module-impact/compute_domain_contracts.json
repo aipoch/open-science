@@ -20,7 +20,9 @@
     "shared_workspace_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/compute/src/host-connection-profile.test.ts"],
+    "owner": [
+      "packages/compute/src/host-connection-profile.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "packages/compute/src/cleanup-stop-evidence.test.ts",
@@ -988,9 +990,14 @@
       "src/shared/renderer-contract-catalog.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

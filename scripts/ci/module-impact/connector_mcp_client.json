@@ -36,7 +36,9 @@
       "packages/connector-mcp-client/src/oauth-client.test.ts",
       "packages/connector-mcp-client/src/oauth-redirect.test.ts"
     ],
-    "contract": ["src/main/connectors/boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/connectors/boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
@@ -461,7 +463,8 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

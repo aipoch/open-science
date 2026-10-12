@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
@@ -661,6 +662,7 @@ class NotebookRunRepository {
     string,
     { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
   >()
+  private readonly documentRevisions = new WeakMap<NotebookRunDocument, string>()
   private documentCacheBytes = 0
   // ponytail: reuse the bounded document cache; cold/oversized JSON still needs a full read.
   // A durable per-run index is the next step if archives routinely exceed that cache budget.
@@ -1274,6 +1276,7 @@ class NotebookRunRepository {
     historySummaryFrameId?: string,
     historyBefore?: NotebookRunCursor
   ): Promise<{
+    revision: string
     runs: NotebookRunRecord[]
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
@@ -1347,6 +1350,17 @@ class NotebookRunRepository {
     const mergedRuns = new Map(pageRuns.map((run) => [run.runId, run]))
     for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
     return {
+      revision: createHash('sha256')
+        .update(
+          documents
+            .map(
+              (document) =>
+                `${document.notebookSessionRoot}:${this.documentRevisions.get(document) ?? document.updatedAt}:${document.runs.length}`
+            )
+            .sort()
+            .join('\n')
+        )
+        .digest('hex'),
       runs: [...mergedRuns.values()].sort(compareRuns),
       total,
       latestRunEnvironments: Object.fromEntries(
@@ -1419,6 +1433,10 @@ class NotebookRunRepository {
         // cached under the replacement file's identity; under continuous writes, return this valid
         // snapshot without caching it and let the next caller observe the latest document.
         if (attempt + 1 < MAX_DOCUMENT_READ_ATTEMPTS) continue
+        this.documentRevisions.set(
+          normalized,
+          `unstable:${fileInfo.ino}:${fileInfo.mtimeMs}:${fileInfo.size}`
+        )
         return normalized
       }
       this.rememberDocument(filePath, {
@@ -1571,6 +1589,7 @@ class NotebookRunRepository {
     filePath: string,
     entry: { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
   ): void {
+    this.documentRevisions.set(entry.document, `${entry.ino}:${entry.mtimeMs}:${entry.size}`)
     const previous = this.documentCache.get(filePath)
     if (previous) {
       this.documentCache.delete(filePath)

@@ -78,7 +78,7 @@ const useSessionBackgroundTasks = (
         const [state, activity, jobs] = await Promise.all([
           // Notebook state can initialize runtime resources, so respect the export admission lock.
           notebook && !exportLocked
-            ? window.api.notebook.state(notebook).catch(() => undefined)
+            ? window.api.notebook.state({ ...notebook, readMode: 'bounded' }).catch(() => undefined)
             : Promise.resolve(undefined),
           window.api.backgroundResultDelivery?.getSessionActivity
             ? window.api.backgroundResultDelivery

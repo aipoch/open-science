@@ -142,7 +142,27 @@ const notebookLocalRpcRequestSchemas = {
     runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
     command: z.string().min(1).optional()
   }),
-  state: notebookSessionRequestSchema,
+  state: notebookSessionRequestSchema.extend({
+    readMode: z.literal('bounded').optional(),
+    readRevision: z.string().max(128).optional(),
+    runIds: z.array(z.string().min(1).max(1024)).max(20).optional(),
+    historyLimit: z.number().int().min(1).max(100).optional(),
+    historyBefore: z
+      .object({ startedAt: z.number().finite(), runId: z.string().min(1).max(1024) })
+      .strict()
+      .optional(),
+    historySummaryFrameId: z.string().max(1024).optional(),
+    contentRead: z
+      .object({
+        runId: z.string().min(1).max(1024),
+        revision: z.string().max(128),
+        cursor: z
+          .object({ part: z.number().int().nonnegative(), offset: z.number().int().nonnegative() })
+          .strict()
+      })
+      .strict()
+      .optional()
+  }),
   restart: z.union([
     notebookSessionRequestSchema,
     notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),

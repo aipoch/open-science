@@ -107,7 +107,11 @@
     "src/main/literature/pdf-translation/ipc.ts",
     "src/main/literature/pdf-translation/usage.ts"
   ],
-  "consumerModules": ["desktop_composition", "shared_application_contracts", "workspace_previews"],
+  "consumerModules": [
+    "desktop_composition",
+    "shared_application_contracts",
+    "workspace_previews"
+  ],
   "testFiles": {
     "owner": [
       "src/main/literature/pdf-translation/index.test.ts",
@@ -486,9 +490,12 @@
       "src/main/artifacts/provenance-startup.integration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",
       "src/main/acp/runtime-composition.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions"],
+  "capabilityOverlays": [
+    "e2e_regressions"
+  ],
   "fallbackCapability": "main_runtime"
 }

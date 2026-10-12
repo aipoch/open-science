@@ -1,3 +1,4 @@
+import { boundNotebookState } from './bounded-read'
 import type {
   NotebookCell,
   NotebookEnvironmentStatus,
@@ -11,7 +12,8 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
-  NotebookSessionState
+  NotebookSessionState,
+  NotebookSessionStateRequest
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import {
@@ -166,14 +168,21 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     includeRunIds: readonly string[] = [],
     historySummaryFrameId?: string,
     historyBefore?: NotebookRunCursor,
-    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT
+    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT,
+    boundedRequest?: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const document = await this.options.repository.loadOrCreate({
-      projectId: session.projectId,
-      sessionId: session.sessionId,
-      workspaceCwd: session.cwd,
-      lane: session.lane
-    })
+    const document =
+      (await this.options.repository.findExisting(
+        session.projectId,
+        session.sessionId,
+        session.lane
+      )) ??
+      (await this.options.repository.loadOrCreate({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        workspaceCwd: session.cwd,
+        lane: session.lane
+      }))
     const snapshot = session.snapshot()
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
@@ -202,7 +211,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       !defaultKernelTerminated
     const liveDefaultKernelStatus = session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY)
 
-    return {
+    const state: NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings } = {
       id: session.id,
       sessionId: session.sessionId,
       cwd: session.cwd,
@@ -236,14 +245,25 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(!targetedRunRead && !summaryOnlyRead && runWindow.historyPage
         ? { historyPage: runWindow.historyPage }
         : {}),
-      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: sparseRunRead
-        ? []
-        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      runs: boundedRequest
+        ? runWindow.runs
+        : runWindow.runs.map((run) => this.toPublicRunRecord(run)),
+      recentRuns:
+        boundedRequest || sparseRunRead
+          ? []
+          : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
     }
+    return boundedRequest
+      ? (boundNotebookState(
+          state,
+          boundedRequest,
+          runWindow.revision,
+          state.runs
+        ) as NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings })
+      : state
   }
 
   async importedState(
@@ -251,20 +271,23 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     runIds: readonly string[],
     historySummaryFrameId: string | undefined,
     historyBefore: NotebookRunCursor | undefined,
-    historyLimit: number
+    historyLimit: number,
+    boundedRequest?: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const window = await this.options.repository.readSessionRunWindow(
       projectId,
       request.sessionId,
-      historyLimit,
+      boundedRequest && runIds.length ? 0 : historyLimit,
       runIds,
       historySummaryFrameId,
       historyBefore
     )
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
-    const runs = window.runs.map((run) => this.toPublicRunRecord(run))
-    return {
+    const runs = boundedRequest
+      ? window.runs
+      : window.runs.map((run) => this.toPublicRunRecord(run))
+    const state: NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings } = {
       id: request.sessionId,
       sessionId: request.sessionId,
       cwd: root,
@@ -279,10 +302,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(window.historySummary ? { historySummary: window.historySummary } : {}),
       ...(window.historyPage ? { historyPage: window.historyPage } : {}),
       runs,
-      recentRuns: runs.slice(-20),
+      recentRuns: boundedRequest ? [] : runs.slice(-20),
       environments: [],
       runtimeBindings: {}
     }
+    return boundedRequest
+      ? { ...boundNotebookState(state, boundedRequest, window.revision, runs), runtimeBindings: {} }
+      : state
   }
 
   async getSessionReference(

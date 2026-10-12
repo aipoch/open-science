@@ -7164,6 +7164,11 @@
     "Selected environment": "選択した環境",
     "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。",
     "No code has run in this view yet.": "このビューではまだコードが実行されていません。",
-    "Code received; waiting for execution details.": "コードを受信しました。実行の詳細を待っています。"
+    "Code received; waiting for execution details.": "コードを受信しました。実行の詳細を待っています。",
+    "Could not load Notebook content": "Notebook の内容を読み込めませんでした",
+    "Notebook output": "Notebook の出力",
+    "Continue reading": "続きを読む",
+    "End of run": "実行の終わり",
+    "Read complete run": "実行内容をすべて読む"
   }
 }

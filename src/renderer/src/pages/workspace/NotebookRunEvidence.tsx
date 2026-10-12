@@ -1,3 +1,4 @@
+import { NotebookContentReader } from './NotebookContentReader'
 import { useTranslation } from 'react-i18next'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
@@ -10,6 +11,13 @@ export const NotebookRunEvidence = ({
   showEnvironmentCaptureWarning?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  if (run.contentRead)
+    return (
+      <details className="mt-2 text-xs text-text-300" data-testid="notebook-run-evidence">
+        <summary className="cursor-pointer">{t('Execution evidence')}</summary>
+        <NotebookContentReader run={run} initialPart={run.contentRead.metadataPart ?? 0} />
+      </details>
+    )
   const target = run.frozenRuntimeTarget
   const capture = run.environmentCapture
   return (

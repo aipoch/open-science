@@ -55,7 +55,9 @@
     "src/main/skills/resource-path.ts",
     "scripts/check-skill-package-boundary.mjs"
   ],
-  "consumerModules": ["settings_service_facade"],
+  "consumerModules": [
+    "settings_service_facade"
+  ],
   "testFiles": {
     "owner": [
       "src/main/skills/user-skill-repository.architecture.test.ts",
@@ -646,9 +648,14 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/environment-download.contract.test.ts",
-      "src/main/notebook/windows-runtime-download.contract.test.ts"
+      "src/main/notebook/windows-runtime-download.contract.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -1,3 +1,4 @@
+import { NotebookContentReader } from './NotebookContentReader'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -414,10 +415,11 @@ const NotebookRunOutputs = ({
                   )
                 : undefined
 
-  if (!hasText && !hasFigures && !run.truncated && !notice && !networkRecovery) return null
+  if (!run.contentRead && !hasText && !hasFigures && !run.truncated && !notice && !networkRecovery) return null
 
   return (
     <div data-testid="notebook-run-outputs">
+      <NotebookContentReader run={run} />
       {allowFolderAccess ? <NotebookFolderAccessNotice run={run} /> : null}
       {networkRecovery ? <NotebookNetworkRecoveryNotice /> : null}
       {notice ? (

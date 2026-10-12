@@ -3,10 +3,14 @@
     "packages/connector-core/src/url-admission.test.ts",
     "packages/connector-core/src/url-admission.ts"
   ],
-  "interfacePaths": ["packages/connector-core/src/url-admission.ts"],
+  "interfacePaths": [
+    "packages/connector-core/src/url-admission.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["packages/connector-core/src/url-admission.test.ts"],
+    "owner": [
+      "packages/connector-core/src/url-admission.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "packages/connector-mcp-client/src/client-manager.test.ts",
@@ -244,7 +248,8 @@
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

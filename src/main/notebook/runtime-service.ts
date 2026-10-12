@@ -2190,7 +2190,11 @@ class NotebookRuntimeService {
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
-      const requestedRunIds = request.runIds ?? []
+      if (request.contentRead && request.readMode !== 'bounded')
+        throw new Error('Content reads require bounded mode.')
+      const requestedRunIds = request.contentRead
+        ? [request.contentRead.runId]
+        : (request.runIds ?? [])
       if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
         throw new Error(
           `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
@@ -2218,7 +2222,8 @@ class NotebookRuntimeService {
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
-          historyLimit
+          historyLimit,
+          request.readMode === 'bounded' ? { ...request, projectId } : undefined
         )
       }
       const session = await this.sessionLifecycle.ensure(request)
@@ -2231,7 +2236,8 @@ class NotebookRuntimeService {
         runIds,
         request.historySummaryFrameId,
         request.historyBefore,
-        historyLimit
+        historyLimit,
+        request.readMode === 'bounded' ? { ...request, projectId } : undefined
       )
     })
   }

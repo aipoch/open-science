@@ -26,7 +26,7 @@ import type {
 } from '../../../../shared/notebook'
 import { kernelKindLabel, resolveRunKernelKind } from './notebook-cell-utils'
 import { NotebookRecordCell as NotebookDialogCell } from './NotebookRecordCell'
-import { loadSessionNotebookData } from './session-notebook-data'
+import { invalidateSessionNotebookCache, loadSessionNotebookData } from './session-notebook-data'
 import {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
@@ -591,6 +591,7 @@ const SessionNotebookDialog = ({
 }: SessionNotebookDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
+  const [readGeneration, setReadGeneration] = useState(0)
   const [runCount, setRunCount] = useState(0)
   const [historyPage, setHistoryPage] = useState<NotebookRunPage>()
   const [loadingEarlier, setLoadingEarlier] = useState(false)
@@ -609,16 +610,26 @@ const SessionNotebookDialog = ({
   const projectId = session?.projectId
   const cwd = session?.cwd
   const activeSessionRef = useRef<{ id: string | undefined; generation: number }>({
-    id: sessionId,
+    id: JSON.stringify([projectId, sessionId]),
     generation: 0
   })
   useLayoutEffect(() => {
-    if (activeSessionRef.current.id === sessionId) return
+    if (activeSessionRef.current.id === JSON.stringify([projectId, sessionId])) return
     activeSessionRef.current = {
-      id: sessionId,
+      id: JSON.stringify([projectId, sessionId]),
       generation: activeSessionRef.current.generation + 1
     }
-  }, [sessionId])
+  }, [sessionId, projectId])
+
+  useEffect(() => {
+    if (!sessionId) return
+    return window.api.notebook.onChanged?.((event) => {
+      if (event.sessionId !== sessionId || event.projectId !== projectId) return
+      activeSessionRef.current.generation++
+      invalidateSessionNotebookCache({ sessionId, projectId, workspaceCwd: cwd ?? '' })
+      setReadGeneration((value) => value + 1)
+    })
+  }, [sessionId, projectId, cwd])
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current
@@ -650,7 +661,7 @@ const SessionNotebookDialog = ({
     }
     const requestGeneration = activeSessionRef.current.generation
     const requestIsCurrent = (): boolean =>
-      activeSessionRef.current.id === request.sessionId &&
+      activeSessionRef.current.id === JSON.stringify([request.projectId, request.sessionId]) &&
       activeSessionRef.current.generation === requestGeneration
     const viewport = viewportRef.current
     if (viewport) {
@@ -666,7 +677,7 @@ const SessionNotebookDialog = ({
         if (!requestIsCurrent()) return
         const existingIds = new Set(runs.map((run) => run.runId))
         const earlierRuns = loaded.runs.filter((run) => !existingIds.has(run.runId))
-        setRuns([...earlierRuns, ...runs])
+        setRuns([...earlierRuns, ...runs].slice(0, 200))
         setHistoryPage(loaded.historyPage)
       })
       .catch((loadError: unknown) => {
@@ -683,6 +694,7 @@ const SessionNotebookDialog = ({
     async (agentFrameId: string): Promise<NotebookRunHistorySummary | undefined> => {
       if (!dialogSession) return undefined
       const state = await window.api.notebook.state({
+        readMode: 'bounded',
         sessionId: dialogSession.id,
         projectId: dialogSession.projectId,
         workspaceCwd: dialogSession.cwd ?? '',
@@ -735,7 +747,7 @@ const SessionNotebookDialog = ({
       cancelled = true
       window.clearTimeout(timeoutId)
     }
-  }, [cwd, projectId, sessionId])
+  }, [cwd, projectId, sessionId, readGeneration])
 
   return (
     <Dialog.Root

@@ -16,7 +16,10 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/local-models/download.test.ts", "src/main/local-models/owner.test.ts"],
+    "owner": [
+      "src/main/local-models/download.test.ts",
+      "src/main/local-models/owner.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -348,9 +351,14 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/literature/pdf-structure/engine-adapter.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

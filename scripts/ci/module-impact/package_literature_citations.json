@@ -1345,7 +1345,10 @@
       "packages/literature-library/test/library.test.ts",
       "packages/literature-library/test/merge-batch.test.ts",
       "packages/literature-library/test/reconcile.test.ts",
-      "packages/literature-library/test/item.test.ts"
+      "packages/literature-library/test/item.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts",
+      "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx",
+      "src/main/notebook/bounded-read.test.ts"
     ]
   },
   "capabilityOverlays": [],

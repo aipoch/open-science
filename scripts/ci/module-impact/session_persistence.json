@@ -122,7 +122,9 @@
     "src/main/session-persistence/flush-protocol.ts",
     "src/main/session-persistence/conversation-pdf-electron.ts"
   ],
-  "consumerModules": ["project_lifecycle"],
+  "consumerModules": [
+    "project_lifecycle"
+  ],
   "testFiles": {
     "owner": [
       "src/main/session-persistence/coordinator.architecture.test.ts",
@@ -606,9 +608,14 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/notebook/artifact-analysis-contract.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
-      "src/main/notebook/environment-startup.contract.test.ts"
+      "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

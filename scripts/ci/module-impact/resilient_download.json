@@ -1052,7 +1052,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/shared/run-error-classification.test.ts",
       "src/shared/runtime-session-projection.test.ts",
-      "src/shared/update.test.ts"
+      "src/shared/update.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [

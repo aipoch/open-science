@@ -159,9 +159,13 @@
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -622,7 +622,8 @@
       "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
       "src/main/notebook/environment-bundle-resources.test.ts",
       "src/main/notebook/environment-resources.test.ts",
-      "src/main/notebook/windows-runtime-components.test.ts"
+      "src/main/notebook/windows-runtime-components.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

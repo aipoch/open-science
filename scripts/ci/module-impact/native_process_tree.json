@@ -7,7 +7,9 @@
     "packages/process-tree-native/src/process_tree_native.cc",
     "packages/process-tree-native/src/windows_owned_process.cc"
   ],
-  "interfacePaths": ["packages/process-tree-native/index.cjs"],
+  "interfacePaths": [
+    "packages/process-tree-native/index.cjs"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],
@@ -580,9 +582,13 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/environment-process.contract.test.ts",
-      "src/main/notebook/environment-recovery.contract.test.ts"
+      "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

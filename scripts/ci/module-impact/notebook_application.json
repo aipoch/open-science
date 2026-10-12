@@ -157,7 +157,10 @@
     "src/main/notebook/package-boundaries.architecture.test.ts",
     "src/main/notebook/powershell-search-parser.test.ts",
     "src/main/notebook/analysis-file-evidence.ts",
-    "src/main/notebook/analysis-file-evidence.test.ts"
+    "src/main/notebook/analysis-file-evidence.test.ts",
+    "src/main/notebook/bounded-read.ts",
+    "src/main/notebook/bounded-read.test.ts",
+    "src/main/notebook/bounded-read.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/application-commands.ts",
@@ -295,7 +298,9 @@
       "src/main/notebook/dependency-analysis-adapter.test.ts",
       "src/main/notebook/package-boundaries.architecture.test.ts",
       "src/main/notebook/powershell-search-parser.test.ts",
-      "src/main/notebook/analysis-file-evidence.test.ts"
+      "src/main/notebook/analysis-file-evidence.test.ts",
+      "src/main/notebook/bounded-read.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -709,6 +714,9 @@
       "src/main/notebook/session-aggregate.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -57,8 +57,12 @@
     "packages/compute/src/lifecycle-boundary.test.ts",
     "packages/compute/test/packed-runtime.mjs"
   ],
-  "interfacePaths": ["packages/compute/src/node.ts"],
-  "consumerModules": ["compute_service"],
+  "interfacePaths": [
+    "packages/compute/src/node.ts"
+  ],
+  "consumerModules": [
+    "compute_service"
+  ],
   "testFiles": {
     "owner": [
       "packages/compute/src/cleanup-stop-evidence.test.ts",
@@ -181,9 +185,14 @@
       "src/main/web-service/task-api.test.ts",
       "src/main/window-find-ipc.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

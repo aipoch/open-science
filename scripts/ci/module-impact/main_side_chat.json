@@ -21,7 +21,9 @@
     "src/main/side-chat/application-commands.ts",
     "src/main/side-chat/command-owner.ts"
   ],
-  "consumerModules": ["desktop_composition"],
+  "consumerModules": [
+    "desktop_composition"
+  ],
   "testFiles": {
     "owner": [
       "src/main/side-chat/host-message-mcp-server.test.ts",
@@ -184,9 +186,14 @@
       "src/main/composition/notebook-environment.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

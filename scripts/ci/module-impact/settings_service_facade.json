@@ -37,7 +37,9 @@
     "src/main/settings/vision-model-owner.ts",
     "src/main/settings/file-commands.ts"
   ],
-  "consumerModules": ["workspace_runtime"],
+  "consumerModules": [
+    "workspace_runtime"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -105,7 +107,8 @@
       "src/main/literature/smart-collections.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/composition/reviewer.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [

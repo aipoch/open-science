@@ -16,7 +16,9 @@
     "src/main/artifacts/pending-file-transaction.ts",
     "src/main/artifacts/storage-access.ts"
   ],
-  "consumerModules": ["artifact_provenance"],
+  "consumerModules": [
+    "artifact_provenance"
+  ],
   "testFiles": {
     "owner": [
       "src/main/artifacts/repository.test.ts",
@@ -368,9 +370,14 @@
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

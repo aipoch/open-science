@@ -7324,6 +7324,11 @@
     "Selected environment": "Ausgewählte Umgebung",
     "Switching environments clears the current kernel's variables.": "Beim Wechsel der Umgebung werden die Variablen des aktuellen Kernels gelöscht.",
     "No code has run in this view yet.": "In dieser Ansicht wurde noch kein Code ausgeführt.",
-    "Code received; waiting for execution details.": "Code empfangen; Ausführungsdetails werden geladen."
+    "Code received; waiting for execution details.": "Code empfangen; Ausführungsdetails werden geladen.",
+    "Could not load Notebook content": "Notebook-Inhalt konnte nicht geladen werden",
+    "Notebook output": "Notebook-Ausgabe",
+    "Continue reading": "Weiterlesen",
+    "End of run": "Ende der Ausführung",
+    "Read complete run": "Vollständige Ausführung lesen"
   }
 }

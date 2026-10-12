@@ -15,7 +15,10 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/locale/owner.test.ts", "src/main/locale/resources.lazy.test.ts"],
+    "owner": [
+      "src/main/locale/owner.test.ts",
+      "src/main/locale/resources.lazy.test.ts"
+    ],
     "contract": [
       "src/renderer/src/i18n/resources.test.ts",
       "src/preload/index.test.ts",
@@ -461,9 +464,12 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/literature/batch-job-journal.test.ts"
+      "src/main/literature/batch-job-journal.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["i18n_catalog"],
+  "capabilityOverlays": [
+    "i18n_catalog"
+  ],
   "fallbackCapability": "main_runtime"
 }

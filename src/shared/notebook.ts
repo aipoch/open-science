@@ -370,7 +370,35 @@ export type NotebookHelperEvidenceStatus =
     }
 
 // Stores one durable notebook execution, including code, output, and generated-file references.
+export const NOTEBOOK_READ_PAGE_BYTES = 1024 * 1024
+export const NOTEBOOK_READ_CHUNK_CHARACTERS = 64 * 1024
+export type NotebookContentCursor = { part: number; offset: number }
+export type NotebookContentRead = {
+  runId: string
+  revision: string
+  cursor: NotebookContentCursor
+}
+export type NotebookContentChunk = {
+  revision: string
+  cursor: NotebookContentCursor
+  label: string
+  mime?: string
+  data: string
+  next?: NotebookContentCursor
+  partComplete: boolean
+}
+export type NotebookRunReadReference = {
+  metadataPart?: number
+  inputFileCount?: number
+  projectId: string
+  sessionId: string
+  workspaceCwd: string
+  revision: string
+}
+
 export type NotebookRunRecord = {
+  // Transient bounded-read projection; never persisted by execution.
+  contentRead?: NotebookRunReadReference
   runId: string
   executionMode?: 'foreground' | 'background'
   // Stable, lane-scoped identity for durable admission. Reusing it with the same fingerprint
@@ -654,6 +682,8 @@ export type NotebookSessionState = {
   historySummary?: NotebookRunHistorySummary
   // Present on normal and cursor-paged renderer reads; omitted for sparse run-id/summary requests.
   historyPage?: NotebookRunPage
+  contentChunk?: NotebookContentChunk
+  readRevision?: string
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Derived from run history and the rebuildable dependency-analysis sidecar; never written into
@@ -742,6 +772,9 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
 }
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
+  readMode?: 'bounded'
+  readRevision?: string
+  contentRead?: NotebookContentRead
   runIds?: string[]
   historySummaryFrameId?: string
   historyBefore?: NotebookRunCursor
