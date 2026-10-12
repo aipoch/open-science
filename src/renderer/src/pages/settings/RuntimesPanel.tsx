@@ -653,7 +653,7 @@ const RuntimesPanel = ({
               ? t(
                   'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
                 )
-            : undefined)
+              : undefined)
 
     return (
       <div
