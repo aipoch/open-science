@@ -173,6 +173,23 @@ describe('Notebook application commands', () => {
       [notebookExportIpynbCommand, [{ ...session, kernel: 'python' }], 'exportIpynb'],
       [notebookExportIpynbAllCommand, [session], 'exportIpynbAll'],
       [notebookRestartCommand, [session], 'restart'],
+      [notebookRestartCommand, [{ ...session, readMode: 'bounded' }], 'restart'],
+      [
+        notebookStateCommand,
+        [
+          {
+            ...session,
+            readMode: 'bounded',
+            contentRead: { runId: 'run-1', revision: 'r1', cursor: { part: 0, offset: 0 } }
+          }
+        ],
+        'state'
+      ],
+      [
+        notebookStateCommand,
+        [{ ...session, readMode: 'bounded', cellRead: { cellId: 'cell-1', offset: 0 } }],
+        'state'
+      ],
       [notebookShutdownCommand, [session], 'shutdown']
     ] as const
 

@@ -106,7 +106,7 @@ const loadSessionNotebookRuns = async (
 
   if (!reference) return []
 
-  const state = await api.state(request)
+  const state = await api.state({ ...request, readMode: 'bounded' })
 
   return state.runs
 }
@@ -134,6 +134,7 @@ const loadSessionNotebookData = async (
     const reference = await api.getReference(request)
     if (!reference) return { runs: [], runCount: 0 }
     const state = await api.state({
+      readMode: 'bounded',
       ...request,
       ...(historyBefore ? { historyBefore } : {})
     })

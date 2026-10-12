@@ -2529,7 +2529,8 @@
       "packages/pdf-translation/test/pdf-cache.test.ts",
       "packages/pdf-translation/test/usage.test.ts",
       "packages/pdf-translation/test/workflow.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

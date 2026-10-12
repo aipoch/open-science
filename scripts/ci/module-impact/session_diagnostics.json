@@ -117,7 +117,8 @@
       "src/main/credential-identity/access.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/database/database-startup-logging.test.ts"
+      "src/main/database/database-startup-logging.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

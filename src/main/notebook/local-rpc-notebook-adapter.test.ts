@@ -402,4 +402,27 @@ describe('notebook local RPC adapter', () => {
 
     expect(leaseMethods).toEqual(['runCell', 'execute', 'executeControl', 'executeShell'])
   })
+  it('preserves bounded reading through the existing local RPC capability and rejects path selectors', async () => {
+    const capability = createCapability()
+    const bounded = {
+      ...request,
+      readMode: 'bounded',
+      contentRead: { runId: 'run-1', revision: 'revision', cursor: { part: 2, offset: 65536 } }
+    }
+    const handler = resolveNotebookLocalRpcHandler(capability, 'state', bounded)
+    await handler(bounded)
+    expect(capability.state).toHaveBeenCalledWith(bounded)
+    const restart = { ...request, readMode: 'bounded', language: 'r', environment: 'default-r' }
+    await resolveNotebookLocalRpcHandler(capability, 'restart', restart)(restart)
+    expect(capability.restart).toHaveBeenCalledWith(restart)
+    const cell = { ...request, readMode: 'bounded', cellRead: { cellId: 'cell-1', offset: 0 } }
+    await resolveNotebookLocalRpcHandler(capability, 'state', cell)(cell)
+    expect(capability.state).toHaveBeenCalledWith(cell)
+    expect(() =>
+      resolveNotebookLocalRpcHandler(capability, 'state', {
+        ...bounded,
+        path: '/another/project/run.json'
+      })
+    ).toThrow('Invalid notebook RPC params')
+  })
 })

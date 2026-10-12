@@ -1240,7 +1240,10 @@
       "packages/reproducibility/src/recipe.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "scripts/electron-vite-config.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts",
+      "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx",
+      "src/main/notebook/bounded-read.test.ts"
     ]
   },
   "capabilityOverlays": [

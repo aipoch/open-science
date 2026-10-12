@@ -439,7 +439,8 @@
       "src/main/credential-identity/probe-logging.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
-      "src/main/session-persistence/runtime-resume-recovery.test.ts"
+      "src/main/session-persistence/runtime-resume-recovery.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

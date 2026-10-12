@@ -1210,7 +1210,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
 
     expect(window.api.notebook.restart).toHaveBeenCalledWith(
-      expect.objectContaining({ language: 'r', environment: 'default-r' })
+      expect.objectContaining({ readMode: 'bounded', language: 'r', environment: 'default-r' })
     )
     expect(window.api.notebook.inspectNamespace).toHaveBeenCalledTimes(2)
     expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(

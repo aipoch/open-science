@@ -283,7 +283,8 @@
       "packages/connector-builtins/src/contracts.test.ts",
       "packages/connector-builtins/src/encori/publication.test.ts",
       "src/main/connectors/custom-mcp-config.test.ts",
-      "src/main/connectors/molecule-artifact-adapter.test.ts"
+      "src/main/connectors/molecule-artifact-adapter.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1,3 +1,4 @@
+import { NotebookContentReader } from './NotebookContentReader'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   useCallback,
@@ -312,6 +313,7 @@ const TerminalScrollback = ({
                 <span className="text-text-300">{prompt} </span>
                 <span className="text-text-100">{run.script}</span>
               </div>
+              <NotebookContentReader run={run} />
               {getRunOutputText(run) ? (
                 <div
                   className={isProblemRunStatus(run.status) ? 'text-danger-000' : 'text-text-200'}
@@ -605,7 +607,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           stateReloadQueued.current = false
           const requested = latestNotebookRequest.current
           try {
-            const nextState = await window.api.notebook.state(requested.request)
+            const nextState = await window.api.notebook.state({
+              ...requested.request,
+              readMode: 'bounded'
+            })
 
             if (latestNotebookRequest.current.key === requested.key) {
               applyNotebookState(nextState)
@@ -1105,6 +1110,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setNamespaceStatus('unavailable')
     try {
       const next = await window.api.notebook.restart({
+        readMode: 'bounded',
         ...createNotebookRequest(item.notebook),
         language: 'r',
         environment: activeEnvName

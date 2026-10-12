@@ -1,3 +1,4 @@
+import { NotebookContentReader } from './NotebookContentReader'
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -371,7 +372,12 @@ const WorkspaceToolDetailsRow = ({
         )}
       </WorkspaceToolActivityRowButton>
       {allowFolderAccess && notebookRun ? <NotebookFolderAccessNotice run={notebookRun} /> : null}
-      {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}
+      {notebookRun ? (
+        <>
+          <NotebookContentReader run={notebookRun} />
+          <NotebookToolFigureOutputs run={notebookRun} />
+        </>
+      ) : null}
     </>
   )
 }

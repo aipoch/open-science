@@ -244,7 +244,8 @@
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

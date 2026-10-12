@@ -43,7 +43,9 @@
     "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
     "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.tsx",
     "src/renderer/src/pages/workspace/notebook-folder-access.test.ts",
-    "src/renderer/src/pages/workspace/notebook-folder-access.ts"
+    "src/renderer/src/pages/workspace/notebook-folder-access.ts",
+    "src/renderer/src/pages/workspace/NotebookContentReader.tsx",
+    "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
@@ -88,7 +90,8 @@
       "src/renderer/src/pages/workspace/use-notebook-runs-by-id.test.ts",
       "src/renderer/src/pages/workspace/workspace-compute-host-access-controller.test.ts",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/notebook-folder-access.test.ts"
+      "src/renderer/src/pages/workspace/notebook-folder-access.test.ts",
+      "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx"
     ],
     "contract": [],
     "consumer": [

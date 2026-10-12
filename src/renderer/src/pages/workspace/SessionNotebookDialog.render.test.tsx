@@ -35,6 +35,7 @@ const renderContent = (props: {
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
   runCount?: number
+  historyPage?: { hasEarlierRuns: boolean }
   loadedRunCount?: number
   error?: string
   frameLabels?: Readonly<Record<string, string>>
@@ -119,6 +120,7 @@ describe('SessionNotebookContent', () => {
       runs: [makeRun()],
       runCount: 125,
       loadedRunCount: 100,
+      historyPage: { hasEarlierRuns: true },
       status: 'ready'
     })
 

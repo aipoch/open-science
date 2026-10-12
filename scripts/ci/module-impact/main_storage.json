@@ -715,7 +715,8 @@
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

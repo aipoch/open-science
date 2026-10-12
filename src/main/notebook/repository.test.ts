@@ -919,9 +919,12 @@ describe('notebook run repository', () => {
       { runId: 'legacy', agentFrameId: undefined },
       { runId: 'child', agentFrameId: 'child-frame-1' }
     ])
+    const { revision } = await repository.readSessionRunWindow('default-project', 'session-1', 1)
+    expect(revision).toMatch(/^[a-f0-9]{64}$/)
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1)
     ).resolves.toEqual({
+      revision,
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
       latestRunEnvironments: { python: 'historical-python' },
@@ -933,6 +936,7 @@ describe('notebook run repository', () => {
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, ['legacy'])
     ).resolves.toEqual({
+      revision,
       runs: [
         expect.objectContaining({ runId: 'legacy' }),
         expect.objectContaining({ runId: 'child' })
@@ -947,6 +951,7 @@ describe('notebook run repository', () => {
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, [], 'child-frame-1')
     ).resolves.toEqual({
+      revision,
       runs: [expect.objectContaining({ runId: 'child' })],
       total: 3,
       latestRunEnvironments: { python: 'historical-python' },
@@ -967,6 +972,7 @@ describe('notebook run repository', () => {
         runId: 'child'
       })
     ).resolves.toEqual({
+      revision,
       runs: [expect.objectContaining({ runId: 'legacy' })],
       total: 3,
       latestRunEnvironments: { python: 'historical-python' },

@@ -150,6 +150,7 @@ describe('static original evidence reader', () => {
         workspaceCwd: ''
       })
       expect(notebook.state).toHaveBeenCalledWith({
+        readMode: 'bounded',
         projectId: 'project',
         sessionId: 'source',
         workspaceCwd: '',
@@ -177,6 +178,7 @@ describe('static original evidence reader', () => {
     await screen.findByText(run.script)
     expect(screen.getByText((text) => text.endsWith('FINAL ORIGINAL RESULT'))).toBeTruthy()
     expect(notebook.state).toHaveBeenCalledWith({
+      readMode: 'bounded',
       projectId: 'project',
       sessionId: 'source',
       workspaceCwd: '/archive',

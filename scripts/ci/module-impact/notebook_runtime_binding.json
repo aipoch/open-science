@@ -575,7 +575,8 @@
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
       "src/renderer/src/stores/runtime-settings-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

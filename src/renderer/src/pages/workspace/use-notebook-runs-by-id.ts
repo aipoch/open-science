@@ -14,6 +14,7 @@ type NotebookRunSnapshot = {
 
 const EMPTY_RUNS_BY_ID: ReadonlyMap<string, NotebookRunRecord> = new Map()
 const MAX_HISTORICAL_RUN_CACHE = 20
+const MAX_VISIBLE_HISTORICAL_RUNS = 100
 
 type NotebookRunCache = {
   scopeKey?: string
@@ -22,13 +23,14 @@ type NotebookRunCache = {
   protectedRunIds: ReadonlySet<string>
 }
 
-const trimHistoricalRuns = (
-  cache: NotebookRunCache,
-  protectedRunIds: ReadonlySet<string>
-): void => {
+const trimHistoricalRuns = (cache: NotebookRunCache): void => {
   for (const runId of cache.historicalRunsById.keys()) {
     if (cache.historicalRunsById.size <= MAX_HISTORICAL_RUN_CACHE) break
-    if (!protectedRunIds.has(runId)) cache.historicalRunsById.delete(runId)
+    if (!cache.protectedRunIds.has(runId)) cache.historicalRunsById.delete(runId)
+  }
+  for (const runId of cache.historicalRunsById.keys()) {
+    if (cache.historicalRunsById.size <= MAX_VISIBLE_HISTORICAL_RUNS) break
+    cache.historicalRunsById.delete(runId)
   }
 }
 
@@ -96,7 +98,12 @@ const useNotebookRunsById = (
       do {
         reloadQueued = false
         try {
-          const state = await window.api.notebook.state({ sessionId, projectId, workspaceCwd })
+          const state = await window.api.notebook.state({
+            readMode: 'bounded',
+            sessionId,
+            projectId,
+            workspaceCwd
+          })
 
           if (!active) return
           const nextRecentRunsById = new Map(state.runs.map((run) => [run.runId, run]))
@@ -108,7 +115,7 @@ const useNotebookRunsById = (
           }
           for (const runId of nextRecentRunsById.keys()) cache.historicalRunsById.delete(runId)
           cache.recentRunsById = nextRecentRunsById
-          trimHistoricalRuns(cache, cache.protectedRunIds)
+          trimHistoricalRuns(cache)
           publish(cache)
           if (refreshHistorical) {
             refreshHistorical = false
@@ -144,7 +151,7 @@ const useNotebookRunsById = (
     const requestedRunIds = JSON.parse(referencedRunIdsKey) as string[]
     const protectedRunIds = new Set(requestedRunIds)
     cache.protectedRunIds = protectedRunIds
-    trimHistoricalRuns(cache, protectedRunIds)
+    trimHistoricalRuns(cache)
     publish(cache)
     const missingRunIds = requestedRunIds.filter((runId) => {
       if (cache.recentRunsById.has(runId)) return false
@@ -163,6 +170,7 @@ const useNotebookRunsById = (
         const batch = missingRunIds.slice(offset, offset + NOTEBOOK_STATE_TARGET_RUN_LIMIT)
         try {
           const targetedState = await window.api.notebook.state({
+            readMode: 'bounded',
             sessionId,
             projectId,
             workspaceCwd,
@@ -175,7 +183,7 @@ const useNotebookRunsById = (
             cache.historicalRunsById.delete(run.runId)
             cache.historicalRunsById.set(run.runId, run)
           }
-          trimHistoricalRuns(cache, cache.protectedRunIds)
+          trimHistoricalRuns(cache)
           publish(cache)
         } catch (error) {
           if (!active) return

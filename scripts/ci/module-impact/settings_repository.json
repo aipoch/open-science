@@ -253,7 +253,8 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-      "src/main/settings/provider-token-limits.test.ts"
+      "src/main/settings/provider-token-limits.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -713,7 +713,8 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/literature/batch-job-journal.test.ts"
+      "src/main/literature/batch-job-journal.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

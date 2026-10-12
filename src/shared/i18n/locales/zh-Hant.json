@@ -7164,6 +7164,12 @@
     "Selected environment": "所選環境",
     "Switching environments clears the current kernel's variables.": "切換環境會清除目前核心中的變數。",
     "No code has run in this view yet.": "此檢視中尚未執行程式碼。",
-    "Code received; waiting for execution details.": "已收到程式碼，正在等候執行詳情。"
+    "Code received; waiting for execution details.": "已收到程式碼，正在等候執行詳情。",
+    "Could not load Notebook content": "無法載入 Notebook 內容",
+    "Notebook output": "Notebook 輸出",
+    "Continue reading": "繼續閱讀",
+    "End of run": "執行記錄結束",
+    "Read complete run": "閱讀完整執行記錄",
+    "Return to latest runs": "返回最新執行"
   }
 }

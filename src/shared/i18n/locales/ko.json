@@ -7162,6 +7162,12 @@
     "Selected environment": "선택한 환경",
     "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다.",
     "No code has run in this view yet.": "이 보기에서는 아직 코드가 실행되지 않았습니다.",
-    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다."
+    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다.",
+    "Could not load Notebook content": "Notebook 내용을 불러오지 못했습니다",
+    "Notebook output": "Notebook 출력",
+    "Continue reading": "계속 읽기",
+    "End of run": "실행 끝",
+    "Read complete run": "전체 실행 내용 읽기",
+    "Return to latest runs": "최신 실행으로 돌아가기"
   }
 }

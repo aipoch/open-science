@@ -1299,7 +1299,10 @@
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/uploads.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts",
+      "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx",
+      "src/main/notebook/bounded-read.test.ts"
     ]
   },
   "capabilityOverlays": [],

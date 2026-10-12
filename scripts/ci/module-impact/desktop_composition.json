@@ -1188,7 +1188,8 @@
       "src/main/process-tree.windows.integration.test.ts",
       "src/main/runtime-ownership.integration.test.ts",
       "src/main/node-process-host.test.ts",
-      "src/main/windows-executable-trust.test.ts"
+      "src/main/windows-executable-trust.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

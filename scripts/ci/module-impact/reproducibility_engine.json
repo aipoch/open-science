@@ -490,7 +490,8 @@
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

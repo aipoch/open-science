@@ -74,6 +74,7 @@ describe('useNotebookRunsById', () => {
 
     await waitFor(() => expect(result.current.get('run-1')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenCalledWith({
+      readMode: 'bounded',
       sessionId: 'session-1',
       projectId: 'project-1',
       workspaceCwd: '/workspace'
@@ -140,6 +141,7 @@ describe('useNotebookRunsById', () => {
 
     await waitFor(() => expect(result.current.get('old-run')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenNthCalledWith(2, {
+      readMode: 'bounded',
       sessionId: 'session-1',
       projectId: 'project-1',
       workspaceCwd: '/workspace',
@@ -169,6 +171,7 @@ describe('useNotebookRunsById', () => {
 
     expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
     expect(window.api.notebook.state).toHaveBeenNthCalledWith(3, {
+      readMode: 'bounded',
       sessionId: 'session-1',
       projectId: 'project-1',
       workspaceCwd: '/workspace',

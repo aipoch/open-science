@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react'
 import { NotebookRecordCell } from './NotebookRecordCell'
-import { NotebookRunTextOutputs } from './NotebookRunOutputs'
+import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { ReplayToolRecord } from './replay/ReplayToolRecord'
 import { ReplayMarkdown, ResourceTable } from './replay/ReplayStage'
 import { useNearViewport } from './previews/useNearViewport'
@@ -134,7 +134,11 @@ const RecordedNotebook = ({
         throw new Error('Notebook not recorded')
       if (cancelled) return
       // Read an already recorded run only. This never mounts a Notebook workspace or attaches a kernel.
-      const state = await window.api.notebook.state({ ...request, runIds: [index.runId] })
+      const state = await window.api.notebook.state({
+        readMode: 'bounded',
+        ...request,
+        runIds: [index.runId]
+      })
       if (cancelled) return
       const record = state.runs.find((candidate) => candidate.runId === index.runId)
       const fields = [
@@ -184,7 +188,7 @@ const RecordedNotebook = ({
         {t('Recorded status: {{status}}', { status: run.status })}
       </p>
       <NotebookRecordCell run={run} index={0}>
-        <NotebookRunTextOutputs run={run} />
+        <NotebookRunOutputs run={run} />
       </NotebookRecordCell>
       {resolveNotebookRunFigures(run).map((figure) => {
         const image = replayImageSource(figure.mimeType, figure.payload)

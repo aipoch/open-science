@@ -8283,6 +8283,65 @@ describe('notebook runtime service', () => {
     }
   )
 
+  it.each([false, true])(
+    'bounds the restart response without repeating the mutation (targeted=%s)',
+    async (targeted) => {
+      const root = await createStorageRoot()
+      const restart = vi.fn(async () => {})
+      const terminate = vi.fn(async () => {})
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => ({ reaped: true }),
+          restart,
+          terminate
+        })
+      })
+      const request = { sessionId: 'bounded-restart', workspaceCwd: root }
+      await service.execute({ ...request, code: '1' })
+      const initial = await service.state(request)
+      const document = JSON.parse(await readFile(initial.runJsonPath, 'utf8'))
+      const text = 'x'.repeat(1_572_865)
+      document.runs = Array.from({ length: 3 }, (_, index) => ({
+        runId: `large-${index}`,
+        cellId: `cell-${index}`,
+        source: 'user',
+        kernelKind: 'python',
+        script: 'print(value)',
+        status: 'completed',
+        startedAt: index + 1,
+        workingFiles: [],
+        text: { stdout: text, stderr: '', traceback: '', plain: [text] },
+        outputs: [{ type: 'stream', name: 'stdout', text }]
+      }))
+      await writeFile(initial.runJsonPath, JSON.stringify(document))
+      const result = await service.restart(
+        targeted
+          ? { ...request, readMode: 'bounded', language: 'r', environment: DEFAULT_R_ENV }
+          : { ...request, readMode: 'bounded' }
+      )
+      expect(result.runs).toHaveLength(3)
+      expect(result.recentRuns).toEqual([])
+      expect(result.runs.every((run) => run.contentRead && run.outputs.length === 0)).toBe(true)
+      expect(Buffer.byteLength(JSON.stringify({ id: 1, result }))).toBeLessThan(1024 * 1024)
+      expect(targeted ? terminate : restart).toHaveBeenCalledTimes(1)
+      // Old integrations keep the legacy state contract; the renderer never requests this shape.
+      expect((await service.state(request)).runs[0].text.stdout).toBe(text)
+      await service.dispose()
+    }
+  )
+
   it('restart calls executor.restart when the executor supports it', async () => {
     const root = await createStorageRoot()
     let restarts = 0

@@ -62,7 +62,7 @@ describe('loadSessionNotebookRuns', () => {
         request
       )
     ).resolves.toEqual({ runs: [run], runCount: 125 })
-    expect(state).toHaveBeenCalledWith(request)
+    expect(state).toHaveBeenCalledWith({ ...request, readMode: 'bounded' })
   })
 
   it('deduplicates and caches the same cursor page until the Session is invalidated', async () => {
@@ -84,7 +84,11 @@ describe('loadSessionNotebookRuns', () => {
     ])
     expect(first).toEqual(second)
     expect(state).toHaveBeenCalledTimes(1)
-    expect(state).toHaveBeenCalledWith({ ...pagedRequest, historyBefore: cursor })
+    expect(state).toHaveBeenCalledWith({
+      ...pagedRequest,
+      readMode: 'bounded',
+      historyBefore: cursor
+    })
 
     await loadSessionNotebookData(api, pagedRequest, cursor)
     expect(state).toHaveBeenCalledTimes(1)

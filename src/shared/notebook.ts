@@ -370,7 +370,36 @@ export type NotebookHelperEvidenceStatus =
     }
 
 // Stores one durable notebook execution, including code, output, and generated-file references.
+export const NOTEBOOK_READ_PAGE_BYTES = 1024 * 1024
+export const NOTEBOOK_READ_CHUNK_CHARACTERS = 64 * 1024
+export type NotebookContentCursor = { part: number; offset: number }
+export type NotebookContentRead = {
+  runId: string
+  revision: string
+  cursor: NotebookContentCursor
+}
+export type NotebookContentChunk = {
+  revision: string
+  cursor: NotebookContentCursor
+  label: string
+  mime?: string
+  data: string
+  next?: NotebookContentCursor
+  partComplete: boolean
+}
+export type NotebookRunReadReference = {
+  metadataPart?: number
+  inputFileCount?: number
+  projectId: string
+  sessionId: string
+  workspaceCwd: string
+  revision: string
+}
+
 export type NotebookRunRecord = {
+  // Transient bounded-read projection; never persisted by execution.
+  folderAccessPath?: string
+  contentRead?: NotebookRunReadReference
   runId: string
   executionMode?: 'foreground' | 'background'
   // Stable, lane-scoped identity for durable admission. Reusing it with the same fingerprint
@@ -534,6 +563,8 @@ export type NotebookCell = {
   id: string
   language: NotebookLanguage
   code: string
+  // Bounded state includes a byte-limited preview; cellRead retrieves the full live source.
+  sourceRead?: { cellId: string; offset: number }
   status:
     | 'idle'
     | 'receiving-code'
@@ -654,6 +685,8 @@ export type NotebookSessionState = {
   historySummary?: NotebookRunHistorySummary
   // Present on normal and cursor-paged renderer reads; omitted for sparse run-id/summary requests.
   historyPage?: NotebookRunPage
+  contentChunk?: NotebookContentChunk
+  readRevision?: string
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Derived from run history and the rebuildable dependency-analysis sidecar; never written into
@@ -718,10 +751,11 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 
 // Restarts either every kernel in the Session (target omitted, preserving the historical behavior)
 // or one exact data-kernel target. Runtime boundaries reject half-specified targets.
-export type NotebookRestartRequest =
+export type NotebookRestartRequest = { readMode?: 'bounded' } & (
   | (NotebookSessionRequest & { language: NotebookLanguage; environment: string; kernel?: never })
   | (NotebookSessionRequest & { kernel: 'repl'; language?: never; environment?: never })
   | (NotebookSessionRequest & { language?: never; environment?: never; kernel?: never })
+)
 
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
@@ -742,6 +776,10 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
 }
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
+  readMode?: 'bounded'
+  readRevision?: string
+  contentRead?: NotebookContentRead
+  cellRead?: { cellId: string; offset: number; revision?: string }
   runIds?: string[]
   historySummaryFrameId?: string
   historyBefore?: NotebookRunCursor

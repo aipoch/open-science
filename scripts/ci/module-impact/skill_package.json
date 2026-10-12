@@ -1413,7 +1413,10 @@
       "src/main/notebook/environment-process.contract.test.ts",
       "cli/connector-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/pages/workspace/NotebookContentReader.render.test.tsx",
+      "src/main/notebook/bounded-read.integration.test.ts",
+      "src/main/notebook/bounded-read.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

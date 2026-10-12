@@ -7631,6 +7631,12 @@
     "Selected environment": "Выбранная среда",
     "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются.",
     "No code has run in this view yet.": "В этом представлении код ещё не выполнялся.",
-    "Code received; waiting for execution details.": "Код получен; ожидание сведений о выполнении."
+    "Code received; waiting for execution details.": "Код получен; ожидание сведений о выполнении.",
+    "Could not load Notebook content": "Не удалось загрузить содержимое Notebook",
+    "Notebook output": "Вывод Notebook",
+    "Continue reading": "Продолжить чтение",
+    "End of run": "Конец выполнения",
+    "Read complete run": "Прочитать полное выполнение",
+    "Return to latest runs": "Вернуться к последним запускам"
   }
 }
