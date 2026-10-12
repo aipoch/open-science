@@ -209,7 +209,7 @@ export function createConsumerDependencyReader(
       ).resolvedModule?.resolvedFileName
       if (resolved && source.files.has(key(resolved))) result.paths.add(key(resolved))
       else if (
-        (staticOnly &&
+        ((staticOnly || runtimeOnly) &&
           ![
             'vitest',
             'react',

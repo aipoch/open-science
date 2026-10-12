@@ -224,10 +224,21 @@ it.each([
   "import '@example/example'",
   "export * from '@example/example'",
   "vi.mock('@example/example', () => ({}))",
+  "import 'an-opaque-runtime'",
+  "import { readFileSync } from 'node:fs'",
   "import('./missing')",
   'import(name)'
 ])('retains direct or unresolved PR integration: %s', (source) => {
   expect(fixture(source).refine({ tier: 'pr' }).testFiles).toContain(unrelated)
+})
+
+it('retains a host adapter with an unresolved external runtime dependency in PR', () => {
+  const state = fixture("import './adapter'")
+  state.put('src/adapter.ts', "import 'an-opaque-runtime'")
+  const revision = state.commit()
+  expect(state.refine({ base: revision, head: revision, tier: 'pr' }).testFiles).toContain(
+    unrelated
+  )
 })
 
 it('keeps a host adapter contract, including dependency changes in the actual merge checkout', () => {

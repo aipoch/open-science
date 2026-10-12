@@ -45,6 +45,20 @@ it.each([
 })
 
 it('retains uncertainty rather than proving a missing dynamic or local import absent', () => {
-  for (const text of ['import(name)', "import './missing'"])
+  for (const text of [
+    'import(name)',
+    "import './missing'",
+    "import 'an-opaque-runtime'",
+    "import { readFileSync } from 'node:fs'"
+  ])
     expect(graph(text, true)('src/test.ts', new Set(['src/value.ts'])).complete).toBe(false)
+})
+
+it('keeps allowlisted test utilities and erased external types complete', () => {
+  for (const text of [
+    "import { expect } from 'vitest'",
+    "import { join } from 'node:path'",
+    "import type { Value } from 'an-opaque-runtime'"
+  ])
+    expect(graph(text, true)('src/test.ts', new Set(['src/value.ts'])).complete).toBe(true)
 })
