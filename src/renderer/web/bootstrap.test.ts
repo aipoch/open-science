@@ -1308,6 +1308,33 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(1)
     window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
   })
+
+  it('requests one reload immediately when the server signals a newer event protocol', async () => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    await loadBootstrap()
+
+    FakeWebSocket.instances[0].emit('open')
+    FakeWebSocket.instances[0].emit('message', {
+      data: JSON.stringify({
+        kind: 'resync-required',
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION + 1,
+        streamId: 'stream-1',
+        latestSequence: 4,
+        reason: 'stream-changed'
+      })
+    })
+    expect(phases.at(-1)).toBe('reload-required')
+    FakeWebSocket.instances[0].emit('close', { code: 1002 })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(phases).toContain('reload-required')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+  })
 })
 
 describe('Web reliability regressions', () => {

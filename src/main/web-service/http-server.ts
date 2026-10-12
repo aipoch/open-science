@@ -1852,6 +1852,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (requestedProtocol === null) {
         internalEventSockets.set(socket, 'legacy')
       } else if (requestedProtocol !== String(WEB_EVENT_STREAM_PROTOCOL_VERSION)) {
+        // Old pages already request a reload on a resync frame or a newer protocol version.
+        sendCurrentWebSocketMessage(
+          socket,
+          JSON.stringify({
+            kind: 'resync-required',
+            ...internalEventStream.cursor(),
+            reason: 'stream-changed'
+          })
+        )
         socket.close(1002, 'Unsupported event stream protocol')
         return
       } else {

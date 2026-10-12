@@ -22,6 +22,7 @@ const MAX_WAITING_READS = 32
 const MAX_TEMP_BYTES = 1024 * 1024 * 1024
 const IDLE_MS = 60_000
 const LIFETIME_MS = 300_000
+const SHUTDOWN_CLEANUP_MS = 1_000
 
 type Transfer = {
   id: string
@@ -230,9 +231,26 @@ export class RuntimePayloadTransfers {
   }
 
   async settleReleased(): Promise<void> {
-    await Promise.all(
-      [...this.entries.values()].filter((entry) => entry.closed).map((entry) => this.release(entry))
-    )
+    const releases = [...this.entries.values()]
+      .filter((entry) => entry.closed)
+      .map((entry) => this.release(entry))
+    if (releases.length === 0) return
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        Promise.all(releases),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(() => {
+            logger.warn('temporary payload cleanup remains pending after shutdown deadline')
+            resolve()
+          }, SHUTDOWN_CLEANUP_MS)
+          timeout.unref()
+        })
+      ])
+    } finally {
+      clearTimeout(timeout)
+    }
+    // Late cleanup retains its reservation; abandoned files are reclaimed after process exit.
   }
 
   private authorize(caller: CallerContext, lease: ApplicationCallerLease, entry?: Transfer): void {

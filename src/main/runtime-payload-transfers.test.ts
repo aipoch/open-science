@@ -517,3 +517,54 @@ it.each(['inline', 'upload'])(
     expect(client.dispatch).not.toHaveBeenCalled()
   }
 )
+
+it('bounds shutdown cleanup when an uploaded command ignores cancellation', async () => {
+  vi.useFakeTimers()
+  const client = caller()
+  const { $payload } = runtimePayloadDescriptorSchema.parse(
+    await client.invoke('sessions:save-session', [], {
+      kind: 'upload',
+      byteLength: 2
+    })
+  )
+  await client.invoke('sessions:save-session', [], {
+    kind: 'append',
+    snapshotId: $payload.snapshotId,
+    offset: 0,
+    data: 'W10='
+  })
+  let entered!: () => void
+  let finish!: () => void
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const ready = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  client.dispatch.mockImplementation(async () => {
+    entered()
+    await ready
+    return {}
+  })
+  const operation = Promise.allSettled([
+    client.invoke('sessions:save-session', [], {
+      kind: 'commit',
+      snapshotId: $payload.snapshotId
+    })
+  ])
+  await started
+  leases.dispose()
+  let settled = false
+  const shutdown = owner.settleReleased().then(() => {
+    settled = true
+  })
+  try {
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(settled).toBe(true)
+  } finally {
+    finish()
+    await operation
+    await shutdown
+  }
+  expect(await readdir(root)).toEqual([])
+})
