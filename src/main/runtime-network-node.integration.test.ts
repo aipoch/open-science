@@ -129,6 +129,39 @@ describe('ordinary Node HTTP transport', () => {
     expect(await (await transport.fetch(url)).text()).toBe('ok')
     expect(tunnels).toBe(1)
   })
+  it.each(['CONNECT', 'TLS'] as const)(
+    'closes a pending proxy %s connection during shutdown',
+    async (phase) => {
+      const proxy = createServer()
+      let accepted!: () => void
+      const connected = new Promise<void>((resolve) => {
+        accepted = resolve
+      })
+      let socket: import('node:stream').Duplex | undefined
+      proxy.on('connect', (_request, client) => {
+        socket = client
+        client.on('error', () => undefined)
+        client.resume()
+        if (phase === 'TLS') {
+          client.once('data', () => accepted())
+          client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+        } else accepted()
+      })
+      const port = await listen(proxy)
+      const transport = network({ HTTPS_PROXY: `http://127.0.0.1:${port}` })
+      // Explicit fixture cleanup also releases the intentionally stalled peer on a red test.
+      cleanup.push(async () => {
+        socket?.destroy()
+      })
+      const request = transport.fetch('https://example.invalid').catch((error: unknown) => error)
+      await connected
+      await transport.close()
+      await expect.poll(() => socket?.readableEnded, { timeout: 500 }).toBe(true)
+      expect(await request).toBeInstanceOf(Error)
+      await expect(transport.fetch('https://example.invalid')).rejects.toThrow('closed')
+      await expect(transport.setProxy({ mode: 'direct' })).rejects.toThrow('closed')
+    }
+  )
   it('does not silently bypass a rejected proxy or unsupported PAC configuration', async () => {
     const proxy = createServer()
     proxy.on('connect', (_request, socket) =>

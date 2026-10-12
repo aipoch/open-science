@@ -25,10 +25,16 @@ export function createNodeRuntimeNetwork(
   }
   const direct = buildConnector({ timeout: 30_000 })
   const agents = new Set<Agent>()
+  const pendingProxyConnections = new Set<AbortController>()
+  let closed = false
   let settings = inherited
   const createAgent = (proxySettings: ProxyEnvironment): Agent => {
     const agent = new Agent({
       connect(options, callback) {
+        if (closed) {
+          callback(new Error('Runtime network is closed.'), null)
+          return
+        }
         const target = new URL(`${options.protocol}//${options.host || options.hostname}`)
         if (options.port) target.port = options.port
         const proxy = resolveParentProxyUrl(proxySettings, target)
@@ -37,6 +43,7 @@ export function createNodeRuntimeNetwork(
           return
         }
         const controller = new AbortController()
+        pendingProxyConnections.add(controller)
         const signal = controller.signal
         const timer = setTimeout(
           () => controller.abort(new Error('Proxy connection timed out.')),
@@ -47,6 +54,7 @@ export function createNodeRuntimeNetwork(
           if (settled) return
           settled = true
           clearTimeout(timer)
+          pendingProxyConnections.delete(controller)
           callback(...args)
         }
         void tunnelThroughProxy(
@@ -57,6 +65,11 @@ export function createNodeRuntimeNetwork(
           signal
         ).then(
           (socket) => {
+            if (signal.aborted) {
+              socket.destroy()
+              finish(new Error('Runtime network is closed.'), null)
+              return
+            }
             if (options.protocol !== 'https:') {
               finish(null, socket)
               return
@@ -92,6 +105,7 @@ export function createNodeRuntimeNetwork(
   const fetch: typeof globalThis.fetch = async (input, init) => {
     // Keep redirects, header stripping, streaming, request cancellation and TLS verification in
     // Undici. Normalize native Request objects rather than relying on cross-package instanceof.
+    if (closed) throw new Error('Runtime network is closed.')
     const request = new Request(input, init)
     return (await nodeFetch(request.url, {
       method: request.method,
@@ -123,6 +137,7 @@ export function createNodeRuntimeNetwork(
       return `${kind} ${proxy.host}`
     },
     setProxy: async (config) => {
+      if (closed) throw new Error('Runtime network is closed.')
       if (!['system', 'direct', 'fixed_servers'].includes(config.mode ?? ''))
         throw new Error(
           'Node backend supports environment, direct and fixed proxy settings; PAC requires the desktop app.'
@@ -148,6 +163,11 @@ export function createNodeRuntimeNetwork(
         .catch(() => undefined)
     },
     close: async () => {
+      closed = true
+      // Until CONNECT/TLS completes, Undici has not received the socket and cannot own its drain.
+      for (const controller of pendingProxyConnections) {
+        controller.abort(new Error('Runtime network is closed.'))
+      }
       await Promise.all([...agents].map((value) => value.destroy()))
       agents.clear()
     }
