@@ -281,3 +281,24 @@ it.each(['remaining', 'uncertain', 'manual'])(
     expect(result.retiredConsumers).not.toContain(`host:${consumer}`)
   }
 )
+
+it('preserves owner evidence that has no provable source dependency', () => {
+  const state = fixture()
+  state.put(appTest, 'export {}')
+  const base = state.commit()
+  state.split()
+  state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(appTest)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it('keeps an unproven moved owner test registered on the remaining owner as well', () => {
+  const state = fixture()
+  state.put(leafTest, 'export {}')
+  const base = state.commit()
+  state.split()
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.host.testFiles.consumer.push(leafTest)
+  expect(state.check(base).ok).toBe(true)
+})

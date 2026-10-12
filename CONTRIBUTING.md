@@ -635,10 +635,10 @@ Host owners under `src/main/` and `src/renderer/` may split into new modules in 
 registration-only revision with unchanged source and tests. Trusted Integrity verifies that each
 new owner takes paths from exactly one surviving non-full owner, preserves moved interfaces,
 platform capabilities and downstream routing, and retains every reachable or uncertain test from
-the old execution plan. Explicit contracts, non-host evidence and host consumers without a
+the old execution plan. Explicit contracts, non-host evidence and explicit tests without a
 provable old source dependency follow the split as well. Moved owner tests keep their owner
 classification in the new module; tests still reaching the remaining owner, or with incomplete
-evidence, must also remain registered there. Shared/full owners, existing-module transfers and
+or unproven old source evidence, must also remain registered there. Shared/full owners, existing-module transfers and
 mixed source/policy edits do not qualify. An old consumer registration may follow a verified split
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain

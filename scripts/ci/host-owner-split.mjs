@@ -96,15 +96,15 @@ export function verifiedHostOwnerSplits(
         ].some((test) => !evidence.has(test))
       )
         continue
-      // An explicitly registered consumer with no demonstrable old source path can be a
+      // Explicit evidence with no demonstrable old source path can be a
       // behavioral contract. Its absence from the graph cannot authorize dropping it.
       const originalSources = new Set(
         original.ownerPaths.filter((path) => !/\.(test|spec)\.[cm]?[jt]sx?$/.test(path))
       )
       if (
-        original.testFiles.consumer.some(
-          (test) => !evidence.has(test) && !inspect(test, originalSources).reachable
-        )
+        Object.values(original.testFiles)
+          .flat()
+          .some((test) => !evidence.has(test) && !inspect(test, originalSources).reachable)
       )
         continue
       const movedTests = original.testFiles.owner.filter((test) => owners.has(test))
@@ -114,6 +114,8 @@ export function verifiedHostOwnerSplits(
       if (
         movedTests.some((test) => {
           if (remainingEvidence.has(test)) return false
+          const previous = inspect(test, originalSources)
+          if (!previous.complete || !previous.reachable) return true
           const dependency = inspect(test, remainingOwners)
           return dependency.reachable || !dependency.complete
         })
