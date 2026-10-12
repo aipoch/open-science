@@ -1,3 +1,6 @@
+import { createSessionEventHydrator } from '../shared/session-event-hydrator'
+import { createRuntimePayloadClient } from '../shared/runtime-payload-client'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
 import { desktopDatabaseStartupSchema, desktopStartupEventSchema } from './desktop-startup-contract'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import type { DesktopLifecycleRequest } from './desktop-runtime-lifecycle'
@@ -83,6 +86,7 @@ const responseSchema = z.discriminatedUnion('ok', [
 const bootstrapSchema = webRpcBootstrapSchema
   .pick({
     rpcProtocolVersion: true,
+    rpcCapabilities: true,
     eventStream: true
   })
   .extend({
@@ -106,6 +110,7 @@ export type DesktopRuntimeClient = Readonly<{
   processId(): number
   ownsRuntime(): boolean
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
+  loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
   invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
   invoke(clientId: string, channel: string, args: readonly unknown[]): Promise<unknown>
   release(clientId: string): void
@@ -134,6 +139,14 @@ export async function connectDesktopRuntime(options: {
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
   const native = new Map<number, AbortController>()
   let highestNativeId = 0
+  const payloadClients = new Map<
+    string,
+    {
+      controller: AbortController
+      client: ReturnType<typeof createRuntimePayloadClient>
+    }
+  >()
+  let supportsPayload = false
   let requestId = 0
   let channels: readonly string[] = []
   let cursor: { streamId: string; latestSequence: number } | undefined
@@ -191,6 +204,8 @@ export async function connectDesktopRuntime(options: {
         )
       )
     pending.clear()
+    for (const document of payloadClients.values()) document.controller.abort(error)
+    payloadClients.clear()
     for (const operation of native.values()) operation.abort()
     native.clear()
     socket.terminate()
@@ -210,6 +225,20 @@ export async function connectDesktopRuntime(options: {
     }
     socket.send(serialized)
   }
+  const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
+    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
+    const id = ++requestId
+    const response = new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject })
+      try {
+        send({ ...frame, id })
+      } catch (error) {
+        pending.delete(id)
+        reject(error)
+      }
+    })
+    return { id, response }
+  }
   const deliver = (failure: DesktopDeliveryFailure, callback: () => void): void => {
     try {
       callback()
@@ -225,6 +254,35 @@ export async function connectDesktopRuntime(options: {
       }
     }
   }
+  const eventController = new AbortController()
+  const eventPayloadClient = createRuntimePayloadClient({
+    invoke: (_channel, args, payloadOptions) =>
+      request({
+        kind: 'session-event-read',
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        args,
+        ...payloadOptions
+      }).response,
+    encode: stringifyRpcJson,
+    decode: parseRpcJson,
+    signal: () => eventController.signal
+  })
+  const eventHydrator = createSessionEventHydrator({
+    load: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
+    deliver: (event) => deliver({ kind: 'event' }, () => options.onEvent(event)),
+    onFailure: () =>
+      deliver({ kind: 'event' }, () => {
+        throw new Error('Session event projection requires reload.')
+      })
+  })
+  socket.once('close', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
+  socket.once('error', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
   socket.on('message', (bytes, binary) => {
     if (closed) return
     let failureReason: DisconnectReason = 'invalid-frame'
@@ -236,6 +294,7 @@ export async function connectDesktopRuntime(options: {
         const bootstrap = bootstrapSchema.parse(frame)
         startupState = bootstrap.startup ?? { phase: 'ready' }
         runtimePid = bootstrap.pid
+        supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
         const child = options.startedProcess
@@ -372,8 +431,11 @@ export async function connectDesktopRuntime(options: {
           return
         }
         failureReason = 'callback-failure'
-        deliver({ kind: 'event' }, () =>
-          options.onEvent({ channel: event.channel, payload: event.payload })
+        eventHydrator.receive(
+          { channel: event.channel, payload: event.payload },
+          Array.isArray(bytes)
+            ? bytes.reduce((total, part) => total + part.byteLength, 0)
+            : bytes.byteLength
         )
         cursor = { streamId: event.streamId, latestSequence: event.sequence }
       } else if (event.latestSequence > cursor!.latestSequence) {
@@ -405,20 +467,6 @@ export async function connectDesktopRuntime(options: {
     await ready
   } finally {
     options.signal?.removeEventListener('abort', canceled)
-  }
-  const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
-    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
-    const id = ++requestId
-    const response = new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
-      try {
-        send({ ...frame, id })
-      } catch (error) {
-        pending.delete(id)
-        reject(error)
-      }
-    })
-    return { id, response }
   }
   const close = (): void => {
     initialized = false
@@ -497,6 +545,7 @@ export async function connectDesktopRuntime(options: {
     notificationAction: (token, action) => {
       if (!closed) send({ kind: 'notification-action', token, action })
     },
+    loadSessionForEvent: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
     invokeHost: async (channel, args = []) =>
       request({
         kind: 'host-invoke',
@@ -507,15 +556,39 @@ export async function connectDesktopRuntime(options: {
     invoke: async (clientId, channel, args) => {
       if (!channels.includes(channel))
         throw new Error(`Desktop runtime command is unavailable: ${channel}`)
-      return request({
-        kind: 'invoke',
-        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        clientId,
+      const invoke: Parameters<typeof createRuntimePayloadClient>[0]['invoke'] = (
         channel,
-        args
-      }).response
+        args,
+        payloadOptions
+      ) =>
+        request({
+          kind: 'invoke',
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          clientId,
+          channel,
+          args,
+          ...payloadOptions
+        }).response
+      if (!supportsPayload) return invoke(channel, args)
+      let document = payloadClients.get(clientId)
+      if (!document) {
+        const controller = new AbortController()
+        document = {
+          controller,
+          client: createRuntimePayloadClient({
+            invoke,
+            encode: stringifyRpcJson,
+            decode: parseRpcJson,
+            signal: () => controller.signal
+          })
+        }
+        payloadClients.set(clientId, document)
+      }
+      return document.client.invoke(channel, args)
     },
     release: (clientId) => {
+      payloadClients.get(clientId)?.controller.abort(new Error('Renderer document released.'))
+      payloadClients.delete(clientId)
       if (closed) return
       try {
         send({ kind: 'release', clientId })

@@ -1,3 +1,4 @@
+import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../shared/web-rpc-contract'
 import { ChildProcess } from 'node:child_process'
 import { PermissionApprovalPresence } from './permission-approval-presence'
 import { randomUUID } from 'node:crypto'
@@ -574,7 +575,7 @@ describe('desktop projection of application commands and events', () => {
     const event = await value.received.next()
     expect(event).toMatchObject({
       kind: 'event',
-      protocolVersion: 3,
+      protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
       streamId: cursor.streamId,
       sequence: 1,
       channel: 'side-chat:relay-delivered'

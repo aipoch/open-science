@@ -1,3 +1,6 @@
+import { projectSessionEventPayload } from '../session-event-payload'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -1473,7 +1476,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .digest('hex'),
           taskCapabilities: options.tasks ? ['permission-prompts-none'] : [],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
+          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
           eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
@@ -1639,7 +1642,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             dispatcher,
             channel,
             callerContext,
-            parsed.data.args
+            parsed.data.args,
+            parsed.data
           )
           assertExternalAuthorizationCurrent(externalAuthorization)
           json(
@@ -1870,7 +1874,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
-    const internalProjection = projectWebRendererEvent(event)
+    const projection = projectWebRendererEvent(event)
+    const internalProjection = projection
+      ? { ...projection, payload: projectSessionEventPayload(projection) }
+      : undefined
+    const needsPayloadClient = internalProjection?.payload !== projection?.payload
     const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
       options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
     ).map((projection) => publicTaskEventStream.publish(projection))
@@ -1888,6 +1896,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
+        if (needsPayloadClient) {
+          socket.close(1002, 'Reload to receive large Session updates')
+          continue
+        }
         sendCurrentWebSocketMessage(socket, legacyInternalMessage)
       }
     }
@@ -1978,6 +1990,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             : error
         }
       }
+      await runtimePayloadTransfers.settleReleased()
       server.closeAllConnections()
       await closePromise
       if (cleanupError) throw cleanupError

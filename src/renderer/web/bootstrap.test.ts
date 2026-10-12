@@ -57,6 +57,7 @@ class FakeWebSocket {
 type WebApi = {
   getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
+  sessions: Window['api']['sessions']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
     | 'beginPackageUpload'
@@ -1114,6 +1115,136 @@ describe('Web bootstrap event connection', () => {
     expect(phases.at(-1)).toBe('reload-required')
     expect(FakeWebSocket.instances).toHaveLength(8)
     window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+  })
+
+  it('aborts an in-flight snapshot page on disconnect and still sends its release', async () => {
+    let readSignal: AbortSignal | undefined
+    const released = vi.fn()
+    const snapshotId = '38cbf4bf-879b-4295-af03-fb0ee7e00a30'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one'],
+              rpcCapabilities: ['bounded-payload-v1']
+            })
+          )
+        const body = JSON.parse(String(init?.body))
+        if (body.transfer?.kind === 'read') {
+          readSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            readSignal?.addEventListener('abort', () => reject(readSignal?.reason), { once: true })
+          })
+        }
+        if (body.transfer?.kind === 'release') released(body.transfer)
+        return Promise.resolve(
+          Response.json({
+            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+            ok: true,
+            result: body.transfer ? null : { $payload: { snapshotId, byteLength: 2 } }
+          })
+        )
+      })
+    )
+    const api = await loadBootstrap()
+    const request = api.sessions.loadOne({ projectId: 'p', sessionId: 's' })
+    const outcome = expect(request).rejects.toThrow('could not be confirmed')
+    await vi.waitFor(() => expect(readSignal).toBeDefined())
+    FakeWebSocket.instances[0].emit('close')
+    expect(readSignal?.aborted).toBe(true)
+    await outcome
+    expect(released).toHaveBeenCalledExactlyOnceWith({ kind: 'release', snapshotId })
+  })
+
+  it('replays an interrupted large Session update instead of skipping its received cursor', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one']
+            })
+          )
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+      })
+    )
+    await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', {
+      data: eventFrame(1, 'session:updated', {
+        kind: 'session-invalidation',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        revision: 2,
+        originClientId: 'other'
+      })
+    })
+    socket.emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(new URL(FakeWebSocket.instances[1].url).searchParams.get('after')).toBe('0')
+  })
+
+  it('keeps replay gated until a large Session update has been applied', async () => {
+    let complete!: (response: Response) => void
+    const opened = vi.fn()
+    const phases: string[] = []
+    const phaseListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENTS_OPEN_EVENT, opened)
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, phaseListener)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one']
+            })
+          )
+        return new Promise<Response>((resolve) => {
+          complete = resolve
+        })
+      })
+    )
+    try {
+      await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', {
+        data: eventFrame(1, 'session:updated', {
+          kind: 'session-invalidation',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          revision: 2,
+          originClientId: 'other'
+        })
+      })
+      socket.emit('message', { data: readyFrame(1) })
+      expect(opened).not.toHaveBeenCalled()
+      expect(phases.at(-1)).toBe('replaying')
+      complete(
+        Response.json({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          ok: true,
+          result: { id: 'session-1', projectId: 'project-1', revision: 2 }
+        })
+      )
+      await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce())
+      expect(phases.at(-1)).toBe('live')
+    } finally {
+      window.removeEventListener(WEB_EVENTS_OPEN_EVENT, opened)
+      window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, phaseListener)
+    }
   })
 
   it('signals stores to refresh only after replay reaches the live cursor', async () => {

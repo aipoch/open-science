@@ -180,7 +180,9 @@
     "src/main/backend-startup.ts",
     "src/main/backend-startup-recovery.ts",
     "src/main/backend-startup-recovery.test.ts",
-    "src/main/node-entry.test.ts"
+    "src/main/node-entry.test.ts",
+    "src/main/desktop-recovery-event-buffer.ts",
+    "src/main/desktop-runtime-session-size.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -336,7 +338,8 @@
       "src/main/desktop-runtime-recovery.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/backend-startup-recovery.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1166,7 +1169,10 @@
       "src/main/process-tree.windows.integration.test.ts",
       "src/main/runtime-ownership.integration.test.ts",
       "src/main/node-process-host.test.ts",
-      "src/main/windows-executable-trust.test.ts"
+      "src/main/windows-executable-trust.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/runtime-payload-transfers.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

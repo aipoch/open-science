@@ -1,3 +1,4 @@
+import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../shared/web-rpc-contract'
 import { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -22,7 +23,11 @@ class Socket extends EventEmitter {
           pid: 42,
           rpcProtocolVersion: 1,
           rpcChannels: ['projects:list'],
-          eventStream: { protocolVersion: 3, streamId, latestSequence: 0 }
+          eventStream: {
+            protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+            streamId,
+            latestSequence: 0
+          }
         })
       )
   })
@@ -67,7 +72,7 @@ it('isolates callback failures and reports stale display without logging private
   })
   socket.frame({
     kind: 'event',
-    protocolVersion: 3,
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
     streamId,
     sequence: 1,
     channel: 'session:changed',
@@ -107,7 +112,7 @@ it.each([
     (s: Socket) =>
       s.frame({
         kind: 'resync-required',
-        protocolVersion: 3,
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
         streamId,
         latestSequence: 1,
         reason: 'cursor-expired'

@@ -179,7 +179,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
     const pagedHistoryRead = historyBefore !== undefined
     const sparseRunRead = targetedRunRead || summaryOnlyRead || pagedHistoryRead
-    const runWindow = await this.options.repository.readSessionRunWindow(
+    const requestedWindow = await this.options.repository.readSessionRunWindow(
       session.projectId,
       session.sessionId,
       targetedRunRead || summaryOnlyRead ? 0 : historyLimit,
@@ -187,6 +187,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       historySummaryFrameId,
       historyBefore
     )
+    const runWindow =
+      targetedRunRead || summaryOnlyRead
+        ? requestedWindow
+        : this.limitRunWindow(requestedWindow, !sparseRunRead)
     const dependencyProjection = await this.options.dependencyAnalyzer
       .project({ projectId: session.projectId, sessionId: session.sessionId })
       .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
@@ -254,7 +258,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historyLimit: number
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
-    const window = await this.options.repository.readSessionRunWindow(
+    const requestedWindow = await this.options.repository.readSessionRunWindow(
       projectId,
       request.sessionId,
       historyLimit,
@@ -262,6 +266,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       historySummaryFrameId,
       historyBefore
     )
+    const window =
+      runIds.length > 0 || historySummaryFrameId !== undefined
+        ? requestedWindow
+        : this.limitRunWindow(requestedWindow, true)
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
     const runs = window.runs.map((run) => this.toPublicRunRecord(run))
     return {
@@ -392,6 +400,33 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
         restartRecommended: this.options.isRestartRecommended(processKey, session)
       }
     })
+  }
+
+  private limitRunWindow(
+    window: Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>>,
+    includeRecentRuns: boolean
+  ): Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>> {
+    let bytes = 0
+    let start = window.runs.length
+    for (let index = window.runs.length - 1; index >= 0; index--) {
+      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(window.runs[index])))
+      const projectedBytes =
+        runBytes * (includeRecentRuns && index >= window.runs.length - 20 ? 2 : 1)
+      // Always retain one complete run; byte transfer handles an individually large output.
+      if (start < window.runs.length && bytes + projectedBytes > 63 * 1024 * 1024) break
+      bytes += projectedBytes
+      start = index
+    }
+    if (start === 0) return window
+    const runs = window.runs.slice(start)
+    return {
+      ...window,
+      runs,
+      historyPage: {
+        hasEarlierRuns: true,
+        oldestCursor: { runId: runs[0].runId, startedAt: runs[0].startedAt }
+      }
+    }
   }
 
   private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {

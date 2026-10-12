@@ -1,4 +1,6 @@
 import { createLogger } from '@aipoch/diagnostics/node'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
+import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
@@ -56,6 +58,10 @@ const requestSchema = z.discriminatedUnion('kind', [
   desktopNativeResponseSchema,
   desktopNotificationActionSchema,
   desktopNotificationViewSchema,
+  webRpcRequestSchema.extend({
+    kind: z.literal('session-event-read'),
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+  }),
   webRpcRequestSchema.extend({
     kind: z.literal('host-invoke'),
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -328,6 +334,7 @@ export async function startDesktopRuntimeTransport(options: {
             socket,
             stringifyRpcJson({
               kind: 'bootstrap',
+              rpcCapabilities: [RUNTIME_PAYLOAD_CAPABILITY],
               pid: process.pid,
               ...(options.startup ? { startup: options.startup.getState() } : {}),
               rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -493,16 +500,19 @@ export async function startDesktopRuntimeTransport(options: {
           })
           return
         }
-        if (request.kind === 'host-invoke') {
+        if (request.kind === 'host-invoke' || request.kind === 'session-event-read') {
           pending.add(request.id)
           void (async () => {
             try {
-              if (!options.hostCommands) throw new Error('Desktop host commands are unavailable.')
+              const eventRead = request.kind === 'session-event-read'
+              const dispatcher = eventRead ? commands : options.hostCommands
+              if (!dispatcher) throw new Error('Desktop host commands are unavailable.')
               const result = await client.invoke(
-                options.hostCommands,
-                request.channel,
+                dispatcher,
+                eventRead ? 'sessions:load-one' : request.channel,
                 hostCaller,
-                request.args
+                request.args,
+                request
               )
               respond({
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -565,7 +575,7 @@ export async function startDesktopRuntimeTransport(options: {
         }
         pending.add(request.id)
         void client
-          .invoke(commands, request.channel, caller, request.args)
+          .invoke(commands, request.channel, caller, request.args, request)
           .then(
             (result) =>
               respond({
@@ -607,6 +617,7 @@ export async function startDesktopRuntimeTransport(options: {
       close: async () => {
         unsubscribe()
         await listener.close()
+        await runtimePayloadTransfers.settleReleased()
       }
     }
   } catch (error) {

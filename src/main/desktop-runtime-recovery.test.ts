@@ -159,3 +159,68 @@ describe('same-backend desktop recovery', () => {
     expect(recovery.state().phase).toBe('disconnected')
   })
 })
+
+describe('reconciliation event buffer', () => {
+  it('drops an in-flight Session snapshot when its deletion arrives before replay finishes', async () => {
+    const { createDesktopRecoveryEventBuffer } = await import('./desktop-recovery-event-buffer')
+    const buffer = createDesktopRecoveryEventBuffer()
+    const snapshot = deferred<unknown>()
+    const deliver = vi.fn()
+    buffer.push({
+      channel: 'session:updated',
+      payload: {
+        kind: 'session-invalidation',
+        projectId: 'p',
+        sessionId: 's',
+        revision: 1,
+        originClientId: 'other'
+      }
+    })
+    const replay = buffer.drain({
+      load: () => snapshot.promise,
+      deliver,
+      signal: new AbortController().signal
+    })
+    buffer.push({ channel: 'session:deleted', payload: { projectId: 'p', sessionId: 's' } })
+    snapshot.resolve({ id: 's', projectId: 'p', revision: 1 })
+    await replay
+    expect(deliver).toHaveBeenCalledExactlyOnceWith({
+      channel: 'session:deleted',
+      payload: { projectId: 'p', sessionId: 's' }
+    })
+  })
+
+  it('cancels replay without installing a late snapshot and can begin a new recovery', async () => {
+    const { createDesktopRecoveryEventBuffer } = await import('./desktop-recovery-event-buffer')
+    const buffer = createDesktopRecoveryEventBuffer()
+    const snapshot = deferred<unknown>()
+    const deliver = vi.fn()
+    const controller = new AbortController()
+    buffer.push({
+      channel: 'session:updated',
+      payload: {
+        kind: 'session-invalidation',
+        projectId: 'p',
+        sessionId: 's',
+        revision: 1,
+        originClientId: 'other'
+      }
+    })
+    const replay = buffer.drain({
+      load: () => snapshot.promise,
+      deliver,
+      signal: controller.signal
+    })
+    const outcome = expect(replay).rejects.toThrow('canceled')
+    controller.abort()
+    await outcome
+    snapshot.resolve({ id: 's', projectId: 'p', revision: 1 })
+    buffer.clear()
+    buffer.push({ channel: 'project:created', payload: { id: 'p' } })
+    await buffer.drain({ load: vi.fn(), deliver, signal: new AbortController().signal })
+    expect(deliver).toHaveBeenCalledExactlyOnceWith({
+      channel: 'project:created',
+      payload: { id: 'p' }
+    })
+  })
+})

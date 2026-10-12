@@ -289,10 +289,15 @@ it('isolates large Notebook and JSON-escaped file results amid mixed desktop com
     )
   ])
   expect(results.map((result) => result.status)).toEqual([
-    ...Array(3).fill('rejected'),
+    'fulfilled',
+    ...Array(2).fill('rejected'),
     ...Array(8).fill('fulfilled')
   ])
-  for (const result of results.slice(0, 3))
+  expect(
+    results[0].status === 'fulfilled' &&
+      JSON.stringify(results[0].value) === JSON.stringify(oversized)
+  ).toBe(true)
+  for (const result of results.slice(1, 3))
     if (result.status === 'rejected') expect(result.reason.message).toContain('response exceeds')
   events.publish('connectors:approval-settled', 'still connected')
   await vi.waitFor(() =>

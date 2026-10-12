@@ -1,6 +1,6 @@
 import { DesktopBackendStartupError } from './backend-startup'
 import { recoverDesktopBackendStartup } from './backend-startup-recovery'
-import { stringifyRpcJson } from './rpc-json'
+import { createDesktopRecoveryEventBuffer } from './desktop-recovery-event-buffer'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
 import { DESKTOP_RUNTIME_RECOVERY_CHANNELS } from '../shared/desktop-runtime-recovery'
 import { deliverDesktopEvent } from './desktop-event-delivery'
@@ -463,8 +463,7 @@ async function startDesktop(): Promise<void> {
         reject(error: Error): void
       }
     | undefined
-  let bufferedEventBytes = 0
-  let bufferedEvents: { channel: string; payload: unknown }[] = []
+  const recoveryEvents = createDesktopRecoveryEventBuffer()
   const native = createDesktopNativeHandler((id) => relay?.documentFor(id), isApplicationWindow)
   let state: DatabaseStartupState = { phase: 'checking' }
   let ready = false
@@ -646,13 +645,11 @@ async function startDesktop(): Promise<void> {
       onEvent: ({ channel, payload }) => {
         if (attached !== client) return
         if (recovery?.state().phase === 'reconciling') {
-          const eventBytes = Buffer.byteLength(stringifyRpcJson({ channel, payload }))
-          if (bufferedEvents.length >= 2048 || bufferedEventBytes + eventBytes > 16 * 1024 * 1024) {
-            reconcileWait?.reject(new Error('Desktop recovery event budget exceeded.'))
-            return
+          try {
+            recoveryEvents.push({ channel, payload })
+          } catch (error) {
+            reconcileWait?.reject(error as Error)
           }
-          bufferedEventBytes += eventBytes
-          bufferedEvents.push({ channel, payload })
           return
         }
         deliverRuntimeEvent({ channel, payload })
@@ -710,8 +707,7 @@ async function startDesktop(): Promise<void> {
       signal.throwIfAborted()
       deliverRuntimeEvent({ channel: 'locale:changed', payload: locale })
       deliverRuntimeEvent({ channel: 'settings:changed', payload: settings })
-      bufferedEvents = []
-      bufferedEventBytes = 0
+      recoveryEvents.clear()
       const epoch = recovery!.state().epoch
       await new Promise<void>((resolve, reject) => {
         const windows = BrowserWindow.getAllWindows().filter(
@@ -759,9 +755,11 @@ async function startDesktop(): Promise<void> {
       })
       // Old snapshot failures are repaired; new replay failures must remain invalidated.
       staleWindows.clear()
-      for (const event of bufferedEvents) deliverRuntimeEvent(event)
-      bufferedEvents = []
-      bufferedEventBytes = 0
+      await recoveryEvents.drain({
+        load: candidate.loadSessionForEvent,
+        deliver: deliverRuntimeEvent,
+        signal
+      })
       candidate.notificationView('window-created')
       refreshAppTrayNavigation(tray)
     },

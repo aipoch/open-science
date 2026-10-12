@@ -234,7 +234,7 @@
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["shared_application_contracts"],
   "testFiles": {
     "owner": [
       "src/shared/acp.test.ts",

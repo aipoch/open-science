@@ -1033,7 +1033,10 @@
       "src/renderer/src/stores/specialist-store.test.ts",
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
