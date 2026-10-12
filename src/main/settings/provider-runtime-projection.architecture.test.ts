@@ -120,40 +120,13 @@ describe('Provider runtime projection ownership', () => {
       'src/main/settings/provider-accounts.ts'
     ])
     const manifest = loadModuleImpactManifest(manifestPath)
-    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
-      'src/main/settings/bounded-response.ts',
-      'src/main/settings/provider-accounts.ts',
-      'src/main/settings/provider-auth-lifecycle.ts',
-      'src/main/settings/provider-draft-projection.ts',
-      'src/main/settings/provider-model-catalog-owner.ts',
-      'src/main/settings/provider-resource-limits.ts',
-      'src/main/settings/provider-runtime-projection.ts',
-      'src/main/settings/xai-oauth.ts',
-      'src/main/settings/xai-provider-account-owner.ts',
-      'src/main/settings/claude-isolated-auth.test.ts',
-      'src/main/settings/claude-isolated-auth.ts',
-      'src/main/settings/claude-shared-auth.test.ts',
-      'src/main/settings/claude-shared-auth.ts',
-      'src/main/settings/codex-auth.test.ts',
-      'src/main/settings/codex-auth.ts',
-      'src/main/settings/crypto.test.ts',
-      'src/main/settings/crypto.ts',
-      'src/main/settings/list-models.test.ts',
-      'src/main/settings/list-models.ts',
-      'src/main/settings/provider-accounts.test.ts',
-      'src/main/settings/provider-auth-lifecycle.architecture.test.ts',
-      'src/main/settings/provider-auth-lifecycle.test.ts',
-      'src/main/settings/provider-env.test.ts',
-      'src/main/settings/provider-env.ts',
-      'src/main/settings/provider-runtime-projection.architecture.test.ts',
-      'src/main/settings/provider-runtime-projection.test.ts',
-      'src/main/settings/validate.test.ts',
-      'src/main/settings/validate.ts',
-      'src/main/settings/xai-oauth.test.ts',
-      'src/main/settings/xai-provider-account-owner.test.ts',
-      'src/main/settings/provider-text-generation.ts',
-      'src/main/settings/provider-text-generation.test.ts'
-    ])
+    // The complete inventory is guarded by settings-backend.architecture.test.ts.
+    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual(
+      expect.arrayContaining([
+        'src/main/settings/provider-accounts.ts',
+        'src/main/settings/provider-runtime-projection.ts'
+      ])
+    )
     expect(manifest.modules.settings_provider_accounts.testFiles.owner).toEqual([
       'src/main/settings/settings-backend.architecture.test.ts',
       'src/main/settings/provider-accounts.test.ts',
