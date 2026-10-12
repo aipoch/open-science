@@ -486,7 +486,9 @@
       "src/main/artifacts/provenance-startup.integration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",
       "src/main/acp/runtime-composition.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

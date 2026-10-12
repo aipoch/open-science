@@ -17,7 +17,7 @@ test('headless desktop creates no renderer and exits after Web shutdown', async 
   const env = {
     ...launchEnvironment(storageRoot),
     OPEN_SCIENCE_USER_DATA: profileRoot,
-    ...(process.platform === 'darwin'
+    ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
       ? {
           NODE_OPTIONS: `--require=${JSON.stringify(resolve('e2e/fixtures/mock-node-credentials.cjs'))}`
         }
@@ -66,10 +66,6 @@ test('headless desktop creates no renderer and exits after Web shutdown', async 
 
 for (const borrowed of [false, true]) {
   test(`desktop ${borrowed ? 'detaches from a CLI-owned' : 'stops its own'} ordinary Node runtime`, async () => {
-    test.skip(
-      Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-      'Source entry ownership certification'
-    )
     const root = await mkdtemp(join(tmpdir(), 'open-science-desktop-lifetime-'))
     const roots = {
       storageRoot: join(root, 'storage'),
@@ -82,7 +78,7 @@ for (const borrowed of [false, true]) {
     const env = {
       ...launchEnvironment(roots.storageRoot),
       OPEN_SCIENCE_USER_DATA: roots.userDataRoot,
-      ...(process.platform === 'darwin'
+      ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
         ? {
             NODE_OPTIONS: `--require=${JSON.stringify(resolve('e2e/fixtures/mock-node-credentials.cjs'))}`
           }

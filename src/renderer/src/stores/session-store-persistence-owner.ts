@@ -210,6 +210,23 @@ const markExternallyHydratedSession = (
   recordSessionConversationAuthority(session, authority)
 }
 
+// Recovery replaces runtime authority while retaining only unsubmitted editable drafts. Keep the
+// authority marker on the new projection so the persistence saver cannot echo hydration as a write.
+export const retainSessionRecoveryDrafts = (
+  session: ChatSession,
+  previous: ChatSession
+): ChatSession => {
+  if (!previous.unsavedTitle && !previous.elicitationEditDrafts) return session
+  const retained: ChatSession = {
+    ...session,
+    elicitationEditDrafts: previous.elicitationEditDrafts,
+    ...(previous.unsavedTitle ? { title: previous.title, unsavedTitle: true } : {})
+  }
+  const authority = externallyHydratedSessionAuthorities.get(session)
+  if (authority) markExternallyHydratedSession(retained, authority)
+  return retained
+}
+
 export const createInitialSessionState = (): SessionStoreData => ({
   sessions: [],
   selectedSessionId: undefined,

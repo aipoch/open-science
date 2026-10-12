@@ -53,7 +53,8 @@
     "src/renderer/src/stores/theme-store.test.ts",
     "src/renderer/src/stores/theme-store.ts",
     "src/renderer/src/stores/update-store.test.ts",
-    "src/renderer/src/stores/update-store.ts"
+    "src/renderer/src/stores/update-store.ts",
+    "src/renderer/src/stores/desktop-runtime-recovery-store.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/interface-scale-store.ts",
@@ -503,7 +504,12 @@
       "src/renderer/src/stores/settings-skills-slice.test.ts",
       "src/renderer/src/stores/settings-store.architecture.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
-      "src/renderer/src/stores/settings-write-coordinator.test.ts"
+      "src/renderer/src/stores/settings-write-coordinator.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
+      "src/renderer/src/lib/acp/useAcpRuntime.test.ts",
+      "src/renderer/src/stores/session-job-store.test.ts",
+      "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。",
     "Close window": "ウィンドウを閉じる",
     "Review potentially destructive code": "破壊的な操作を含む可能性があるコードを確認",
-    "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認"
+    "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認",
+    "Quit app": "アプリを終了"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux のシステム認証情報には、元々選択されていた Secret Service または KWallet バックエンドと /usr/bin/busctl が必要です。元の既定のキーリングまたはウォレットのロックを解除して再起動してください。この確認を回避するために password-store バックエンドやプロファイルを変更しないでください。",
@@ -132,7 +133,9 @@
     "Running sessions": "実行中",
     "Pinned sessions": "固定済み",
     "Recent items": "最近のセッション",
-    "More items": "その他のセッション"
+    "More items": "その他のセッション",
+    "Quit while disconnected?": "切断したまま終了しますか？",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "未保存の変更は失われる可能性があります。送信済みの操作は完了している可能性があります。バックエンドは停止されません。"
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI の RNA 相互作用、制御の証拠と一括データセット。",
@@ -7164,6 +7167,11 @@
     "Selected environment": "選択した環境",
     "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。",
     "No code has run in this view yet.": "このビューではまだコードが実行されていません。",
-    "Code received; waiting for execution details.": "コードを受信しました。実行の詳細を待っています。"
+    "Code received; waiting for execution details.": "コードを受信しました。実行の詳細を待っています。",
+    "Desktop connection lost": "デスクトップの接続が切断されました",
+    "Restoring desktop connection…": "デスクトップの接続を復元中…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "ローカルの下書きは開いたままです。送信済みの操作は完了している可能性があり、再実行されません。",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "元のバックエンドは利用できません。アプリを終了して再度開いてください。",
+    "Reconnect": "再接続"
   }
 }

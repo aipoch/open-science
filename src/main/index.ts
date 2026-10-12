@@ -1,3 +1,7 @@
+import { stringifyRpcJson } from './rpc-json'
+import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
+import { DESKTOP_RUNTIME_RECOVERY_CHANNELS } from '../shared/desktop-runtime-recovery'
+import { deliverDesktopEvent } from './desktop-event-delivery'
 import {
   app,
   BrowserWindow,
@@ -23,10 +27,7 @@ import type { LocalePreferenceSnapshot } from '../shared/locale'
 import { acquireRuntimeDirectorySync } from './runtime-ownership'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
-import {
-  currentApplicationShutdownTrigger,
-  markApplicationShutdownTrigger
-} from './application-shutdown-trigger'
+import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
 import { configureIpcHandlerRegistry, ipcMainHandle } from './ipc-handler-registry'
 import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
@@ -40,7 +41,6 @@ import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runt
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
-import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
@@ -376,9 +376,31 @@ async function startDesktop(): Promise<void> {
   let icons: ReturnType<typeof createAppIconController> | undefined = undefined
   const i18n = createNativeI18n('en')
   const translate = i18n.t.bind(i18n)
+  const staleWindows = new Set<number>()
+  const markStale = (sender: WebContents): void => {
+    if (sender.isDestroyed()) return
+    staleWindows.add(sender.id)
+    try {
+      sender.send(DESKTOP_RUNTIME_RECOVERY_CHANNELS.stateChanged, {
+        ...recovery?.state(),
+        phase: 'disconnected',
+        epoch: (recovery?.state().epoch ?? 0) + 1,
+        closing: false
+      })
+    } catch {
+      /* A destroyed document has no recovery surface. */
+    }
+  }
   const broadcast = (channel: string, payload: unknown): void => {
-    for (const window of BrowserWindow.getAllWindows())
-      if (!window.isDestroyed() && isMainWindow(window)) window.webContents.send(channel, payload)
+    deliverDesktopEvent(
+      BrowserWindow.getAllWindows(),
+      isMainWindow,
+      channel,
+      payload,
+      channel === DESKTOP_RUNTIME_RECOVERY_CHANNELS.stateChanged
+        ? undefined
+        : (window) => markStale(window.webContents)
+    )
   }
   startupDiagnostics?.phase('notification-projection')
   const visibility = registerUnreadTaskIpc({
@@ -410,25 +432,37 @@ async function startDesktop(): Promise<void> {
     ...(process.platform === 'darwin' ? { dock: app.dock } : {}),
     onError: reportError
   })
-  const notifications = createDesktopNotificationHandler({
-    delivery: {
-      notificationCtor: Notification,
-      liveNotifications: new Set(),
-      log: diagnostics.log,
-      headless,
-      translate
-    },
-    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
-    isMainWindowFocused: () => getMainWindow()?.isFocused() ?? false,
-    confirmSessionVisible: visibility.confirmSessionVisible,
-    setBadgeCount: (count) => badge.setCount(count),
-    requestAttention: () => attention.request(),
-    clearAttention: () => attention.clear(),
-    activate: () => {
-      showMainWindow?.().webContents.send('notifications:open-session')
-    },
-    onAction: (token, action) => client?.notificationAction(token, action)
-  })
+  const makeNotifications = (): ReturnType<typeof createDesktopNotificationHandler> =>
+    createDesktopNotificationHandler({
+      delivery: {
+        notificationCtor: Notification,
+        liveNotifications: new Set(),
+        log: diagnostics.log,
+        headless,
+        translate
+      },
+      isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+      isMainWindowFocused: () => getMainWindow()?.isFocused() ?? false,
+      confirmSessionVisible: visibility.confirmSessionVisible,
+      setBadgeCount: (count) => badge.setCount(count),
+      requestAttention: () => attention.request(),
+      clearAttention: () => attention.clear(),
+      activate: () => {
+        showMainWindow?.().webContents.send('notifications:open-session')
+      },
+      onAction: (token, action) => client?.notificationAction(token, action)
+    })
+  let notifications = makeNotifications()
+  let reconcileWait:
+    | {
+        epoch: number
+        pending: Map<number, WebContents['mainFrame']>
+        resolve(): void
+        reject(error: Error): void
+      }
+    | undefined
+  let bufferedEventBytes = 0
+  let bufferedEvents: { channel: string; payload: unknown }[] = []
   const native = createDesktopNativeHandler((id) => relay?.documentFor(id), isApplicationWindow)
   let state: DatabaseStartupState = { phase: 'checking' }
   let ready = false
@@ -446,13 +480,41 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply'
   ])
+  const recoveryReadChannels = new Set([
+    'sessions:list',
+    'sessions:load-all',
+    'sessions:load-one',
+    'sessions:list-runtime-terminal-failures',
+    'projects:list',
+    'projects:list-deletion-cleanup',
+    'settings:get-settings',
+    'settings:is-encryption-available',
+    'settings:get-preflight',
+    'settings:is-npm-available',
+    'lifecycle:client-id',
+    'acp:get-state',
+    'compute:jobs:list',
+    'compute:list',
+    'notebook:state'
+  ])
   const installRelay = (): void => {
     relay?.uninstall()
+    const attached = client!
     relay = installDesktopRuntimeElectronAdapter(
       {
-        commandNames: () => client!.commandNames().filter((name) => !nativeChannels.has(name)),
-        invoke: (...args) => client!.invoke(...args),
-        release: (id) => client!.release(id)
+        commandNames: () => attached.commandNames().filter((name) => !nativeChannels.has(name)),
+        invoke: (...args) => {
+          if (
+            ((recovery && recovery.state().phase !== 'connected') ||
+              staleWindows.has(relay?.documentFor(args[0])?.id ?? -1)) &&
+            !recoveryReadChannels.has(args[1])
+          )
+            return Promise.reject(
+              new Error('Desktop is recovering. This operation was not submitted.')
+            )
+          return attached.invoke(...args)
+        },
+        release: (id) => attached.release(id)
       },
       isApplicationWindow
     )
@@ -518,79 +580,281 @@ async function startDesktop(): Promise<void> {
     )
   }
   startupDiagnostics?.phase('connect-node-runtime')
-  client = await connectDesktopRuntime({
-    ...launch,
-    onStartupState: (next) => {
-      if (acceptStartupEvents) publishStartup(next)
-    },
-    onNativeRequest: async (request, signal) => {
-      if (request.request.operation === 'runtime-relaunch') {
-        plannedRelaunch = true
-        return client!.ownsRuntime()
+  const deliverRuntimeEvent = ({
+    channel,
+    payload
+  }: {
+    channel: string
+    payload: unknown
+  }): void => {
+    if (channel === 'locale:changed') {
+      void i18n
+        .changeLanguage((payload as LocalePreferenceSnapshot).locale)
+        .then(() => refreshAppTrayLocale(tray))
+    }
+    if (channel === 'settings:changed') {
+      const variant = (payload as SettingsSnapshot).appIconVariant
+      icons?.setVariant(variant)
+      if (tray && trayVariantIconPaths) setTrayIconVariant(tray, trayVariantIconPaths, variant)
+    }
+    broadcast(channel, payload)
+    if (/^(session:|project:|acp:state|side-chat:event|notebook:changed)/.test(channel))
+      refreshAppTrayNavigation(tray)
+  }
+  const attach = async (signal?: AbortSignal): Promise<DesktopRuntimeClient> => {
+    const attached = await connectDesktopRuntime({
+      ...launch,
+      signal,
+      onStartupState: (next) => {
+        if (acceptStartupEvents && attached === client) publishStartup(next)
+      },
+      onNativeRequest: async (request, signal) => {
+        signal.throwIfAborted()
+        if (request.request.operation === 'runtime-relaunch') {
+          if (!client!.ownsRuntime()) return false
+          plannedRelaunch = true
+          recovery?.setClosing(true)
+          return true
+        }
+        if (request.request.operation === 'renderer-flush') {
+          const outcome = await createElectronSessionPersistenceFlush(() => getMainWindow())()
+          const blocked = rendererSessionPersistenceFlushBlocksShutdown(
+            outcome,
+            request.request.policy
+          )
+          if (blocked) notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
+          return !blocked
+        }
+        if (request.request.operation === 'renderer-flush-aborted') {
+          notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
+          return null
+        }
+        return request.request.operation.startsWith('notification-')
+          ? notifications.handle(request, signal)
+          : native(request, signal)
+      },
+      onDocumentEvent: (event) => {
+        if (attached === client)
+          relay?.documentFor(event.clientId)?.send(event.channel, event.payload)
+      },
+      onUploadProgress: (id, progress) => {
+        if (attached === client) relay?.documentFor(id)?.send('uploads:transfer-progress', progress)
+      },
+      onEvent: ({ channel, payload }) => {
+        if (attached !== client) return
+        if (recovery?.state().phase === 'reconciling') {
+          const eventBytes = Buffer.byteLength(stringifyRpcJson({ channel, payload }))
+          if (bufferedEvents.length >= 2048 || bufferedEventBytes + eventBytes > 16 * 1024 * 1024) {
+            reconcileWait?.reject(new Error('Desktop recovery event budget exceeded.'))
+            return
+          }
+          bufferedEventBytes += eventBytes
+          bufferedEvents.push({ channel, payload })
+          return
+        }
+        deliverRuntimeEvent({ channel, payload })
+      },
+      onDeliveryFailure: (failure) => {
+        if (attached !== client || !attached) return
+        const sender = failure.clientId ? relay?.documentFor(failure.clientId) : undefined
+        if (sender) markStale(sender)
+        else
+          for (const window of BrowserWindow.getAllWindows())
+            if (isMainWindow(window)) markStale(window.webContents)
+      },
+      onDisconnect: () => {
+        if (attached !== client || !attached) return
+        if (!ready) reportError(new Error('Desktop connection was lost during startup.'))
+        preview?.dispose()
+        notifications.dispose()
+        reconcileWait?.reject(new Error('Desktop disconnected during recovery.'))
+        if (plannedRelaunch) {
+          const restart = (): void => {
+            app.relaunch()
+            app.exit(0)
+          }
+          if (launch.startedProcess && launch.startedProcess.exitCode === null)
+            launch.startedProcess.once('exit', restart)
+          else restart()
+        } else if (!updateCommitted) recovery?.disconnect(attached)
       }
-      if (request.request.operation === 'renderer-flush') {
-        const outcome = await createElectronSessionPersistenceFlush(() => getMainWindow())()
-        const blocked = rendererSessionPersistenceFlushBlocksShutdown(
-          outcome,
-          request.request.policy
-        )
-        if (blocked) notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
-        return !blocked
-      }
-      if (request.request.operation === 'renderer-flush-aborted') {
-        notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
-        return null
-      }
-      return request.request.operation.startsWith('notification-')
-        ? notifications.handle(request, signal)
-        : native(request, signal)
-    },
-    onDocumentEvent: (event) =>
-      relay?.documentFor(event.clientId)?.send(event.channel, event.payload),
-    onUploadProgress: (id, progress) =>
-      relay?.documentFor(id)?.send('uploads:transfer-progress', progress),
-    onEvent: ({ channel, payload }) => {
-      if (channel === 'locale:changed') {
-        void i18n
-          .changeLanguage((payload as LocalePreferenceSnapshot).locale)
-          .then(() => refreshAppTrayLocale(tray))
-      }
-      if (channel === 'settings:changed') {
-        const variant = (payload as SettingsSnapshot).appIconVariant
-        icons?.setVariant(variant)
-        if (tray && trayVariantIconPaths) setTrayIconVariant(tray, trayVariantIconPaths, variant)
-      }
-      broadcast(channel, payload)
-      if (/^(session:|project:|acp:state|side-chat:event|notebook:changed)/.test(channel))
-        refreshAppTrayNavigation(tray)
-    },
-    onDisconnect: (error) => {
+    })
+    return attached
+  }
+  client = await attach()
+  const recovery = createDesktopRuntimeRecovery({
+    client,
+    startedProcess: launch.startedProcess,
+    connect: attach,
+    activate: async (candidate, signal, readyForSnapshots) => {
       preview?.dispose()
       notifications.dispose()
-      if (plannedRelaunch) {
-        const restart = (): void => {
-          app.relaunch()
-          app.exit(0)
+      client = candidate
+      notifications = makeNotifications()
+      const candidatePreview = await createDesktopPreviewProxy(configRoot, candidate.processId())
+      if (signal.aborted) {
+        candidatePreview.dispose()
+        throw new Error('Desktop recovery canceled.')
+      }
+      preview = candidatePreview
+      installRelay()
+      const [locale, settings] = await Promise.all([
+        candidate.invokeHost('locale:snapshot') as Promise<LocalePreferenceSnapshot>,
+        candidate.invokeHost('settings:get-settings') as Promise<SettingsSnapshot>
+      ])
+      if (signal.aborted) throw new Error('Desktop recovery canceled.')
+      await i18n.changeLanguage(locale.locale)
+      signal.throwIfAborted()
+      deliverRuntimeEvent({ channel: 'locale:changed', payload: locale })
+      deliverRuntimeEvent({ channel: 'settings:changed', payload: settings })
+      bufferedEvents = []
+      bufferedEventBytes = 0
+      const epoch = recovery!.state().epoch
+      await new Promise<void>((resolve, reject) => {
+        const windows = BrowserWindow.getAllWindows().filter(
+          (window) => !window.isDestroyed() && isMainWindow(window)
+        )
+        const pending = new Map(
+          windows.map((window) => [window.webContents.id, window.webContents.mainFrame])
+        )
+        const removals: (() => void)[] = []
+        const cleanup = (): void => {
+          for (const remove of removals) remove()
         }
-        if (launch.startedProcess && launch.startedProcess.exitCode === null)
-          launch.startedProcess.once('exit', restart)
-        else restart()
-      } else if (launch.startedProcess) {
-        handleOwnedBackendDisconnect({
-          child: launch.startedProcess,
-          runtimePid: client?.processId(),
-          error,
-          isUpdateCommitted: () => updateCommitted,
-          onCleanExit: () => {
-            // The backend is already gone: renderer persistence and delegated-work gates cannot
-            // complete, so this shutdown is best-effort like a system power-off, not a user quit.
-            markApplicationShutdownTrigger('system')
-            app.quit()
+        const aborted = (): void => {
+          cleanup()
+          reject(new Error('Desktop recovery canceled.'))
+        }
+        signal.addEventListener('abort', aborted, { once: true })
+        removals.push(() => signal.removeEventListener('abort', aborted))
+        reconcileWait = {
+          epoch,
+          pending,
+          resolve: () => {
+            cleanup()
+            resolve()
           },
-          onFailure: reportError
-        })
-      } else if (!updateCommitted) reportError(error)
+          reject: (error) => {
+            cleanup()
+            reject(error)
+          }
+        }
+        for (const window of windows) {
+          const sender = window.webContents
+          const id = sender.id
+          const closed = (): void => {
+            pending.delete(id)
+            if (pending.size === 0 && reconcileWait?.epoch === epoch) reconcileWait.resolve()
+          }
+          sender.once('destroyed', closed)
+          removals.push(() => sender.removeListener('destroyed', closed))
+        }
+        readyForSnapshots()
+        if (pending.size === 0) reconcileWait.resolve()
+      }).finally(() => {
+        if (reconcileWait?.epoch === epoch) reconcileWait = undefined
+      })
+      // Old snapshot failures are repaired; new replay failures must remain invalidated.
+      staleWindows.clear()
+      for (const event of bufferedEvents) deliverRuntimeEvent(event)
+      bufferedEvents = []
+      bufferedEventBytes = 0
+      candidate.notificationView('window-created')
+      refreshAppTrayNavigation(tray)
+    },
+    discard: (candidate) => {
+      if (client !== candidate) return
+      preview?.dispose()
+      notifications.dispose()
+      relay?.uninstall()
+    },
+    onState: (next) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!isMainWindow(window) || window.webContents.isDestroyed()) continue
+        const sender = window.webContents
+        try {
+          sender.send(
+            DESKTOP_RUNTIME_RECOVERY_CHANNELS.stateChanged,
+            next.phase === 'connected' && staleWindows.has(sender.id)
+              ? { ...next, phase: 'disconnected', epoch: next.epoch + 1 }
+              : next
+          )
+        } catch {
+          markStale(sender)
+        }
+      }
     }
+  })
+  if (client.ownsRuntime())
+    launch.startedProcess?.once('exit', () => {
+      if (headless && !updateCommitted && !plannedRelaunch) app.exit(0)
+      else if (client && !updateCommitted && !plannedRelaunch) recovery!.disconnect(client)
+    })
+  const requireRecoveryFrame = (event: import('electron').IpcMainInvokeEvent): void => {
+    if (
+      !isApplicationWindow(event.sender) ||
+      !event.senderFrame ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('Desktop recovery requires the main application frame.')
+  }
+  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.getState, (event) => {
+    requireRecoveryFrame(event)
+    const state = recovery!.state()
+    return state.phase === 'connected' && staleWindows.has(event.sender.id)
+      ? { ...state, phase: 'disconnected', epoch: state.epoch + 1 }
+      : state
+  })
+  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.reconnect, (event) => {
+    requireRecoveryFrame(event)
+    if (staleWindows.has(event.sender.id) && recovery!.state().phase === 'connected') {
+      client!.close()
+      recovery!.disconnect(client!)
+    }
+    return recovery!.reconnect()
+  })
+  ipcMainHandle(
+    DESKTOP_RUNTIME_RECOVERY_CHANNELS.reconciled,
+    (event, epoch: number, success: boolean) => {
+      requireRecoveryFrame(event)
+      const waiting = reconcileWait
+      if (
+        !waiting ||
+        waiting.epoch !== epoch ||
+        waiting.pending.get(event.sender.id) !== event.senderFrame
+      )
+        return
+      if (success !== true) {
+        waiting.reject(new Error('Desktop state refresh failed.'))
+        return
+      }
+      waiting.pending.delete(event.sender.id)
+      if (waiting.pending.size === 0) waiting.resolve()
+    }
+  )
+  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, async (event) => {
+    requireRecoveryFrame(event)
+    if (recovery!.state().phase === 'connected' && !staleWindows.has(event.sender.id)) {
+      app.quit()
+      return
+    }
+    recovery!.setClosing(true)
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: [translate('Cancel'), translate('Quit app')],
+      defaultId: 0,
+      cancelId: 0,
+      message: translate('Quit while disconnected?'),
+      detail: translate(
+        'Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.'
+      )
+    })
+    if (result.response !== 1) {
+      recovery!.setClosing(false)
+      return
+    }
+    client?.close()
+    app.exit(0)
   })
   cleanupStartupClient = () => client!.quit()
   if (startupQuitRequested) {
@@ -648,19 +912,25 @@ async function startDesktop(): Promise<void> {
   const update = createUpdateStrategy(process.platform, {
     translate,
     installGate: async (options) => {
-      if (!client!.ownsRuntime())
-        throw new Error(
-          'Stop the independently started server with open-science stop before updating this desktop installation.'
-        )
-      const result = (await client!.invokeHost('desktop:update-gate', [
-        options ?? {}
-      ])) as import('./update/strategy').InstallReadiness
-      if (!result.completed || !result.reaped) return result
-      await client!.quit()
-      updateCommitted = true
-      return result
+      recovery!.setClosing(true)
+      try {
+        if (!client!.ownsRuntime())
+          throw new Error(
+            'Stop the independently started server with open-science stop before updating this desktop installation.'
+          )
+        const result = (await client!.invokeHost('desktop:update-gate', [
+          options ?? {}
+        ])) as import('./update/strategy').InstallReadiness
+        if (!result.completed || !result.reaped) return result
+        await client!.quit()
+        updateCommitted = true
+        return result
+      } finally {
+        if (!updateCommitted) recovery!.setClosing(false)
+      }
     },
     releaseInstallHandoff: () => {
+      if (!updateCommitted) recovery!.setClosing(false)
       if (!updateCommitted) void client!.invokeHost('desktop:update-abort').catch(reportError)
     }
   })
@@ -706,6 +976,8 @@ async function startDesktop(): Promise<void> {
     countWindows: () => BrowserWindow.getAllWindows().length,
     isMigrationInProgress: () => false,
     refreshQuitState: async () => {
+      if (recovery!.state().phase !== 'connected')
+        throw new Error('Use the connection notice to quit while disconnected.')
       if (!client!.ownsRuntime() || !ready) return false
       let next = (await client!.lifecycle({ operation: 'inspect' })) as DesktopShutdownWork
       if (next.migrationActive) {
@@ -736,9 +1008,11 @@ async function startDesktop(): Promise<void> {
     hasActiveReviewerWork: () => work?.reviewerActive ?? false,
     getActiveSettingsInstallId: () => work?.settingsInstallId,
     holdSettingsInstallAdmission: () => {
+      recovery!.setClosing(true)
       if (client!.ownsRuntime() && ready) admission = client!.lifecycle({ operation: 'hold' })
       void admission.catch(() => undefined)
       return () => {
+        recovery!.setClosing(false)
         if (client!.ownsRuntime() && ready)
           void client!.lifecycle({ operation: 'release' }).catch(reportError)
       }
@@ -756,6 +1030,7 @@ async function startDesktop(): Promise<void> {
       try {
         if (client!.ownsRuntime() && ready) await client!.lifecycle({ operation: 'abort' })
       } finally {
+        recovery!.setClosing(false)
         notifyRendererSessionPersistenceFlushAborted(() => getMainWindow(), reason)
       }
     },
@@ -775,7 +1050,10 @@ async function startDesktop(): Promise<void> {
     log: diagnostics.log,
     flushLogs,
     requireCleanBackendShutdown: true,
-    onQuitError: reportError,
+    onQuitError: (error) => {
+      recovery!.setClosing(false)
+      reportError(error)
+    },
     shutdownBackends: async () => {
       await client!.quit()
       preview?.dispose()

@@ -1,4 +1,9 @@
 import { useEffect, useRef } from 'react'
+import {
+  getDesktopRuntimeEpoch,
+  desktopRuntimeWritable,
+  useDesktopRuntimeRecoveryStore
+} from '../../stores/desktop-runtime-recovery-store'
 
 import {
   PREVIEW_STATE_VERSION,
@@ -227,6 +232,7 @@ const createPreviewSaveScheduler = (
   const queues = new Map<
     string,
     {
+      epoch: number
       pendingState: PersistedPreviewState | undefined
       pendingBaseState: PersistedPreviewState | undefined
       inFlightState: PersistedPreviewState | undefined
@@ -248,9 +254,26 @@ const createPreviewSaveScheduler = (
     generations.set(projectId, (generations.get(projectId) ?? 0) + 1)
   }
 
+  // Retire queued work immediately; a completed old write may have reached the backend, but its
+  // response must not seed revisions or trigger conflict retries in the new attachment.
+  useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+    if (state.epoch === previous.epoch && state.phase === previous.phase) return
+    if (state.phase === 'connected' && state.epoch === previous.epoch) return
+    for (const [projectId, queue] of queues) {
+      queue.pendingState = undefined
+      queue.pendingBaseState = undefined
+      bumpGeneration(projectId)
+    }
+    failures.clear()
+    revisions.clear()
+    acceptedStates.clear()
+  })
+
   const schedule = ({ projectId, state }: PreviewSaveInput): void => {
+    if (!desktopRuntimeWritable()) return
     state = canonicalizeLiteraturePreviewState(state)
     const queue = queues.get(projectId) ?? {
+      epoch: getDesktopRuntimeEpoch(),
       pendingState: undefined,
       pendingBaseState: undefined,
       inFlightState: undefined,
@@ -276,6 +299,10 @@ const createPreviewSaveScheduler = (
     const drain = (async () => {
       try {
         while (queue.pendingState) {
+          if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) {
+            queue.pendingState = undefined
+            break
+          }
           const nextState = queue.pendingState
           const nextBaseState =
             queue.pendingBaseState ??
@@ -291,6 +318,7 @@ const createPreviewSaveScheduler = (
               state: nextState,
               expectedRevision: revisions.get(projectId) ?? 0
             })
+            if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) return
             if (result.status === 'conflict') {
               const authoritativeState = canonicalizeLiteraturePreviewState(
                 result.snapshot?.state ?? createEmptyPersistedPreviewState()
@@ -328,6 +356,7 @@ const createPreviewSaveScheduler = (
             bumpGeneration(projectId)
             failures.delete(projectId)
           } catch (error) {
+            if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) return
             failures.set(projectId, { state: nextState, error })
             bumpGeneration(projectId)
             reportError(error)
@@ -570,10 +599,12 @@ export const usePreviewPersistence = (
   isSessionPersistenceReady: boolean
 ): void => {
   const previousProjectIdRef = useRef<string | undefined>(undefined)
+  const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
+  const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
 
   useEffect(() => {
     // Upload preview paths can only be reconciled after persisted sessions have hydrated.
-    if (!isSessionPersistenceReady) return
+    if (!isSessionPersistenceReady || !['connected', 'reconciling'].includes(recoveryPhase)) return
 
     const previousProjectId = previousProjectIdRef.current
     const store = usePreviewWorkbenchStore.getState()
@@ -600,7 +631,7 @@ export const usePreviewPersistence = (
     const loadLatest = async (): Promise<void> => {
       const loadGeneration = previewSaveScheduler.getGeneration(activeProjectId)
       const snapshot = await window.api.preview.load({ projectId: activeProjectId })
-      if (cancelled) return
+      if (cancelled || recoveryEpoch !== getDesktopRuntimeEpoch()) return
 
       if (!previewSaveScheduler.acceptLoadedSnapshot(activeProjectId, loadGeneration, snapshot)) {
         const currentStore = usePreviewWorkbenchStore.getState()
@@ -634,7 +665,7 @@ export const usePreviewPersistence = (
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, isSessionPersistenceReady])
+  }, [activeProjectId, isSessionPersistenceReady, recoveryEpoch, recoveryPhase])
 
   // Write through workbench changes so a process-level restart cannot lose the selected Subagent
   // Frame (or another durable preview change) before React gets an unmount opportunity.

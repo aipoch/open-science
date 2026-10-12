@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "请等待所有会话活动和待处理审批结束后再创建副本。",
     "Close window": "关闭窗口",
     "Review potentially destructive code": "检查可能具有破坏性的代码",
-    "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境"
+    "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境",
+    "Quit app": "退出应用"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系统凭据需要原来选定的 Secret Service 或 KWallet 后端以及 /usr/bin/busctl。请解锁原有的默认密钥环或钱包后重启。不要更改 password-store 后端或配置目录来绕过此检查。",
@@ -132,7 +133,9 @@
     "Running sessions": "运行中",
     "Pinned sessions": "已固定",
     "Recent items": "最近会话",
-    "More items": "更多会话"
+    "More items": "更多会话",
+    "Quit while disconnected?": "在断开连接时退出？",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "未保存的更改可能丢失。已提交的操作可能已经完成。后台不会停止。"
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、调控证据与批量数据集。",
@@ -7164,6 +7167,11 @@
     "Selected environment": "所选环境",
     "Switching environments clears the current kernel's variables.": "切换环境会清除当前内核中的变量。",
     "No code has run in this view yet.": "此视图中尚未运行代码。",
-    "Code received; waiting for execution details.": "已收到代码，正在等待执行详情。"
+    "Code received; waiting for execution details.": "已收到代码，正在等待执行详情。",
+    "Desktop connection lost": "桌面连接已断开",
+    "Restoring desktop connection…": "正在恢复桌面连接…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "本地草稿仍保持打开。已提交的操作可能已经完成，不会自动重试。",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "原后台已不可用。请退出并重新打开应用以继续。",
+    "Reconnect": "重新连接"
   }
 }

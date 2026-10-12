@@ -1172,7 +1172,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/smart-collections.test.ts',
       'src/main/session-persistence/ipc.test.ts',
       'src/main/composition/reviewer.test.ts',
-      'src/main/desktop-runtime-transport.integration.test.ts'
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1641,7 +1643,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/connectors/mcp-host-dependencies.test.ts',
       'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
       'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
-      ...(manifest.modules.settings_proxy_runtime?.testFiles.owner ?? [])
+      ...(manifest.modules.settings_proxy_runtime?.testFiles.owner ?? []),
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts'
     ])
     expect(
       [

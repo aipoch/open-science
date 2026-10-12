@@ -271,7 +271,8 @@
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
       "src/renderer/src/pages/workspace/SessionNotebookDialog.accessibility.test.tsx",
       "src/renderer/src/pages/workspace/SessionNotebookDialog.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx"
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

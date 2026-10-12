@@ -168,7 +168,9 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/analysis-file-evidence.test.ts",
-      "src/main/notebook/artifact-analysis-contract.integration.test.ts"
+      "src/main/notebook/artifact-analysis-contract.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

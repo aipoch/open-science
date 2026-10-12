@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer.",
     "Close window": "Fermer la fenêtre",
     "Review potentially destructive code": "Examiner le code potentiellement destructeur",
-    "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook"
+    "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook",
+    "Quit app": "Quitter l’application"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
@@ -134,7 +135,9 @@
     "Running sessions": "En cours",
     "Pinned sessions": "Épinglé",
     "Recent items": "Sessions récentes",
-    "More items": "Plus de sessions"
+    "More items": "Plus de sessions",
+    "Quit while disconnected?": "Quitter sans connexion ?",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "Les modifications non enregistrées risquent d’être perdues. Les opérations envoyées ont peut-être abouti. Le backend ne sera pas arrêté."
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Interactions ARN, preuves de régulation et jeux de données en masse d’ENCORI.",
@@ -7492,6 +7495,11 @@
     "Selected environment": "Environnement sélectionné",
     "Switching environments clears the current kernel's variables.": "Changer d’environnement efface les variables du noyau actuel.",
     "No code has run in this view yet.": "Aucun code n’a encore été exécuté dans cette vue.",
-    "Code received; waiting for execution details.": "Code reçu ; en attente des détails d’exécution."
+    "Code received; waiting for execution details.": "Code reçu ; en attente des détails d’exécution.",
+    "Desktop connection lost": "Connexion du bureau perdue",
+    "Restoring desktop connection…": "Rétablissement de la connexion du bureau…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "Vos brouillons locaux restent ouverts. Les opérations envoyées ont peut-être abouti ; elles ne seront pas relancées.",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "Le backend initial n’est plus disponible. Quittez puis rouvrez l’application pour continuer.",
+    "Reconnect": "Reconnecter"
   }
 }

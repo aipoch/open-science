@@ -661,7 +661,10 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/shared/specialist.test.ts"
+      "src/shared/specialist.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

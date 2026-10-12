@@ -438,7 +438,8 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
-      "src/renderer/src/pages/settings/mirror-view.test.ts"
+      "src/renderer/src/pages/settings/mirror-view.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

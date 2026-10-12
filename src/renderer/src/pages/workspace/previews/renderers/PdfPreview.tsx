@@ -1,3 +1,4 @@
+import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { PdfTranslationExport } from './PdfTranslationExport'
 import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
 import { restorePdfTranslationJob } from './use-pdf-translation-job'
@@ -2420,11 +2421,15 @@ export const PdfPreviewContent = ({
     size,
     mtimeMs
   })
-  const generation = usePreviewResourceGeneration()
-  const resourceRequestKey = `${requestKey}:${generation}`
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const panGestureRef = useRef<PdfPanGesture | undefined>(undefined)
   const viewportAnchorRef = useRef<PdfViewportAnchor | undefined>(undefined)
+  const retainRecoveryViewport = useCallback(() => {
+    const anchor = readViewportAnchor(scrollRef.current)
+    if (anchor) viewportAnchorRef.current = anchor
+  }, [])
+  const generation = usePreviewResourceGeneration(retainRecoveryViewport)
+  const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
     { destination: PdfLinkDestination; translated: boolean } | undefined
   >(undefined)
@@ -2607,7 +2612,8 @@ export const PdfPreviewContent = ({
     setCursorMode('select')
 
   const captureViewportAnchor = useCallback((): void => {
-    viewportAnchorRef.current = readViewportAnchor(scrollRef.current)
+    const anchor = readViewportAnchor(scrollRef.current)
+    if (anchor) viewportAnchorRef.current = anchor
   }, [])
 
   useEffect(() => {
@@ -2701,6 +2707,7 @@ export const PdfPreviewContent = ({
   }, [captureViewportAnchor])
 
   useEffect(() => {
+    if (!desktopRuntimeWritable()) return
     let canceled = false
     let document: PdfDocument | undefined
     let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined

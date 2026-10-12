@@ -224,7 +224,9 @@
       "src/main/acp/permission-frequency.test.ts",
       "src/main/acp/permission-policy.test.ts",
       "src/main/acp/permission-wait-owner.test.ts",
-      "src/renderer/src/lib/session-persistence/session-persistence.test.ts"
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

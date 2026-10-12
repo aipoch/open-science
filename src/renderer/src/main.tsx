@@ -1,3 +1,4 @@
+import { DesktopRuntimeRecovery } from '@/components/desktop-runtime-recovery'
 import './assets/main.css'
 
 import { StrictMode } from 'react'
@@ -75,6 +76,7 @@ const startRenderer = (): void => {
         <ApplicationErrorBoundary>
           <DatabaseStartupGate>
             <App />
+            <DesktopRuntimeRecovery />
           </DatabaseStartupGate>
         </ApplicationErrorBoundary>
       </WindowsTitleBar>

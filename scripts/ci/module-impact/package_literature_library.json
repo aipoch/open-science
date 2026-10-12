@@ -1299,7 +1299,12 @@
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/uploads.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

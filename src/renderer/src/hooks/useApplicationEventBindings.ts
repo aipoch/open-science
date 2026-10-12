@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { OpenSessionFromNotificationRequest } from '../../../shared/notifications'
@@ -139,9 +140,13 @@ const useApplicationEventBindings = ({
     generation: 0,
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
   })
+  const desktopRecoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
   const lifecycle = useLifecycleSync({
     // Keep incoming changes queued while a catalog reload can still replace the store snapshot.
-    isSessionPersistenceHydrated: sessionPersistence.isHydrated && !sessionPersistence.isLoading
+    isSessionPersistenceHydrated:
+      sessionPersistence.isHydrated &&
+      !sessionPersistence.isLoading &&
+      desktopRecoveryPhase === 'connected'
   })
   useWindowFindAppearanceSync()
 
@@ -158,7 +163,8 @@ const useApplicationEventBindings = ({
         view,
         presentations: {
           closeConfirmation: isCloseConfirmOpen,
-          webEventRecovery: webEventConnectionPhase !== 'live',
+          webEventRecovery:
+            webEventConnectionPhase !== 'live' || desktopRecoveryPhase !== 'connected',
           dataRootRecovery: hasDataRootRecovery,
           legacyDataMove: hasLegacyDataMove,
           update: isUpdateDialogOpen,
@@ -187,6 +193,7 @@ const useApplicationEventBindings = ({
       sessionPersistence.isLoading,
       startupView,
       webEventConnectionPhase,
+      desktopRecoveryPhase,
       view
     ]
   )

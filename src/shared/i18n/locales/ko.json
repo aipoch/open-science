@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요.",
     "Close window": "창 닫기",
     "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
-    "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인"
+    "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인",
+    "Quit app": "앱 종료"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
@@ -132,7 +133,9 @@
     "Running sessions": "실행 중",
     "Pinned sessions": "고정됨",
     "Recent items": "최근 세션",
-    "More items": "더 많은 세션"
+    "More items": "더 많은 세션",
+    "Quit while disconnected?": "연결이 끊어진 상태에서 종료할까요?",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "저장하지 않은 변경 사항이 손실될 수 있습니다. 전송된 작업은 이미 완료되었을 수 있습니다. 백엔드는 중지되지 않습니다."
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
@@ -7162,6 +7165,11 @@
     "Selected environment": "선택한 환경",
     "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다.",
     "No code has run in this view yet.": "이 보기에서는 아직 코드가 실행되지 않았습니다.",
-    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다."
+    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다.",
+    "Desktop connection lost": "데스크톱 연결이 끊어졌습니다",
+    "Restoring desktop connection…": "데스크톱 연결 복구 중…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "로컬 초안은 열린 상태로 유지됩니다. 전송된 작업은 이미 완료되었을 수 있으며 다시 실행되지 않습니다.",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "기존 백엔드를 더 이상 사용할 수 없습니다. 계속하려면 앱을 종료한 후 다시 여세요.",
+    "Reconnect": "다시 연결"
   }
 }

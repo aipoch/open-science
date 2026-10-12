@@ -1345,7 +1345,12 @@
       "packages/literature-library/test/library.test.ts",
       "packages/literature-library/test/merge-batch.test.ts",
       "packages/literature-library/test/reconcile.test.ts",
-      "packages/literature-library/test/item.test.ts"
+      "packages/literature-library/test/item.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],
