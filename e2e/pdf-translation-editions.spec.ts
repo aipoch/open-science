@@ -1,24 +1,24 @@
-import { createServer } from 'node:http'
-import { expect } from '@playwright/test'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { Page } from 'playwright'
 import {
   extractPdfTranslationSource,
   getPdfTranslationLayoutSnapshot,
   rememberPdfTranslationExtraction
 } from '@aipoch/pdf-translation/reader'
+import { expect } from '@playwright/test'
+import { createServer } from 'node:http'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import type { Page } from 'playwright'
 
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import type {
-  PdfTranslationLayoutSnapshot,
-  PdfTranslationEdition
+  PdfTranslationEdition,
+  PdfTranslationLayoutSnapshot
 } from '@aipoch/pdf-translation/contracts'
 import type {
+  PdfTranslationBeginRequest,
   PdfTranslationCheckpoint,
   PdfTranslationCheckpointRequest
 } from '../src/shared/pdf-translation'
-import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
 
 import { test } from './fixtures/electron-app'
 

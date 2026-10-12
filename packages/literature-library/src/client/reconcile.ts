@@ -1,5 +1,4 @@
-import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
-
+import type { LibraryPage } from './ports.js'
 // Catalog IPC values are plain, acyclic data. Reuse equal subtrees after transport cloning;
 // metadataRevision alone cannot detect assessment, attachment or collection changes.
 function shareEqual<T>(previous: T, next: T): T {
@@ -20,10 +19,10 @@ function shareEqual<T>(previous: T, next: T): T {
   return equal ? previous : (result as T)
 }
 
-export function reconcileLiteraturePage(
-  previous: LiteratureCatalogSearchPage | undefined,
-  next: LiteratureCatalogSearchPage
-): LiteratureCatalogSearchPage {
+export function reconcileLiteraturePage<Page extends LibraryPage>(
+  previous: Page | undefined,
+  next: Page
+): Page {
   if (!previous) return next
   const byId = new Map(
     previous.entries.flatMap((entry) => ('id' in entry ? [[entry.id, entry] as const] : []))
@@ -34,5 +33,5 @@ export function reconcileLiteraturePage(
   const sameEntries =
     entries.length === previous.entries.length &&
     entries.every((entry, index) => entry === previous.entries[index])
-  return { ...next, entries: sameEntries ? previous.entries : entries }
+  return { ...next, entries: sameEntries ? previous.entries : entries } as Page
 }

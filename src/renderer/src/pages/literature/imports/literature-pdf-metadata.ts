@@ -1,13 +1,13 @@
-import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
-import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
-import type { TFunction } from 'i18next'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
   type LiteratureCreatorInput
 } from '@aipoch/literature-citations/contracts'
-import { type LiteratureItemInput } from '../../../../../shared/literature-item'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { TFunction } from 'i18next'
+import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
 import { joinPdfTextItems, type PdfTextItem } from '../../../../../shared/pdf-text'
+import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
 
 const MAX_LOCAL_PDF_METADATA_BYTES = 50 * 1024 * 1024
 const DOI_PATTERN = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/giu

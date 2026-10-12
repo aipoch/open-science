@@ -7,7 +7,7 @@ test('retries a disconnected batch and resumes it after restart without repeatin
 }, testInfo) => {
   test.setTimeout(180_000)
   const { createServer } = await import('node:http')
-  const { literatureItemInputSchema } = await import('../src/shared/literature')
+  const { literatureItemInputSchema } = await import('@aipoch/literature-library/contracts')
   const requests: string[] = []
   let offline = true
   const service = createServer(async (request, response) => {
@@ -325,7 +325,7 @@ test('reviews classified papers in the library table using a local fixture servi
 }, testInfo) => {
   test.setTimeout(240_000)
   const { createServer } = await import('node:http')
-  const { literatureItemInputSchema } = await import('../src/shared/literature')
+  const { literatureItemInputSchema } = await import('@aipoch/literature-library/contracts')
   let failClassification = false
   const classifiedInputs: string[] = []
   let holdAfter = 0

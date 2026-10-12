@@ -1,9 +1,9 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
-import { literatureItemInputSchema } from '../../shared/literature-item'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { PackageRecords } from './native-snapshot'
 import { LiteratureCatalog } from '../literature/catalog'
+import type { PackageRecords } from './native-snapshot'
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 export const packageLiteratureSchema = z

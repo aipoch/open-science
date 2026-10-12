@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
+import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
+import type {
+  LiteratureFullTextCandidate,
+  LiteratureFullTextProgress
+} from '@aipoch/literature-discovery/contracts'
+import type {
+  LiteratureFullTextResult,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import {
   AlertCircle,
   ChevronRight,
@@ -9,20 +19,13 @@ import {
   Search,
   Settings2
 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { ErrorNotice } from '@/components/error-notice'
-import type { LiteratureFullTextResult, LiteratureItemView } from '../../../../../shared/literature'
-import type {
-  LiteratureFullTextCandidate,
-  LiteratureFullTextProgress
-} from '@aipoch/literature-discovery/contracts'
-import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
 
-import { formatBytes } from '../../../../../shared/update'
-import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
-import { UnpaywallCredentialForm } from '../../settings/UnpaywallCredentialForm'
 import { useSettingsStore } from '@/stores/settings-store'
+import { formatBytes } from '../../../../../shared/update'
+import { UnpaywallCredentialForm } from '../../settings/UnpaywallCredentialForm'
+import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
 
 export const LiteratureFullTextLookup = ({
   item,

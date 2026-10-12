@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
 import {
   LITERATURE_ITEM_TYPES,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import { literatureItemInputSchema } from '../../../../../shared/literature'
-import { LiteratureRecordImportDialog } from './LiteratureRecordImportDialog'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
+import { LiteratureRecordImportDialog } from './LiteratureRecordImportDialog'
 
 afterEach(cleanup)
 const item = literatureItemInputSchema.parse({

@@ -1,11 +1,11 @@
 import { createComputeExecution } from '@aipoch/compute/node'
 // Public lifecycle regressions derived from interrupted deletion and publication scenarios.
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { literatureItemInputSchema } from '../../shared/literature'
 import { LiteratureCatalog } from '../literature/catalog'
 import {
   ProjectDeletionCoordinator,

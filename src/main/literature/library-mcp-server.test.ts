@@ -2,11 +2,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
   LITERATURE_LIBRARY_MCP_SERVER_NAME,
   createLiteratureLibraryMcpServer
 } from './library-mcp-server'
-import type { LiteratureItemView } from '../../shared/literature'
 
 const discovery = {
   item: {

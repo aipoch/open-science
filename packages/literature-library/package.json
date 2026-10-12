@@ -1,0 +1,52 @@
+{
+  "name": "@aipoch/literature-library",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./item": {
+      "types": "./dist/item.d.ts",
+      "default": "./dist/item.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build",
+    "pretest": "npm run build && npm run test:types",
+    "test:types": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "zod": "^4.6.5",
+    "@aipoch/literature-citations": "file:../literature-citations",
+    "@aipoch/literature-discovery": "file:../literature-discovery",
+    "@aipoch/literature-screening": "file:../literature-screening",
+    "@aipoch/journal-catalog": "file:../journal-catalog"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

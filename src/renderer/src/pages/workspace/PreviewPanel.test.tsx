@@ -1,10 +1,11 @@
-import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { ANNOTATION_DRAG_TYPE, annotationTransfers } from './annotations/annotation-transfer'
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 // @vitest-environment jsdom
 import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useNavigationStore } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore,
@@ -12,14 +13,13 @@ import {
   type PreviewSourceItem,
   type PreviewToolItem
 } from '@/stores/preview-workbench-store'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { Annotation } from '../../../../shared/annotations'
-import type { LiteratureItemView } from '../../../../shared/literature'
 import { SOURCE_PREVIEW_PARTITION } from '../../../../shared/source-preview'
-import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { literatureReadingDocument } from '../literature/workflows/literature-reading'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 
 // jsdom does not implement layout scrolling; real visibility is covered in keyboard-focus.spec.ts.

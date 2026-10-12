@@ -1,14 +1,14 @@
-import { isDeepStrictEqual } from 'node:util'
 import {
   LITERATURE_IDENTITY_SCHEMES,
   normalizeLiteratureIdentifierValue
 } from '@aipoch/literature-citations/contracts'
+import { isDeepStrictEqual } from 'node:util'
 import {
   literatureItemInputSchema,
+  type LiteratureItemInput,
   type LiteratureItemView,
-  type LiteratureMergeStrategy,
-  type LiteratureItemInput
-} from '../../shared/literature'
+  type LiteratureMergeStrategy
+} from './contracts.js'
 
 const empty = (value: unknown): boolean =>
   value === undefined ||

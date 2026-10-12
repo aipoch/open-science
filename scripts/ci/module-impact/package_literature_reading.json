@@ -1,0 +1,49 @@
+{
+  "ownerPaths": [
+    "packages/literature-reading/LICENSE",
+    "packages/literature-reading/README.md",
+    "packages/literature-reading/package.json",
+    "packages/literature-reading/src/full-text-index.ts",
+    "packages/literature-reading/src/index.ts",
+    "packages/literature-reading/src/ports.ts",
+    "packages/literature-reading/src/reader.ts",
+    "packages/literature-reading/src/schema.ts",
+    "packages/literature-reading/test/index.test.ts",
+    "packages/literature-reading/test/packed-runtime.mjs",
+    "packages/literature-reading/test/reader.test.ts",
+    "packages/literature-reading/test/sqlite.ts",
+    "packages/literature-reading/tsconfig.dev.json",
+    "packages/literature-reading/tsconfig.json",
+    "packages/literature-reading/tsconfig.test.json",
+    "packages/literature-reading/vitest.config.ts"
+  ],
+  "interfacePaths": [
+    "packages/literature-reading/src/full-text-index.ts",
+    "packages/literature-reading/src/index.ts",
+    "packages/literature-reading/src/ports.ts",
+    "packages/literature-reading/src/reader.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "packages/literature-reading/test/index.test.ts",
+      "packages/literature-reading/test/reader.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/main/acp/ipc.test.ts",
+      "src/main/acp/runtime-composition.test.ts",
+      "src/main/acp/runtime-library-evidence.test.ts",
+      "src/main/delegation/production-framework-runtime.test.ts",
+      "src/main/literature/document-reader.test.ts",
+      "src/main/literature/full-text-index.test.ts",
+      "src/main/literature/library-tool-contracts.test.ts",
+      "src/main/literature/migration-writers.test.ts",
+      "src/main/literature/pdf-attachment-reliability.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

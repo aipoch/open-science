@@ -1,51 +1,53 @@
-import type { PdfAddToLiteratureRequest } from '../../shared/pdf-annotations'
-import { pdfAddToLiteratureContract } from '../../shared/literature'
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
+import {
+  type LiteratureFullTextRequest,
+  type LiteratureMetadataCompletionRequest
+} from '@aipoch/literature-discovery/contracts'
+import {
+  type LiteratureJobRequest,
+  type LiteratureJobsResult
+} from '@aipoch/literature-discovery/jobs'
+import {
+  type LiteratureCatalogCommand,
+  type LiteratureCatalogReceipt,
+  type LiteratureCatalogSearchRequest,
+  type LiteratureCitationStylesRequest,
+  type LiteratureCitationStylesResult,
+  type LiteratureFormatDocumentRequest,
+  type LiteratureFormatDocumentResult,
+  type LiteratureFormatReferencesRequest,
+  type LiteratureFormatReferencesResult,
+  type LiteratureFullTextResult,
+  type LiteratureItemView,
+  type LiteratureMetadataCompletionResult,
+  type LiteraturePdfCancelImportRequest,
+  type LiteraturePdfImportReceipt,
+  type LiteratureRecordImportRequest,
+  type LiteratureRecordImportResult,
+  type LiteratureSourceRecordView
+} from '@aipoch/literature-library/contracts'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
 import { journalAttributesContract } from '../../shared/journal-attributes'
-import { withDataRootWrite } from '../storage/migration-state'
+import {
+  literatureApplicationCommandContracts,
+  pdfAddToLiteratureContract,
+  type LiteratureCatalogSearchPage,
+  type LiteraturePdfImportRequest
+} from '../../shared/literature'
 import {
   literatureExportRecordContract,
   type LiteratureExportRecordRequest,
   type LiteratureExportRecordResult
 } from '../../shared/literature-export'
 import { literatureJobsContract } from '../../shared/literature-jobs'
-import {
-  type LiteratureJobRequest,
-  type LiteratureJobsResult
-} from '@aipoch/literature-discovery/jobs'
-import {
-  literatureApplicationCommandContracts,
-  type LiteratureFullTextResult,
-  type LiteratureCatalogCommand,
-  type LiteratureCatalogReceipt,
-  type LiteratureCatalogSearchPage,
-  type LiteratureCatalogSearchRequest,
-  type LiteratureCitationStylesRequest,
-  type LiteratureCitationStylesResult,
-  type LiteratureFormatReferencesRequest,
-  type LiteratureFormatReferencesResult,
-  type LiteratureFormatDocumentRequest,
-  type LiteratureFormatDocumentResult,
-  type LiteratureItemInput,
-  type LiteratureItemView,
-  type LiteratureSourceRecordView,
-  type LiteratureMetadataCompletionResult,
-  type LiteraturePdfCancelImportRequest,
-  type LiteraturePdfImportReceipt,
-  type LiteraturePdfImportRequest,
-  type LiteratureRecordImportRequest,
-  type LiteratureRecordImportResult
-} from '../../shared/literature'
-import {
-  type LiteratureFullTextRequest,
-  type LiteratureMetadataCompletionRequest
-} from '@aipoch/literature-discovery/contracts'
+import type { PdfAddToLiteratureRequest } from '../../shared/pdf-annotations'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
+import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
   addPdf(

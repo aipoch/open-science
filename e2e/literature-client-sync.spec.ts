@@ -1,7 +1,10 @@
+import {
+  literatureCandidateInputSchema,
+  literatureItemInputSchema
+} from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
-import { literatureCandidateInputSchema, literatureItemInputSchema } from '../src/shared/literature'
 
 const library = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Library', exact: true }).click()

@@ -48,7 +48,9 @@ export const verificationFamilies = [
       'literature-citations',
       'journal-catalog',
       'literature-discovery',
-      'literature-screening'
+      'literature-screening',
+      'literature-library',
+      'literature-reading'
     ]
   }
 ]

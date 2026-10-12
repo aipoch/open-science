@@ -1,10 +1,13 @@
-import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
+import { LITERATURE_OVERSIZED_REFERENCE } from '@aipoch/literature-library/client'
 import { readLiteratureSelectionPage } from './literature-read-pages'
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from 'vitest'
-import { readLiteratureDisplayPage, readLiteratureJobPages } from './literature-read-pages'
-import { downloadLiteratureRecord } from './literature-read-pages'
 import type { LiteratureJobView } from '@aipoch/literature-discovery/jobs'
+import { afterEach, expect, it, vi } from 'vitest'
+import {
+  downloadLiteratureRecord,
+  readLiteratureDisplayPage,
+  readLiteratureJobPages
+} from './literature-read-pages'
 
 afterEach(() => vi.restoreAllMocks())
 const job = (ids: string[], nextRowOffset?: number): LiteratureJobView => ({

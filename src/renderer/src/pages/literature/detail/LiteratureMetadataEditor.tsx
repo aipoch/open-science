@@ -9,13 +9,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
   LITERATURE_IDENTIFIER_SCHEMES,
-  normalizeLiteratureIdentifierPreferences,
   LITERATURE_ITEM_TYPES,
+  normalizeLiteratureIdentifierPreferences,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import { type LiteratureItemInput } from '../../../../../shared/literature-item'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
 
 type LiteratureMetadataEditorProps = Readonly<{
   item: LiteratureItemInput

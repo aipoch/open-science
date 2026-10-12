@@ -48,7 +48,7 @@ it('shows a partially selected page and limits Select groups on this page to vis
 
 const duplicateGroup = (
   itemIds = ['1', '2']
-): import('../../../../../shared/literature').LiteratureDuplicateGroup => ({
+): import('@aipoch/literature-library/contracts').LiteratureDuplicateGroup => ({
   id: 'group',
   title: 'Shared paper',
   itemIds,

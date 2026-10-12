@@ -1,26 +1,26 @@
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
-import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
-import { literatureItemInputSchema } from '../../../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { configureComposerDraftStorage, revokeComposerDraftStorage } from './composer-draft-storage'
 
-import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { PdfAnnotation, TextAnnotation } from '../../../../shared/annotations'
-import {
-  SessionSizeLimitError,
-  type SessionPdfContext
-} from '../../../../shared/session-persistence'
 import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
   createPendingPdfContext,
   pendingPdfContextSelections,
-  type PendingPdfContextSelection,
-  usePreviewWorkbenchStore
+  usePreviewWorkbenchStore,
+  type PendingPdfContextSelection
 } from '@/stores/preview-workbench-store'
+import type { PdfAnnotation, TextAnnotation } from '../../../../shared/annotations'
+import {
+  SessionSizeLimitError,
+  type SessionPdfContext
+} from '../../../../shared/session-persistence'
+import type { UploadedAttachment } from '../../../../shared/uploads'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
 import {
@@ -29,11 +29,10 @@ import {
   type ComposerDoc,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
-import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
-import { useWorkspaceComposerController } from './workspace-composer-controller'
-import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import type { ComposerHistoryEntry } from './composer/composer-history'
-
+import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
+import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })

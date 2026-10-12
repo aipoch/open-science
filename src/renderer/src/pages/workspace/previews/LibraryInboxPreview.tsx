@@ -1,4 +1,4 @@
-import { readMatchingCandidateIds } from '../../literature/literature-inbox-reconciliation'
+import { literatureClient } from '../../literature/literature-read-pages'
 /* Hallmark · component: inbox preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Reuse semantic tokens and shared control states.
  */
@@ -6,6 +6,8 @@ import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
+import { type LiteratureInboxCandidateView } from '@aipoch/literature-library/contracts'
 import {
   Check,
   ChevronDown,
@@ -18,11 +20,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
-import {
-  type LiteratureCatalogSearchPage,
-  type LiteratureInboxCandidateView
-} from '../../../../../shared/literature'
+import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
 import { useLiteratureChanges } from '../../literature/useLiteratureChanges'
 
@@ -248,7 +246,13 @@ export function LibraryInboxPreview({
 
   // Only the exceptional Undo conflict path scans dismissed rows. Never restore an accepted row.
   const stillDismissed = async (id: string): Promise<boolean> =>
-    (await readMatchingCandidateIds(new Set([id]), 'dismissed', () => mounted.current)).has(id)
+    (
+      await literatureClient.readMatchingCandidateIds(
+        new Set([id]),
+        'dismissed',
+        () => mounted.current
+      )
+    ).has(id)
   const change = async (
     entry: UndoEntry,
     action: 'accept' | 'dismiss' | 'restore'

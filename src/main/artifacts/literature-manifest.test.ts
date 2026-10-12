@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import {
   ArtifactLiteratureManifestOwner,
   type ArtifactLiteratureItemSnapshot
 } from './literature-manifest'
-import { literatureItemInputSchema } from '../../shared/literature'
-import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 
 const literatureSnapshot = (metadataRevision = 3): ArtifactLiteratureItemSnapshot => ({
   id: 'item-1',

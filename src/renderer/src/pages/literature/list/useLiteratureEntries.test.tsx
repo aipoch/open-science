@@ -2,15 +2,11 @@
 import { act, cleanup, renderHook, type RenderHookResult } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  LiteratureCatalogSearchPage,
-  LiteratureCatalogSearchRequest
-} from '../../../../../shared/literature'
+import type { LiteratureCatalogSearchRequest } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { useLiteratureEntries } from './useLiteratureEntries'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
 
 const page: LiteratureCatalogSearchPage = { entries: [], totalCount: 0 }
 const search =

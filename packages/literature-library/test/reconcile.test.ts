@@ -1,9 +1,9 @@
-import { expect, it } from 'vitest'
+import { reconcileLiteraturePage } from '@aipoch/literature-library/client'
 import {
   literatureItemInputSchema,
   type LiteratureItemView
-} from '../../../../../shared/literature'
-import { reconcileLiteraturePage } from './reconcile-literature-page'
+} from '@aipoch/literature-library/contracts'
+import { expect, it } from 'vitest'
 
 const entries: LiteratureItemView[] = Array.from({ length: 100 }, (_, i) => ({
   id: String(i),
@@ -22,7 +22,11 @@ const entries: LiteratureItemView[] = Array.from({ length: 100 }, (_, i) => ({
 }))
 
 it('shares cloned visible rows in a 1,029-reference result and retains fresh counts/order', () => {
-  const before = { entries, totalCount: 1029, nextOffset: 100 }
+  const before: { entries: LiteratureItemView[]; totalCount: number; nextOffset?: number } = {
+    entries,
+    totalCount: 1029,
+    nextOffset: 100
+  }
   const unchanged = reconcileLiteraturePage(before, structuredClone(before))
   expect(unchanged.entries).toBe(entries)
   const next = structuredClone(before)

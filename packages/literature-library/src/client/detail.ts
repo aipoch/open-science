@@ -1,4 +1,4 @@
-import type { LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureItemView } from '../contracts.js'
 
 export type LiteratureDetailSnapshot = Readonly<{
   item?: LiteratureItemView
@@ -16,7 +16,9 @@ export type LiteratureDetailController = Readonly<{
   read: (id: string) => Promise<LiteratureItemView | undefined>
 }>
 
-const createLiteratureDetailController = (): LiteratureDetailController => {
+const createLiteratureDetailController = (
+  getItem: (id: string) => Promise<LiteratureItemView | undefined>
+): LiteratureDetailController => {
   let snapshot: LiteratureDetailSnapshot = { open: false, generation: 0 }
   const listeners = new Set<() => void>()
   const reads = new Map<
@@ -30,8 +32,7 @@ const createLiteratureDetailController = (): LiteratureDetailController => {
       promise: undefined as unknown as Promise<LiteratureItemView | undefined>,
       invalidated: false
     }
-    entry.promise = window.api.literature
-      .get(id)
+    entry.promise = getItem(id)
       .then((item): Promise<LiteratureItemView | undefined> | LiteratureItemView | undefined => {
         const newer = reads.get(id)
         if (newer && newer !== entry) return newer.promise

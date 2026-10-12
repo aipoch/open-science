@@ -1,5 +1,5 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { afterEach, expect, it, vi } from 'vitest'
-import { literatureItemInputSchema } from '../../../../../shared/literature'
 import { completeLiteraturePdfDraft } from './literature-pdf-metadata'
 
 const draft = literatureItemInputSchema.parse({

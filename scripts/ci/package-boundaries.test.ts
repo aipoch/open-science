@@ -395,7 +395,15 @@ it('selects durable file consumers downstream without testing unchanged prerequi
     ['packages/specialists/src/repository.ts', ['packages/specialists']],
     ['src/main/settings/document-store.ts', []],
     ['src/main/artifacts/repository.ts', []],
-    ['packages/journal-catalog/src/index.ts', ['packages/journal-catalog']]
+    [
+      'packages/journal-catalog/src/index.ts',
+      ['packages/journal-catalog', 'packages/literature-library']
+    ],
+    ['packages/literature-library/src/library.ts', ['packages/literature-library']],
+    ['packages/literature-reading/src/reader.ts', ['packages/literature-reading']],
+    ['src/main/literature/catalog.ts', []],
+    ['src/main/literature/document-reader.ts', []],
+    ['src/renderer/src/pages/literature/workflows/useLiteratureMetadata.ts', []]
   ] as const
   for (const [path, selected] of cases) {
     const packagePlan = createPackageTestPlan([path], registry)

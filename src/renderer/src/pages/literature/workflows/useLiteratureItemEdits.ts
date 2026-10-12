@@ -1,10 +1,10 @@
-import { useTranslation } from 'react-i18next'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type {
   LiteratureCollectionView,
-  LiteratureItemInput,
   LiteratureItemView
-} from '../../../../../shared/literature'
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import { useTranslation } from 'react-i18next'
 import type { LiteratureSelectionStore } from '../list/literature-selection'
 
 /** Apply detail membership and inline metadata writes with the existing receipt and readback rules. */

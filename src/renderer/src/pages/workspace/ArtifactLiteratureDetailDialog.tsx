@@ -1,5 +1,5 @@
-import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import { ErrorNotice } from '@/components/error-notice'
+import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as Dialog from '@/components/ui/dialog'
@@ -7,6 +7,7 @@ import { ArrowUpRight, FileText, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import {
   dialogCloseButtonClassName,
@@ -15,15 +16,15 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { cn } from '@/lib/utils'
-import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import { type LiteratureItemInput, type LiteratureItemView } from '../../../../shared/literature'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 
 type ArtifactLiteratureDetailDialogProps = Readonly<{
   snapshotOnly?: boolean

@@ -1,19 +1,15 @@
-import { discoveryJobOptions } from './discovery-adapters'
-import { configureTestElectronHost } from '../../../test/runtime-host'
+import * as durableJson from '@aipoch/durable-files'
+import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { createLiteratureLibraryMcpServer } from './library-mcp-server'
-import { createLiteratureMcpServer } from './mcp-server'
-import * as durableJson from '@aipoch/durable-files'
-
-vi.mock('@aipoch/durable-files', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
-}))
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
   createApplicationCommandRouter,
   type ApplicationInvocation
@@ -29,10 +25,14 @@ import {
   literatureApplicationCommands,
   registerLiteratureApplicationCommands
 } from './application-commands'
-import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
-import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
-import { LiteratureFullTextIndex } from './full-text-index'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { discoveryJobOptions } from './discovery-adapters'
+import { literatureIndex } from './full-text-index'
+import { createLiteratureLibraryMcpServer } from './library-mcp-server'
+import { createLiteratureMcpServer } from './mcp-server'
+
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
+}))
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 const roots: string[] = []
@@ -144,10 +144,11 @@ it('drains a detached batch worker and pauses remaining rows before copying', as
 })
 
 it('does not start or flush index maintenance while the migration gate is closed', async () => {
-  const sweep = vi.spyOn(LiteratureFullTextIndex, 'sweepExpired').mockResolvedValue()
-  const flush = vi.spyOn(LiteratureFullTextIndex, 'flushPendingAccesses').mockResolvedValue()
+  const owner = literatureIndex(await directory())
+  const sweep = vi.spyOn(owner, 'sweepExpired').mockResolvedValue()
+  const flush = vi.spyOn(owner, 'flushPendingAccesses').mockResolvedValue()
   beginMigration()
-  const stop = LiteratureFullTextIndex.startRetentionSweep(await directory(), vi.fn())
+  const stop = owner.startRetentionSweep(vi.fn())
   await stop()
   expect(sweep).not.toHaveBeenCalled()
   expect(flush).not.toHaveBeenCalled()
@@ -194,12 +195,11 @@ it('waits for admitted index maintenance before copying', async () => {
   const blocked = new Promise<void>((resolve) => {
     release = resolve
   })
-  const sweep = vi.spyOn(LiteratureFullTextIndex, 'sweepExpired').mockImplementation(() => blocked)
-  vi.spyOn(LiteratureFullTextIndex, 'flushPendingAccesses').mockResolvedValue()
+  const owner = literatureIndex(await directory())
+  const sweep = vi.spyOn(owner, 'sweepExpired').mockImplementation(() => blocked)
+  vi.spyOn(owner, 'flushPendingAccesses').mockResolvedValue()
   // Startup can itself run within an admitted writer's async context.
-  const stop = await withDataRootWrite(async () =>
-    LiteratureFullTextIndex.startRetentionSweep(await directory(), vi.fn())
-  )
+  const stop = await withDataRootWrite(async () => owner.startRetentionSweep(vi.fn()))
   try {
     await vi.waitFor(() => expect(sweep).toHaveBeenCalledOnce())
     beginMigration()

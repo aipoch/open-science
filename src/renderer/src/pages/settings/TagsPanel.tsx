@@ -1,6 +1,6 @@
-import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Tag master-detail + reorder · genre: modern-minimal · tone: technical/utilitarian
  * states: default · hover · focus · active · disabled · loading · error · success
@@ -8,8 +8,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
  */
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
-  ChevronDown,
   BookOpenText,
+  ChevronDown,
   GripVertical,
   LockKeyhole,
   Pencil,
@@ -20,8 +20,8 @@ import {
   X
 } from 'lucide-react'
 import {
-  useEffect,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -30,19 +30,8 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  TAG_COLOR_KEYS,
-  TAG_ICON_KEYS,
-  type TagColorKey,
-  type TagIconKey,
-  type TagResourceRef,
-  type TagResourceType,
-  type TagView
-} from '../../../../shared/tags'
-import type { LiteratureItemView } from '../../../../shared/literature'
-import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -58,14 +47,25 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import { ConnectorsNavIcon } from './connector-icons'
-import { SettingsIconAction } from './SettingsLayout'
-import { SettingsSearchInput } from './SettingsSearchInput'
-import { SettingsPanelHeader } from './SettingsPanelHeader'
-import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
-import { TagBadge } from './tag-visuals'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
+import {
+  TAG_COLOR_KEYS,
+  TAG_ICON_KEYS,
+  type TagColorKey,
+  type TagIconKey,
+  type TagResourceRef,
+  type TagResourceType,
+  type TagView
+} from '../../../../shared/tags'
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
 import { connectorDescription } from './connector-copy'
+import { ConnectorsNavIcon } from './connector-icons'
+import { SettingsIconAction } from './SettingsLayout'
+import { SettingsPanelHeader } from './SettingsPanelHeader'
+import { SettingsSearchInput } from './SettingsSearchInput'
+import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
+import { TagBadge } from './tag-visuals'
 
 type TagResourceRow = TagResourceRef & {
   title: string

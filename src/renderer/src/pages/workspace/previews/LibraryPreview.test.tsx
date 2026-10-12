@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView,
-  type LiteratureCatalogSearchPage
-} from '../../../../../shared/literature'
-import LibraryPreview from './LibraryPreview'
+import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
+import LibraryPreview from './LibraryPreview'
 
 const navigation = vi.hoisted(() => ({
   openProjectLiterature: vi.fn(),

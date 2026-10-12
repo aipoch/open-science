@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
+import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
+import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from './JournalAttributes'
 import {
+  setJournalSourceYear,
   useJournalDatasets,
-  useJournalSourceYears,
-  setJournalSourceYear
+  useJournalSourceYears
 } from './journals/journal-attribute-store'
-import { literatureItemInputSchema } from '../../../../shared/literature'
-import type { LiteratureChangedEvent } from '../../../../shared/literature'
-import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 
 afterEach(() => {
   cleanup()

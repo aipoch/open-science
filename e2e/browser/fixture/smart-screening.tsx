@@ -1,5 +1,4 @@
 import '@/assets/main.css'
-import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -9,12 +8,13 @@ import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand,
   type LiteratureChangedEvent
-} from '../../../src/shared/literature'
+} from '@aipoch/literature-library/contracts'
 import type {
   SmartCollectionView,
   SmartRunProgress,
   SmartRunProgressRow
 } from '@aipoch/literature-screening/contracts'
+import { createRoot } from 'react-dom/client'
 
 const parameters = new URLSearchParams(location.search)
 const chinese = parameters.get('lang') === 'zh-Hans'

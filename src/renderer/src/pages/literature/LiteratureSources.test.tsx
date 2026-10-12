@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
+import type { LiteratureSourceRecordView } from '@aipoch/literature-library/contracts'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LiteratureSources } from './LiteratureSources'
-import type { LiteratureSourceRecordView } from '../../../../shared/literature'
 
 const record: LiteratureSourceRecordView = {
   id: 'source-1',

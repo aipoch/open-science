@@ -1,8 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
-import { LoaderCircle } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import {
   Select,
   SelectContent,
@@ -14,7 +10,11 @@ import type {
   LiteratureCatalogReceipt,
   LiteratureDuplicateGroup,
   LiteratureMergeStrategy
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { LoaderCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 
 export function LiteratureDuplicateBatch({
   groups,

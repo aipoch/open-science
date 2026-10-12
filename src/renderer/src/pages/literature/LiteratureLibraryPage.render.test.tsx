@@ -1,37 +1,37 @@
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { configureTestRuntimeMetadata } from '../../../../../test/runtime-metadata'
+import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
-import { FocusScope } from '@radix-ui/react-focus-scope'
-import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
+import { useNavigationStore } from '@/stores/navigation-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { literatureJobRequestSchema } from '@aipoch/literature-discovery/jobs'
+import type {
+  LiteratureCatalogReceipt,
+  LiteratureCatalogSearchRequest,
+  LiteratureInboxCandidateView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   literatureCatalogCommandSchema
-} from '../../../../shared/literature'
-import type {
-  LiteratureCatalogReceipt,
-  LiteratureCatalogSearchPage,
-  LiteratureCatalogSearchRequest,
-  LiteratureInboxCandidateView,
-  LiteratureItemInput,
-  LiteratureItemView
-} from '../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
-import { useNavigationStore } from '@/stores/navigation-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
-import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
 import { LiteratureSearchInput } from './list/LiteratureSearchInput'
 import { useAttachmentOperations } from './workflows/literature-attachment-operations'
-import { i18next } from '@/i18n'
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined

@@ -2,21 +2,21 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * pre-emit critique: P5 H4 E4 S5 R5 V4
  */
-import { useState } from 'react'
-import { Check, Info, LoaderCircle, Upload } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
-import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
-  LiteratureItemInput,
   LiteratureDuplicatePolicy,
   LiteratureRecordImportResult
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import { Check, Info, LoaderCircle, Upload } from 'lucide-react'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
+import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
+import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 
 export type RecordImportDraft = Readonly<{
   reading?: boolean

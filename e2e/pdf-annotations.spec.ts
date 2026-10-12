@@ -1,10 +1,10 @@
-import { createTestPdf } from '../test/fixtures/literature-pdf'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import { PDFDocument, PDFDict, PDFName, PDFHexString } from 'pdf-lib'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
+import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
-import { literatureItemInputSchema } from '../src/shared/literature'
 
 test('imports external notes, preserves provenance through undo, and persists an empty annotated export', async ({
   app

@@ -1,12 +1,12 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { Prisma } from '@prisma/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { Prisma } from '@prisma/client'
-import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from './catalog'
-import { literatureItemInputSchema } from '../../shared/literature'
 
 it('allows a small catalog write while a large library search is running', async () => {
   const root = await mkdtemp(join(tmpdir(), 'literature-capacity-'))

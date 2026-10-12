@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
-import { literatureItemInputSchema } from '../../../../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { describe, expect, it } from 'vitest'
-import type { LiteratureReference } from '../../../../../shared/session-persistence'
 import type { ArtifactReference } from '../../../../../shared/artifacts'
+import type { LiteratureReference } from '../../../../../shared/session-persistence'
 
 import {
   appendArtifactMention,
   appendLiteratureMentions,
-  MAX_COMPOSER_ARTIFACT_MENTIONS,
   applyDocToDom,
   createPastedTextAnchor,
   docArtifactCount,
@@ -25,6 +24,7 @@ import {
   insertPastedTextNodeAtLogicalOffset,
   LONG_PASTE_CHARACTER_THRESHOLD,
   LONG_PASTE_LINE_THRESHOLD,
+  MAX_COMPOSER_ARTIFACT_MENTIONS,
   pastedTextLogicalOffset,
   restorePastedTextNode,
   shouldAttachPastedText,

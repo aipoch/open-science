@@ -15,7 +15,7 @@ import type {
   LiteratureCitationStyle,
   LiteratureCitationStyleView
 } from '@aipoch/literature-citations/contracts'
-import type { LiteratureFormatReferencesResult } from '../../../../../shared/literature'
+import type { LiteratureFormatReferencesResult } from '@aipoch/literature-library/contracts'
 
 type CitationCopyKind = 'bibtex' | 'inText' | 'reference' | 'ris'
 

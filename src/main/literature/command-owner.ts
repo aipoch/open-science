@@ -1,23 +1,25 @@
-import type { LiteratureItemView } from '../../shared/literature'
+import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
+import type { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import type {
+  LiteratureBatchJobs,
+  LiteratureFullTextFinder,
+  LiteratureMetadataEnricher,
+  LiteratureReferenceResolver
+} from '@aipoch/literature-discovery'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
+import type { GetArtifactVersionProvenanceRequest } from '../../shared/artifact-provenance'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
+import { broadcastToRenderers } from '../renderer-broadcast'
+import type { ContentRepository } from '../storage/content-repository'
+import { withDataRootWrite } from '../storage/migration-state'
+import type { LiteratureCommandOwner } from './application-commands'
+import type { LiteratureCatalog } from './catalog'
+import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
-import { withDataRootWrite } from '../storage/migration-state'
-import { broadcastToRenderers } from '../renderer-broadcast'
-import { transactLiterature } from './transact'
-import type { LiteratureCommandOwner } from './application-commands'
-import type { LiteratureBatchJobs } from '@aipoch/literature-discovery'
-import type { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
-import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
-import type { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
-import type { LiteratureMetadataEnricher } from '@aipoch/literature-discovery'
-import type { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
-import type { GetArtifactVersionProvenanceRequest } from '../../shared/artifact-provenance'
-import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
-import type { ManagedFileVersionService } from '../managed-file-versions/service'
-import type { LiteratureCitationDocument } from './citation-document'
-import type { LiteratureCatalog } from './catalog'
 import type { LiteraturePdfImporter } from './pdf-importer'
-import type { ContentRepository } from '../storage/content-repository'
+import { transactLiterature } from './transact'
 
 type LiteratureCommandServices = Readonly<{
   journalAttributes: Pick<JournalAttributes, 'run'>

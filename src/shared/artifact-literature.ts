@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { literatureItemInputSchema } from './literature-item'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 
 const ARTIFACT_LITERATURE_SIDECAR_SUFFIX = '.open-science-literature.json'
 
@@ -257,11 +257,11 @@ type ArtifactLiteratureRetrieval = z.infer<typeof artifactLiteratureRetrievalSch
 export {
   ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
   artifactCitationInputSchema,
-  artifactCitationManifestSchema,
   artifactCitationLocatorSchema,
-  artifactLiteratureCoverageSchema,
+  artifactCitationManifestSchema,
   artifactLiteratureCorpusManifestSchema,
   artifactLiteratureCorpusRequestSchema,
+  artifactLiteratureCoverageSchema,
   artifactLiteratureManifestSchema,
   artifactLiteratureReferenceSchema,
   artifactLiteratureRequestSchema,
@@ -270,13 +270,13 @@ export {
 export type {
   ArtifactCitationInput,
   ArtifactCitationLocator,
-  ArtifactLiteratureCoverage,
   ArtifactLiteratureCorpus,
   ArtifactLiteratureCorpusRequest,
+  ArtifactLiteratureCoverage,
   ArtifactLiteratureManifest,
   ArtifactLiteratureReference,
   ArtifactLiteratureRequest,
-  ArtifactLiteratureSidecar,
+  ArtifactLiteratureRetrieval,
   ArtifactLiteratureRetrievalCriteria,
-  ArtifactLiteratureRetrieval
+  ArtifactLiteratureSidecar
 }

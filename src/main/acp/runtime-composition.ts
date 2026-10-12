@@ -1,45 +1,73 @@
-import { SessionReadingOwner } from '../session-replay/session-reading'
-import { SessionReplayRepository } from '../session-replay/repository'
-import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
-import { homedir } from 'node:os'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
+import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
+import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
+import type {
+  LiteratureCatalogReceipt,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
-import type { PersistedChatSession } from '../../shared/session-persistence'
-import { imageAttachmentMimeType } from '../../shared/uploads'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
 } from '../../shared/lifecycle-events'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import { filterSpecialistConnectorSkills } from '../../shared/specialist'
-import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { imageAttachmentMimeType } from '../../shared/uploads'
+import type { ResolvedAgentBackend } from '../agent-framework'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { opencodeStorageDir } from '../agent-framework/opencode'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { resolveAllowedImportFilePath } from '../artifacts/storage-access'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
+import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
+import type { LiteratureCatalog } from '../literature/catalog'
+import { LiteratureCitationDocument } from '../literature/citation-document'
+import type { LiteratureDocumentReader } from '../literature/document-reader'
+import {
+  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  type LiteratureLibraryScope
+} from '../literature/library-mcp-server'
+import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { netFetchStandard } from '../network-fetch'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
+import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import {
   runTaskNotificationInBackground,
   type TaskNotificationService
 } from '../notifications/task-notifications'
-import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { createAcpRuntimeEventBroadcastCoalescer } from './runtime-event-broadcast-coalescer'
-import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import { SessionReplayRepository } from '../session-replay/repository'
+import { SessionReadingOwner } from '../session-replay/session-reading'
 import { CodexTransportFallbackLogObserver } from '../settings/codex-transport-fallback-log'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import {
   buildSpecialistIdentityAppend,
   buildSpecialistIdentityPrefix
@@ -47,38 +75,13 @@ import {
 import type { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
-import type {
-  SessionCatalog,
-  SessionMutation,
-  SessionRuntimeContextCommands
-} from '../session-persistence/coordinator'
-import type { LiteratureDocumentReader } from '../literature/document-reader'
-import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
-import type { LiteratureCatalog } from '../literature/catalog'
-import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
-import { netFetchStandard } from '../network-fetch'
-import { LiteratureCitationDocument } from '../literature/citation-document'
-import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
-import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
-import {
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
-  type LiteratureLibraryScope
-} from '../literature/library-mcp-server'
-import type { LiteratureCatalogReceipt, LiteratureItemView } from '../../shared/literature'
-import type { NotebookRpcConnection } from '../notebook/mcp-server'
-import type { ResolvedAgentBackend } from '../agent-framework'
-import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
-import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { opencodeStorageDir } from '../agent-framework/opencode'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
-import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { projectRegistrySessionGrants } from './permission-broker'
 import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { createAcpRuntimeEventBroadcastCoalescer } from './runtime-event-broadcast-coalescer'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
-import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 
 const log = createLogger('acp')
 const MAX_LITERATURE_CANDIDATE_FILE_BYTES = 2 * 1024 * 1024

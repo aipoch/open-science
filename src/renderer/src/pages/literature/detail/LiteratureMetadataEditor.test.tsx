@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toCslItem } from '@aipoch/literature-citations/csl'
 import {
   literatureItemInputSchema,
   type LiteratureItemInput
-} from '../../../../../shared/literature'
-import { toCslItem } from '@aipoch/literature-citations/csl'
+} from '@aipoch/literature-library/item'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 
 afterEach(cleanup)

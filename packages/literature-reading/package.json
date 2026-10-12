@@ -1,0 +1,34 @@
+{
+  "name": "@aipoch/literature-reading",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build",
+    "pretest": "npm run build && npm run test:types",
+    "test:types": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

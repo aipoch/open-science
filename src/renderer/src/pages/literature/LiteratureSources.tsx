@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ErrorNotice } from '@/components/error-notice'
+import type { LiteratureSourceRecordView } from '@aipoch/literature-library/contracts'
 import { useLiteratureChanges } from './useLiteratureChanges'
-import type { LiteratureSourceRecordView } from '../../../../shared/literature'
 
 const sourceLink = (value: string): string | undefined => {
   try {

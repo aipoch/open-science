@@ -1,28 +1,28 @@
-import {
-  AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
-  AUTOMATIC_CLASSIFICATION_DAY_LIMIT
-} from '../../../../../shared/classification'
-import { SMART_RULE_MAX_LENGTH } from '@aipoch/literature-screening/rules'
-import { formatSmartRule, parseSmartRule, type SmartRuleFields } from './smart-rule-fields'
-import { CollectionOptionHelp } from './CollectionOptionHelp'
-import { SmartCollectionDraftPreview } from './SmartCollectionDraftPreview'
-import { Switch } from '@/components/ui/switch'
+import * as Dialog from '@/components/ui/dialog'
 import {
   Select,
   SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   SelectGroup,
-  SelectLabel
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue
 } from '@/components/ui/select'
-import type { SmartScope, SmartEvidenceMode } from '@aipoch/literature-screening/contracts'
+import { Switch } from '@/components/ui/switch'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { useLiteratureChanges } from '../useLiteratureChanges'
-import * as Dialog from '@/components/ui/dialog'
+import type { SmartEvidenceMode, SmartScope } from '@aipoch/literature-screening/contracts'
+import { SMART_RULE_MAX_LENGTH } from '@aipoch/literature-screening/rules'
 import { Info, LoaderCircle, X } from 'lucide-react'
 import { forwardRef, useImperativeHandle, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  AUTOMATIC_CLASSIFICATION_DAY_LIMIT,
+  AUTOMATIC_CLASSIFICATION_RUN_LIMIT
+} from '../../../../../shared/classification'
+import { useLiteratureChanges } from '../useLiteratureChanges'
+import { CollectionOptionHelp } from './CollectionOptionHelp'
+import { formatSmartRule, parseSmartRule, type SmartRuleFields } from './smart-rule-fields'
+import { SmartCollectionDraftPreview } from './SmartCollectionDraftPreview'
 
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -43,13 +43,13 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import {
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_CONFLICT,
-  LITERATURE_COLLECTION_REVISION_CONFLICT,
-  LITERATURE_COLLECTION_NAME_MAX_LENGTH
-} from '../../../../../shared/literature'
+  LITERATURE_COLLECTION_NAME_MAX_LENGTH,
+  LITERATURE_COLLECTION_REVISION_CONFLICT
+} from '@aipoch/literature-library/contracts'
 
 type CollectionEditorMode = 'create' | 'edit'
 
