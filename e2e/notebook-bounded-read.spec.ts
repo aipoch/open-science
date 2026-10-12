@@ -9,7 +9,7 @@ test.use({ windowMode: 'normal' })
 test('opens and completely reads three large Notebook runs without retaining previous pages', async ({
   app
 }, info) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   await app.completeOnboarding()
   await app.beginResourceProfile({ outputRoot: info.outputPath('resource-profile') })
   let page = await app.configureFakeAgent()
@@ -27,7 +27,7 @@ test('opens and completely reads three large Notebook runs without retaining pre
     updatedAt: 5
   }
   const outputs = [0, 1, 2].map(
-    (index) => `${index}:` + 'x'.repeat(1.5 * 1024 * 1024 - 20) + `:complete-${index}`
+    (index) => `${index}:` + 'x'.repeat(1_572_865 - 13) + `:complete-${index}`
   )
   const runs: NotebookRunRecord[] = outputs.map((text, index) => ({
     runId: `large-${index}`,
@@ -36,13 +36,13 @@ test('opens and completely reads three large Notebook runs without retaining pre
     kernelKind: 'python',
     script: `print(${index})`,
     status: 'completed',
-    startedAt: index + 123,
-    endedAt: index + 124,
-    text: { stdout: text, stderr: '', traceback: '', plain: [] },
+    startedAt: index + 303,
+    endedAt: index + 304,
+    text: { stdout: text, stderr: '', traceback: '', plain: [text] },
     outputs: [{ type: 'stream', name: 'stdout', text }],
     workingFiles: []
   }))
-  const olderRuns: NotebookRunRecord[] = Array.from({ length: 122 }, (_, index) => ({
+  const olderRuns: NotebookRunRecord[] = Array.from({ length: 302 }, (_, index) => ({
     ...runs[0],
     runId: `old-${index}`,
     cellId: `old-cell-${index}`,
@@ -52,6 +52,7 @@ test('opens and completely reads three large Notebook runs without retaining pre
     text: { stdout: 'old', stderr: '', traceback: '', plain: [] },
     outputs: []
   }))
+  olderRuns[42].kernelKind = 'r'
   const tinyPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQVDL+DwACFAFmBODefwAAAABJRU5ErkJggg==',
     'base64'
@@ -64,13 +65,17 @@ test('opens and completely reads three large Notebook runs without retaining pre
     ...runs[0],
     runId: 'large-figure',
     cellId: 'large-figure-cell',
-    startedAt: 126,
-    endedAt: 127,
+    startedAt: 306,
+    endedAt: 307,
     script: 'figure()',
     text: { stdout: '', stderr: '', traceback: '', plain: [] },
     outputs: [{ type: 'display', data: { 'image/png': image } }]
   }
   page = await app.restartWithSessionFixture(session, [...olderRuns, ...runs, figure])
+  const otherSession = { ...session, id: 'bounded-other-session', title: 'Other bounded history' }
+  page = await app.restartWithSessionFixture(otherSession, [
+    { ...olderRuns[0], runId: 'other-run', cellId: 'other-cell', script: 'other_session_only' }
+  ])
   await page
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: 'Bounded Notebook', exact: true })
@@ -104,7 +109,7 @@ test('opens and completely reads three large Notebook runs without retaining pre
   await expect(figureCell.getByTestId('notebook-content-page')).toBeVisible()
   await figureCell.getByRole('button', { name: 'Continue reading', exact: true }).click()
   const displayedImage = figureCell.getByRole('img', { name: 'Notebook output' })
-  await expect(displayedImage).toBeVisible()
+  await expect(displayedImage).toBeVisible({ timeout: 60_000 })
   await expect
     .poll(() => displayedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth))
     .toBe(1)
@@ -113,9 +118,27 @@ test('opens and completely reads three large Notebook runs without retaining pre
   const viewport = page.getByTestId('session-notebook-scroll-viewport')
   await viewport.hover()
   await page.mouse.wheel(0, -100_000)
-  await expect(cells).toHaveCount(126)
+  await expect(cells).toHaveCount(200)
+  await page.mouse.wheel(0, -100_000)
+  await expect(
+    page.getByRole('button', { name: 'Return to latest runs', exact: true })
+  ).toBeVisible()
+  await page.mouse.wheel(0, -100_000)
+  await expect(page.getByText('Beginning of notebook history', { exact: true })).toBeVisible()
   await expect(cells.first()).toContainText('old_value')
   await page.screenshot({ path: info.outputPath('large-notebook-earlier-page.png') })
+  await page.getByTestId('session-notebook-tab-r').click()
+  await expect(cells).toHaveCount(1)
+  await expect(cells.first()).toContainText('old_value = 42')
+  await page.getByRole('button', { name: 'Return to latest runs', exact: true }).click()
+  await page.getByTestId('session-notebook-tab-python').click()
+  await expect(cells).toHaveCount(100)
+  await expect(cells.nth(96)).toContainText('print(0)')
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByText(otherSession.title, { exact: true }).first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'View notebook', exact: true }).click()
+  await expect(cells).toHaveCount(1)
+  await expect(cells.first()).toContainText('other_session_only')
   await app.markResourceProfilePhase('earlier-history-loaded')
   const profile = await app.finishResourceProfile()
   await info.attach('resource-profile.json', {

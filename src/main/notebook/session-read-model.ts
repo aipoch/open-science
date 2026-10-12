@@ -196,9 +196,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       historySummaryFrameId,
       historyBefore
     )
-    const dependencyProjection = await this.options.dependencyAnalyzer
-      .project({ projectId: session.projectId, sessionId: session.sessionId })
-      .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
+    // A content chunk does not display staleness. Re-projecting all history on every 64K page
+    // adds unrelated analysis and sidecar I/O to an otherwise bounded read.
+    const dependencyProjection =
+      boundedRequest?.contentRead || boundedRequest?.cellRead
+        ? undefined
+        : await this.options.dependencyAnalyzer
+            .project({ projectId: session.projectId, sessionId: session.sessionId })
+            .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
     const terminatedKernelInstances = document.kernel.terminatedKernelInstances
     const defaultKernelTerminated = terminatedKernelInstances?.some(
       (instance) => kernelInstanceProcessKey(instance) === DEFAULT_KERNEL_PROCESS_KEY
@@ -252,7 +257,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
         boundedRequest || sparseRunRead
           ? []
           : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
-      runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
+      runStaleness: dependencyProjection
+        ? projectVisibleRunStaleness(dependencyProjection, runWindow.runs)
+        : undefined,
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
     }

@@ -514,3 +514,45 @@ describe('NotebookSessionReadModel', () => {
     })
   })
 })
+
+it('bounds the normal live-cell state and exposes unchanged full source on demand', async () => {
+  const storageRoot = await createRoot()
+  const session = makeSession(storageRoot, {
+    cells: Array.from({ length: 100 }, (_, index) => ({
+      id: `cell-${index}`,
+      language: 'python',
+      code: '#' + '中文\0🧬'.repeat(20_000),
+      status: 'idle'
+    }))
+  })
+  const project = vi.fn(async () => {
+    throw new Error('No dependency sidecar in this fixture')
+  })
+  const model = new NotebookSessionReadModel({
+    storageRoot,
+    defaultProjectId: session.projectId,
+    repository: new NotebookRunRepository(storageRoot),
+    dependencyAnalyzer: { project },
+    findSession: () => session,
+    runtimeBindings: () => ({}),
+    isRestartRecommended: () => false
+  })
+  const request = {
+    projectId: session.projectId,
+    sessionId: session.sessionId,
+    workspaceCwd: session.cwd,
+    readMode: 'bounded' as const
+  }
+  const view = await model.state(session, [], undefined, undefined, undefined, request)
+  expect(view.cells).toHaveLength(100)
+  expect(Buffer.byteLength(JSON.stringify(view))).toBeLessThan(256 * 1024)
+  const source = await model.state(session, [], undefined, undefined, undefined, {
+    ...request,
+    cellRead: { cellId: 'cell-99', offset: 0 }
+  })
+  expect(source.contentChunk?.data).toBe(
+    session.snapshot().cells[99].code.slice(0, source.contentChunk?.data.length)
+  )
+  expect(source.contentChunk?.next).toBeDefined()
+  expect(project).toHaveBeenCalledTimes(1)
+})

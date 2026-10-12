@@ -7636,6 +7636,7 @@
     "Notebook output": "Вывод Notebook",
     "Continue reading": "Продолжить чтение",
     "End of run": "Конец выполнения",
-    "Read complete run": "Прочитать полное выполнение"
+    "Read complete run": "Прочитать полное выполнение",
+    "Return to latest runs": "Вернуться к последним запускам"
   }
 }

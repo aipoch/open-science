@@ -389,7 +389,7 @@ The existing caller/project/session authorization applies to every page and cont
 The legacy default remains available to CLI and existing integrations; local RPC clients can opt
 into the same bounded contract. `runs` contains display previews, `recentRuns` is empty, and
 `historyPage.oldestCursor` continues chronological pagination. Pages retain at most 100 Runs and
-1 MiB of encoded JSON, with room below the unchanged 16 MiB desktop envelope limit.
+1 MiB of encoded JSON. Live-cell source previews each use at most 1,024 encoded JSON/UTF-8 bytes; `cellRead: { cellId, offset: 0 }` reads full source in bounded chunks. Follow the returned offset with `contentChunk.revision`; changing source rejects an old revision. This leaves room below the unchanged 16 MiB desktop envelope limit.
 
 A preview's `contentRead` reference identifies the document revision and selected Run. Clients
 request `contentRead: { runId, revision, cursor: { part: 0, offset: 0 } }` with bounded mode and
@@ -402,9 +402,11 @@ path or grants additional access.
 The renderer keeps one expanded output reader, replaces text pages (65,536 characters), and
 assembles at most one image (8 MiB base64 ceiling, above the legal 3.5 MiB decoded single-image
 producer limit). Oversized imported images fail locally. History retains at most 200 displayed
-summaries and the existing 64 MiB / three-session page cache; historical transcript summaries are
+summaries, with an explicit return-to-latest action after newer rows are evicted, and the existing 64 MiB / three-session page cache; historical transcript summaries are
 limited to 20 ordinary entries or 100 currently visible entries. Inputs are previewed up to 16 entries; complete input/evidence metadata is
 available through the execution-evidence content reader. Closing/switching readers releases their
 content and ignores late requests. This introduces no durable format changes. The repository's
 bounded document cache is reused; cold reads of existing single-file JSON histories still parse the
 whole document and remain a distinct storage limitation.
+
+Renderer restart requests also opt into `readMode: 'bounded'`; both whole-session and selected-kernel restarts return bounded state. Legacy callers retain their existing result shape. A failed delivery never triggers an automatic mutation retry. Summary folder-access suggestions are derived from full diagnostics before previewing and preserve WSL suppression.

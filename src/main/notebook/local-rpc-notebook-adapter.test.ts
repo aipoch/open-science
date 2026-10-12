@@ -412,6 +412,12 @@ describe('notebook local RPC adapter', () => {
     const handler = resolveNotebookLocalRpcHandler(capability, 'state', bounded)
     await handler(bounded)
     expect(capability.state).toHaveBeenCalledWith(bounded)
+    const restart = { ...request, readMode: 'bounded', language: 'r', environment: 'default-r' }
+    await resolveNotebookLocalRpcHandler(capability, 'restart', restart)(restart)
+    expect(capability.restart).toHaveBeenCalledWith(restart)
+    const cell = { ...request, readMode: 'bounded', cellRead: { cellId: 'cell-1', offset: 0 } }
+    await resolveNotebookLocalRpcHandler(capability, 'state', cell)(cell)
+    expect(capability.state).toHaveBeenCalledWith(cell)
     expect(() =>
       resolveNotebookLocalRpcHandler(capability, 'state', {
         ...bounded,

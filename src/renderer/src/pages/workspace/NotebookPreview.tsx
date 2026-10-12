@@ -1110,6 +1110,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setNamespaceStatus('unavailable')
     try {
       const next = await window.api.notebook.restart({
+        readMode: 'bounded',
         ...createNotebookRequest(item.notebook),
         language: 'r',
         environment: activeEnvName

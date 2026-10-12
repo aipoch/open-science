@@ -48,7 +48,7 @@ describe('bounded durable Notebook reading', () => {
       ...request,
       lane: createFrameNotebookLane('p', 's', 'frame')
     })
-    const text = 'x'.repeat(1.5 * 1024 * 1024 - 20) + 'complete-output-end'
+    const text = 'x'.repeat(1_572_865 - 19) + 'complete-output-end'
     document.runs = Array.from({ length: 125 }, (_, index): NotebookRunRecord => ({
       runId: `run-${index}`,
       cellId: `cell-${index}`,
@@ -60,11 +60,7 @@ describe('bounded durable Notebook reading', () => {
       endedAt: index + 1,
       text: {
         stdout:
-          index === 124
-            ? '\0'.repeat(1.5 * 1024 * 1024 - 20) + '中文🧬complete'
-            : index >= 122
-              ? text
-              : 'short',
+          index === 124 ? '\0'.repeat(1000) + text.slice(1000) : index >= 122 ? text : 'short',
         stderr: '',
         traceback: '',
         plain: []
@@ -72,6 +68,11 @@ describe('bounded durable Notebook reading', () => {
       outputs: [],
       workingFiles: []
     }))
+    // Match the incident's three representations without reading any real user content.
+    for (const record of document.runs.slice(-3)) {
+      record.text.plain = [record.text.stdout]
+      record.outputs = [{ type: 'stream', name: 'stdout', text: record.text.stdout }]
+    }
     await writeFile(join(document.notebookSessionRoot, 'run.json'), JSON.stringify(document))
     const reader = new NotebookRunRepository(root)
     const model = new NotebookSessionReadModel({

@@ -7169,6 +7169,7 @@
     "Notebook output": "Notebook の出力",
     "Continue reading": "続きを読む",
     "End of run": "実行の終わり",
-    "Read complete run": "実行内容をすべて読む"
+    "Read complete run": "実行内容をすべて読む",
+    "Return to latest runs": "最新の実行に戻る"
   }
 }

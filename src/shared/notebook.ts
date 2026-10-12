@@ -398,6 +398,7 @@ export type NotebookRunReadReference = {
 
 export type NotebookRunRecord = {
   // Transient bounded-read projection; never persisted by execution.
+  folderAccessPath?: string
   contentRead?: NotebookRunReadReference
   runId: string
   executionMode?: 'foreground' | 'background'
@@ -562,6 +563,8 @@ export type NotebookCell = {
   id: string
   language: NotebookLanguage
   code: string
+  // Bounded state includes a byte-limited preview; cellRead retrieves the full live source.
+  sourceRead?: { cellId: string; offset: number }
   status:
     | 'idle'
     | 'receiving-code'
@@ -748,10 +751,11 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 
 // Restarts either every kernel in the Session (target omitted, preserving the historical behavior)
 // or one exact data-kernel target. Runtime boundaries reject half-specified targets.
-export type NotebookRestartRequest =
+export type NotebookRestartRequest = { readMode?: 'bounded' } & (
   | (NotebookSessionRequest & { language: NotebookLanguage; environment: string; kernel?: never })
   | (NotebookSessionRequest & { kernel: 'repl'; language?: never; environment?: never })
   | (NotebookSessionRequest & { language?: never; environment?: never; kernel?: never })
+)
 
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
@@ -775,6 +779,7 @@ export type NotebookSessionStateRequest = NotebookSessionRequest & {
   readMode?: 'bounded'
   readRevision?: string
   contentRead?: NotebookContentRead
+  cellRead?: { cellId: string; offset: number; revision?: string }
   runIds?: string[]
   historySummaryFrameId?: string
   historyBefore?: NotebookRunCursor

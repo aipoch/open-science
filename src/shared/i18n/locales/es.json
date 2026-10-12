@@ -7497,6 +7497,7 @@
     "Notebook output": "Salida del Notebook",
     "Continue reading": "Continuar leyendo",
     "End of run": "Fin de la ejecución",
-    "Read complete run": "Leer la ejecución completa"
+    "Read complete run": "Leer la ejecución completa",
+    "Return to latest runs": "Volver a las ejecuciones más recientes"
   }
 }

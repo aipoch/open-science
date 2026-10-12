@@ -7169,6 +7169,7 @@
     "Notebook output": "Notebook 輸出",
     "Continue reading": "繼續閱讀",
     "End of run": "執行記錄結束",
-    "Read complete run": "閱讀完整執行記錄"
+    "Read complete run": "閱讀完整執行記錄",
+    "Return to latest runs": "返回最新執行"
   }
 }

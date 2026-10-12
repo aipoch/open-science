@@ -7329,6 +7329,7 @@
     "Notebook output": "Notebook-Ausgabe",
     "Continue reading": "Weiterlesen",
     "End of run": "Ende der Ausführung",
-    "Read complete run": "Vollständige Ausführung lesen"
+    "Read complete run": "Vollständige Ausführung lesen",
+    "Return to latest runs": "Zu den neuesten Ausführungen zurückkehren"
   }
 }

@@ -2190,7 +2190,7 @@ class NotebookRuntimeService {
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
-      if (request.contentRead && request.readMode !== 'bounded')
+      if ((request.contentRead || request.cellRead) && request.readMode !== 'bounded')
         throw new Error('Content reads require bounded mode.')
       const requestedRunIds = request.contentRead
         ? [request.contentRead.runId]
@@ -2371,7 +2371,14 @@ class NotebookRuntimeService {
 
         this.sessionLifecycle.notifyChanged(session)
         await this.runTerminalization.reconcilePending(session)
-        return this.sessionReadModel.state(session)
+        return this.sessionReadModel.state(
+          session,
+          [],
+          undefined,
+          undefined,
+          undefined,
+          request.readMode === 'bounded' ? { ...request, projectId: session.projectId } : undefined
+        )
       }
 
       // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
@@ -2441,7 +2448,14 @@ class NotebookRuntimeService {
       this.sessionLifecycle.notifyChanged(session)
 
       await this.runTerminalization.reconcilePending(session)
-      return this.sessionReadModel.state(session)
+      return this.sessionReadModel.state(
+        session,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        request.readMode === 'bounded' ? { ...request, projectId: session.projectId } : undefined
+      )
     })
   }
 

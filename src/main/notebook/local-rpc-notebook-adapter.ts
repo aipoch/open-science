@@ -152,6 +152,14 @@ const notebookLocalRpcRequestSchemas = {
       .strict()
       .optional(),
     historySummaryFrameId: z.string().max(1024).optional(),
+    cellRead: z
+      .object({
+        cellId: z.string().min(1).max(1024),
+        offset: z.number().int().nonnegative(),
+        revision: z.string().max(128).optional()
+      })
+      .strict()
+      .optional(),
     contentRead: z
       .object({
         runId: z.string().min(1).max(1024),
@@ -164,9 +172,13 @@ const notebookLocalRpcRequestSchemas = {
       .optional()
   }),
   restart: z.union([
-    notebookSessionRequestSchema,
-    notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),
+    notebookSessionRequestSchema.extend({ readMode: z.literal('bounded').optional() }),
     notebookSessionRequestSchema.extend({
+      readMode: z.literal('bounded').optional(),
+      kernel: z.literal('repl')
+    }),
+    notebookSessionRequestSchema.extend({
+      readMode: z.literal('bounded').optional(),
       language: notebookLanguageSchema,
       environment: z.string().min(1)
     })

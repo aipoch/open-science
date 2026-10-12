@@ -7167,6 +7167,7 @@
     "Notebook output": "Notebook 출력",
     "Continue reading": "계속 읽기",
     "End of run": "실행 끝",
-    "Read complete run": "전체 실행 내용 읽기"
+    "Read complete run": "전체 실행 내용 읽기",
+    "Return to latest runs": "최신 실행으로 돌아가기"
   }
 }

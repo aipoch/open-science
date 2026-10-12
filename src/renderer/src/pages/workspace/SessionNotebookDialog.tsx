@@ -62,6 +62,8 @@ type SessionNotebookContentProps = {
   topSentinelRef?: RefObject<HTMLDivElement | null>
   frameLabels?: Readonly<Record<string, string>>
   onLoadHistorySummary?: (agentFrameId: string) => Promise<NotebookRunHistorySummary | undefined>
+  hasNewerRuns?: boolean
+  onLoadLatest?: () => void
   onLoadEarlier?: () => void
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
@@ -88,6 +90,8 @@ const SessionNotebookContent = ({
   frameLabels = {},
   onLoadHistorySummary,
   onLoadEarlier,
+  hasNewerRuns = false,
+  onLoadLatest,
   onClose,
   onExport,
   onExportAll
@@ -310,6 +314,15 @@ const SessionNotebookContent = ({
         </button>
       </div>
 
+      {hasNewerRuns ? (
+        <button
+          type="button"
+          className="shrink-0 border-b border-border px-4 py-2 text-xs"
+          onClick={onLoadLatest}
+        >
+          {t('Return to latest runs')}
+        </button>
+      ) : null}
       <div
         ref={viewportRef}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
@@ -369,7 +382,7 @@ const SessionNotebookContent = ({
                 {t('Beginning of notebook history')}
               </div>
             ) : null}
-            {runCount > loadedRunCount ? (
+            {runCount > loadedRunCount && historyPage?.hasEarlierRuns ? (
               <p
                 className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground"
                 role="status"
@@ -592,6 +605,7 @@ const SessionNotebookDialog = ({
   const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [readGeneration, setReadGeneration] = useState(0)
+  const [hasNewerRuns, setHasNewerRuns] = useState(false)
   const [runCount, setRunCount] = useState(0)
   const [historyPage, setHistoryPage] = useState<NotebookRunPage>()
   const [loadingEarlier, setLoadingEarlier] = useState(false)
@@ -677,6 +691,7 @@ const SessionNotebookDialog = ({
         if (!requestIsCurrent()) return
         const existingIds = new Set(runs.map((run) => run.runId))
         const earlierRuns = loaded.runs.filter((run) => !existingIds.has(run.runId))
+        if (earlierRuns.length + runs.length > 200) setHasNewerRuns(true)
         setRuns([...earlierRuns, ...runs].slice(0, 200))
         setHistoryPage(loaded.historyPage)
       })
@@ -713,6 +728,7 @@ const SessionNotebookDialog = ({
     // Defer state writes out of the synchronous effect body, then load runs read-only.
     const timeoutId = window.setTimeout(() => {
       setStatus('loading')
+      setHasNewerRuns(false)
       setError(undefined)
       setRuns([])
       setRunCount(0)
@@ -774,7 +790,7 @@ const SessionNotebookDialog = ({
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.
-              key={dialogSession.id}
+              key={JSON.stringify([dialogSession.projectId, dialogSession.id])}
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
               runs={runs}
@@ -788,6 +804,16 @@ const SessionNotebookDialog = ({
               frameLabels={notebookFrameLabels(dialogSession, t)}
               onLoadHistorySummary={loadHistorySummary}
               onLoadEarlier={loadEarlier}
+              hasNewerRuns={hasNewerRuns}
+              onLoadLatest={() => {
+                activeSessionRef.current.generation++
+                invalidateSessionNotebookCache({
+                  sessionId: dialogSession.id,
+                  projectId: dialogSession.projectId,
+                  workspaceCwd: dialogSession.cwd ?? ''
+                })
+                setReadGeneration((value) => value + 1)
+              }}
               status={status}
               error={error}
               onClose={onClose}

@@ -182,3 +182,75 @@ describe('bounded Notebook reads', () => {
     ).toThrow(/changed/)
   })
 })
+
+it('budgets 100 legal live CJK/escaped cell previews and retrieves complete live source', () => {
+  const input = state([])
+  input.cells = Array.from({ length: 100 }, (_, index) => ({
+    id: `cell-${index}`,
+    language: 'python',
+    status: 'idle',
+    code: '#' + (index % 2 ? '\0中文🧬' : '中文').repeat(20_000)
+  }))
+  const request = { ...reference, readMode: 'bounded' as const }
+  const view = boundNotebookState(input, request, reference.revision, [])
+  expect(view.cells).toHaveLength(100)
+  expect(envelopeBytes(view)).toBeLessThan(256 * 1024)
+  for (const cell of view.cells) {
+    expect(Buffer.byteLength(JSON.stringify(cell.code))).toBeLessThanOrEqual(1024)
+    expect(cell.sourceRead).toEqual({ cellId: cell.id, offset: 0 })
+  }
+  let offset = 0
+  let revision: string | undefined
+  let full = ''
+  do {
+    const read = boundNotebookState(
+      input,
+      { ...request, cellRead: { cellId: 'cell-1', offset, revision } },
+      reference.revision,
+      []
+    )
+    expect(envelopeBytes(read)).toBeLessThan(1024 * 1024)
+    const chunk = read.contentChunk!
+    full += chunk.data
+    revision = chunk.revision
+    offset = chunk.next?.offset ?? 0
+  } while (offset)
+  expect(full).toBe(input.cells[1].code)
+  input.cells[1].code += 'changed'
+  expect(() =>
+    boundNotebookState(
+      input,
+      { ...request, cellRead: { cellId: 'cell-1', offset: 65536, revision } },
+      reference.revision,
+      []
+    )
+  ).toThrow('source changed')
+})
+
+it('preserves recovery from full diagnostics and WSL exclusion in summaries', () => {
+  const failed = { ...run(''), status: 'failed' as const }
+  failed.text.stderr =
+    'warning\n'.repeat(1000) + "Permission denied: '/workspace/protected/data.csv'"
+  const summary = summarizeNotebookRun(failed, reference)
+  expect(summary.text.stderr).not.toContain('protected')
+  expect(summary.folderAccessPath).toBe('/workspace/protected/data.csv')
+  expect(
+    summarizeNotebookRun(
+      { ...failed, shellRuntime: { kind: 'wsl2-bash' } as NotebookRunRecord['shellRuntime'] },
+      reference
+    )
+  ).toMatchObject({ shellRuntime: { kind: 'wsl2-bash' }, folderAccessPath: undefined })
+})
+
+it('keeps every rich MIME payload complete without interpreting HTML', () => {
+  const record = run('')
+  const html = '<table><tr><td>中文🧬</td></tr></table>'.repeat(10_000)
+  record.outputs = [
+    { type: 'display', data: { 'text/html': html, 'text/plain': 'table fallback' } },
+    { type: 'json', data: { rows: [1, 2], label: '中文' } }
+  ]
+  const values = [...readAll(record).values()]
+  expect(values).toContain(html)
+  expect(values).toContain('table fallback')
+  expect(values).toContain(JSON.stringify({ rows: [1, 2], label: '中文' }))
+})

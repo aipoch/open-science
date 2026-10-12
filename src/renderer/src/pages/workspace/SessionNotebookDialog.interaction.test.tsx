@@ -5,7 +5,9 @@ import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import { SessionNotebookDialog, SessionNotebookContent } from './SessionNotebookDialog'
+import type { ChatSession } from '@/stores/session-store'
+import type { NotebookChangedEvent, NotebookSessionStateRequest } from '../../../../shared/notebook'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 if (!Element.prototype.scrollIntoView) {
@@ -480,5 +482,146 @@ describe('SessionNotebookContent export', () => {
     )
     expect(allButton).toBeNull()
     expect(onExportAll).not.toHaveBeenCalled()
+  })
+})
+
+describe('bounded history container', () => {
+  it('returns to evicted latest runs, refreshes new/deleted runs, and rejects an old session page', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined)
+    let changed: ((event: NotebookChangedEvent) => void) | undefined
+    let records = Array.from({ length: 300 }, (_, index) => ({
+      ...run,
+      runId: `history-${index}`,
+      cellId: `history-cell-${index}`,
+      startedAt: index,
+      script: `value_${index} = 1`
+    }))
+    records[250] = { ...records[250], kernelKind: 'r' }
+    let pendingEarlier: ((value: unknown) => void) | undefined
+    let deferEarlier = false
+    const state = vi.fn(async (request: NotebookSessionStateRequest) => {
+      if (request.historySummaryFrameId) return { runs: [], runCount: records.length }
+      if (request.projectId === 'other-project')
+        return {
+          runs: [{ ...run, runId: 'other', script: 'other_session_value' }],
+          runCount: 1,
+          historyPage: { hasEarlierRuns: false }
+        }
+      const eligible = records.filter(
+        (record) => !request.historyBefore || record.startedAt < request.historyBefore.startedAt
+      )
+      const page = eligible.slice(-100)
+      const response = {
+        runs: page,
+        runCount: records.length,
+        historyPage: {
+          hasEarlierRuns: eligible.length > page.length,
+          oldestCursor: { startedAt: page[0].startedAt, runId: page[0].runId }
+        }
+      }
+      if (deferEarlier && request.historyBefore)
+        return new Promise((resolve) => {
+          pendingEarlier = resolve
+        })
+      return response
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        notebook: {
+          state,
+          getReference: vi.fn(async () => ({})),
+          onChanged: (callback: typeof changed) => {
+            changed = callback
+            return () => {
+              changed = undefined
+            }
+          }
+        }
+      }
+    })
+    const session = {
+      id: 'bounded-history-container',
+      projectId: 'p',
+      cwd: '/workspace',
+      messages: [],
+      activities: [],
+      conversationGraph: {
+        rootFrameId: 'root-frame-session-1',
+        frames: [{ id: 'root-frame-session-1', kind: 'root' }]
+      }
+    } as unknown as ChatSession
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+    }
+    const click = async (label: string): Promise<void> => {
+      const button = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === label
+      )
+      expect(button, label + document.body.textContent).toBeTruthy()
+      await act(async () => button!.click())
+      await settle()
+    }
+    await act(async () =>
+      root.render(<SessionNotebookDialog session={session} onClose={vi.fn()} />)
+    )
+    await settle()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-testid="session-notebook-tab-r"]')!.click()
+    )
+    expect(document.body.textContent).toContain('value_250')
+    await click('Load earlier runs')
+    await click('Load earlier runs')
+    expect(document.querySelectorAll('[data-testid="session-notebook-cell"]')).toHaveLength(200)
+    expect(document.body.textContent).not.toContain('value_299')
+    expect(document.body.textContent).not.toContain('Scroll up to load earlier history.')
+    await click('Return to latest runs')
+    expect(document.body.textContent).toContain('value_250')
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="session-notebook-tab-python"]')!
+        .click()
+    )
+    expect(document.querySelectorAll('[data-testid="session-notebook-cell"]')).toHaveLength(99)
+    expect(document.body.textContent).toContain('value_299')
+    // A new run and deletion invalidate all cached pages and keep the displayed window bounded.
+    records = records.filter((record) => record.runId !== 'history-299')
+    records.push({
+      ...run,
+      runId: 'new-run',
+      cellId: 'new-cell',
+      startedAt: 301,
+      script: 'new_live_value'
+    })
+    await act(async () =>
+      changed?.({ projectId: 'p', sessionId: session.id } as NotebookChangedEvent)
+    )
+    await settle()
+    expect(document.body.textContent).toContain('new_live_value')
+    expect(document.body.textContent).not.toContain('value_299')
+    deferEarlier = true
+    await click('Load earlier runs')
+    expect(pendingEarlier).toBeTypeOf('function')
+    await act(async () =>
+      root.render(
+        <SessionNotebookDialog
+          session={{ ...session, projectId: 'other-project' }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await settle()
+    await act(async () =>
+      pendingEarlier?.({
+        runs: records.slice(0, 100),
+        runCount: 300,
+        historyPage: { hasEarlierRuns: false }
+      })
+    )
+    expect(document.body.textContent).toContain('other_session_value')
+    expect(document.body.textContent).not.toContain('value_0')
+    expect(state.mock.calls.every(([request]) => request.readMode === 'bounded')).toBe(true)
   })
 })

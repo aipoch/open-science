@@ -7169,6 +7169,7 @@
     "Notebook output": "Notebook 输出",
     "Continue reading": "继续阅读",
     "End of run": "运行记录结束",
-    "Read complete run": "阅读完整运行记录"
+    "Read complete run": "阅读完整运行记录",
+    "Return to latest runs": "返回最新运行"
   }
 }

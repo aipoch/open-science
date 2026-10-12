@@ -3003,6 +3003,7 @@ describe('notebook local RPC server', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
+    const stateRead = vi.spyOn(service, 'state')
     const server = new NotebookLocalRpcServer(service, { transport: 'pipe' })
     const session = await server.issueSessionConnection(
       'session-1',
@@ -3031,12 +3032,103 @@ describe('notebook local RPC server', () => {
           },
           body: JSON.stringify({
             method: 'state',
-            params: { sessionId: 'session-1', workspaceCwd: root }
+            params: { sessionId: 'session-1', workspaceCwd: root, readMode: 'bounded' }
           })
         },
         'Notebook capability test RPC'
       )
       expect(response.status).toBe(200)
+      const bounded = (await response.json()) as {
+        result: { readRevision?: string; recentRuns: unknown[]; runJsonPath: string }
+      }
+      expect(bounded.result.readRevision).toBeTypeOf('string')
+      expect(bounded.result.recentRuns).toEqual([])
+      const document = JSON.parse(await readFile(bounded.result.runJsonPath, 'utf8'))
+      document.runs = [
+        {
+          runId: 'owned-run',
+          cellId: 'owned-cell',
+          kernelKind: 'python',
+          source: 'user',
+          script: 'owned source',
+          status: 'completed',
+          startedAt: 1,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: []
+        }
+      ]
+      await writeFile(bounded.result.runJsonPath, JSON.stringify(document))
+      const ownedSummary = await service.state({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        readMode: 'bounded'
+      })
+      const detail = await fetchLocalRpc(
+        session,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            method: 'state',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: root,
+              readMode: 'bounded',
+              contentRead: {
+                runId: 'owned-run',
+                revision: ownedSummary.readRevision,
+                cursor: { part: 0, offset: 0 }
+              }
+            }
+          })
+        },
+        'Notebook authorized detail test'
+      )
+      expect(detail.status).toBe(200)
+      expect(await detail.json()).toMatchObject({
+        result: { runs: [], recentRuns: [], contentChunk: { data: 'owned source' } }
+      })
+
+      for (const forged of [{ projectId: 'other-project' }, { sessionId: 'other-session' }]) {
+        const rejected = await fetchLocalRpc(
+          session,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${session.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'state',
+              params: {
+                sessionId: 'session-1',
+                workspaceCwd: root,
+                readMode: 'bounded',
+                contentRead: {
+                  runId: 'foreign-run',
+                  revision: 'r1',
+                  cursor: { part: 0, offset: 0 }
+                },
+                ...forged
+              }
+            })
+          },
+          'Notebook bounded authorization test'
+        )
+        expect(rejected.status).toBe(500)
+        expect(await rejected.json()).toMatchObject({
+          error: 'Notebook run not found.'
+        })
+        expect(stateRead).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            projectId: 'default-project',
+            sessionId: 'session-1',
+            readMode: 'bounded'
+          })
+        )
+      }
     } finally {
       control.release()
       await server.close()

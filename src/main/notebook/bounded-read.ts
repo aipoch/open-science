@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { notebookFolderAccessPath } from '../../shared/notebook-folder-access'
 import {
   NOTEBOOK_READ_CHUNK_CHARACTERS,
   NOTEBOOK_READ_PAGE_BYTES,
@@ -39,6 +41,8 @@ export const summarizeNotebookRun = (
   kernelDispatched: run.kernelDispatched,
   interruptionReason: run.interruptionReason,
   exitCode: run.exitCode,
+  shellRuntime: run.shellRuntime,
+  folderAccessPath: notebookFolderAccessPath(run, process.platform),
   shellRuntimeStatus: run.shellRuntimeStatus,
   shellErrorCode: run.shellErrorCode,
   truncated: run.truncated,
@@ -69,6 +73,19 @@ export const summarizeNotebookRun = (
       (run.text.plain?.length ?? 0)
   }
 })
+
+// Budget the encoded string itself, including quotes, escapes and multibyte UTF-8.
+const sourcePreview = (code: string): string => {
+  let start = 0
+  let end = Math.min(code.length, 1024)
+  while (start < end) {
+    const middle = Math.ceil((start + end) / 2)
+    if (Buffer.byteLength(JSON.stringify(code.slice(0, middle)), 'utf8') <= 1024) start = middle
+    else end = middle - 1
+  }
+  if (end < code.length && end > 0 && /[\uD800-\uDBFF]/.test(code[end - 1])) end--
+  return code.slice(0, end)
+}
 
 // JSON values are encoded incrementally, including very large imported strings. No call encodes
 // a full output or Run. The stack is proportional to document depth, not historical output size.
@@ -110,7 +127,7 @@ function* jsonFragments(value: unknown, omitStorageKeys = false): Generator<stri
 type Part = { label: string; mime?: string; fragments: Iterable<string> }
 function* parts(run: NotebookRunRecord): Generator<Part> {
   yield { label: 'script', fragments: [run.script] }
-  // Structured outputs are authoritative; legacy text is used only when absent, avoiding duplicates.
+  // Saved text and structured MIME payloads remain separately addressable for lossless inspection.
   {
     for (const label of ['stdout', 'stderr', 'traceback'] as const) {
       if (run.text[label]) yield { label, fragments: [run.text[label]] }
@@ -213,7 +230,11 @@ export const boundNotebookState = (
   }
   const result: NotebookSessionState = {
     ...state,
-    cells: state.cells.map((cell) => ({ ...cell, code: cell.code.slice(0, 1024) })),
+    cells: state.cells.map((cell) => ({
+      ...cell,
+      code: sourcePreview(cell.code),
+      sourceRead: { cellId: cell.id, offset: 0 }
+    })),
     runs: [],
     recentRuns: [],
     readRevision: revision
@@ -228,6 +249,27 @@ export const boundNotebookState = (
     return bytes
   }
   let bytes = encodedBytes(result, NOTEBOOK_READ_PAGE_BYTES / 4)
+  if (request.cellRead) {
+    const { cellId, offset, revision: sourceRevision } = request.cellRead
+    const cell = state.cells.find((candidate) => candidate.id === cellId)
+    if (!cell) throw new Error('Notebook cell not found.')
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > cell.code.length)
+      throw new Error('Invalid Notebook cell source offset.')
+    const revision = createHash('sha256').update(cell.code).digest('hex')
+    if ((offset > 0 && !sourceRevision) || (sourceRevision && sourceRevision !== revision))
+      throw new Error('Notebook cell source changed. Read from the beginning.')
+    let end = Math.min(cell.code.length, offset + NOTEBOOK_READ_CHUNK_CHARACTERS)
+    if (end < cell.code.length && /[\uD800-\uDBFF]/.test(cell.code[end - 1])) end--
+    result.contentChunk = {
+      revision,
+      cursor: { part: 0, offset },
+      label: 'script',
+      data: cell.code.slice(offset, end),
+      partComplete: end === cell.code.length,
+      ...(end < cell.code.length ? { next: { part: 0, offset: end } } : {})
+    }
+    return result
+  }
   if (request.contentRead) {
     const run = publicRuns.find((candidate) => candidate.runId === request.contentRead!.runId)
     if (!run) throw new Error('Notebook run not found.')
