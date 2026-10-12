@@ -276,7 +276,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
   }
 })
 
-it.each(['dependencies', 'unavailable'] as const)(
+it.each(['dependencies', 'unavailable', 'pr'] as const)(
   'executes all required package tests in a real selective shard: %s',
   (evidence) => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'package-selective-shard-')))
@@ -292,7 +292,7 @@ it.each(['dependencies', 'unavailable'] as const)(
         )
       }
       const plan =
-        evidence === 'dependencies'
+        evidence !== 'unavailable'
           ? createPackageTestPlan([`${core}/src/engine.ts`], registry)
           : packageTestPlanFromRevisions('missing', 'missing', 'missing', { cwd })
       expect(
@@ -301,6 +301,7 @@ it.each(['dependencies', 'unavailable'] as const)(
             mode: 'selective',
             modules: [],
             testFiles: [`${core}/contract.test.ts`],
+            deferredPackageRoots: evidence === 'pr' ? [providers, mcp] : [],
             graphStatus: 'not-used',
             capabilityOverlays: [],
             fallbackCapabilities: [],
@@ -318,10 +319,14 @@ it.each(['dependencies', 'unavailable'] as const)(
         )
       ).toBe(0)
       const report = JSON.parse(readFileSync(join(cwd, 'result.json'), 'utf8'))
-      expect(report.numPassedTests).toBe(3)
+      expect(report.numPassedTests).toBe(evidence === 'pr' ? 1 : 3)
       expect(
         report.testResults.map(({ name }: { name: string }) => normalize(name)).sort()
-      ).toEqual([core, providers, mcp].map((root) => join(cwd, root, 'contract.test.ts')).sort())
+      ).toEqual(
+        (evidence === 'pr' ? [core] : [core, providers, mcp])
+          .map((root) => join(cwd, root, 'contract.test.ts'))
+          .sort()
+      )
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

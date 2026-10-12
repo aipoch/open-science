@@ -4,8 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { auditPackageConsumers } from './audit-package-consumers.mjs'
 import { refinePackageHostTests } from './package-host-test-impact.mjs'
-import { runModuleTestCli } from './module-test-impact.mjs'
+import { executeModuleTestPlan, runModuleTestCli } from './module-test-impact.mjs'
 
 const roots: string[] = []
 afterEach(() => {
@@ -109,33 +110,39 @@ it('omits only proven unrelated expansion tests, preserving all declared boundar
   expect(state.plan.testFiles).toContain(unrelated)
 })
 
-it('uses the refined plan in both CLI explanation and test execution', async () => {
-  const state = fixture()
-  const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-  const spawn = vi.fn(() => ({ status: 0 }))
-  const options = {
-    cwd: state.cwd,
-    manifest: state.manifest,
-    execute: (command: string, args: string[]) => {
-      if (command === 'codegraph') throw Error('Graph unavailable')
-      return execFileSync(command, args, { cwd: state.cwd, encoding: 'utf8' })
-    },
-    spawn,
-    environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+it.each(['queue', 'pr'])(
+  'uses the %s tier in both CLI explanation and test execution',
+  async (tier) => {
+    const state = fixture()
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const options = {
+      cwd: state.cwd,
+      manifest: state.manifest,
+      execute: (command: string, args: string[]) => {
+        if (command === 'codegraph') throw Error('Graph unavailable')
+        return execFileSync(command, args, { cwd: state.cwd, encoding: 'utf8' })
+      },
+      spawn,
+      environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+    }
+    const args = ['affected', '--base', state.base, '--head', state.head, '--tier', tier]
+    try {
+      expect(await runModuleTestCli([...args, '--explain'], options)).toBe(0)
+      expect(spawn).not.toHaveBeenCalled()
+      expect(output.mock.calls.flat().join('')).toContain(
+        tier === 'pr' ? 'blocking merge queue' : 'expansion-only host test'
+      )
+      expect(await runModuleTestCli(args, options)).toBe(0)
+      expect(spawn.mock.calls[0]?.[1]).not.toContain(unrelated)
+      expect(spawn.mock.calls[0]?.[1]).toContain(related)
+      if (tier === 'queue') expect(spawn.mock.calls[0]?.[1]).toContain(downstream)
+      else expect(spawn.mock.calls[0]?.[1]).not.toContain(downstream)
+    } finally {
+      output.mockRestore()
+    }
   }
-  const args = ['affected', '--base', state.base, '--head', state.head]
-  try {
-    expect(await runModuleTestCli([...args, '--explain'], options)).toBe(0)
-    expect(spawn).not.toHaveBeenCalled()
-    expect(output.mock.calls.flat().join('')).toContain('expansion-only host test')
-    expect(await runModuleTestCli(args, options)).toBe(0)
-    expect(spawn.mock.calls[0]?.[1]).not.toContain(unrelated)
-    expect(spawn.mock.calls[0]?.[1]).toContain(related)
-    expect(spawn.mock.calls[0]?.[1]).toContain(downstream)
-  } finally {
-    output.mockRestore()
-  }
-})
+)
 
 it.each([
   "import './missing'",
@@ -198,3 +205,158 @@ it('keeps full plans and downstream full-marker obligations separate', () => {
   Object.assign(state.manifest.modules.example, { fullTestReason: 'Shared runtime' })
   expect(state.refine().testFiles).toEqual(state.plan.testFiles)
 })
+
+it('defers distant host consumers in PR but retains contracts, package tests and queue evidence', () => {
+  const state = fixture()
+  const pr = state.refine({ tier: 'pr' })
+  expect(pr.testFiles).toEqual([contract, related])
+  expect(pr.deferredTestFiles).toEqual([unrelated, declared, downstream])
+  expect(pr.deferredPackageRoots).toEqual(['packages/downstream'])
+  expect(pr.modules).toEqual(state.plan.modules)
+  expect(pr.capabilityOverlays).toEqual(state.plan.capabilityOverlays)
+  expect(pr.reasonChains.join('\n')).toContain('blocking merge queue')
+  expect(state.refine({ tier: 'queue' }).testFiles).toContain(declared)
+  // The original expansion-only test remains provably unrelated in queue; declared evidence does not.
+  expect(state.plan.testFiles).toContain(unrelated)
+})
+
+it.each([
+  "import '@example/example'",
+  "export * from '@example/example'",
+  "vi.mock('@example/example', () => ({}))",
+  "import('./missing')",
+  'import(name)'
+])('retains direct or unresolved PR integration: %s', (source) => {
+  expect(fixture(source).refine({ tier: 'pr' }).testFiles).toContain(unrelated)
+})
+
+it('keeps a host adapter contract, including dependency changes in the actual merge checkout', () => {
+  const state = fixture("import './adapter'")
+  state.put('src/adapter.ts', "import '@example/example'")
+  const head = state.commit()
+  expect(state.refine({ head, tier: 'pr' }).testFiles).toContain(unrelated)
+  const merged = fixture("import './adapter'")
+  merged.put('src/adapter.ts', 'export {}')
+  const before = merged.commit()
+  merged.put('src/adapter.ts', "import '@example/example'")
+  merged.commit()
+  expect(merged.refine({ base: before, head: before, tier: 'pr' }).testFiles).toContain(unrelated)
+})
+
+it('keeps unioned dynamic resource adapter contracts in PR', () => {
+  const state = fixture("import './adapter'", { [owner]: ['src/adapter.ts'] })
+  state.put('src/adapter.ts', 'export {}')
+  expect(state.refine({ head: state.commit(), tier: 'pr' }).testFiles).toContain(unrelated)
+})
+
+it('defers a runtime consumer beyond the host adapter to the blocking queue', () => {
+  const state = fixture("import './service'")
+  state.put('src/service.ts', "import './adapter'")
+  state.put('src/adapter.ts', "import '@example/example'")
+  const revision = state.commit()
+  const pr = state.refine({ base: revision, head: revision, tier: 'pr' })
+  expect(pr.testFiles).not.toContain(unrelated)
+  expect(pr.deferredTestFiles).toContain(unrelated)
+  expect(state.refine({ base: revision, head: revision, tier: 'queue' }).testFiles).toContain(
+    unrelated
+  )
+})
+
+it('rejects unsupported phases and keeps mixed changes conservative in PR', () => {
+  const state = fixture()
+  expect(() => state.refine({ tier: 'nightly' })).toThrow('Unknown test tier')
+  expect(
+    refinePackageHostTests(
+      state.plan,
+      [...state.changes, { path: 'src/host.ts', status: 'modified' }],
+      state.manifest,
+      { ...state, tier: 'pr' }
+    ).testFiles
+  ).toEqual(state.plan.testFiles)
+})
+
+it('does not let CI-selected downstream roots re-expand PR package discovery', () => {
+  const state = fixture()
+  const spawn = vi.fn(() => ({ status: 0 }))
+  const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  try {
+    executeModuleTestPlan(state.refine({ tier: 'pr' }), {
+      cwd: state.cwd,
+      spawn,
+      environment: {
+        ...process.env,
+        VITEST_PORTABLE_CI: '1',
+        OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '["packages/example","packages/downstream"]'
+      }
+    })
+    const args = spawn.mock.calls[0]?.[1]
+    expect(args).toContain('packages/example')
+    expect(args).not.toContain('packages/downstream')
+    expect(args).not.toContain(downstream)
+    expect(args).toContain('--exclude=packages/downstream/**')
+    expect(args).toContain(related)
+  } finally {
+    output.mockRestore()
+  }
+})
+
+it('keeps explicitly registered downstream package contracts in PR', () => {
+  const state = fixture()
+  state.manifest.modules.downstream.testFiles = { owner: [], contract: [downstream], consumer: [] }
+  state.put('scripts/ci/module-impact.json', JSON.stringify(state.manifest))
+  const pr = state.refine({ head: state.commit(), tier: 'pr' })
+  expect(pr.testFiles).toContain(downstream)
+  expect(pr.deferredPackageRoots).toEqual([])
+})
+
+it('audits a committed package and distinguishes runtime consumers from deferred declared evidence', () => {
+  const state = fixture()
+  const audit = auditPackageConsumers(state.head, state.cwd)
+  expect(audit.revision).toBe(state.head)
+  const example = audit.packages.find(({ root }: { root: string }) => root === 'packages/example')!
+  expect(example.mode).toBe('selective')
+  expect(example.evidence).toContainEqual({ test: related, evidence: 'runtime-path', pr: true })
+  expect(example.evidence).toContainEqual({ test: declared, evidence: 'no-static-path', pr: false })
+  expect(example.hostTestFiles).toBe(example.prHostTestFiles! + example.queueHostTestFiles!)
+  expect(() => auditPackageConsumers('--all', state.cwd)).toThrow()
+})
+
+it('keeps PR consumers when trusted package selection falls back to all packages', async () => {
+  const state = fixture()
+  const spawn = vi.fn(() => ({ status: 0 }))
+  const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  try {
+    expect(
+      await runModuleTestCli(
+        ['affected', '--base', state.base, '--head', state.head, '--tier', 'pr'],
+        {
+          cwd: state.cwd,
+          manifest: state.manifest,
+          execute: (command: string, args: string[]) => {
+            if (command === 'codegraph') throw Error('Graph unavailable')
+            return execFileSync(command, args, { cwd: state.cwd, encoding: 'utf8' })
+          },
+          spawn,
+          environment: {
+            ...process.env,
+            VITEST_PORTABLE_CI: '1',
+            OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '["packages"]'
+          }
+        }
+      )
+    ).toBe(0)
+    expect(spawn.mock.calls[0]?.[1]).toContain(unrelated)
+    expect(spawn.mock.calls[0]?.[1]).toContain(downstream)
+  } finally {
+    output.mockRestore()
+  }
+})
+
+it.each([['--tier'], ['--tier', 'nightly']])(
+  'rejects invalid tier arguments before selection: %j',
+  async (...tier) => {
+    await expect(
+      runModuleTestCli(['affected', '--base', 'base', '--head', 'head', ...tier])
+    ).rejects.toThrow('--tier must be pr or queue')
+  }
+)

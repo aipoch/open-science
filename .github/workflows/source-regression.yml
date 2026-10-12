@@ -1,6 +1,6 @@
 name: Source Regression
 
-# Run complete Mac source coverage twice daily, independently of package publication.
+# Run complete portable and Mac source coverage twice daily, independently of package publication.
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
@@ -14,6 +14,7 @@ on:
         default: full
         options:
           - full
+          - portable
           - presentation
           - workspace-images
           - presentation-screening
@@ -29,7 +30,7 @@ concurrency:
 jobs:
   regression:
     name: Complete source regression (macOS)
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' }}
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -167,6 +168,97 @@ jobs:
           PRESENTATION_SCREENING: ${{ steps.presentation_screening.outcome }}
         run: '[[ "$PRESENTATION_SCREENING" == "success" ]]'
 
+  portable:
+    name: Complete portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'portable' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      VITEST_PORTABLE_CI: '1'
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+      OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]'
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Test complete portable shard
+        run: >-
+          npm test -- --coverage --coverage.reporter=text-summary --testTimeout=30000
+          --shard=${{ matrix.shard }}/4 --reporter=dot --reporter=blob --reporter=github-actions
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+      - name: Upload portable reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: scheduled-portable-${{ matrix.shard }}
+          path: vitest-reports/
+          retention-days: 5
+          if-no-files-found: error
+
+  portable_report:
+    name: Complete portable coverage
+    needs: [portable]
+    if: ${{ always() && (github.event_name == 'schedule' || inputs.mode == 'full' || inputs.mode == 'portable') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VITEST_PORTABLE_CI: '1'
+      OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]'
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]'
+    steps:
+      - name: Require every portable shard
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+        run: test "$PORTABLE_RESULT" = success
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install report dependencies
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Download every portable report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: scheduled-portable-*
+          path: vitest-reports
+          merge-multiple: true
+      - name: Require all four reports
+        shell: bash
+        run: |
+          for shard in 1 2 3 4; do test -s "vitest-reports/blob-${shard}.json"; done
+      - name: Merge complete coverage
+        run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
+      - name: Test i18n catalog excluded from portable shards
+        env:
+          VITEST_PORTABLE_CI: '0'
+        run: npx vitest run src/renderer/src/i18n/resources.test.ts
+      - name: Upload complete portable coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: scheduled-portable-coverage
+          path: coverage/
+          retention-days: 5
+          if-no-files-found: warn
+
   packages:
     name: Complete installed package verification (Ubuntu)
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'full' }}
@@ -188,7 +280,7 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [regression, packages]
+    needs: [regression, packages, portable, portable_report]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -205,7 +297,7 @@ jobs:
       - name: Open, refresh, or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+          CONCLUSION: ${{ needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}
         with:
           script: |
             const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)

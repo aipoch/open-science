@@ -180,7 +180,9 @@ describe('PR Gate workflow', () => {
     expect(selected?.run).toContain('--reporter=blob')
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
-    expect(merge?.run).toContain('--coverage-changed "$BASE_SHA" -- --merge-reports=vitest-reports')
+    expect(merge?.run).toContain(
+      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports'
+    )
     expect(workflow.jobs.unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     const serial = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
     expect(serial?.if).toContain("needs.unit_shard.result == 'skipped'")
@@ -2177,3 +2179,17 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
     expect(step.env?.PR_GATE_NEEDS).toContain('needs.package_verification.result')
   }
 )
+
+it('uses the PR tier only for pull requests, and the same tier for execution and report merging', () => {
+  const steps = Object.values(workflow.jobs)
+    .flatMap((job) => job.steps ?? [])
+    .filter((step) => step.run?.includes('npm run test:affected'))
+  expect(steps).toHaveLength(3)
+  for (const step of steps) {
+    expect(step.env?.TEST_TIER).toBe(
+      "${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}"
+    )
+    expect(step.run).toContain('--tier "$TEST_TIER"')
+  }
+  expect(workflow.on).toHaveProperty('merge_group')
+})

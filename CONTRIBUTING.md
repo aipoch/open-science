@@ -566,14 +566,15 @@ Source Regression; manual callers without an explicit capacity input retain comp
 ### Independent package tests
 
 Register independent packages and their dependencies in `scripts/ci/package-test-boundaries.json`.
-Ubuntu PR tests skip unchanged upstream packages while retaining host integration coverage;
-shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
+Ubuntu PR tests run changed packages and bounded host adapter/contracts; merge queue retains downstream
+package and host integration coverage. See [test layers](docs/ci-test-layers.md).
+Shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
 Registry changes require CI owner review.
 
 Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
 Use the manual package dry-run for focused diagnostics; see [Package workflows](docs/package-workflows.md).
 
-For pure registered-package edits, `test:affected` can further omit host tests added only
+For pure registered-package edits, the default `queue` tier can further omit host tests added only
 by downstream module expansion. It preserves directly declared owner/contract/consumer
 evidence, downstream package suites, CodeGraph-selected tests and platform capabilities.
 Exclusion requires complete dependency evidence in the merge base, PR head and actual

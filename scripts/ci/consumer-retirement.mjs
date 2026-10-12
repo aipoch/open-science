@@ -55,7 +55,11 @@ export function sourceSnapshot(revision, cwd) {
   return { files: new Set(entries.keys()), read }
 }
 
-export function createConsumerDependencyReader(source, runtimeEdges, { staticOnly = false } = {}) {
+export function createConsumerDependencyReader(
+  source,
+  runtimeEdges,
+  { staticOnly = false, runtimeOnly = false } = {}
+) {
   const root = resolve('/__module_evidence__').replaceAll('\\', '/')
   const key = (path) => posix.relative(root, path.replaceAll('\\', '/'))
   const directories = new Set([root])
@@ -125,11 +129,29 @@ export function createConsumerDependencyReader(source, runtimeEdges, { staticOnl
     }
     if (path.endsWith('.json')) return result
     const specs = new Set(
-      ts.preProcessFile(text, true, true).importedFiles.map(({ fileName }) => fileName)
+      runtimeOnly
+        ? []
+        : ts.preProcessFile(text, true, true).importedFiles.map(({ fileName }) => fileName)
     )
     const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
     if (ast.parseDiagnostics.length) result.complete = false
     const visit = (node) => {
+      // Keep value imports conservative, including mixed named type/value imports and export *.
+      // Type references still belong to the default structural graph and typecheck scope.
+      if (runtimeOnly) {
+        if (ts.isImportTypeNode(node)) return
+        if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly)
+          specs.add(node.moduleSpecifier.text)
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier && !node.isTypeOnly)
+          specs.add(node.moduleSpecifier.text)
+        if (
+          ts.isImportEqualsDeclaration(node) &&
+          !node.isTypeOnly &&
+          ts.isExternalModuleReference(node.moduleReference) &&
+          ts.isStringLiteral(node.moduleReference.expression)
+        )
+          specs.add(node.moduleReference.expression.text)
+      }
       // Test pruning needs stronger evidence than registration auditing: these globals
       // can reach IPC, external processes or filesystem resources without an import edge.
       if (
@@ -214,7 +236,7 @@ export function createConsumerDependencyReader(source, runtimeEdges, { staticOnl
     }
     return result
   }
-  return (test, owners) => {
+  const inspect = (test, owners) => {
     const pending = [test],
       visited = new Set()
     let complete = true
@@ -231,6 +253,9 @@ export function createConsumerDependencyReader(source, runtimeEdges, { staticOnl
     }
     return { reachable: false, complete }
   }
+  // Expose the same resolver for bounded host-adapter selection and explainable audits.
+  inspect.dependencies = dependencies
+  return inspect
 }
 
 // Exceptions are derived by trusted code from both revisions, never a candidate flag.
