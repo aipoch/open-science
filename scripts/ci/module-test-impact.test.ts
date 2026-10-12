@@ -155,6 +155,31 @@ describe('module test impact commands', () => {
     expect(spawn).toHaveBeenCalledOnce()
   })
 
+  it.each(['0', '1'])('honors package-only selections in portable CI mode %s', (portable) => {
+    const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const environment = {
+      npm_execpath: '/npm/bin/npm-cli.js',
+      VITEST_PORTABLE_CI: portable,
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '["packages/connector-core"]'
+    }
+    try {
+      expect(executeModuleTestPlan(plan, { spawn, environment, nodeExecutable: '/node' })).toBe(0)
+      if (portable === '1') {
+        expect(spawn).toHaveBeenCalledExactlyOnceWith(
+          '/node',
+          ['/npm/bin/npm-cli.js', 'test', '--', 'packages/connector-core'],
+          expect.objectContaining({ env: environment })
+        )
+      } else {
+        expect(spawn).not.toHaveBeenCalled()
+      }
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it.each([
     ['--shard=2/3', '--reporter=blob', '--outputFile=vitest-reports/blob-2.json'],
     ['--merge-reports=vitest-reports', '--passWithNoTests']
@@ -985,7 +1010,7 @@ it.each([
 
   expect(plan.mode).toBe('selective')
   expect(plan.modules).toContain(
-    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'desktop_composition'
+    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'host_process_runtime'
   )
   expect(plan.capabilityOverlays).toContain('windows_sensitive')
   if (path.endsWith('.test.ts')) {

@@ -189,7 +189,9 @@
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/composition/handoff.test.ts",
-      "src/main/composition/artifact-surfaces.test.ts"
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

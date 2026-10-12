@@ -893,7 +893,15 @@
       "src/main/composition/handoff.test.ts",
       "src/main/session-persistence/create-local-session.test.ts",
       "src/main/session-persistence/create-managed-session.test.ts",
-      "src/main/notebook/managed-confinement.macos.integration.test.ts"
+      "src/main/notebook/managed-confinement.macos.integration.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/browser-recordings/external-port.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

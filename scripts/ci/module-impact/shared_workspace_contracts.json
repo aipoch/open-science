@@ -40,7 +40,8 @@
     "src/shared/renderer-contracts/session-replay.ts",
     "src/shared/artifact-version-locator.ts",
     "src/shared/artifact-version-locator.test.ts",
-    "src/shared/notebook-network-settings.ts"
+    "src/shared/notebook-network-settings.ts",
+    "src/shared/recorded-observation-selection.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -70,7 +71,8 @@
     "src/shared/uploads.ts",
     "src/shared/renderer-contracts/session-replay.ts",
     "src/shared/artifact-version-locator.ts",
-    "src/shared/notebook-network-settings.ts"
+    "src/shared/notebook-network-settings.ts",
+    "src/shared/recorded-observation-selection.ts"
   ],
   "consumerModules": [],
   "testFiles": {

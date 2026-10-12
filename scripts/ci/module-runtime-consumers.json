@@ -189,5 +189,8 @@
   ],
   "src/main/notebook/node-local-service-preload.mjs": [
     "src/main/notebook/managed-research-environment.ts"
+  ],
+  "src/main/run-observation/electron-capture.ts": [
+    "src/main/run-observation/electron-capture.integration.test.ts"
   ]
 }
