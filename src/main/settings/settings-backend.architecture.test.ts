@@ -1641,7 +1641,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/connectors/mcp-host-dependencies.test.ts',
       'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
       'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
-      ...(manifest.modules.settings_proxy_runtime?.testFiles.owner ?? [])
+      ...(manifest.modules.settings_proxy_runtime?.testFiles.owner ?? []),
+      'src/main/session-package/research-reproduction.integration.test.ts'
     ])
     expect(
       [

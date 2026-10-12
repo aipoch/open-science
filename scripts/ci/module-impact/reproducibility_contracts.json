@@ -1037,7 +1037,10 @@
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
       "src/main/artifacts/reproducibility-host.test.ts",
       "scripts/electron-vite-config.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

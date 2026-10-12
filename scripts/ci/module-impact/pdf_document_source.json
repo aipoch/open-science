@@ -1250,7 +1250,8 @@
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
       "src/main/notebook/environment-capture.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

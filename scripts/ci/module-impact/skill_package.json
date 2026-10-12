@@ -1413,7 +1413,10 @@
       "src/main/notebook/environment-process.contract.test.ts",
       "cli/connector-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

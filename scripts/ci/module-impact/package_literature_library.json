@@ -1299,7 +1299,10 @@
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/uploads.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

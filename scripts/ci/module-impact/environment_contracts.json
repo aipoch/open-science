@@ -1112,7 +1112,10 @@
       "scripts/electron-vite-config.test.ts",
       "src/main/notebook/environment-download.contract.test.ts",
       "src/main/notebook/windows-runtime-download.contract.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

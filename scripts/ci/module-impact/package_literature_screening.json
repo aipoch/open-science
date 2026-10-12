@@ -928,7 +928,8 @@
       "packages/literature-library/test/inbox-reconciliation.test.ts",
       "packages/literature-library/test/library.test.ts",
       "packages/literature-library/test/merge-batch.test.ts",
-      "packages/literature-library/test/reconcile.test.ts"
+      "packages/literature-library/test/reconcile.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

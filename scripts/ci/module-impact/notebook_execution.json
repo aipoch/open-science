@@ -115,7 +115,14 @@
     "src/main/notebook/environment-recovery.contract.test.ts",
     "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
     "src/main/notebook/environment-startup.contract.test.ts",
-    "src/main/notebook/windows-runtime-download.contract.test.ts"
+    "src/main/notebook/windows-runtime-download.contract.test.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/local-service-lease.test.ts",
+    "src/main/notebook/local-service.macos.integration.test.ts",
+    "src/main/notebook/node-local-service-preload.mjs",
+    "src/main/notebook/node-local-service-preload.test.ts",
+    "src/main/notebook/research-service.macos.integration.test.ts",
+    "src/main/notebook/fixtures/research-service-driver.mjs"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -168,7 +175,9 @@
     "src/main/notebook/runtime-ipc.ts",
     "src/main/notebook/runtime-service.ts",
     "src/main/notebook/runtime-workflows.ts",
-    "src/main/notebook/windows-python.test-support.ts"
+    "src/main/notebook/windows-python.test-support.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/node-local-service-preload.mjs"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -213,7 +222,11 @@
       "src/main/notebook/windows-notebook-runtime.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/notebook/runtime-repair.windows.integration.test.ts",
-      "src/main/notebook/windows-python-probe.integration.test.ts"
+      "src/main/notebook/windows-python-probe.integration.test.ts",
+      "src/main/notebook/local-service-lease.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/node-local-service-preload.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -734,7 +747,8 @@
       "src/main/notebook/package-process-sandbox.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/shell-runtime.test.ts",
-      "src/main/notebook/environment-lifecycle-diagnostics.test.ts"
+      "src/main/notebook/environment-lifecycle-diagnostics.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

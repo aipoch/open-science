@@ -490,7 +490,10 @@
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

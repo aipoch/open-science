@@ -411,7 +411,10 @@
       "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/connectors/custom-mcp-config.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
