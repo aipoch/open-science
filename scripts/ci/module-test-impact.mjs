@@ -147,9 +147,15 @@ export function createAffectedTestPlan(
   changes,
   graph,
   manifest = defaultManifest,
-  registrationModules = []
+  registrationModules = [],
+  registrationOnly = false
 ) {
   validateModuleImpactManifest(manifest)
+  if (registrationOnly)
+    return {
+      ...selectivePlan(manifest, [], [], graph),
+      reasonChains: ['registration-only revision -> policy and manifest contracts in Static checks']
+    }
   const classification = { moduleManifest: manifest, registrationModules }
   const changePlan = classifyChanges(changes, undefined, classification)
   if (changePlan.mode === 'full') {
@@ -424,12 +430,12 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
   )
   const graph = collectCodeGraphTests(paths, options)
-  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
     base,
     head,
     ...options
   })
-  let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules)
+  let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
   // Keep preflight dependency-free; refine only the installed test runner's package-only plan.
   if (
     plan.mode === 'selective' &&
@@ -449,6 +455,27 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     } catch {
       plan.reasonChains.push(
         'package host evidence unavailable -> retain complete declared selection'
+      )
+    }
+  }
+  if (
+    plan.mode === 'selective' &&
+    tier === 'pr' &&
+    changes.length &&
+    changes.every(({ path }) => path.startsWith('src/'))
+  ) {
+    try {
+      const { refineHostTests } = await import('./package-host-test-impact.mjs')
+      plan = refineHostTests(plan, changes, manifest, {
+        base,
+        head,
+        graphTests: graph.testFiles,
+        tier,
+        ...options
+      })
+    } catch {
+      plan.reasonChains.push(
+        'host consumer evidence unavailable -> retain complete declared selection'
       )
     }
   }

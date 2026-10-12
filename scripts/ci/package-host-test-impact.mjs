@@ -19,12 +19,24 @@ export function isDirectPackageConsumerTest(inspect, test, owners) {
   return false
 }
 
+// Host changes keep the complete registered plan in queue. PR retains owners,
+// contracts, direct adapters and uncertain or historically unproven consumers.
+export function refineHostTests(plan, changes, manifest, options = {}) {
+  if ((options.tier ?? 'queue') !== 'pr') return plan
+  return refineConsumerTests(plan, changes, manifest, options, 'host')
+}
+
 // Refine execution, never preflight capabilities or directly declared boundary evidence.
-export function refinePackageHostTests(
+export function refinePackageHostTests(plan, changes, manifest, options = {}) {
+  return refineConsumerTests(plan, changes, manifest, options, 'package')
+}
+
+function refineConsumerTests(
   plan,
   changes,
   manifest,
-  { base, head, cwd = process.cwd(), graphTests = [], tier = 'queue' } = {}
+  { base, head, cwd = process.cwd(), graphTests = [], tier = 'queue' } = {},
+  boundary
 ) {
   if (!['pr', 'queue'].includes(tier)) throw new Error(`Unknown test tier: ${tier}`)
   if (plan.mode !== 'selective' || !changes.length) return plan
@@ -50,13 +62,20 @@ export function refinePackageHostTests(
     // Uncommitted sources are not covered by immutable evidence.
     if (git('status', '--porcelain', '--untracked-files=normal')) return plan
     const sources = revisions.map((revision) => sourceSnapshot(revision, cwd))
-    const registry = validatePackageTestRegistry(
-      JSON.parse(sources[0].read('scripts/ci/package-test-boundaries.json'))
-    )
+    const registry =
+      boundary === 'package'
+        ? validatePackageTestRegistry(
+            JSON.parse(sources[0].read('scripts/ci/package-test-boundaries.json'))
+          )
+        : undefined
     const paths = changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
     if (
       changes.some(({ status }) => !['modified', 'added'].includes(status)) ||
-      paths.some((path) => !registry.packages.some(({ root }) => path.startsWith(root + '/')))
+      paths.some((path) =>
+        boundary === 'package'
+          ? !registry.packages.some(({ root }) => path.startsWith(root + '/'))
+          : !/^src\/(?:main|renderer|shared)\/.*\.[cm]?[jt]sx?$/.test(path)
+      )
     )
       return plan
     const manifests = [
@@ -65,6 +84,7 @@ export function refinePackageHostTests(
     ]
     const protectedTests = new Set([...graphTests, ...paths])
     const owners = new Set()
+    const declaredConsumers = new Set()
     for (const current of manifests) {
       for (const path of paths) {
         const matches = Object.values(current.modules).filter((module) =>
@@ -79,6 +99,7 @@ export function refinePackageHostTests(
         for (const module of matches) {
           if (module.fullTestReason) return plan
           for (const owner of module.ownerPaths) owners.add(owner)
+          for (const test of module.testFiles.consumer) declaredConsumers.add(test)
           for (const test of tier === 'pr'
             ? [...module.testFiles.owner, ...module.testFiles.contract]
             : tests(module))
@@ -99,19 +120,35 @@ export function refinePackageHostTests(
       const inspectors = sources.map((source) =>
         createConsumerDependencyReader(source, runtimeEdges, { runtimeOnly: true })
       )
+      const structural =
+        boundary === 'host'
+          ? sources.map((source) => createConsumerDependencyReader(source, runtimeEdges))
+          : []
       const deferred = plan.testFiles.filter((test) => {
         if (!test.startsWith('src/') || protectedTests.has(test)) return false
+        // Missing import evidence cannot demote a historical host contract.
+        if (
+          declaredConsumers.has(test) &&
+          structural.some((inspect) => {
+            const evidence = inspect(test, owners)
+            return !evidence.complete || !evidence.reachable
+          })
+        )
+          return false
         // Keep tests of a direct package consumer (host adapter), plus tests importing the package.
         // More distant integration evidence is deferred, never retired or claimed unrelated.
         return inspectors.every((inspect) => {
           return !isDirectPackageConsumerTest(inspect, test, owners)
         })
       })
-      const deferredPackageRoots = createPackageTestPlan(paths, registry).selected.filter(
-        (root) =>
-          !paths.some((path) => path.startsWith(root + '/')) &&
-          ![...protectedTests].some((test) => test.startsWith(root + '/'))
-      )
+      const deferredPackageRoots =
+        boundary === 'package'
+          ? createPackageTestPlan(paths, registry).selected.filter(
+              (root) =>
+                !paths.some((path) => path.startsWith(root + '/')) &&
+                ![...protectedTests].some((test) => test.startsWith(root + '/'))
+            )
+          : []
       deferred.push(
         ...plan.testFiles.filter((test) =>
           deferredPackageRoots.some((root) => test.startsWith(root + '/'))
@@ -125,7 +162,7 @@ export function refinePackageHostTests(
         deferredPackageRoots,
         reasonChains: [
           ...plan.reasonChains,
-          `PR package boundary -> ${plan.testFiles.length - deferred.length} retained files; ${deferred.length} consumer files deferred to blocking merge queue; typechecks and capabilities unchanged`,
+          `PR ${boundary} boundary -> ${plan.testFiles.length - deferred.length} retained files; ${deferred.length} consumer files deferred to blocking merge queue; typechecks and capabilities unchanged`,
           ...deferredPackageRoots.map(
             (root) => `${root} -> downstream package suite -> merge queue`
           ),
@@ -165,7 +202,7 @@ export function refinePackageHostTests(
       ...plan,
       reasonChains: [
         ...plan.reasonChains,
-        'package host evidence unavailable -> retain complete declared selection'
+        `${boundary === 'package' ? 'package host' : 'host consumer'} evidence unavailable -> retain complete declared selection`
       ]
     }
   }

@@ -24,9 +24,20 @@ Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resump
 Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
 complete scheduled/manual regression; adding a mainline tag requires CI policy review.
 The discovery guard asserts these five exact test identities to prevent silent growth.
-Selection uses the trusted base module owners and consumer graph and explains every chosen group
+PR Windows E2E installs, builds and runs on one runner; the three-runner scheduled regression
+retains its shared setup snapshot. Selection uses the trusted base module owners and consumer graph and explains every chosen group
 in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
-E2E suites. Windows core checks remain blocking. Complete Windows business/browser variants run
+E2E suites. Windows core checks remain blocking when selected. The trusted selector uses the existing module
+owner/contract evidence for early PR checks and adds indirect integration evidence in merge queue.
+Direct process/framework, Notebook/sandbox and environment changes retain their corresponding native
+checks in PRs. The bounded check inventory is `scripts/ci/windows-core-checks.json`; its explicit input
+prefixes preserve security/runtime boundaries beyond static imports. Path and general Windows behavior
+checks also retain affected consumer evidence in PRs. Other affected consumer-only integration groups
+run in queue. Unknown/full plans or missing selection metadata retain all existing lane checks; a
+platform overlay without mapped check evidence also retains its complete inventory. The selected
+set and deferred groups appear in preflight reason chains. Checks retain complete test files within
+each selected group, so this is group selection rather than individual-test pruning. Native supervisor
+consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate. Complete Windows business/browser variants run
 in the independent Windows E2E Regression workflow.
 Automatic PR checks do not allocate Mac runners, including for platform-sensitive changes;
 Mac validation happens in merge queue.
@@ -43,8 +54,7 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
-Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
-selected Windows core checks remain blocking.
+Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles
 
@@ -134,6 +144,17 @@ imports, dirty checkouts and missing evidence retain the broader plan. Mixed hos
 edits retain ordinary module selection. The installed test runner explains exclusions;
 the dependency-free preflight continues to report conservative module and platform scope.
 
+For pure host source edits (`src/main`, `src/renderer`, or `src/shared`), the PR tier also
+bounds transitive consumer execution. Owner tests, selected explicit contracts, changed tests,
+CodeGraph evidence, direct runtime consumers and one adapter hop remain in PR. Unresolved
+boundaries stay selected. Historical consumers declared by a changed owner also stay selected
+when any base/head/checkout source graph cannot prove their dependency. Distant consumers
+are deferred to the **blocking merge queue**, whose host plan remains unchanged; they are not
+removed from registration or treated as unrelated. The runner explains each deferral. This
+uses the same repository-owned dependency reader as package tiering, without extra contributor
+tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
+destructive changes, dirty checkouts and missing evidence retain the broad selection.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
@@ -203,7 +224,13 @@ import of the moved source cannot rule out an additional IPC/filesystem dependen
 owner. Moved owner tests with those uncertain dependencies stay registered on both owners.
 This exception does not relax ordinary consumer retirement or runtime test-pruning proofs, and it
 cannot accompany source or runtime-edge changes.
-The split still receives full PR validation; ordinary selective runs acquire no extra graph scan.
+A revision changing only valid module shard JSON runs a bounded registration check in both PR
+and queue: CI policy tests, source architecture tests, manifest-reading tests and the ownership /
+consumer guards. Trusted preflight verifies the complete Git diff and reads regular JSON blobs;
+CI Integrity independently enforces every preservation rule above. Mixed source/policy edits,
+malformed records, unsupported statuses and root-manifest changes retain ordinary fallback.
+Registration data never selects its own contract tests. No application or platform behavior
+changes in this data-only path, so it does not launch desktop or Windows runtime suites.
 
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
 (for example, a generated native addon or computed import). Absence from a static graph alone
