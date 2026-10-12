@@ -77,6 +77,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",

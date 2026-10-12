@@ -887,6 +887,7 @@ export const createApplicationModules = async (
     prepareDesktopUpdate: handoff.prepareDesktopUpdate,
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
+      sessionPackageSurfaces.browserPackageImport.active ||
       sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,

@@ -40,6 +40,8 @@ export function prepareBrowserImport(file, options = {}) {
   if (
     typeof filename !== 'string' ||
     filename.length > 160 ||
+    new TextEncoder().encode(filename).byteLength > 255 ||
+    /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(filename) ||
     !/\.science$/i.test(filename) ||
     // eslint-disable-next-line no-control-regex -- Reject control characters in external filenames.
     /[\x00-\x1f\x7f/\\:*?"<>|\u202a-\u202e\u2066-\u2069]/u.test(filename) ||
@@ -89,37 +91,43 @@ export function prepareBrowserImport(file, options = {}) {
           redirect: 'error',
           targetAddressSpace: 'loopback',
           ...init,
-          signal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-            : AbortSignal.timeout(30_000)
+          signal: AbortSignal.any(
+            [signal, init.signal, AbortSignal.timeout(30_000)].filter(Boolean)
+          )
         })
       try {
         const deadline = Date.now() + Math.max(1, Math.min(readyTimeoutMs, 300_000))
+        // The readiness budget also bounds a stalled response body, not just polling attempts.
+        const readySignal = AbortSignal.timeout(Math.ceil(Math.min(readyTimeoutMs, 300_000)))
+        const notReady = new Error(
+          'Open-Science did not become ready. Open the app, allow local network access, and retry.'
+        )
         const challenge = randomHex()
         let response
         while (Date.now() < deadline) {
           signal?.throwIfAborted()
           try {
-            response = await request(`/ready?challenge=${challenge}`)
+            response = await request(`/ready?challenge=${challenge}`, { signal: readySignal })
             break
           } catch {
             signal?.throwIfAborted()
-            await wait(250, signal)
+            if (readySignal.aborted) break
+            await wait(Math.max(0, Math.min(250, deadline - Date.now())), signal)
           }
         }
-        if (!response)
-          throw new Error(
-            'Open-Science did not become ready. Open the app, allow local network access, and retry.'
-          )
+        if (!response) throw notReady
         let ready
         try {
           ready = await response.json()
         } catch {
+          signal?.throwIfAborted()
+          if (readySignal.aborted || Date.now() >= deadline) throw notReady
           throw new Error('Could not verify the local receiver identity.')
         }
         const expected = await sign(
           `open-science-import-v1:${challenge}:${ready.offset}:${ready.accepted ? 1 : 0}`
         )
+        if (readySignal.aborted || Date.now() >= deadline) throw notReady
         if (!response.ok || ready.proof !== expected)
           throw new Error(
             'Could not verify the local receiver identity. Prepare a new transfer and reopen Open-Science.'

@@ -2,7 +2,86 @@ import { createHmac } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { prepareBrowserImport } from './browser-import.mjs'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+it.each([
+  '研'.repeat(100) + '.science',
+  '研'.repeat(83) + '.science',
+  'CON.science',
+  'aux.notes.science',
+  'COM1.science',
+  'COM¹.science',
+  'lpt9.science'
+])('rejects a filename that cannot be stored portably: %s', (filename) => {
+  expect(() =>
+    prepareBrowserImport(new Blob(['hello']), {
+      filename,
+      origin: 'https://research.example'
+    })
+  ).toThrow(/filename/)
+})
+
+it.each(['研'.repeat(82) + '.science', '研究.science', 'com10.science'])(
+  'accepts a portable filename: %s',
+  (filename) => {
+    expect(() =>
+      prepareBrowserImport(new Blob(['hello']), {
+        filename,
+        origin: 'https://research.example'
+      })
+    ).not.toThrow()
+  }
+)
+
+it.each(['headers', 'body'])('bounds receiver readiness while waiting for %s', async (stage) => {
+  const controller = new AbortController()
+  // Fails promptly on the old implementation instead of waiting for its 30-second request budget.
+  const fallback = setTimeout(
+    () => controller.abort(new Error('Readiness budget was ignored')),
+    500
+  )
+  vi.stubGlobal('fetch', async (_input: string, init: RequestInit) => {
+    const stalled = (): Promise<never> =>
+      new Promise((_resolve, reject) => {
+        init.signal!.throwIfAborted()
+        init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+      })
+    return stage === 'headers' ? stalled() : { ok: true, json: stalled }
+  })
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  try {
+    await expect(transfer.send({ signal: controller.signal, readyTimeoutMs: 20 })).rejects.toThrow(
+      /did not become ready/
+    )
+  } finally {
+    clearTimeout(fallback)
+  }
+})
+
+it('rejects a valid readiness response that arrives after the deadline', async () => {
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  const secret = new URL(transfer.url).searchParams.get('secret')!
+  let now = 1000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  vi.stubGlobal('fetch', async (input: string) => {
+    const challenge = new URL(input).searchParams.get('challenge')
+    const proof = createHmac('sha256', Buffer.from(secret, 'hex'))
+      .update(`open-science-import-v1:${challenge}:5:1`)
+      .digest('hex')
+    now = 1100
+    return new Response(JSON.stringify({ proof, offset: 5, accepted: true, chunkBytes: 4194304 }))
+  })
+  await expect(transfer.send({ readyTimeoutMs: 50 })).rejects.toThrow(/did not become ready/)
+})
 
 it('never sends bytes or credentials to an endpoint that cannot prove its identity', async () => {
   const requests: RequestInit[] = []

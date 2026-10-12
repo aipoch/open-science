@@ -20,6 +20,7 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "packages/reproducibility/src/output-comparison.test.ts",
       "packages/reproducibility/src/preflight.test.ts",
       "src/main/notebook/python-loop.integration.test.ts",

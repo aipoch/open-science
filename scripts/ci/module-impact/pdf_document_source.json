@@ -6,6 +6,7 @@
     "owner": ["src/shared/pdf-document-source.test.ts"],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",

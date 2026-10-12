@@ -29,6 +29,7 @@
     "owner": ["packages/environment/src/contracts.test.ts"],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/notebook/environment-lifecycle-diagnostics.test.ts",
       "packages/environment/src/environment-lock.test.ts",
       "packages/environment/src/environment-state-tracker.test.ts",

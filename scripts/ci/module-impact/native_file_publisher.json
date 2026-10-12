@@ -12,6 +12,7 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
       "src/main/agents/agents-mutations.test.ts",
       "src/main/agents/agents-service.test.ts",

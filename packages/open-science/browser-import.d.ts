@@ -6,6 +6,7 @@ export type BrowserImportTransfer = {
   send(options?: {
     signal?: AbortSignal
     onProgress?: (progress: BrowserImportProgress) => void
+    /** Bounds the readiness handshake, including response body reads; defaults to two minutes. */
     readyTimeoutMs?: number
   }): Promise<{ received: true }>
 }

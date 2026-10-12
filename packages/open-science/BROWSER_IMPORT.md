@@ -82,6 +82,8 @@ a session was created. No website receives desktop session data or general API c
 - Version 1 accepts nonempty packages up to **2 GiB**, sent in **4 MiB** chunks. The website owns
   storage of the completed Blob; the SDK only reads one chunk at a time. This browser transfer
   limit is intentionally separate from the desktop archive format's larger limit.
+- Filenames must fit both 160 UTF-16 code units and 255 UTF-8 bytes, and cannot use Windows reserved
+  device names such as `CON.science`. Both the SDK and receiver validate these portable limits.
 - A transfer has a two-minute idle timeout. Keep the same transfer object and call `send()` again
   after a transient connection failure to resume from the acknowledged offset while the receiver
   is alive. Cancellation removes a partial transfer; prepare a new transfer before retrying it.

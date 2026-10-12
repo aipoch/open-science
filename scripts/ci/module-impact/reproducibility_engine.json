@@ -55,6 +55,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",

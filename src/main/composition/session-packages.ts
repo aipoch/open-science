@@ -246,10 +246,12 @@ export function composeSessionPackageSurfaces({
       return result.response === 1
     }
   })
-  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
+  // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
+  sessionPackageDesktopLifecycle.isActive = () =>
+    browserPackageImport.active || sessionPackageDesktop.operations.active
   declareElectronAdapter('session-package-quit-guard', () =>
     desktopInteraction('Session package quit confirmation').installPackageQuitGuard(
-      () => sessionPackageDesktop.hasActiveTransfer(),
+      () => browserPackageImport.active || sessionPackageDesktop.hasActiveTransfer(),
       () => {
         desktopInteraction('Confirm desktop action').confirmSync({
           type: 'info',

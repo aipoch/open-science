@@ -23,6 +23,7 @@
     "owner": ["packages/compute/src/host-connection-profile.test.ts"],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "packages/compute/src/concurrency-manager.test.ts",
       "packages/compute/src/execution.test.ts",
       "packages/compute/src/job-deletion-owner.test.ts",

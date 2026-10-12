@@ -33,6 +33,7 @@
     "owner": [],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.anndata.test.ts",

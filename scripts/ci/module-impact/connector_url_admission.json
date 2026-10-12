@@ -9,6 +9,7 @@
     "owner": ["packages/connector-core/src/url-admission.test.ts"],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "packages/connector-mcp-client/src/client-manager.test.ts",
       "packages/connector-mcp-client/src/protocol.test.ts",
       "src/main/acp/application-commands.test.ts",

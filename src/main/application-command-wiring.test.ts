@@ -102,7 +102,7 @@ describe('production application command wiring', () => {
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
+      'sessionPackageDesktopLifecycle.isActive = () => browserPackageImport.active || sessionPackageDesktop.operations.active'
     )
     expect(source).toContain(
       'sessionPackageDesktopLifecycle.close = async () => { browserPackageImport.stop() await sessionPackageDesktop.close() await browserPackageImport.close() }'

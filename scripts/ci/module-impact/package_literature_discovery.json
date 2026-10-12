@@ -65,6 +65,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "packages/open-science/cli.test.ts",
       "packages/open-science/client.test.ts",
       "scripts/electron-app-fixture.test.ts",

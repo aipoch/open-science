@@ -56,7 +56,8 @@
     "src/main/session-package/browser-import.test.ts",
     "src/main/session-package/browser-import-protocol.ts",
     "src/main/session-package/browser-import-protocol.test.ts",
-    "src/main/session-package/browser-import-sdk.integration.test.ts"
+    "src/main/session-package/browser-import-sdk.integration.test.ts",
+    "src/main/session-package/test-helpers/browser-import-port.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -106,6 +107,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",

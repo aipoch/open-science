@@ -44,6 +44,7 @@
       "src/main/update/downloader.test.ts"
     ],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "cli/connector-contract.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",

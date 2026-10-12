@@ -1,4 +1,4 @@
-import { createServer } from 'node:net'
+import { findBrowserImportPort } from './test-helpers/browser-import-port'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -11,21 +11,7 @@ import { prepareBrowserImport } from '../../../packages/open-science/browser-imp
 afterEach(() => vi.unstubAllGlobals())
 
 it('transfers a browser-held Blob over authenticated HTTP without any remote download', async () => {
-  const probe = createServer()
-  for (;;) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        probe.once('error', reject)
-        probe.listen(49152 + Math.floor(Math.random() * 16384), '127.0.0.1', resolve)
-      })
-      probe.removeAllListeners('error')
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
-    }
-  }
-  const port = (probe.address() as { port: number }).port
-  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  const port = await findBrowserImportPort()
   const origin = 'https://research.example'
   const root = await mkdtemp(join(tmpdir(), 'browser-sdk-'))
   let received: string | undefined

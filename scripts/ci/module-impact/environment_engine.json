@@ -146,6 +146,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/notebook/environment-bundle-resources.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-process.contract.test.ts",

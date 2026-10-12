@@ -2233,6 +2233,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/literature/pdf-structure/engine.test.ts",
       "src/main/literature/pdf-structure/worker-result.test.ts",
       "src/main/literature/pdf-structure/agent-reader.test.ts",

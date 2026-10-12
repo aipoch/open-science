@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Inferred types for test fixture helpers. */
 import { createCipheriv, createHash, createHmac, randomBytes } from 'node:crypto'
-import { createServer } from 'node:net'
+import { findBrowserImportPort } from './test-helpers/browser-import-port'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,21 +22,7 @@ afterEach(async () => {
 })
 
 async function setup(options: { confirm?: () => Promise<boolean>; idleMs?: number } = {}) {
-  const probe = createServer()
-  for (;;) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        probe.once('error', reject)
-        probe.listen(49152 + Math.floor(Math.random() * 16384), '127.0.0.1', resolve)
-      })
-      probe.removeAllListeners('error')
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
-    }
-  }
-  const port = (probe.address() as { port: number }).port
-  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  const port = await findBrowserImportPort()
   const root = await mkdtemp(join(tmpdir(), 'browser-package-'))
   disposers.push(() => rm(root, { recursive: true, force: true }))
   const received: string[] = []

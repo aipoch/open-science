@@ -28,6 +28,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/session-packages.test.ts",
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
       "src/main/acp/runtime.test.ts",
