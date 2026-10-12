@@ -592,9 +592,9 @@ describe('installed-consumer input selection', () => {
       expect(plan.excluded.length).toBeGreaterThan(0)
     }
   )
-  it('does not let verification rules narrow portable test or ownership policy', () => {
-    expect(
-      createPackageTestPlan(['scripts/ci/windows-test-sequencer.test.ts'], actual).excluded
-    ).toEqual([])
+  it('keeps portable global policy independent of installed-consumer exclusions', () => {
+    const path = 'scripts/ci/module-test-impact.mjs'
+    expect(select([path]).selected).toEqual([])
+    expect(createPackageTestPlan([path], actual).excluded).toEqual([])
   })
 })

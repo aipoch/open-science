@@ -165,7 +165,9 @@ export function createPackageTestPlan(paths, registry, { verification = false } 
         excluded: [],
         reasons: [`${path} -> package compilation, discovery or policy input -> all package tests`]
       }
-    } else if (packageExemptInput.test(path)) {
+    } else if (!verification && packageExemptInput.test(path)) {
+      // Installed-consumer inputs were already filtered by verificationPaths. An unknown
+      // helper must retain all consumers, even when portable package units exclude scripts.
       reasons.push(`${path} -> non-package test or script input -> package unit tests excluded`)
     } else if (!/^(?:src\/|docs\/|[^/]+\.md$)/.test(path)) {
       return {
