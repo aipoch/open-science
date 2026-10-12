@@ -142,6 +142,19 @@ export function createConsumerDependencyReader(
     const moduleNamespaces = new Set()
     for (const statement of ast.statements) {
       if (
+        ts.isImportEqualsDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        ts.isExternalModuleReference(statement.moduleReference) &&
+        ['node:module', 'module'].includes(statement.moduleReference.expression?.text)
+      )
+        moduleNamespaces.add(statement.name.text)
+      if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        ['node:module', 'module'].includes(statement.moduleSpecifier?.text)
+      )
+        result.complete = false
+      if (
         !ts.isImportDeclaration(statement) ||
         !['node:module', 'module'].includes(statement.moduleSpecifier.text) ||
         statement.importClause?.isTypeOnly
@@ -176,7 +189,12 @@ export function createConsumerDependencyReader(
         )
           specs.add(node.moduleReference.expression.text)
       }
-      if (ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isInterfaceDeclaration(node))
+      if (
+        ts.isTypeNode(node) ||
+        ts.isImportDeclaration(node) ||
+        ts.isImportEqualsDeclaration(node) ||
+        ts.isInterfaceDeclaration(node)
+      )
         return
       // Test pruning needs stronger evidence than registration auditing: these globals
       // can reach IPC, external processes or filesystem resources without an import edge.

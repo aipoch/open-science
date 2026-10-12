@@ -440,7 +440,12 @@ it.each([
   "const load = require; load('./leaf')",
   "import Module from 'node:module'; Module._load('./leaf')",
   "import { Module as Loader } from 'node:module'; Loader._load('./leaf')",
-  "import * as modules from 'node:module'; modules.Module.prototype.require('./leaf')"
+  "import * as modules from 'node:module'; modules.Module.prototype.require('./leaf')",
+  "import * as modules from 'node:module'; modules['_load']('./leaf')",
+  "import Module = require('node:module'); Module._load('./leaf')",
+  "import Module = require('module'); Module['_load']('./leaf')",
+  "export { createRequire } from 'node:module'",
+  "export * from 'node:module'"
 ])('retains indirect loading when selecting the extracted owner evidence: %s', (loader) => {
   const state = fixture()
   state.put(app, 'export const value = 2')
