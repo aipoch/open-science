@@ -437,6 +437,7 @@ it('retains evidence for selected downstream packages and missing dependency reg
 it.each([
   ["import { builtinModules } from 'node:module'; builtinModules.includes('fs')", true],
   ["import * as moduleApi from 'node:module'; moduleApi.builtinModules.includes('fs')", true],
+  ["import { isBuiltin as checkBuiltin } from 'node:module'; checkBuiltin('fs')", true],
   ["import { createRequire } from 'node:module'", true],
   ["import { expect } from 'vitest'; expect.any(Function)", true],
   ['type Callback = Function; interface API { handler: Function }', true],
@@ -449,6 +450,10 @@ it.each([
     false
   ],
   ["import { register as hook } from 'node:module'; hook('./owner', import.meta.url)", false],
+  ["import Module from 'node:module'; Module._load('./owner')", false],
+  ["import { Module as Loader } from 'node:module'; Loader._load('./owner')", false],
+  ["import { _load as load } from 'node:module'; load('./owner')", false],
+  ["import * as modules from 'node:module'; modules.Module.prototype.require('./owner')", false],
   [
     "import Module from 'node:module'; const api = Module; api.createRequire(import.meta.url)",
     false

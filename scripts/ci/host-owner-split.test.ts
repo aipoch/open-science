@@ -436,10 +436,15 @@ it('requires declared runtime consumers even when their imports reach a differen
   expect(state.check(base).ok).toBe(true)
 })
 
-it('retains indirect loading when selecting the extracted owner evidence', () => {
+it.each([
+  "const load = require; load('./leaf')",
+  "import Module from 'node:module'; Module._load('./leaf')",
+  "import { Module as Loader } from 'node:module'; Loader._load('./leaf')",
+  "import * as modules from 'node:module'; modules.Module.prototype.require('./leaf')"
+])('retains indirect loading when selecting the extracted owner evidence: %s', (loader) => {
   const state = fixture()
   state.put(app, 'export const value = 2')
-  state.put(consumer, "import './app'; const load = require; load('./leaf')")
+  state.put(consumer, `import './app'; ${loader}`)
   const base = state.commit()
   state.split()
   state.manifest.modules.foundation.testFiles.consumer = [uncertain]

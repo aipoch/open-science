@@ -135,7 +135,9 @@ export function createConsumerDependencyReader(
     )
     const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
     if (ast.parseDiagnostics.length) result.complete = false
-    const loaderNames = new Set(['createRequire', 'register', 'registerHooks'])
+    // Module exposes indirect loaders too (_load, Module.prototype.require, etc.).
+    // Only known read-only introspection is safe to exclude from opaque loading.
+    const harmlessModuleMembers = new Set(['builtinModules', 'isBuiltin'])
     const importedLoaders = new Set()
     const moduleNamespaces = new Set()
     for (const statement of ast.statements) {
@@ -151,7 +153,10 @@ export function createConsumerDependencyReader(
       if (bindings && ts.isNamespaceImport(bindings)) moduleNamespaces.add(bindings.name.text)
       if (bindings && ts.isNamedImports(bindings))
         for (const binding of bindings.elements)
-          if (!binding.isTypeOnly && loaderNames.has((binding.propertyName ?? binding.name).text))
+          if (
+            !binding.isTypeOnly &&
+            !harmlessModuleMembers.has((binding.propertyName ?? binding.name).text)
+          )
             importedLoaders.add(binding.name.text)
     }
     const visit = (node) => {
@@ -222,7 +227,7 @@ export function createConsumerDependencyReader(
           moduleNamespaces.has(node.text) &&
           ts.isPropertyAccessExpression(parent) &&
           parent.expression === node &&
-          !loaderNames.has(parent.name.text)
+          harmlessModuleMembers.has(parent.name.text)
         if (!directRequire && !assertion && !moduleProperty) result.complete = false
       }
       if (
