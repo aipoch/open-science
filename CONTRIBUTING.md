@@ -34,10 +34,13 @@ npm install
 ```
 
 External contributors: [fork the repository](https://github.com/aipoch/open-science/fork),
-clone your fork instead, and add the original repository as `upstream`:
+then replace `<your-username>` below with your GitHub username:
 
 ```bash
+git clone https://github.com/<your-username>/open-science.git
+cd open-science
 git remote add upstream https://github.com/aipoch/open-science.git
+npm install
 ```
 
 `npm install` runs a `postinstall` step that generates the Prisma client and
