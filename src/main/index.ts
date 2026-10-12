@@ -847,7 +847,12 @@ async function startDesktop(): Promise<void> {
             'Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.'
           )
         })
-        if (result.response !== 1) return
+        if (result.response !== 1) {
+          // Match ordinary quit cancellation: a no-tray desktop must retain a reachable window.
+          if (process.platform !== 'darwin' && !tray && getMainWindow()?.isDestroyed())
+            showMainWindow?.()
+          return
+        }
         client?.close()
         app.exit(0)
       })
