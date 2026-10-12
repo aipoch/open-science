@@ -481,6 +481,7 @@
       "src/main/notebook/windows-external-r.integration.test.ts",
       "src/main/notebook/windows-path-access.integration.test.ts",
       "src/main/notebook/windows-r-conda-discovery.integration.test.ts",
+      "src/main/notebook/windows-r-report.integration.test.ts",
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/working-file-observer.performance.test.ts",
@@ -726,9 +727,11 @@
       "src/main/notebook/working-file-observer.write-scope.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/configured-shell-runtime.test.ts",
+      "src/main/notebook/managed-runtime-relocation.test.ts",
       "src/main/notebook/package-process-sandbox.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
-      "src/main/notebook/shell-runtime.test.ts"
+      "src/main/notebook/shell-runtime.test.ts",
+      "src/main/notebook/environment-lifecycle-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
