@@ -452,24 +452,6 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
       )
     }
   }
-  if (
-    plan.mode === 'selective' &&
-    tier === 'pr' &&
-    changes.every(({ path }) => path.startsWith('src/'))
-  ) {
-    try {
-      const { refineHostTests } = await import('./host-test-impact.mjs')
-      plan = refineHostTests(plan, changes, manifest, {
-        base,
-        head,
-        graphTests: graph.testFiles,
-        tier,
-        ...options
-      })
-    } catch {
-      plan.reasonChains.push('host evidence unavailable -> retain complete declared selection')
-    }
-  }
   if (arguments_.includes('--explain')) {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0

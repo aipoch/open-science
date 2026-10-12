@@ -584,20 +584,6 @@ imports, dirty checkouts and missing evidence retain the broader plan. Mixed hos
 edits retain ordinary module selection. The installed test runner explains exclusions;
 the dependency-free preflight continues to report conservative module and platform scope.
 
-### Host PR test scope
-
-For source-only edits under `src/main/` and `src/renderer/`, `--tier pr` may defer tests
-introduced only by recursive module expansion to the blocking merge queue. It retains every
-changed owner's declared owner/contract/consumer test, downstream contract and full-owner
-evidence, CodeGraph-selected tests, package suites and platform capabilities. Deferral requires
-complete structural dependency evidence with no path to any changed owner in the merge base,
-PR head and actual checkout, using the union of their runtime-consumer declarations. Type-only
-imports count as dependencies. Opaque runtime inputs, unresolved imports, dirty checkouts,
-unknown ownership, renames, deletions and mixed/shared changes retain the broader plan.
-`--tier queue` retains the ordinary host selection; scheduled Source Regression still runs the
-complete portable suite. This changes execution scope, not module registration or ownership.
-Use `test:affected:explain` with each tier to inspect the exact files and deferral reasons.
-
 ### CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
@@ -645,6 +631,20 @@ test evidence and routing obligations retained, and every reachable or uncertain
 registered in the new owner. The original shared owner keeps its full-validation marker
 and surviving evidence. This is not a general exception for shared files or package edits;
 merge the protected policy before proposing the registration split.
+Host owners under `src/main/` and `src/renderer/` may split into new modules in a
+registration-only revision with unchanged source and tests. Trusted Integrity verifies that each
+new owner takes paths from exactly one surviving non-full owner, preserves moved interfaces,
+platform capabilities and downstream routing, and retains every reachable or uncertain test from
+the old execution plan. Explicit contracts, non-host evidence and host consumers without a
+provable old source dependency follow the split as well. Moved owner tests keep their owner
+classification in the new module; tests still reaching the remaining owner, or with incomplete
+evidence, must also remain registered there. Shared/full owners, existing-module transfers and
+mixed source/policy edits do not qualify. An old consumer registration may follow a verified split
+only when complete evidence proves its old dependency and no dependency on the remaining owner;
+uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
+in force. Merge this protected policy before proposing a registration split that depends on it.
+The split still receives full PR validation; ordinary selective runs acquire no extra graph scan.
+
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
 (for example, a generated native addon or computed import). Absence from a static graph alone
 must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
