@@ -285,6 +285,7 @@ describe('PR Gate workflow', () => {
           'module-impact-authority.mjs',
           'module-impact-inputs.mjs',
           'module-impact-shadow.mjs',
+          'module-ownership-paths.mjs',
           'module-test-impact.mjs',
           'module-impact.json',
           'load-module-impact.mjs',
