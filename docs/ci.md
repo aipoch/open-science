@@ -54,18 +54,7 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
-Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
-selected Windows core checks remain blocking when selected. The trusted selector uses the existing module
-owner/contract evidence for early PR checks and adds indirect integration evidence in merge queue.
-Direct process/framework, Notebook/sandbox and environment changes retain their corresponding native
-checks in PRs. The bounded check inventory is `scripts/ci/windows-core-checks.json`; its explicit input
-prefixes preserve security/runtime boundaries beyond static imports. Path and general Windows behavior
-checks also retain affected consumer evidence in PRs. Other affected consumer-only integration groups
-run in queue. Unknown/full plans or missing selection metadata retain all existing lane checks; a
-platform overlay without mapped check evidence also retains its complete inventory. The selected
-set and deferred groups appear in preflight reason chains. Checks retain complete test files within
-each selected group, so this is group selection rather than individual-test pruning. Native supervisor
-consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate.
+Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles
 
