@@ -3560,6 +3560,21 @@ describe('production delegated-work composition', () => {
       ]
     })
 
+    // Windows may need longer than the default assertion deadline to publish the next Turn handoff.
+    const openExecution = turns.openExecution.bind(turns)
+    vi.spyOn(turns, 'openExecution').mockImplementationOnce(async (request) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200))
+      return openExecution(request)
+    })
+
+    const continuationStarted = Promise.withResolvers<void>()
+    const run = execution.run.bind(execution)
+    vi.spyOn(execution, 'run').mockImplementationOnce((...args) => {
+      const running = run(...args)
+      continuationStarted.resolve()
+      return running
+    })
+
     const continued = await harness.composition.host.sendMessage(
       {
         ...harness.caller,
@@ -3572,7 +3587,8 @@ describe('production delegated-work composition', () => {
     )
     expect(continued.disposition).toBe('continued')
     if (continued.disposition !== 'continued') throw new Error('expected terminal continuation')
-    await expect.poll(() => execution.controls()).toHaveLength(2)
+    await continuationStarted.promise
+    expect(execution.controls()).toHaveLength(2)
     const continuationControl = execution.control(continued.continuation_attempt_id)
     const continuationTurn = turns.handleForExecution(continued.continuation_attempt_id)
     await turns.write(continuationTurn, {
