@@ -1233,6 +1233,17 @@ it('queues OS files without reading payloads before project selection and cancel
     expect(desktop.hasActiveTransfer()).toBe(false)
     expect(JSON.stringify(desktop.operations.snapshot)).not.toContain(fixture.storageRoot)
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    const discarded = vi.fn()
+    await desktop.enqueueFile(join(fixture.storageRoot, 'discard.science'), discarded)
+    const requestId = desktop.operations.snapshot!.pendingImports!.find(
+      (file) => file.filename === 'discard.science'
+    )!.id
+    desktop.respond({
+      action: 'discard-import',
+      operationId: desktop.operations.snapshot!.id,
+      requestId
+    })
+    expect(discarded).toHaveBeenCalledOnce()
     const initial = desktop.operations.snapshot!
     desktop.respond({ action: 'cancel', operationId: initial.id })
     await vi.waitFor(() =>
@@ -1267,8 +1278,12 @@ it('checks project admission before copying an OS file and keeps a failed reques
     storageRoot: fixture.storageRoot,
     getClient: async () => fixture.client
   })
-  const reserve = vi.fn(async () => {
-    throw new Error('Project was archived')
+  const reserve = vi
+    .fn(async () => () => undefined)
+    .mockRejectedValueOnce(new Error('Project was archived'))
+  vi.spyOn(service, 'importFrom').mockResolvedValue({
+    projectId: 'archived',
+    sessionId: 'imported'
   })
   const copy = vi.spyOn(fileIo, 'copyFileWithinBudget')
   const desktop = new SessionPackageDesktop({
@@ -1278,8 +1293,9 @@ it('checks project admission before copying an OS file and keeps a failed reques
     reserveImport: reserve,
     afterImport: async () => undefined
   })
+  const released = vi.fn()
   try {
-    desktop.enqueueFile(input)
+    desktop.enqueueFile(input, released)
     await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
     desktop.respond({
       action: 'select-project',
@@ -1298,8 +1314,10 @@ it('checks project admission before copying an OS file and keeps a failed reques
     await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(2))
     expect(desktop.operations.snapshot?.importTarget).toEqual({ projectId: 'archived' })
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
   } finally {
     await desktop.close()
+    expect(released).toHaveBeenCalledOnce()
     await service.close()
   }
 })

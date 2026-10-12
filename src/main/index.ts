@@ -45,6 +45,7 @@ import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
+import { BrowserImportLaunchRelay } from './session-package/browser-import-protocol'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import {
   OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG,
@@ -72,6 +73,11 @@ const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const bootstrapLog = createLogger('desktop-bootstrap')
 const webServiceLog = createLogger('web-service')
+// macOS can deliver a launch URL before ready or any asynchronous backend initialization.
+const browserImports = new BrowserImportLaunchRelay()
+app.on('open-url', (event, url) => {
+  if (browserImports.receive(url)) event.preventDefault()
+})
 let startupDiagnostics: DiagnosticOperation | undefined
 let cleanupStartupClient: (() => Promise<void>) | undefined
 let bootstrapPhase = 'credential-preflight'
@@ -222,11 +228,13 @@ async function startDesktop(): Promise<void> {
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
   app.on('second-instance', (_event, argv, cwd) => {
+    for (const value of argv.slice(1)) browserImports.receive(value)
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
     if (showMainWindow) showMainWindow()
     else secondInstancePending = true
   })
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  for (const value of process.argv.slice(1)) browserImports.receive(value)
   let client: DesktopRuntimeClient | undefined = undefined
   const reportError = (error: unknown): void => {
     bootstrapLog.error('desktop operation failed', diagnosticErrorFields(error))
@@ -476,6 +484,10 @@ async function startDesktop(): Promise<void> {
           packageFiles.bind((path) => {
             showMainWindow?.()
             void client!.invokeHost('desktop:open-package', [path]).catch(reportError)
+          })
+          browserImports.bind((url) => {
+            showMainWindow?.()
+            void client!.invokeHost('desktop:browser-import', [url]).catch(reportError)
           })
         }
         state = next

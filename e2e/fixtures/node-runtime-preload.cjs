@@ -6,6 +6,25 @@ const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 if (!root) throw new Error('The Node runtime fixture requires an isolated source E2E profile.')
 if (process.versions.electron) {
   if (require('electron').app.isPackaged) throw new Error('Source fixture cannot run packaged.')
+  // Native consent stays at the Electron boundary; only this source-test profile can answer it.
+  const { dialog } = require('electron')
+  const showMessageBox = dialog.showMessageBox.bind(dialog)
+  dialog.showMessageBox = (...args) => {
+    const options = args.at(-1)
+    if (options.buttons?.at(-1) === 'Receive package') {
+      try {
+        const response = Number(readFileSync(join(root, 'e2e-browser-import-consent'), 'utf8'))
+        require('node:fs').appendFileSync(
+          join(root, 'e2e-browser-import-prompts.jsonl'),
+          JSON.stringify(options) + '\n'
+        )
+        return Promise.resolve({ response, checkboxChecked: false })
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+    return showMessageBox(...args)
+  }
   const Module = require('node:module')
   const load = Module._load
   const wrapped = new WeakMap()

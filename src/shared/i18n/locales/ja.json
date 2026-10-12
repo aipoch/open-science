@@ -49,6 +49,9 @@
     "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認"
   },
   "native": {
+    "Receive package": "パッケージを受信",
+    "Allow {{origin}} to send {{filename}} to Open-Science?": "{{origin}} が {{filename}} を Open-Science に送信することを許可しますか？",
+    "The file will be received locally. You can review it before importing.": "ファイルはローカルで受信されます。インポート前に内容を確認できます。",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux のシステム認証情報には、元々選択されていた Secret Service または KWallet バックエンドと /usr/bin/busctl が必要です。元の既定のキーリングまたはウォレットのロックを解除して再起動してください。この確認を回避するために password-store バックエンドやプロファイルを変更しないでください。",
     "Credential storage needs recovery": "認証情報ストレージの復旧が必要です",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "このシステムの認証情報バックエンドは、操作を求めない識別情報の確認に対応していません。既存の暗号化データを保持するため、起動を停止しました。",

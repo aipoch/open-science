@@ -341,6 +341,7 @@ async function main(): Promise<void> {
           'locale:snapshot',
           'desktop:tray-sessions',
           'desktop:open-package',
+          'desktop:browser-import',
           'settings:get-settings',
           'settings:set-close-preference'
         ],
@@ -375,6 +376,10 @@ async function main(): Promise<void> {
             if (path !== null && (typeof path !== 'string' || path.length > 32768))
               throw new Error('Invalid Session package path.')
             runtime.openSessionPackageFile(path)
+            return null
+          }
+          if (channel === 'desktop:browser-import') {
+            await runtime.beginBrowserPackageImport(invocation.args[0])
             return null
           }
           if (channel !== 'settings:get-settings' && channel !== 'settings:set-close-preference')

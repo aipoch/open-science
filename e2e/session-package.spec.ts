@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import { stat, writeFile, readFile } from 'node:fs/promises'
+import { stat, writeFile, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
 
@@ -640,3 +640,94 @@ test('receives a package from cold launch arguments and a subsequent file-open e
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog.getByText('Package operation cancelled', { exact: true })).toBeVisible()
 })
+
+for (const launch of ['cold', 'warm'] as const) {
+  test(`imports a browser-held package over real browser HTTP after ${launch} protocol delivery`, async ({
+    app,
+    browser
+  }, testInfo) => {
+    await app.completeOnboarding()
+    await app.configureBrowserImportConsent(true)
+    const inspection = await app.createTestDirectory('browser-import-inspection')
+    const storage = join(dirname(inspection), 'storage')
+    const context = await browser.newContext()
+    const website = await context.newPage()
+    const source = await readFile('packages/open-science/browser-import.mjs', 'utf8')
+    const archive = await readFile(
+      'src/main/session-package/fixtures/session-package-v0.31.1-minimal.science'
+    )
+    const network: string[] = []
+    website.on('request', (request) => network.push(request.url()))
+    // HTTPS public-origin page, without disabling CORS or browser web security. OS protocol
+    // dispatch is delivered through Electron's real argv/open-url boundaries in this source test.
+    await context.grantPermissions(['local-network-access'], { origin: 'https://research.example' })
+    await website.route('https://research.example/**', async (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/browser-import.mjs')
+        await route.fulfill({ contentType: 'text/javascript', body: source })
+      else if (path === '/study.science')
+        await route.fulfill({ contentType: 'application/octet-stream', body: archive })
+      else
+        await route.fulfill({
+          contentType: 'text/html',
+          body: '<!doctype html><title>Research package</title><p>Browser import fixture</p>'
+        })
+    })
+    try {
+      await website.goto('https://research.example/')
+      const url = await website.evaluate(async () => {
+        const sdkPath = '/browser-import.mjs'
+        const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
+        const blob = await (await fetch('/study.science')).blob()
+        const transfer = prepareBrowserImport(blob, { filename: 'study.science' })
+        Object.assign(window, { browserPackageTransfer: transfer })
+        return transfer.url as string
+      })
+      const page = launch === 'cold' ? await app.restartWithPackage(url) : app.page
+      if (launch === 'warm') await app.emitBrowserImport(url)
+      const result = await website.evaluate(async () => {
+        const transfer = (
+          window as unknown as {
+            browserPackageTransfer: { send: () => Promise<{ received: true }> }
+          }
+        ).browserPackageTransfer
+        return transfer.send()
+      })
+      expect(result).toEqual({ received: true })
+      const consent = JSON.parse(
+        (await readFile(join(storage, 'e2e-browser-import-prompts.jsonl'), 'utf8')).trim()
+      )
+      expect(consent.message).toContain('https://research.example')
+      expect(consent.message).toContain('study.science')
+      expect(consent.defaultId).toBe(0)
+      expect(network.filter((url) => url.endsWith('/study.science'))).toHaveLength(1)
+      expect(network.some((url) => /^http:\/\/127\.0\.0\.1:\d+\/v1\/import\/chunk/.test(url))).toBe(
+        true
+      )
+      const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+      await expect(dialog.getByText('study.science', { exact: true })).toBeVisible()
+      await dialog.getByRole('button', { name: 'New project', exact: true }).click()
+      await dialog.getByRole('textbox', { name: 'Project name' }).fill(`Browser ${launch}`)
+      await dialog.getByRole('button', { name: 'Continue', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible({
+        timeout: 60_000
+      })
+      await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-confirmation.png`) })
+      await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+      await expect(dialog.getByText('Package operation completed', { exact: true })).toBeVisible({
+        timeout: 60_000
+      })
+      await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-imported.png`) })
+      await expect.poll(() => readdir(join(storage, 'browser-package-imports'))).toEqual([])
+      await dialog.getByRole('button', { name: 'Open imported Session', exact: true }).click()
+      await expect(
+        page.getByRole('region', { name: 'Imported research history', exact: true })
+      ).toBeVisible()
+      await expect(page.getByTestId('replay-panel')).toBeVisible()
+      await page.getByRole('button', { name: 'All projects', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Projects', exact: true })).toBeVisible()
+    } finally {
+      await context.close()
+    }
+  })
+}

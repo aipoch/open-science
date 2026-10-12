@@ -105,7 +105,7 @@ describe('production application command wiring', () => {
       'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.close = async () => { browserPackageImport.stop() await sessionPackageDesktop.close() await browserPackageImport.close() }'
     )
     expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'

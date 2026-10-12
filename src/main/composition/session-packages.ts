@@ -1,4 +1,6 @@
-import { desktopInteraction } from '../desktop-interaction'
+import { desktopInteraction, desktopFileInteraction } from '../desktop-interaction'
+import { join } from 'node:path'
+import { BrowserPackageImport } from '../session-package/browser-import'
 import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
 import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
 import { createAcpRuntime } from '../acp/runtime-composition'
@@ -176,6 +178,7 @@ export function composeSessionPackageSurfaces({
 }): {
   conversationExportService: ReturnType<typeof createConversationExportService>
   sessionPackageDesktop: ReturnType<typeof createSessionPackageDesktop>
+  browserPackageImport: BrowserPackageImport
 } {
   const conversationExportService = createConversationExportService({
     translate,
@@ -224,6 +227,25 @@ export function composeSessionPackageSurfaces({
     isPackageHandoffHeld: () => packageHandoffHeld.current,
     onSensitiveContentFailure: rememberSensitiveContentFailure
   })
+  const browserPackageImport = new BrowserPackageImport({
+    root: join(resolveConfigRoot(), 'browser-package-imports'),
+    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed),
+    confirm: async ({ origin, name }) => {
+      const result = await desktopFileInteraction().confirm({
+        type: 'question',
+        title: translate('Import Session package'),
+        message: translate('Allow {{origin}} to send {{filename}} to Open-Science?', {
+          origin,
+          filename: name
+        }),
+        detail: translate('The file will be received locally. You can review it before importing.'),
+        buttons: [translate('Cancel'), translate('Receive package')],
+        defaultId: 0,
+        cancelId: 0
+      })
+      return result.response === 1
+    }
+  })
   sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
   declareElectronAdapter('session-package-quit-guard', () =>
     desktopInteraction('Session package quit confirmation').installPackageQuitGuard(
@@ -241,7 +263,9 @@ export function composeSessionPackageSurfaces({
     )
   )
   sessionPackageDesktopLifecycle.close = async () => {
+    browserPackageImport.stop()
     await sessionPackageDesktop.close()
+    await browserPackageImport.close()
   }
-  return { conversationExportService, sessionPackageDesktop }
+  return { conversationExportService, sessionPackageDesktop, browserPackageImport }
 }

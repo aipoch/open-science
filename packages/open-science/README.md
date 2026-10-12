@@ -6,6 +6,12 @@ Node.js SDK and command-line client for an Open-Science daemon running on the lo
 
 - [CLI guide](./CLI.md) - installation, daemon lifecycle, task automation, artifacts, and exit codes
 
+## Browser-held package import
+
+Use `@aipoch/open-science/browser-import` to send a downloaded `.science` Blob to the desktop app.
+See the [browser integration guide](./BROWSER_IMPORT.md) for the click flow, API, security contract,
+limits, and browser requirements. The desktop never downloads the online package URL.
+
 ## SDK quick start
 
 ```js

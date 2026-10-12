@@ -39,6 +39,7 @@ type NativeImportFile = {
   filename: string
   target?: import('../../shared/session-package').SessionPackageImportRequest
   originClientId?: string
+  onReleased?: () => void
 }
 class PackageSourceUnavailableError extends Error {}
 
@@ -89,12 +90,27 @@ export class SessionPackageDesktop {
     )
   }
 
-  enqueueFile(path: string): void {
-    this.enqueueing = this.enqueueing
+  enqueueFile(path: string, onReleased?: () => void): Promise<boolean> {
+    const releaseSource = onReleased
+    let released = false
+    onReleased = releaseSource
+      ? () => {
+          if (released) return
+          released = true
+          releaseSource()
+        }
+      : undefined
+    const enqueue = this.enqueueing
       .then(async () => {
-        if (this.shutdown.signal.aborted) return
+        if (this.shutdown.signal.aborted) {
+          onReleased?.()
+          return false
+        }
         const canonical = await realpath(path).catch(() => path)
-        if (this.shutdown.signal.aborted) return
+        if (this.shutdown.signal.aborted) {
+          onReleased?.()
+          return false
+        }
         if (
           this.activeFile?.path === canonical ||
           this.pendingFiles.some((file) => file.path === canonical)
@@ -103,29 +119,40 @@ export class SessionPackageDesktop {
             this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
           )
           this.operations.present()
-          return
+          return true
         }
         if (this.pendingFiles.length >= 16) {
+          onReleased?.()
           this.operations.setPendingImports(
             this.pendingFiles.map(({ id, filename }) => ({ id, filename })),
             true
           )
-          return
+          return false
         }
         const startImmediately = this.pendingFiles.length === 0 && !this.operations.active
-        this.pendingFiles.push({ id: randomUUID(), path: canonical, filename: basename(path) })
+        this.pendingFiles.push({
+          id: randomUUID(),
+          path: canonical,
+          filename: basename(path),
+          onReleased
+        })
         this.operations.setPendingImports(
           this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
         )
         this.pumpOpenFiles(startImmediately)
         this.operations.present()
+        return true
       })
-      .catch((error) =>
+      .catch((error) => {
+        onReleased?.()
         createLogger('session-package').warn(
           'Could not receive package file',
           diagnosticErrorFields(error)
         )
-      )
+        return false
+      })
+    this.enqueueing = enqueue.then(() => undefined)
+    return enqueue
   }
 
   private pumpOpenFiles(force = false): void {
@@ -144,6 +171,9 @@ export class SessionPackageDesktop {
       this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
     )
     void this.import(undefined, file.originClientId, file.target ?? {}, file.path)
+      .then((result) => {
+        if (result) file.onReleased?.()
+      })
       .catch(() => undefined)
       .finally(() => {
         this.activeFile = undefined
@@ -185,6 +215,7 @@ export class SessionPackageDesktop {
           false
         )
       } else if (request.action === 'discard-import') {
+        this.pendingFiles.find((file) => file.id === request.requestId)?.onReleased?.()
         this.pendingFiles = this.pendingFiles.filter((file) => file.id !== request.requestId)
         this.operations.setPendingImports(
           this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
@@ -257,12 +288,15 @@ export class SessionPackageDesktop {
   }
 
   async close(): Promise<void> {
+    const sources = [...this.pendingFiles, this.lastImportFile, this.activeFile]
     this.pendingFiles = []
     this.lastImportFile = undefined
     this.operations.cancel()
     this.shutdown.abort(new Error('Session package desktop is closed.'))
     await this.operations.close()
     await this.operation
+    await this.enqueueing
+    for (const source of sources) source?.onReleased?.()
   }
 
   private async acceptCleanup<T>(work: () => Promise<T>): Promise<T> {
@@ -622,12 +656,18 @@ export class SessionPackageDesktop {
     let operationSignal: AbortSignal | undefined
     const rememberSource = (path: string): void => {
       const id = this.operations.snapshot?.importRequestId ?? this.activeFile?.id ?? randomUUID()
+      if (this.lastImportFile?.path !== path) this.lastImportFile?.onReleased?.()
+      const onReleased =
+        this.activeFile?.path === path
+          ? this.activeFile.onReleased
+          : this.lastImportFile?.onReleased
       this.lastImportFile = {
         id,
         path,
         filename: basename(path),
         target: { ...target },
-        originClientId
+        originClientId,
+        onReleased
       }
       this.operations.setImportSource(id, basename(path), target)
     }

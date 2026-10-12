@@ -133,6 +133,7 @@ export type IpcRegistrationOptions = {
 export type ApplicationRuntimeInterfaces = {
   fetchPreview: (request: Request) => Promise<Response>
   openSessionPackageFile: (path: string | null) => void
+  beginBrowserPackageImport: (url: unknown) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
     'localWeb' | 'remoteWeb' | 'task' | 'desktop'
@@ -814,6 +815,7 @@ export const createApplicationModules = async (
       if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
       else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
     },
+    beginBrowserPackageImport: (url) => sessionPackageSurfaces.browserPackageImport.begin(url),
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
