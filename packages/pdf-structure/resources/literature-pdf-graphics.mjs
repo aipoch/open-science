@@ -659,10 +659,9 @@ function filledGridRules(rectangles) {
     if (vertical.length < 2) continue
     for (const c of [...horizontal, ...vertical]) if (!result.includes(c)) result.push(c)
   }
-  return result.map((c) => ({
-    ...c,
-    paint: filled(c.paint, c.color, c.rule[1] === c.rule[3] ? 0 : 1) ? c.paint : undefined
-  }))
+  return result
+    .filter((c) => filled(c.paint, c.color, c.rule[1] === c.rule[3] ? 0 : 1))
+    .map((c) => ({ ...c, paint: c.paint }))
 }
 
 export function collectTableRules(operators, viewport, rulePaintBounds) {

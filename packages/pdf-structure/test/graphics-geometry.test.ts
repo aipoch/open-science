@@ -364,6 +364,40 @@ it('uses thin rectangular fills as rules while rejecting shading, slanted edges 
   ])
 })
 
+it('does not promote discontinuous filled-grid candidates to synthetic rules', () => {
+  const rectangle = (x0: number, y0: number, x1: number, y1: number): number[] => [
+    0,
+    x0,
+    y0,
+    1,
+    x1,
+    y0,
+    1,
+    x1,
+    y1,
+    1,
+    x0,
+    y1,
+    4
+  ]
+  const paths = Array.from({ length: 4 }, (_, n) => {
+    const y = n * 10
+    return [[rectangle(0, y, 50, y + 2)], [rectangle(50, y + 0.5, 100, y + 1.5)]]
+  }).flat()
+  paths.push(rectangle(30, 0, 32, 42), rectangle(70, 0, 72, 42))
+  const paint = new Map(),
+    rules = collectTableRules(
+      {
+        fnArray: paths.map(() => OPS.constructPath),
+        argsArray: paths.map((path) => [OPS.fill, path, [0, 0, 100, 42]])
+      },
+      { transform: [1, 0, 0, 1, 0, 0] },
+      paint
+    )
+  for (const y of [1, 11, 21, 31]) expect(rules).not.toContainEqual([0, y, 100, y])
+  expect([...paint.values()]).not.toContain(undefined)
+})
+
 it.each([1, 1.5, 3])('keeps one-point filled rules at render scale %s', (scale) => {
   const path = [0, 10, 20, 1, 110, 20, 1, 110, 21.02, 1, 10, 21.02, 4]
   const rules = collectTableRules(
