@@ -238,6 +238,7 @@ async function main(): Promise<void> {
     }
     const diagnostics = initializeApplicationDiagnostics({
       logDir: join(configRoot, 'logs'),
+      consoleFormat: process.stdout.isTTY ? 'text' : 'json',
       version: metadata.version,
       isPackaged: packaged,
       platform: process.platform,

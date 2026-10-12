@@ -344,6 +344,11 @@ These are retained compatibility paths, not a request to migrate user data:
   removed only by its own generation. The attachment secret is not exposed by Web discovery.
 - Existing `web-token` and `web-service.json` remain the Web discovery/authentication mechanism.
 - Private startup logs (`cli-daemon-<uuid>.log` and `logs/desktop-backend-*.log`) remain for diagnosis.
+  After diagnostics initialization, Node mirrors application records as single-line JSON when stdout
+  is redirected, including these launch files; interactive terminals retain readable text. These
+  captures can still contain raw startup errors and third-party stderr, so they are not strict JSONL
+  files. Use config-root `logs/main.log` for canonical structured records. Existing capture filenames,
+  permissions and retention are unchanged; old captures are not rewritten.
 - Proven-new Windows profiles initialize the existing `Local State.os_crypt.encrypted_key` under
   the bootstrap lock before Chromium starts. No replacement of an existing key is permitted.
 - Linux AppImage cache `~/.cache/open-science/appimage-cli/<sha256>/complete.json` (or XDG cache
