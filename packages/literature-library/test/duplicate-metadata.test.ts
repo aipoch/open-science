@@ -2,8 +2,8 @@ import {
   conflictFreeLiteratureMerge,
   planLiteratureMerge,
   supplementLiteratureMetadata
-} from '@aipoch/literature-library'
-import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
+} from '../src/index.js'
+import { literatureItemInputSchema } from '../src/contracts.js'
 import { describe, expect, it } from 'vitest'
 
 const item = literatureItemInputSchema.parse({

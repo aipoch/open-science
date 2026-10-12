@@ -1,7 +1,13 @@
-import { mergeLiteratureDuplicates } from '@aipoch/literature-library'
-import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
+import {
+  LibraryTransaction,
+  normalizedIdentifiers,
+  mergeLiteratureDuplicates
+} from '../src/index.js'
+import { literatureItemInputSchema } from '../src/contracts.js'
 import { expect, it } from 'vitest'
-import { memoryLibrary } from './memory-store.js'
+import { memoryLibrary as createMemoryLibrary } from './memory-store.js'
+const memoryLibrary = (): ReturnType<typeof createMemoryLibrary> =>
+  createMemoryLibrary({ LibraryTransaction, normalizedIdentifiers, literatureItemInputSchema })
 const paper = literatureItemInputSchema.parse({
   itemType: 'journalArticle',
   title: 'Paper',

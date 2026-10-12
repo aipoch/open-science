@@ -1,9 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Test fixtures retain inferred mock types. */
-import {
-  LiteratureFullTextIndex,
-  LiteratureReader,
-  type DocumentReference
-} from '@aipoch/literature-reading'
+import { LiteratureFullTextIndex, LiteratureReader, type DocumentReference } from '../src/index.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

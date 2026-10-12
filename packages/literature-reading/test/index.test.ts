@@ -1,4 +1,4 @@
-import type { LiteratureFullTextIndex, LiteratureIndexChunk } from '@aipoch/literature-reading'
+import type { LiteratureFullTextIndex, LiteratureIndexChunk } from '../src/index.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

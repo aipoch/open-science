@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { LibraryTransaction, normalizedIdentifiers } from '@aipoch/literature-library'
 import { readFile, writeFile } from 'node:fs/promises'
 import { stripTypeScriptTypes } from 'node:module'
 import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
@@ -8,7 +9,7 @@ import {
 } from '@aipoch/literature-library/client'
 await writeFile('memory-store.mjs', stripTypeScriptTypes(await readFile('memory-store.ts', 'utf8')))
 const { memoryLibrary } = await import('./memory-store.mjs')
-const db = memoryLibrary()
+const db = memoryLibrary({ LibraryTransaction, normalizedIdentifiers, literatureItemInputSchema })
 const input = literatureItemInputSchema.parse({
   itemType: 'journalArticle',
   title: 'Independent consumer',

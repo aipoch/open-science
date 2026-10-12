@@ -1,4 +1,4 @@
-import { findLiteratureDuplicateGroups } from '@aipoch/literature-library'
+import { findLiteratureDuplicateGroups } from '../src/index.js'
 import { describe, expect, it } from 'vitest'
 
 type Candidate = Parameters<typeof findLiteratureDuplicateGroups>[0][number]

@@ -1,4 +1,4 @@
-import { createLiteratureClient, type LibraryClientApi } from '@aipoch/literature-library/client'
+import { createLiteratureClient, type LibraryClientApi } from '../src/client/index.js'
 import { afterEach, expect, it, vi } from 'vitest'
 let readMatchingCandidateIds: ReturnType<typeof createLiteratureClient>['readMatchingCandidateIds']
 

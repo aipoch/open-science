@@ -1,4 +1,4 @@
-import { LiteratureIndex, type IndexDatabase } from '@aipoch/literature-reading'
+import { LiteratureIndex, type IndexDatabase } from '../src/index.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'

@@ -1,27 +1,31 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Test fixtures retain inferred mock types. */
-import {
+import type {
   LibraryTransaction,
   normalizedIdentifiers,
-  type CandidateRecord,
-  type LibraryStore,
-  type MetadataReceipt
-} from '@aipoch/literature-library'
-import {
+  CandidateRecord,
+  LibraryStore,
+  MetadataReceipt
+} from '../src/index.js'
+import type {
   literatureItemInputSchema,
-  type LiteratureItemInput,
-  type LiteratureItemView
-} from '@aipoch/literature-library/contracts'
-const view = (id: string, input: LiteratureItemInput, time: number): LiteratureItemView => ({
-  id,
-  item: literatureItemInputSchema.parse(input),
-  attachments: [],
-  collectionIds: [],
-  projectIds: [],
-  metadataRevision: 1,
-  createdAt: time,
-  updatedAt: time
-})
-export function memoryLibrary() {
+  LiteratureItemInput,
+  LiteratureItemView
+} from '../src/contracts.js'
+export function memoryLibrary(runtime: {
+  LibraryTransaction: typeof LibraryTransaction
+  normalizedIdentifiers: typeof normalizedIdentifiers
+  literatureItemInputSchema: typeof literatureItemInputSchema
+}) {
+  const view = (id: string, input: LiteratureItemInput, time: number): LiteratureItemView => ({
+    id,
+    item: runtime.literatureItemInputSchema.parse(input),
+    attachments: [],
+    collectionIds: [],
+    projectIds: [],
+    metadataRevision: 1,
+    createdAt: time,
+    updatedAt: time
+  })
   let state = {
     serial: 0,
     items: new Map<string, LiteratureItemView>(),
@@ -52,12 +56,14 @@ export function memoryLibrary() {
     [...state.items.values()].filter(
       (row) =>
         !row.mergedIntoItemId &&
-        normalizedIdentifiers(row.item.identifiers).some((other) =>
-          identifiers.some(
-            (value) =>
-              value.scheme === other.scheme && value.normalizedValue === other.normalizedValue
+        runtime
+          .normalizedIdentifiers(row.item.identifiers)
+          .some((other) =>
+            identifiers.some(
+              (value) =>
+                value.scheme === other.scheme && value.normalizedValue === other.normalizedValue
+            )
           )
-        )
     )
   const store: LibraryStore = {
     identityMatches: async (identifiers) =>
@@ -68,7 +74,10 @@ export function memoryLibrary() {
             a.createdAt - b.createdAt ||
             a.id.localeCompare(b.id)
         )
-        .map((row) => ({ id: row.id, identifiers: normalizedIdentifiers(row.item.identifiers) })),
+        .map((row) => ({
+          id: row.id,
+          identifiers: runtime.normalizedIdentifiers(row.item.identifiers)
+        })),
     importIdentityRecords: async (identifiers) =>
       match(identifiers).map((row) => ({ id: row.id, item: row.item })),
     collection: async (key) => {
@@ -330,7 +339,7 @@ export function memoryLibrary() {
     async run<T>(operation: (library: LibraryTransaction) => Promise<T>): Promise<T> {
       const before = structuredClone(state)
       try {
-        return await operation(new LibraryTransaction(store))
+        return await operation(new runtime.LibraryTransaction(store))
       } catch (error) {
         state = before
         throw error

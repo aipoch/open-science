@@ -1,9 +1,9 @@
-import { createLiteratureCreation } from '@aipoch/literature-library/client'
+import { createLiteratureCreation } from '../src/client/index.js'
 import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand,
   type LiteratureItemView
-} from '@aipoch/literature-library/contracts'
+} from '../src/contracts.js'
 import { expect, it, vi } from 'vitest'
 const item = {
   id: 'saved',

@@ -1,8 +1,5 @@
-import { reconcileLiteraturePage } from '@aipoch/literature-library/client'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '@aipoch/literature-library/contracts'
+import { reconcileLiteraturePage } from '../src/client/index.js'
+import { literatureItemInputSchema, type LiteratureItemView } from '../src/contracts.js'
 import { expect, it } from 'vitest'
 
 const entries: LiteratureItemView[] = Array.from({ length: 100 }, (_, i) => ({

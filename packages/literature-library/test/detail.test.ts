@@ -1,5 +1,5 @@
-import { createLiteratureDetailController } from '@aipoch/literature-library/client'
-import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { createLiteratureDetailController } from '../src/client/index.js'
+import type { LiteratureItemView } from '../src/contracts.js'
 import { describe, expect, it, vi } from 'vitest'
 
 describe('Literature detail reads', () => {

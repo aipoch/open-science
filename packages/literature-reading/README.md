@@ -9,3 +9,5 @@ Repository-local npm package for bounded document reading, extraction caching, c
 Existing index schema, extraction fingerprint and cursor serialization are preserved. Cached data remains disposable; an absent, expired or unavailable index falls back to bounded retrieval.
 
 `npm test` builds and runs tests against Node's SQLite driver. `npm run check:packages -- --packages=literature-reading` from the repository builds and tests an isolated copy, packs it, and verifies a clean production consumer.
+
+Unit tests import this package's source entrypoints so coverage measures the code they execute. Packed-consumer checks import the package name and its public exports from a clean production install.

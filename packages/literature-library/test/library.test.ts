@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Test fixtures retain inferred mock types. */
-import { normalizeIdentifier } from '@aipoch/literature-library'
-import {
-  literatureItemInputSchema,
-  type LiteratureCatalogCommand
-} from '@aipoch/literature-library/contracts'
+import { LibraryTransaction, normalizeIdentifier, normalizedIdentifiers } from '../src/index.js'
+import { literatureItemInputSchema, type LiteratureCatalogCommand } from '../src/contracts.js'
 import { describe, expect, it, vi } from 'vitest'
-import { memoryLibrary } from './memory-store.js'
+import { memoryLibrary as createMemoryLibrary } from './memory-store.js'
+const memoryLibrary = () =>
+  createMemoryLibrary({ LibraryTransaction, normalizedIdentifiers, literatureItemInputSchema })
 const paper = (doi = '10.1234/paper', title = 'Paper') =>
   literatureItemInputSchema.parse({
     itemType: 'journalArticle',

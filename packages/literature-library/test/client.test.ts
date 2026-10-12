@@ -7,11 +7,8 @@ import {
   createReferenceExporter,
   type LibraryClientApi,
   type LibraryPage
-} from '@aipoch/literature-library/client'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '@aipoch/literature-library/contracts'
+} from '../src/client/index.js'
+import { literatureItemInputSchema, type LiteratureItemView } from '../src/contracts.js'
 import { expect, it, vi } from 'vitest'
 const item = (id = 'paper', revision = 1): LiteratureItemView => ({
   id,

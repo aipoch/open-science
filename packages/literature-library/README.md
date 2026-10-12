@@ -13,3 +13,5 @@ Client owners accept public API callbacks. Compose an owner once per mounted wor
 No host source, ORM client, Electron or global `window.api` is imported. Public contracts preserve existing serialized values; this extraction introduces no database migration or new persisted state.
 
 `npm test` builds and runs this package's independent fixtures. From the repository, `npm run check:packages -- --packages=literature-library` also verifies packed production consumption outside the repository.
+
+Unit tests import this package's source entrypoints so coverage measures the code they execute. Packed-consumer checks import the package name and its public exports from a clean production install.
