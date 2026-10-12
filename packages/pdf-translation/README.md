@@ -49,8 +49,8 @@ With declared dependencies installed, run `npm run build`, `npm test`, and `npm 
 Supply local sibling packages as matching npm tarballs when installing outside the repository.
 From the repository root, `npm run build:pdf-packages` builds in dependency order and
 `npm run check:pdf-packages` checks isolated source builds/tests, production tarball consumers,
-strict declarations, browser entries and rejection of private imports. The checker uses an
-existing npm cache (`--offline`) and writes its evidence outside the source tree by default.
+strict declarations, browser entries and rejection of private imports. The checker installs online by default and writes evidence outside the source tree. Pass
+`--offline` only when the npm cache already contains every required archive.
 
 Host tests retain authorization, transactions, transport, resource assembly and UI integration.
 CI selects changed packages and their downstream consumers; host-only changes exclude unchanged

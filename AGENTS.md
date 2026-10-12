@@ -115,7 +115,10 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 
 Use `_verb` when the same English word is used as both a noun and a verb and a translated locale
 needs different copy (example: "Archive" → 压缩包 as noun, 归档 as verb). Add the context at the call
-site: `t('Archive', { context: 'verb' })`. Both the bare key and the `_verb` key need catalog entries.
+site: `t('Archive', { context: 'verb' })`. Both the bare key and the `_verb` key need catalog entries when both meanings are used.
+The guard currently permits context suffixes `ago`, `duration`, `files`, `inUse`, `language`,
+`runtime`, `specialists`, `step`, `theme`, `verb`, and `window`; new contexts must be added
+to the guard deliberately, with their call sites and translations.
 
 ### Interpolation placeholders
 
@@ -194,8 +197,11 @@ bare JSX text nodes left unwrapped.
 
 ### ErrorNotice (`src/renderer/src/components/error-notice.tsx`)
 
-The generic error display. The flask brand mark is fixed; every other section is an optional prop
-and renders only when provided:
+The generic error facade delegates to `Notice`. The flask brand mark appears only with
+`fullPage`; ordinary notices stay in their owning region. Optional presentation props include
+`fullPage`, `inline`, `role`, `level`, `content`, `children`, `diagnosticsLabel`, and `dismissButton`.
+Levels are `info`, `success`, `warning`, and `error`; an explicit level overrides the legacy tone.
+Other sections render only when provided:
 
 - `icon` + `tone` — `teal` (update the app), `amber` (transient / retryable), `red` (data or
   installation integrity). Tones resolve to the `status-info` / `status-warning` /
@@ -208,7 +214,7 @@ and renders only when provided:
   a spinner and disables the button.
 
 All copy arrives as final display strings — the **caller** translates with `t()`; the component
-holds no user-visible copy of its own. Current consumer: `DatabaseStartupGate`. New error surfaces
+holds no user-visible copy of its own. Consumers include `DatabaseStartupGate`, Settings, previews, and conversation recovery. New error surfaces
 should compose `ErrorNotice` instead of rolling their own layout.
 
 ### Startup issue draft helpers (`src/renderer/src/lib/startup-issue.ts`)
@@ -252,8 +258,9 @@ though the pointer is elsewhere (upstream: radix-ui/primitives#2248; no React-si
 `ignoreNonKeyboardFocus` was only merged into Radix Vue).
 
 **Fix (adopted here):** guard `TooltipTrigger`'s `onFocus` with a `:focus-visible` check.
-Programmatic focus-return never matches `:focus-visible`; keyboard Tab does, so accessibility is
-preserved. Radix's composed event handlers skip the internal open logic when the event is
+Keyboard Tab can still expose hints. This guard is a mitigation, not a universal modality proof:
+Chromium can retain `:focus-visible` during pointer-origin modal focus restoration, so that case
+needs a real-browser regression and input-modality handling. Radix's composed event handlers skip the internal open logic when the event is
 default-prevented.
 
 ```tsx
@@ -268,4 +275,4 @@ default-prevented.
 Apply this to any `Tooltip` + `DropdownMenuTrigger` (or `DialogTrigger`) combo. Avoid the
 alternatives: `onCloseAutoFocus={(e) => e.preventDefault()}` breaks focus return for keyboard/screen
 reader users, and fully controlled `open` state is more code for the same behavior. Reference
-implementation: `ConversationPanel.tsx` (composer "+" and split-send triggers, commit 7aafedca).
+implementation: `ConversationPanel.tsx` (composer "+" and split-send triggers, commit `b363657fd`, PR #798).

@@ -15,6 +15,7 @@ its public exports are the only supported import paths.
 - The host owns permissions, sandbox policy, kernel construction, session scheduling, storage leases,
   receipt publication and persistence. No SQL, Prisma, transaction, commit or rollback API belongs here.
 - The browser-safe `@aipoch/reproducibility/contracts` entry exposes schemas and immutable DTOs.
+  The `/comparison` entry exposes comparison contracts; `/execution-context` exposes execution-context helpers.
   The root entry is Node-only. Internal workers, validators and helper implementations are private.
 
 ## Composition

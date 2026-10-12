@@ -77,12 +77,13 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 [공식 다운로드 페이지](https://aipoch.com/open-science/download)를 열고 컴퓨터에 맞는 설치 프로그램을 선택하세요.
 
-| 사용 중인 컴퓨터                   | 선택할 파일                            |
-| ---------------------------------- | -------------------------------------- |
-| macOS 12+ — Apple Silicon(M1 이상) | Apple Silicon / ARM64용 macOS DMG      |
-| macOS 12+ — Intel                  | Intel / x64용 macOS DMG                |
-| Windows x64                        | Windows x64 설치 프로그램(코드 서명됨) |
-| Linux x64                          | Linux x64 AppImage 또는 Debian 패키지  |
+| 사용 중인 컴퓨터                   | 선택할 파일                             |
+| ---------------------------------- | --------------------------------------- |
+| macOS 12+ — Apple Silicon(M1 이상) | Apple Silicon / ARM64용 macOS DMG       |
+| macOS 12+ — Intel                  | Intel / x64용 macOS DMG                 |
+| Windows x64                        | Windows x64 설치 프로그램(코드 서명됨)  |
+| Linux x64                          | Linux x64 AppImage 또는 Debian 패키지   |
+| Linux ARM64                        | Linux ARM64 AppImage 또는 Debian 패키지 |
 
 [공식 다운로드 페이지](https://aipoch.com/open-science/download)에서 다운로드하세요. 필요하면 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
 
@@ -235,7 +236,7 @@ AIPOCH Open-Science는 프로젝트 데이터, 설정, 아티팩트 버전, 출�
 
 ## 개발 및 패키징
 
-AIPOCH Open-Science는 React, TypeScript, Prisma/SQLite, ACP 기반 에이전트 런타임으로 구축된 Electron 앱입니다.
+웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다.
 
 소스 개발 요구 사항:
 
@@ -254,14 +255,20 @@ npm run dev
 
 ### Localhost 웹 및 헤드리스 모드
 
-데스크톱 백엔드는 로컬 컴퓨터의 브라우저에 동일한 렌더러를 선택적으로 제공할 수 있습니다. 이 기능은 기본적으로 꺼져 있고 `127.0.0.1`에만 바인딩됩니다.
+웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다.
 
 ```bash
-npm run build:web
 npm run dev:web
+npm run pack:backend
 ```
 
-앱에 출력된 인증 URL을 여세요. `npm run dev:headless`를 사용하면 Electron 창을 열지 않고 백엔드, 트레이, 에이전트 런타임, localhost 웹 서비스를 시작합니다. `OPEN_SCIENCE_WEB_PORT`로 포트를 선택할 수 있습니다(기본값 `44100`). 앱을 명시적으로 종료하면 에이전트와 Notebook 프로세스도 정상적으로 종료됩니다.
+웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다. `npm run dev:web`와 `npm run dev:headless`는 백엔드와 웹 UI를 빌드하고 실행하며 데스크톱이나 트레이를 시작하지 않습니다. `OPEN_SCIENCE_WEB_PORT`로 포트를 선택합니다(기본값 `44100`). Ctrl+C는 전경 서비스를 정상 종료합니다.
+
+소스 개발에는 Node.js 24가 필요합니다. 독립 npm tarball에는 Node >=22.13.0, 경량 CLI/SDK에는 Node >=22.5가 필요합니다. Release 압축 파일, Homebrew Formula, 데스크톱 명령 실행기는 런타임을 포함합니다.
+
+데스크톱과 브라우저는 같은 서비스를 공유합니다. 데스크톱을 종료하면 직접 시작한 백엔드만 중지하며, CLI가 시작한 서비스에서는 연결만 해제합니다.
+
+[CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
 ### 모바일 원격 액세스
 
@@ -273,6 +280,13 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 - [CLI 가이드](../../packages/open-science/CLI.md) — 설치, 서비스 수명 주기, 작업 자동화, 아티팩트, 출력 형식, 종료 코드
 - [SDK 패키지 개요](../../packages/open-science/README.md) — Node.js 빠른 시작 및 패키지 진입점
+
+```bash
+brew install --cask open-science
+brew install aipoch/tap/open-science
+```
+
+[Homebrew / Release](../standalone-runtime.md)
 
 ## 자주 묻는 질문
 
@@ -290,7 +304,7 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 ### 명령줄 인터페이스가 있나요?
 
-답변: 있습니다. **Settings → General → Command line tool → Install command**에서 한 번에 설치할 수 있습니다(`open-science`를 PATH에 추가하며 별도 Node.js가 필요하지 않습니다). CLI는 브라우저를 열지 않고 로컬 서비스를 제어하고 연구 작업을 제출합니다.
+답변: 있습니다. 독립적인 백엔드를 시작하려면 독립형 Node 패키지를 설치하세요. **Settings → General → Command line tool → Install command**로 설치한 명령은 이미 실행 중인 데스크톱 인스턴스를 제어하며, 이 용도에는 별도의 Node.js 설치가 필요하지 않습니다. 예외적으로 Debian 패키지의 실행기는 포함된 Node 런타임으로 포함된 백엔드를 시작합니다. 다음 독립 실행 예제를 사용하려면 독립형 패키지와 일반 Node.js를 설치하고 로컬 프로필을 초기화한 다음 서비스를 시작하세요.
 
 ```bash
 # 백그라운드에서 서비스 시작

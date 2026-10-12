@@ -72,12 +72,13 @@ Git worktree는 저장소의 `.worktree/<name>` 디렉터리 안에만 만들고
 
 ## 프로젝트 구조
 
-이 프로젝트는 electron-vite, React, TypeScript로 구축한 Electron 앱입니다. 세 개의 런타임 프로세스 계층과 공유 모듈이 `src/` 아래에 있습니다.
+웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다.
 
-- `src/main/` — Electron 메인 프로세스(ACP 런타임, 세션 영구 저장, 아티팩트, Notebook, 프로젝트, IPC 핸들러).
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — 타입이 지정된 `window.api`를 렌더러에 제공하는 preload 브리지.
 - `src/renderer/` — React UI(페이지, 스토어, 컴포넌트).
 - `src/shared/` — 프로세스 간에 공유하는 타입과 도우미.
+- `packages/` — `packages/`에는 독립 도메인 패키지와 네이티브 도우미가 있습니다
 
 ## 개발 워크플로
 
@@ -222,8 +223,6 @@ ci(review): unify automated AI reviews
 - [검증 정책](#검증-정책)의 최종 증거 매핑을 포함하고, 나열한 검사가 마지막 실질적 편집 후 실행되었으며 다루지 못한 위험이 무엇인지 명시하세요.
 - 검토하기 쉬운 적절한 크기와 범위로 유지하세요.
 - 최종 Test Impact Set 또는 필요한 전체 폴백이 통과하는지 확인하세요.
-- Pull Request 검사가 통과한 후 **squash merge만** 사용해 직접 병합하세요. `main`이 진행되었다는 이유만으로 브랜치를 업데이트하지 말고, 병합 충돌이 있거나 유지 관리자가 요청할 때만 업데이트하세요. squash 커밋 제목은 Pull Request 제목의 Conventional Commit 형식을 유지해야 합니다.
-- `main`에 병합된 문서 외 변경은 [Nightly 워크플로](../../.github/workflows/nightly.yml)를 실행하여 결과 커밋에 대한 병합 후 검증과 크로스 플랫폼 패키지 인증을 수행합니다.
 
 ## 이슈 보고
 
@@ -237,3 +236,23 @@ ci(review): unify automated AI reviews
 ## 라이선스
 
 기여하면 기여 내용이 프로젝트와 같은 [Apache License 2.0](../../LICENSE)에 따라 라이선스되는 데 동의하는 것입니다.
+
+## 현재 개발 및 CI 기준
+
+전체 규칙은 [영문 기여 가이드](../../CONTRIBUTING.md)를 기준으로 합니다. 아래는 현재 절차의 요약입니다.
+
+- `npm run dev`는 Node 백엔드를 빌드하고 실행 파일을 준비한 뒤 Electron을 엽니다. 감시기는 패키지와 백엔드를 다시 빌드합니다. 성공한 후 앱을 정상 종료하고 명령을 다시 실행해야 backend/Main/Preload 변경이 적용됩니다. renderer는 HMR을 사용합니다.
+
+- 리소스와 fixture를 포함하여 `src/`와 `packages/` 아래의 새 파일은 `scripts/ci/module-impact/<module-id>.json`에 소유자가 정확히 하나 있어야 합니다. 소유자, 계약, 소비자 테스트와 동적 의존성 증거를 유지하세요. `git add` 후 영문 가이드의 등록 검사와 `node scripts/ci/audit-module-ownership.mjs`를 실행하세요.
+
+- 필수 검사와 검토를 통과하면 활성화된 기본 병합 대기열에 넣으세요. 대기열은 통합 리비전을 검사한 다음 squash merge를 수행합니다. Conventional Commit 제목을 유지하고 실패한 필수 검사를 우회하지 마세요.
+
+- Nightly는 매일 15:17 UTC 또는 수동으로 실행되며 매 병합마다 실행되지 않습니다. Source Regression은 하루 두 번 전체 Mac, 위임, 패키지 검증을 보완합니다. PR과 대기열은 각 단계에서 선택된 검사를 실행합니다.
+
+- `npm test`는 전체 테스트를 유지합니다. `npm run test:affected:explain -- --base origin/main --head HEAD --tier pr`는 PR 선택을, `--tier queue`는 대기열 선택을 설명합니다. 증거가 불완전하면 더 넓은 범위를 유지합니다. 보호된 CI 정책은 소유자 검토가 필요하며 등록 변경으로 기존 검증 범위를 줄일 수 없습니다.
+
+- `packages/`에는 독립 도메인 패키지와 네이티브 도우미가 있습니다. 격리 검증은 선언된 tarball을 깨끗한 소비자 환경에 설치합니다. 온라인 설치가 기본이며 `--offline`에는 완전한 캐시가 필요합니다. 안정 릴리스는 다섯 종류의 독립 CLI 압축 파일을 게시하며 npm 자동 게시도 아직 보류 중입니다.
+
+- de, es, fr, zh-Hans, zh-Hant, ja, ko, ru의 여덟 번역이 모두 필요합니다. 용어와 context 규칙은 [AGENTS.md](../../AGENTS.md)와 [용어집](../i18n-glossary.md)을 참조하세요.
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

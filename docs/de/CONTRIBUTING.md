@@ -72,12 +72,13 @@ Lesen Sie vor Änderungen an einem der folgenden Bereiche die jeweils zuständig
 
 ## Projektstruktur
 
-Dies ist eine Electron-Anwendung, die mit electron-vite, React und TypeScript entwickelt wird. Unter `src/` gliedert sich die Laufzeit in drei Prozessschichten und ein gemeinsam genutztes Modul:
+Die Web-Oberfläche läuft mit einem gewöhnlichen Node-Backend, ohne Electron oder grafische Anzeige.
 
-- `src/main/` – Electron-Hauptprozess (ACP-Runtime, Sitzungspersistenz, Artefakte, Notebook, Projekte und IPC-Handler).
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` – Preload-Bridge, die dem Renderer eine typisierte `window.api` bereitstellt.
 - `src/renderer/` – React-Benutzeroberfläche (Seiten, Stores und Komponenten).
 - `src/shared/` – prozessübergreifend genutzte Typen und Hilfsfunktionen.
+- `packages/` — enthält eigenständige Domänenpakete und native Helfer
 
 ## Entwicklungsablauf
 
@@ -234,8 +235,6 @@ ci(review): unify automated AI reviews
 - Nehmen Sie die abschließende Nachweiszuordnung aus der [Verifizierungsrichtlinie](#verifizierungsrichtlinie) auf, geben Sie an, dass die aufgeführten Prüfungen nach der letzten wesentlichen Änderung ausgeführt wurden, und weisen Sie auf nicht abgedeckte Risiken hin.
 - Halten Sie Pull Requests angemessen klein und klar abgegrenzt, damit sie leicht geprüft werden können.
 - Stellen Sie sicher, dass das abschließende Test Impact Set oder, falls erforderlich, der vollständige Fallback erfolgreich ist.
-- Führen Sie den Pull Request nach erfolgreichen Prüfungen direkt und ausschließlich per **Squash Merge** zusammen. Aktualisieren Sie den Branch nicht allein deshalb, weil `main` weiter fortgeschritten ist, sondern nur bei Merge-Konflikten oder auf Anforderung eines Maintainers. Der Betreff des Squash-Commits muss das Conventional-Commit-Format des Pull-Request-Titels beibehalten.
-- Änderungen außerhalb der Dokumentation, die in `main` zusammengeführt werden, lösen den [Nightly-Workflow](../../.github/workflows/nightly.yml) aus. Dieser führt nach dem Merge die Verifizierung und plattformübergreifende Paketzertifizierung für den resultierenden Commit aus.
 
 ## Issues melden
 
@@ -249,3 +248,23 @@ Geben Sie beim Melden eines Fehlers bitte Folgendes an:
 ## Lizenz
 
 Mit Ihrer Mitwirkung erklären Sie sich damit einverstanden, dass Ihre Beiträge unter der [Apache License 2.0](../../LICENSE) lizenziert werden, die auch für dieses Projekt gilt.
+
+## Aktueller Entwicklungs- und CI-Stand
+
+Die [englische Anleitung](../../CONTRIBUTING.md) ist die verbindliche Referenz für die vollständigen Regeln; diese Übersetzung fasst den aktuellen Ablauf zusammen.
+
+- `npm run dev` baut das Node-Backend, stellt dessen ausführbare Datei bereit und öffnet Electron. Der Watcher baut Paket-/Backend-Änderungen neu; nach erfolgreichem Build die App normal beenden und den Befehl neu starten, um Backend/Main/Preload zu laden. Renderer-Änderungen verwenden HMR.
+
+- Jede neue Datei unter `src/` und `packages/` braucht genau einen Eigentümer in `scripts/ci/module-impact/<module-id>.json`, einschließlich Ressourcen und Fixtures. Owner-, Vertrags- und Verbrauchertests sowie dynamische Laufzeitabhängigkeiten müssen erhalten bleiben. Nach `git add` die Registrierungsprüfungen der englischen Anleitung und `node scripts/ci/audit-module-ownership.mjs` ausführen.
+
+- Nach erforderlichen Prüfungen und Review die native Merge Queue verwenden, sobald sie aktiviert ist. Sie prüft die kombinierte Revision vor dem Squash-Merge; Conventional-Commit-Titel beibehalten. Kein direktes Umgehen fehlgeschlagener Pflichtprüfungen.
+
+- Nightly läuft täglich um 15:17 UTC und per manueller Auslösung, nicht nach jedem Merge. Source Regression ergänzt zweimal täglich vollständige Mac-, Delegation- und Paketprüfungen. PR und Queue verwenden die jeweils ausgewählten Prüfgruppen.
+
+- `npm test` bleibt vollständig. `npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` erklärt die PR-Auswahl; `--tier queue` erklärt die Queue. Unklare oder unvollständige Nachweise behalten die breitere Auswahl. Geschützte CI-Richtlinien benötigen Code-Owner-Review; Registrierungsdaten dürfen keine bestehende Abdeckung reduzieren.
+
+- `packages/` enthält eigenständige Domänenpakete und native Helfer. Isolierte Paketprüfungen installieren deklarierte Tarballs in sauberen Verbrauchern; Online-Installation ist Standard, `--offline` benötigt einen vollständigen Cache. Stabile Releases enthalten fünf eigenständige CLI-Archive; automatische npm-Veröffentlichung bleibt zurückgestellt.
+
+- Alle acht Übersetzungen sind erforderlich: de, es, fr, zh-Hans, zh-Hant, ja, ko und ru. Terminologie und Kontextregeln stehen in [AGENTS.md](../../AGENTS.md) und im [Glossar](../i18n-glossary.md).
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

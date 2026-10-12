@@ -152,6 +152,7 @@ The desktop host, standalone Node host, and shared modules live under `src/`:
 - `src/preload/` — preload bridge exposing a typed `window.api` to the renderer.
 - `src/renderer/` — React UI (pages, stores, components).
 - `src/shared/` — types and helpers shared across processes.
+- `packages/` — independently tested domain packages, native helpers and the standalone CLI/client.
 
 Keep the repository root focused on discovery and default tool entry points:
 
@@ -550,11 +551,6 @@ The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution
 credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
 for a GitHub Release.
 
-## License
-
-By contributing, you agree that your contributions will be licensed under the
-[Apache License 2.0](./LICENSE), the same license that covers this project.
-
 ### Supplemental desktop coverage
 
 Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
@@ -719,3 +715,8 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the
+[Apache License 2.0](./LICENSE), the same license that covers this project.

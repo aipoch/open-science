@@ -41,7 +41,7 @@ prepare/commit/rollback ordering in the coordinating application; do not write S
 A repository read callback must finish before its lock is released.
 
 `subscribeSkillDiagnostics` supplies scoped diagnostics and returns an unsubscribe function.
-`UserSkillCatalogObserver.dispose()` must be awaited by its owner. Application notifications,
+`UserSkillCatalogObserver.dispose()` is synchronous; call it when releasing the observer. Application notifications,
 session approvals, ACP reload scheduling and Notebook execution remain host responsibilities.
 
 ## Compatibility and persistence

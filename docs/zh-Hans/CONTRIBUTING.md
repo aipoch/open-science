@@ -72,12 +72,13 @@ Git worktree 只能在仓库的 `.worktree/<name>` 目录下新建，每个变�
 
 ## 项目结构
 
-这是使用 electron-vite、React 和 TypeScript 构建的 Electron 应用。三个运行时进程层和一个共享模块位于 `src/` 下：
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。
 
-- `src/main/` — Electron 主进程（ACP 运行时、会话持久化、产物、Notebook、项目、IPC 处理程序）。
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — preload 桥，将类型化 `window.api` 公开给 renderer。
 - `src/renderer/` — React UI（页面、store、组件）。
 - `src/shared/` — 跨进程共享的类型和辅助工具。
+- `packages/` — 包含独立领域软件包及原生辅助程序。隔离验证将声明的 tarball 安装到干净的消费者环境；默认联网安装，`--offline` 要求完整缓存。稳定版发布五种独立 CLI 压缩包；自动发布 npm 仍暂缓。
 
 ## 开发工作流
 
@@ -249,8 +250,6 @@ ci(review): unify automated AI reviews
 - 保持拉取请求规模合理、范围集中，便于审查。
 - 确保最终测试影响集通过；需要完整回退时，确保完整回退通过。
 - 对适用的变更，确认已完成[模块影响注册清单](#模块影响注册)，并报告新文件加入 Git 跟踪后运行的注册检查。
-- 拉取请求检查通过后，仅使用 **squash merge** 直接合并。不要仅因 `main` 推进而更新分支；只有发生合并冲突或维护者要求时才更新。squash 提交主题必须保留拉取请求标题的 Conventional Commit 格式。
-- 合并到 `main` 的非文档变更会触发 [Nightly 工作流](../../.github/workflows/nightly.yml)，它会在生成的提交上运行合并后验证和跨平台软件包认证。
 
 ## 报告问题
 
@@ -264,3 +263,23 @@ ci(review): unify automated AI reviews
 ## 许可证
 
 参与贡献即表示你同意，你的贡献将在与本项目相同的 [Apache License 2.0](../../LICENSE) 下许可。
+
+## 当前开发与 CI 基准
+
+完整规则以[英文贡献指南](../../CONTRIBUTING.md)为准；下文同步当前工作流。
+
+- `npm run dev` 构建 Node 后端、准备可执行文件并打开 Electron。监听器自动重建软件包和后端；构建成功后，正常退出应用并重新运行命令以加载 backend/Main/Preload 变更。渲染器使用 HMR。
+
+- `src/` 和 `packages/` 下每个新增文件（包括资源和测试夹具）都必须在 `scripts/ci/module-impact/<module-id>.json` 中有且仅有一个所有者。保留所有者、契约、消费者测试及动态依赖证据。执行 `git add` 后，运行英文指南中的注册检查及 `node scripts/ci/audit-module-ownership.mjs`。
+
+- 必要检查和评审通过后，在原生合并队列启用时进入队列；队列先验证合并后的版本，再执行 squash merge。保留 Conventional Commit 标题，不绕过失败的必需检查。
+
+- Nightly 每天 15:17 UTC 定时运行，也可手动触发，不是每次合并都触发。Source Regression 每天两次补充完整 Mac、委派和软件包验证；PR 与队列运行各自选中的检查组。
+
+- `npm test` 始终运行完整测试。`npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` 解释 PR 选测，`--tier queue` 解释队列选测。证据不完整时保留更广的测试范围。受保护的 CI 策略需要代码所有者评审；注册数据不得削减已有覆盖。
+
+- `packages/` 包含独立领域软件包及原生辅助程序。隔离验证将声明的 tarball 安装到干净的消费者环境；默认联网安装，`--offline` 要求完整缓存。稳定版发布五种独立 CLI 压缩包；自动发布 npm 仍暂缓。
+
+- 必须提供全部八种翻译：de、es、fr、zh-Hans、zh-Hant、ja、ko、ru。术语和 context 规则见 [AGENTS.md](../../AGENTS.md) 与[词汇表](../i18n-glossary.md)。
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

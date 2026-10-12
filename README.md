@@ -76,12 +76,13 @@ Completed research sessions can also be exported as portable `.science` packages
 
 Open the [official download page](https://aipoch.com/open-science/download) and choose the installer for your computer:
 
-| Your computer                           | Choose                                   |
-| --------------------------------------- | ---------------------------------------- |
-| macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
-| macOS 12+ — Intel                       | The macOS DMG for Intel / x64            |
-| Windows x64                             | The Windows x64 installer (code-signed)  |
-| Linux x64                               | The Linux x64 AppImage or Debian package |
+| Your computer                           | Choose                                     |
+| --------------------------------------- | ------------------------------------------ |
+| macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64    |
+| macOS 12+ — Intel                       | The macOS DMG for Intel / x64              |
+| Windows x64                             | The Windows x64 installer (code-signed)    |
+| Linux x64                               | The Linux x64 AppImage or Debian package   |
+| Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
 Download from the [official download page](https://aipoch.com/open-science/download); see [download verification](SECURITY.md#verifying-your-download) if needed.
 
@@ -308,7 +309,7 @@ A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in
 
 ### Is there a command-line interface?
 
-A: Yes. Install the standalone Node package, or use **Settings → General → Command line tool → Install command** to control an already running desktop instance. Starting an independent backend requires the standalone package and ordinary Node. Initialize the local profile, then control the service and submit research tasks without opening a browser:
+A: Yes. Install the standalone Node package, or use **Settings → General → Command line tool → Install command** to control an already running desktop instance. For independent startup, use the standalone package and ordinary Node. The Debian package-owned launcher is an exception: it starts the bundled backend with the bundled Node runtime. Initialize the local profile, then control the service and submit research tasks without opening a browser:
 
 ```bash
 # Initialize the local CLI profile and start the service in the background

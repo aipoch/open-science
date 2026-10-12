@@ -19,19 +19,19 @@ npm run dev
 
 Useful commands:
 
-| Command                | Purpose                                     |
-| ---------------------- | ------------------------------------------- |
-| `npm run dev`          | Start the development application           |
-| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)      |
-| `npm run dev:headless` | Ordinary Node backend + Web UI, no Electron |
-| `npm run lint`         | Run ESLint                                  |
-| `npm run typecheck`    | Type-check main and renderer code           |
-| `npm test`             | Run the Vitest suite                        |
-| `npm run build`        | Type-check and build the application        |
-| `npm run build:web`    | Build the optional localhost web UI         |
-| `npm run build:mac`    | Package macOS builds                        |
-| `npm run build:win`    | Package Windows builds                      |
-| `npm run build:linux`  | Package Linux builds                        |
+| Command                | Purpose                                      |
+| ---------------------- | -------------------------------------------- |
+| `npm run dev`          | Start the development application            |
+| `npm run dev:web`      | Node backend + localhost Web UI; no Electron |
+| `npm run dev:headless` | Ordinary Node backend + Web UI, no Electron  |
+| `npm run lint`         | Run ESLint                                   |
+| `npm run typecheck`    | Type-check main and renderer code            |
+| `npm test`             | Run the Vitest suite                         |
+| `npm run build`        | Type-check and build the application         |
+| `npm run build:web`    | Build the optional localhost web UI          |
+| `npm run build:mac`    | Package macOS builds                         |
+| `npm run build:win`    | Package Windows builds                       |
+| `npm run build:linux`  | Package Linux builds                         |
 
 Packaged output is written under `dist/`.
 

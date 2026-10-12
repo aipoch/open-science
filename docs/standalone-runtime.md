@@ -191,7 +191,9 @@ Development commands:
 
 - `npm run dev:web`: build and run Node + Web in the foreground; Ctrl+C drains the backend.
 - `npm run dev`: build Node and stage its executable, then run Electron. After backend source
-  changes, restart this command to rebuild the backend; Electron's renderer still uses Vite HMR.
+  changes, the Vite watcher rebuilds packages/backend automatically; quit normally and restart
+  this command to load backend/main changes. The live backend is not restarted automatically;
+  renderer changes use Vite HMR.
 - `npm run build:e2e`: build Node, Web, Electron and stage the pinned ordinary Node executable.
 - `npm run build:unpack` / `build:mac` / `build:linux` / `build:win`: package the desktop and backend.
 
@@ -221,12 +223,13 @@ open-science start --no-open --password-store=gnome-libsecret
 
 Missing or locked secure storage fails explicitly. Existing Linux headless `--credential-store=file`
 is an explicit plaintext opt-in, never an automatic fallback, and does not enable Compute's
-OS-protected credentials. Desktop OS mode does not attach to a file-mode credential profile.
+OS-protected credentials. At this baseline, desktop attachment verifies backend generation/version but does not enforce
+credential-store compatibility. A desktop can attach to an explicitly file-mode backend, so
+attachment must not be interpreted as proof of OS-encrypted credential writes.
 
 Linux Notebook isolation still requires bubblewrap and permitted unprivileged user namespaces.
 Missing sandbox support is an error; the Node host does not disable protection. Source Linux
-Electron tests also require an unlocked test Secret Service; the old plaintext Electron test
-substitution is removed.
+Electron tests also require an unlocked test Secret Service.
 
 ## Who stops the server
 
@@ -245,6 +248,11 @@ There is no client voting, last-client shutdown, idle timeout, ownership transfe
 killing of an external server. Ownership requires the actual retained ChildProcess and an
 authenticated PID/generation match, not a PID read from disk. Failed quit preparation leaves the
 desktop open; exit timeout/error is reported without a SIGKILL fallback.
+
+When the desktop-owned child exits cleanly (code 0, no signal), the desktop follows its normal
+quit flow, including renderer persistence protection. Abnormal exits or a disconnected borrowed
+backend surface failure instead. Electron crashes with a surviving backend require separate
+lifecycle validation; this document does not claim that path is fully certified.
 
 Native updates use the existing update/handoff gate and stop an owned Node before replacement.
 A borrowed server must be stopped explicitly before desktop update installation. Data-root handoff
@@ -302,8 +310,8 @@ These are retained compatibility paths, not a request to migrate user data:
   Do not remove these paths or change ciphertext formats without a separate compatibility decision.
 - Unreadable identities/keys are not replaced and encrypted values are never silently downgraded.
   The cipher implementation needs review whenever the pinned Electron OSCrypt format changes.
-- Existing CLI launcher recognition is retained. Reinstall the command-line launcher from the new
-  desktop when an old launcher invokes Electron; the CLI now rejects Electron-as-Node explicitly.
+- If a command-line launcher invokes Electron, reinstall it from Desktop; the CLI requires
+  ordinary Node.
 - Existing Web bootstrap v1 accepts absent Electron/Chrome versions when the owner is Node.
   Existing command/event protocols remain unchanged.
 - Older live desktop runtimes without the attachment protocol cannot be taken over. Stop them
@@ -376,9 +384,11 @@ It is not a live-provider test.
 
 ## Validation record and remaining platform work
 
-The macOS arm64 and Linux arm64 follow-up on 2026-10-09 used application code at
-`8803dc229` (0.36.0), after merging the Windows fixes in
-[PR #3365](https://github.com/aipoch/open-science/pull/3365).
+The following is an inherited historical validation report, not rerun evidence for the current
+revision. Its former source reference `8803dc229` cannot be resolved in this checkout; the
+reported counts, container details and artifact digest below have not been independently
+recovered. Retain them as historical claims, not current acceptance results. The report
+references [PR #3365](https://github.com/aipoch/open-science/pull/3365).
 
 | Surface                                           | Final-code evidence                                                                                                                                                            | Result                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
@@ -430,6 +440,7 @@ formal signing/notarization, and updater replacement/data-root relaunch remain o
 
 Only focused/module tests ran locally as requested; no full `npm test` ran. Counts across earlier
 runs overlap and must not be summed as full-suite coverage. Required PR CI remains the merge gate.
-The npm publishing workflow still packages the lightweight CLI/SDK only. Platform-specific
-standalone publication is not wired up; do not publish the same package name/version separately
-for multiple platform tarballs.
+The current manual distribution workflow supports standalone archive dry-runs and a separate
+npm dry-run; stable releases publish the five standalone archives. Automatic npm registry
+publication remains deferred. Do not publish one package name/version separately for multiple
+platform-specific tarballs.

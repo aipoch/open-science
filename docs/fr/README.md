@@ -83,6 +83,7 @@ Ouvrez la [page officielle de téléchargement](https://aipoch.com/open-science/
 | macOS 12+ — Intel                             | Le DMG macOS pour Intel / x64            |
 | Windows x64                                   | L'installateur Windows x64 (signé)       |
 | Linux x64                                     | L'AppImage Linux x64 ou le paquet Debian |
+| Linux ARM64                                   | AppImage ou paquet Debian Linux ARM64    |
 
 Téléchargez depuis la [page officielle de téléchargement](https://aipoch.com/open-science/download) ; consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) si nécessaire.
 
@@ -235,7 +236,7 @@ Examinez les paramètres des connecteurs et l'activité des outils avant de les 
 
 ## Développement et empaquetage
 
-AIPOCH Open-Science est une application Electron construite avec React, TypeScript, Prisma/SQLite, et un environnement d'exécution d'agent basé sur ACP.
+L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique.
 
 Prérequis pour le développement à partir des sources :
 
@@ -254,18 +255,20 @@ Consultez la [référence des commandes de développement et de packaging](devel
 
 ### Modes web localhost et headless
 
-Le backend de bureau peut éventuellement servir le même renderer à un navigateur sur l'ordinateur local. Cette
-fonctionnalité est désactivée par défaut et ne se lie qu'à `127.0.0.1`.
+L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique.
 
 ```bash
-npm run build:web
 npm run dev:web
+npm run pack:backend
 ```
 
-Ouvrez l'URL authentifiée affichée par l'application. Utilisez `npm run dev:headless` pour démarrer le
-backend, la barre d'état, l'environnement d'exécution de l'agent et le service web localhost sans ouvrir de fenêtre Electron.
-Définissez `OPEN_SCIENCE_WEB_PORT` pour choisir un port (par défaut `44100`). Quitter explicitement
-l'application arrête toujours normalement les processus d'agent et Notebook.
+L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique. `npm run dev:web` et `npm run dev:headless` construisent et démarrent le backend et l’interface Web, sans bureau ni icône de notification. `OPEN_SCIENCE_WEB_PORT` choisit le port (`44100` par défaut) ; Ctrl+C arrête proprement le service au premier plan.
+
+Le développement nécessite Node.js 24. Le tarball npm autonome exige Node >=22.13.0 ; le CLI/SDK léger exige Node >=22.5. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
+
+Le bureau et le navigateur partagent le même service. Quitter le bureau arrête seulement le backend qu’il a démarré ; une connexion à un service lancé par le CLI est simplement détachée.
+
+[CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
 ### Accès distant mobile
 
@@ -284,6 +287,13 @@ paquet publiable, afin qu'il n'y ait qu'une seule référence de commandes à ma
   artefacts, formats de sortie et codes de sortie
 - [Aperçu du paquet SDK](../../packages/open-science/README.md) - démarrage rapide Node.js et point d'entrée du paquet
 
+```bash
+brew install --cask open-science
+brew install aipoch/tap/open-science
+```
+
+[Homebrew / Release](../standalone-runtime.md)
+
 ## Questions fréquentes
 
 ### Pourquoi le test de connexion au modèle échoue-t-il ?
@@ -300,7 +310,7 @@ R : **Remote Compute (SSH)** est toujours activé et ne doit pas être activé d
 
 ### Y a-t-il une interface en ligne de commande ?
 
-R : Oui. Installez-la en un clic depuis **Settings → General → Command line tool → Install command** (ajoute `open-science` à votre PATH ; aucun Node.js séparé n'est nécessaire). Le CLI contrôle le service local et soumet des tâches de recherche sans ouvrir de navigateur :
+R : Oui. Installez le paquet Node autonome pour démarrer un backend indépendant. La commande installée via **Settings → General → Command line tool → Install command** contrôle une instance de bureau déjà en cours d’exécution ; cet usage ne nécessite pas de Node.js séparé. Exception : le lanceur fourni par le paquet Debian démarre le backend inclus avec son runtime Node inclus. Pour l’exemple autonome suivant, installez le paquet autonome et Node.js, initialisez le profil local puis démarrez le service :
 
 ```bash
 # Démarrer le service en arrière-plan

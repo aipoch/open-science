@@ -64,7 +64,7 @@ suites through module-impact fixture routing. Unknown paths and incomplete trust
 the complete package baseline.
 
 The dispatcher reuses the Connector, Diagnostics, Environment, Compute, Notebook, Skills and
-PDF/Literature verifiers.
+PDF/Literature, Reproducibility, Resilient Download and Durable Files verifiers.
 Prerequisites need compilation; only selected packages need their own unit suites. Installed
 consumers retain public declarations, private-import rejection, browser entries, CJS/ESM identity
 where supported, actual execution and resource checks. PDF worker assets, Notebook grammars and

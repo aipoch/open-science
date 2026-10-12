@@ -115,7 +115,12 @@ integration tests continue under `src/main/compute`, including real SQLite CAS, 
 permissions, notifications, recovery, deletion and Session policy. External-host certifications are
 separate opt-in tests: `compute-jobs.integration.test.ts`, `cancellation.real-ssh.integration.test.ts`,
 `slurm.real-ssh.integration.test.ts` and `compute-password-auth.real-ssh.integration.test.ts`.
-Their existing `RUN_COMPUTE_*`/SSH target prerequisites are described by the repository `.env.example`.
+Read each test header for its opt-in prerequisites: cancellation uses `RUN_COMPUTE_CANCELLATION=1`
+and `COMPUTE_TEST_SSH_ALIAS`; Slurm uses `RUN_COMPUTE_SLURM=1`, the same alias and optional
+`COMPUTE_SLURM_PARTITION`; password authentication uses `RUN_COMPUTE_PASSWORD_AUTH=1` and
+`COMPUTE_PASSWORD_TEST_ALIAS`, `COMPUTE_PASSWORD_TEST_USERNAME`, `COMPUTE_PASSWORD_TEST_PASSWORD`,
+`COMPUTE_PASSWORD_TEST_HOSTNAME`, and optional `COMPUTE_PASSWORD_TEST_PORT`. The root
+`.env.example` is not a complete inventory of these opt-in test settings.
 They are not substitutes for the portable package suite.
 
 ## Test ownership and compatibility
