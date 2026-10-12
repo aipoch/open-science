@@ -567,7 +567,8 @@ Source Regression; manual callers without an explicit capacity input retain comp
 
 Register independent packages and their dependencies in `scripts/ci/package-test-boundaries.json`.
 Ubuntu PR tests run changed packages and bounded host adapter/contracts; merge queue retains downstream
-package and host integration coverage. See [test layers](docs/ci-test-layers.md).
+package and host integration coverage. Use `npm run test:affected:explain -- --base origin/main --head HEAD
+--tier pr` (or `--tier queue`) to inspect each layer; `queue` remains the local default.
 Shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
 Registry changes require CI owner review.
 

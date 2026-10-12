@@ -66,5 +66,5 @@ selects every registered package explicitly. This is the first place to debug th
 PRs run changed package suites and bounded host adapter/contracts; downstream suites and more distant
 host consumers remain blocking in merge queue. `test:affected -- --tier pr` explains/exercises the PR
 selection; the default remains the complete affected queue selection. Full portable Ubuntu regression
-runs in Source Regression, with a focused manual `portable` mode. See [validation layers and the
-package-by-package consumer audit](ci-test-layers.md) for boundaries, fallbacks and commands.
+runs in Source Regression, with a focused manual `portable` mode. Run
+`node scripts/ci/audit-package-consumers.mjs HEAD` for per-package host dependency evidence.
