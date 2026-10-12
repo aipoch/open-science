@@ -146,7 +146,6 @@
     "List or read official reference tables.": "公式参照表を一覧表示または読み取り。",
     "List bulk datasets without downloading.": "ダウンロードせずに一括データセットを一覧表示。",
     "Download and verify one bulk dataset.": "一括データセットを一つダウンロードして検証。",
-
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC のがんプロテオミクス研究、サンプルと分注試料の対応、およびファイルの検索。",
     "Search PDC studies and versions by name or identifier.": "名前または識別子で PDC の研究とバージョンを検索。",
     "Retrieve PDC study metadata and available versions.": "PDC 研究のメタデータと利用可能なバージョンを取得。",
@@ -7163,6 +7162,8 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{total}} 件中 {{shown}} 件を表示しています。以下のコード全体を確認してください。",
     "Current environment": "現在の環境",
     "Selected environment": "選択した環境",
-    "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。"
+    "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。",
+    "No code has run in this view yet.": "このビューではまだコードが実行されていません。",
+    "Code received; waiting for execution details.": "コードを受信しました。実行の詳細を待っています。"
   }
 }

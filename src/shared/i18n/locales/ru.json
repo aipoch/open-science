@@ -149,7 +149,6 @@
     "List or read official reference tables.": "Вывести список или прочитать официальные справочные таблицы.",
     "List bulk datasets without downloading.": "Вывести список массовых наборов данных без скачивания.",
     "Download and verify one bulk dataset.": "Скачать и проверить один массовый набор данных.",
-
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Исследования протеомики рака, сопоставление образцов и аликвот и поиск файлов в PDC.",
     "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",
@@ -7630,6 +7629,8 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "Показано {{shown}} из {{total}} результатов. Проверьте полный код ниже.",
     "Current environment": "Текущая среда",
     "Selected environment": "Выбранная среда",
-    "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются."
+    "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются.",
+    "No code has run in this view yet.": "В этом представлении код ещё не выполнялся.",
+    "Code received; waiting for execution details.": "Код получен; ожидание сведений о выполнении."
   }
 }

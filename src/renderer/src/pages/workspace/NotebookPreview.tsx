@@ -38,6 +38,7 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { getToolExecutionPhase } from './tool-execution-phase'
 import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
@@ -65,6 +66,7 @@ import {
   notebookFrameLabels,
   normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame,
+  pendingNotebookCode,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
 
@@ -658,9 +660,13 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
   const frameRuns = session ? normalizeNotebookRootFrameRuns(runs, session) : runs
+  const pendingCode = pendingNotebookCode(session, frameRuns)
   const frameOptions = createNotebookFrameFilterOptions(
     frameRuns,
-    session ? notebookFrameLabels(session, t) : {}
+    session ? notebookFrameLabels(session, t) : {},
+    undefined,
+    false,
+    pendingCode[0]?.frameId
   )
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
@@ -669,8 +675,22 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
 
-  // Kernels appear only after producing a run in the current projected history.
-  const kindsWithRuns = new Set(projectedRuns.map(resolveRunKernelKind))
+  const framePendingCode = pendingCode.filter(
+    (entry) => `frame:${entry.frameId}` === effectiveFrameFilter
+  )
+  const pendingKernelKind = (language: string | undefined): NotebookKernelKind =>
+    language === 'javascript'
+      ? 'repl'
+      : language === 'r'
+        ? 'r'
+        : language === 'bash' || language === 'powershell'
+          ? 'bash'
+          : 'python'
+  // Received code can make a kernel tab visible before its first Run is admitted.
+  const kindsWithRuns = new Set([
+    ...projectedRuns.map(resolveRunKernelKind),
+    ...framePendingCode.map((entry) => pendingKernelKind(entry.code.language))
+  ])
   const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
   const effectiveActiveKind = visibleKinds.includes(activeKind)
     ? activeKind
@@ -835,6 +855,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     activeEnvName !== undefined &&
     executionEnvironment !== undefined &&
     activeEnvName !== executionEnvironment
+  const visiblePendingCode = isHistoricalEnvironmentView
+    ? []
+    : framePendingCode.filter(
+        (entry) => pendingKernelKind(entry.code.language) === effectiveActiveKind
+      )
   const isSubmitting = submittingTarget !== undefined
   const isSelectedKernelRunning =
     (submittingTarget !== undefined && submittingTarget === selectedTarget) ||
@@ -1119,6 +1144,27 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             </div>
           )
         })}
+        {visiblePendingCode.map(({ activity, code }) => (
+          <div key={activity.id} data-testid="notebook-pending-code">
+            <div role="status" className="px-3 py-2 text-xs text-text-300">
+              {getToolExecutionPhase(activity, session?.runtimeContext?.permission) ===
+              'awaiting-approval'
+                ? t('Needs approval')
+                : t('Code received; waiting for execution details.')}
+            </div>
+            <NotebookCodeBlock code={code.text} language={code.language} />
+            {code.truncated ? (
+              <p className="px-3 py-2 text-xs text-text-300">
+                {t('Arguments were truncated for display.')}
+              </p>
+            ) : null}
+          </div>
+        ))}
+        {visibleRuns.length === 0 && visiblePendingCode.length === 0 ? (
+          <div role="status" className="px-4 py-6 text-sm text-text-300">
+            {isLoading ? t('Loading notebook…') : t('No code has run in this view yet.')}
+          </div>
+        ) : null}
       </div>
     </div>
   )
