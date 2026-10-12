@@ -212,13 +212,15 @@ async function elfFiles(directory) {
 }
 export function rpmSpec(metadata, bundledSonames) {
   const identity = packageIdentity(metadata)
+  const nodeArch = identity.target === 'linux-x64-gnu' ? 'x64' : 'arm64'
   const escaped = bundledSonames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   return `# Preserve the already certified runtime; never strip or rewrite its binaries.
 %global __os_install_post %{nil}
 %global debug_package %{nil}
 %global __provides_exclude_from ^/opt/open-science-cli/.*$
-# Bundled JavaScript uses the private Node launcher, not a distribution Node interpreter.
-%global __requires_exclude_from ^/opt/open-science-cli/.*\\.(js|mjs|cjs)$
+# Bundled JavaScript uses private Node. Canvas selects its GNU addon on these GNU targets;
+# retain the original dormant musl addon bytes without requiring a foreign libc.
+%global __requires_exclude_from ^/opt/open-science-cli/.*[.](js|mjs|cjs)$|^/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-${nodeArch}-musl/
 ${escaped.length ? `%global __requires_exclude ^(${escaped.join('|')})(\\(.*\\))?$\n` : ''}Name: open-science-cli
 Version: ${identity.version}
 Release: 1
@@ -294,7 +296,16 @@ export async function buildPackage(format, prepared, output) {
         identity.version +
         '/docs/standalone-runtime.md\n'
     )
-    const elfs = await elfFiles(join(tree, packageRoot))
+    const dormantCanvas =
+      join(
+        tree,
+        packageRoot,
+        'backend/node_modules/@napi-rs',
+        `canvas-linux-${process.arch}-musl`
+      ) + '/'
+    const elfs = (await elfFiles(join(tree, packageRoot))).filter(
+      (file) => !file.startsWith(dormantCanvas)
+    )
     assert.ok(elfs.length, 'No native payload')
     let filename
     if (format === 'deb') {

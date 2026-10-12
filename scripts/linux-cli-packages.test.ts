@@ -174,7 +174,7 @@ describe('Linux CLI packages', () => {
       'checksum'
     )
   })
-  it('retains RPM ELF auto-dependencies and limits exclusions to bundled private libraries/scripts', () => {
+  it('retains GNU ELF dependencies while excluding private scripts and the dormant musl canvas addon', () => {
     const spec = rpmSpec(metadata, ['libexample.so.1'])
     expect(spec).not.toMatch(/AutoReq(?:Prov)?:\s*(?:no|0)/)
     expect(spec).toContain('%global __requires_exclude ^(libexample\\.so\\.1)')
@@ -183,6 +183,22 @@ describe('Linux CLI packages', () => {
     expect(spec).toContain('BuildArch: x86_64')
     expect(spec).toContain('--install')
     expect(spec).toContain("open-science-cli' 90")
+    const excluded = new RegExp(spec.match(/^%global __requires_exclude_from (.*)$/m)![1])
+    expect(excluded.test('/opt/open-science-cli/backend/cli.mjs')).toBe(true)
+    expect(
+      excluded.test(
+        '/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-x64-musl/skia.linux-x64-musl.node'
+      )
+    ).toBe(true)
+    expect(
+      excluded.test(
+        '/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node'
+      )
+    ).toBe(false)
+    expect(excluded.test('/opt/open-science-cli/node-runtime/node')).toBe(false)
+    expect(
+      excluded.test('/opt/open-science-cli/backend/node_modules/another-native-addon/index.node')
+    ).toBe(false)
   })
 })
 
