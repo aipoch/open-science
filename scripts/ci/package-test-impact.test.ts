@@ -492,7 +492,8 @@ it.each([
 
 describe('installed-consumer input selection', () => {
   const actual = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
-  const select = (paths: string[]) => createPackageTestPlan(paths, actual, { verification: true })
+  const select = (paths: string[]): ReturnType<typeof createPackageTestPlan> =>
+    createPackageTestPlan(paths, actual, { verification: true })
   it.each([
     'src/main/application-events.ts',
     'docs/package-workflows.md',
