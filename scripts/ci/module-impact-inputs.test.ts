@@ -246,6 +246,7 @@ describe('trusted additive module registrations', () => {
         'package-test-boundaries.json',
         'module-impact-inputs.mjs',
         'module-test-impact.mjs',
+        'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
         'module-impact-shadow.mjs',
         'validate-module-impact.mjs'
