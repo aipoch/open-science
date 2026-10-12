@@ -136,6 +136,7 @@ describe('expression / Bgee API', () => {
       {
         data: {
           species: {
+            id: 9606,
             genomeSpeciesId: 9606,
             genus: 'Homo',
             speciesName: 'sapiens',
@@ -145,9 +146,7 @@ describe('expression / Bgee API', () => {
         }
       }
     )
-    expect(url).toBe(
-      'https://www.bgee.org/api/?page=species&action=name&display_type=json&species_id=9606'
-    )
+    expect(url).toBe('https://www.bgee.org/api/?page=species&display_type=json&species_id=9606')
     expect(out).toEqual({
       species: [
         {
@@ -158,6 +157,70 @@ describe('expression / Bgee API', () => {
           has_expression_data: true
         }
       ]
+    })
+  })
+
+  it('does not interpret unloaded list data sources as absence of expression data', async () => {
+    const { out, url } = await call(
+      'bgee_species',
+      {},
+      {
+        data: {
+          species: [
+            {
+              id: 9606,
+              genomeSpeciesId: 9606,
+              genus: 'Homo',
+              speciesName: 'sapiens',
+              dataSourcesForDataByDataTypes: {}
+            }
+          ]
+        }
+      }
+    )
+    expect(new URL(url).searchParams.get('action')).toBe('name')
+    expect(out).toMatchObject({ species: [{ taxon_id: 9606, has_expression_data: null }] })
+  })
+
+  it.each([
+    [{}, false],
+    [undefined, null]
+  ])(
+    'distinguishes loaded empty data sources from unavailable metadata (%j)',
+    async (sources, expected) => {
+      const { out, url } = await call(
+        'bgee_species',
+        { species_id: 9606 },
+        {
+          data: { species: { id: 9606, dataSourcesForDataByDataTypes: sources } }
+        }
+      )
+      expect(new URL(url).searchParams.has('action')).toBe(false)
+      expect(out).toMatchObject({ species: [{ taxon_id: 9606, has_expression_data: expected }] })
+    }
+  )
+
+  it('preserves species identity when the reference genome comes from a different species', async () => {
+    // Bgee 14.2 used the chimpanzee genome (9598) for bonobo (9597).
+    const { out } = await call(
+      'bgee_species',
+      { species_id: 9597 },
+      {
+        data: {
+          species: {
+            id: 9597,
+            genomeSpeciesId: 9598,
+            genus: 'Pan',
+            speciesName: 'paniscus',
+            name: 'bonobo',
+            genomeVersion: 'CHIMP2.1.4',
+            dataSourcesForDataByDataTypes: { RNA_SEQ: ['Bgee'] }
+          }
+        }
+      }
+    )
+    expect(out).toMatchObject({
+      species: [{ taxon_id: 9597, scientific_name: 'Pan paniscus', has_expression_data: true }]
     })
   })
 
