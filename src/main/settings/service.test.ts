@@ -8974,6 +8974,40 @@ describe('Notebook protection Shell capability switch', () => {
     })
   })
 
+  it('holds admission when removing legacy receipt-derived protection', async () => {
+    const calls: string[] = []
+    await repository.setNotebookNetwork({
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: []
+    })
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        calls.push('stop')
+        return () => calls.push('release')
+      },
+      isNotebookProtectionConfigured: async () => true,
+      applyNotebookNetwork: async (settings) => {
+        calls.push(settings.windowsProtectionEnabled ? 'protected' : 'standard')
+      },
+      removeNotebookNetwork: async (options) => {
+        expect(options).toEqual({ admissionAlreadyHeld: true })
+        calls.push('remove')
+        return { cancelled: false }
+      },
+      getNotebookNetworkStatus: async () => ({ kind: 'standard' })
+    })
+
+    await service.removeNotebookNetwork()
+
+    expect(calls).toEqual(['stop', 'remove', 'standard', 'release'])
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      notebookNetwork: { windowsProtectionEnabled: false }
+    })
+  })
+
   it('restores native protection when the post-removal mode commit fails', async () => {
     await repository.setNotebookNetwork({
       allowedDomains: [],

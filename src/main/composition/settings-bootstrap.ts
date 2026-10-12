@@ -316,6 +316,7 @@ export async function composeSettingsBootstrap({
         await shutdownNotebooksBeforePolicyChange('ca-bundle')
       },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
+      isNotebookProtectionConfigured: () => notebookNetworkSandbox.windowsProtectionConfigured(),
       installNotebookNetwork: (options) => notebookNetworkSandbox.installWindows(options),
       cancelNotebookNetworkSetup: () => notebookNetworkSandbox.cancelWindowsSetup(),
       removeNotebookNetwork: (options) => notebookNetworkSandbox.removeWindows(options),

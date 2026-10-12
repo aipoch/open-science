@@ -269,6 +269,7 @@ export type SettingsServiceOptions = {
   // Applies a committed Notebook egress policy to live kernels without requiring a restart.
   applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
   beforeNotebookProtectionChange?: () => Promise<(() => void) | void>
+  isNotebookProtectionConfigured?: () => Promise<boolean>
   validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
   applyPackageMirror?: (settings: PackageMirror) => Promise<void>
   beforePackageMirrorCaBundleChange?: () => Promise<void>
@@ -479,6 +480,7 @@ class SettingsService {
   ) => Promise<{ cancelled: boolean }>
   private readonly refreshNotebookShellCapabilities: () => Promise<void>
   private readonly beforeNotebookProtectionChange?: SettingsServiceOptions['beforeNotebookProtectionChange']
+  private readonly isNotebookProtectionConfigured: () => Promise<boolean>
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
   private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
   private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
@@ -535,6 +537,8 @@ class SettingsService {
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
     this.beforeNotebookProtectionChange = options.beforeNotebookProtectionChange
+    this.isNotebookProtectionConfigured =
+      options.isNotebookProtectionConfigured ?? (async () => false)
     this.notebookNetwork = new NotebookNetworkSettingsOwner({
       repository: this.repository,
       beforeProtectionChange: options.beforeNotebookProtectionChange,
@@ -774,16 +778,15 @@ class SettingsService {
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
     const settings = await this.notebookNetwork.get()
-    const release =
-      settings.windowsProtectionEnabled === true
-        ? await this.beforeNotebookProtectionChange?.()
-        : undefined
+    const protectionEnabled =
+      settings.windowsProtectionEnabled ?? (await this.isNotebookProtectionConfigured())
+    const release = protectionEnabled ? await this.beforeNotebookProtectionChange?.() : undefined
     try {
       const result = await this.removeNotebookNetworkImpl(
-        settings.windowsProtectionEnabled === true ? { admissionAlreadyHeld: true } : undefined
+        protectionEnabled ? { admissionAlreadyHeld: true } : undefined
       )
       if (!result.cancelled) {
-        if (settings.windowsProtectionEnabled === true) {
+        if (protectionEnabled) {
           try {
             await this.notebookNetwork.setWindowsProtectionEnabled(false, {
               admissionAlreadyHeld: true
