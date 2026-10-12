@@ -23,6 +23,7 @@ import { connectToDesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { createAcpRuntimeEventBroadcastCoalescer } from './acp/runtime-event-broadcast-coalescer'
 import { toAcpRuntimeEvent } from './acp/runtime-events'
+import { createSessionFile, decodeSessionFile } from '../shared/session-persistence'
 
 const diagnostics = vi.hoisted(() => ({ warn: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', () => ({
@@ -355,4 +356,81 @@ it('delivers a burst of normalized agent text without dropping the shared deskto
   )
   expect(result, JSON.stringify(diagnostics.warn.mock.calls)).toBe('available')
   expect(delivered).toEqual(chunks.map(({ id }) => id))
+})
+
+// #3532 reports legal ~5.7 MB Session frames overflowing the former aggregate 16 MiB guard.
+it('delivers a burst of 5.7 MB session updates and a full read without disconnecting', async () => {
+  const decoded = decodeSessionFile(
+    createSessionFile({
+      id: 'session-3532',
+      projectId: 'project-3532',
+      title: 'Synthetic long session',
+      cwd: process.cwd(),
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          createdAt: 1,
+          updatedAt: 2,
+          status: 'complete',
+          content: 'x'.repeat(2_850_000),
+          eventIds: []
+        }
+      ]
+    })
+  )
+  expect(decoded.status).toBe('ok')
+  if (decoded.status !== 'ok') throw new Error('Session fixture must decode.')
+  const session = decoded.session
+  const bytes = Buffer.byteLength(stringifyRpcJson(session))
+  expect(bytes).toBeGreaterThan(5_700_000)
+  expect(bytes).toBeLessThan(5_720_000)
+  const events = new ApplicationEventHub()
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    events,
+    commands: {
+      commandNames: () => ['sessions:load-one', 'projects:list'],
+      invoke: async (name) => (name === 'sessions:load-one' ? session : [])
+    }
+  })
+  cleanups.push(server.close)
+  const received = vi.fn()
+  const disconnected = vi.fn()
+  const client = await connectDesktopRuntime({
+    endpoint: server.endpoint,
+    onEvent: received,
+    onDisconnect: disconnected
+  })
+  cleanups.push(client.close)
+  const document = randomUUID()
+  await client.invoke(document, 'projects:list', [])
+  for (let i = 0; i < 4; i += 1)
+    events.publish('session:updated', { session, originClientId: 'main:runtime-transcript' })
+  const result = await client
+    .invoke(document, 'sessions:load-one', [
+      {
+        projectId: session.projectId,
+        sessionId: session.id
+      }
+    ])
+    .then(
+      (value) => ({ value }),
+      (error: Error) => ({ error: error.message })
+    )
+  expect(
+    'error' in result ? result.error : undefined,
+    JSON.stringify(diagnostics.warn.mock.calls)
+  ).toBeUndefined()
+  if (!('value' in result)) throw new Error('Session read failed.')
+  expect(JSON.stringify(result.value) === JSON.stringify(session)).toBe(true)
+  await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(4), { timeout: 5000 })
+  for (const [event] of received.mock.calls)
+    expect(JSON.stringify(event.payload.session) === JSON.stringify(session)).toBe(true)
+  await expect(client.invoke(document, 'projects:list', [])).resolves.toEqual([])
+  expect(disconnected).not.toHaveBeenCalled()
+  expect(diagnostics.warn).not.toHaveBeenCalled()
 })
