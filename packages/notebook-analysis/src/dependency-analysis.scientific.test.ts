@@ -473,7 +473,7 @@ it('retains phyloseq conversion reads without certifying an unproved cross-cell 
 
 it('requires a phyloseq input before certifying DESeq2 conversion', async () => {
   for (const setup of ['', 'ps <- Seurat::CreateSeuratObject(counts)']) {
-    const { facts } = await analyzeRNotebookSource(
+    const { facts, fileAccess } = await analyzeRNotebookSource(
       `${setup}\ndds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)`
     )
     expect(facts.typeBindings?.find((binding) => binding.target === 'dds')).toBeUndefined()
@@ -1769,6 +1769,28 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     const [facts] = await analyzeRSources([source])
 
     expect(facts?.state).toBe('available')
+  })
+
+  it('preserves an existing binding after an empty R loop', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'path <- "inputs/observations.csv"\n' +
+        'for (path in c()) path <- "inputs/decoy.csv"\n' +
+        'read.csv(path)'
+    )
+
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+    expect(facts.definedNames).toContain('path')
+  })
+
+  it('preserves an attached static helper after an empty R loop', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'library(glue)\n' +
+        'for (glue in c()) glue <- identity\n' +
+        'path <- glue("inputs/%s", "observations.csv")'
+    )
+
+    expect(facts.safeCallNames ?? []).toContain('glue::glue')
+    expect(fileAccess?.context?.staticStrings ?? []).toEqual([])
   })
 
   it('classifies a common base R read-clean-aggregate workflow as clear', async () => {
