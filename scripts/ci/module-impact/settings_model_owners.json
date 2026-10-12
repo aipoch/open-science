@@ -664,9 +664,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "workspace_runtime"
-  ],
+  "consumerModules": ["workspace_runtime"],
   "capabilityOverlays": [
     "e2e_delegation",
     "e2e_regressions",

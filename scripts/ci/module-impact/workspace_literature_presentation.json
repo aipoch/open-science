@@ -3,13 +3,9 @@
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx"
   ],
-  "interfacePaths": [
-    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx"
-  ],
+  "interfacePaths": ["src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx"],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx"
-    ],
+    "owner": ["src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx"],
     "contract": [],
     "consumer": [
       "src/main/literature/library-tool-contracts.test.ts",

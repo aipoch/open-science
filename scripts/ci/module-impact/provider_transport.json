@@ -803,15 +803,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "consumerModules": [
-    "artifact_provenance",
-    "reviewer_orchestrator",
-    "settings_service_facade"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["artifact_provenance", "reviewer_orchestrator", "settings_service_facade"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

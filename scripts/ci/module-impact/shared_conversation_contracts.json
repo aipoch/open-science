@@ -259,9 +259,7 @@
       "src/shared/session-persistence/prompt-preparation.test.ts",
       "src/shared/artifact-visibility.test.ts"
     ],
-    "contract": [
-      "src/shared/session-persistence.architecture.test.ts"
-    ],
+    "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": [
       "src/main/side-chat/application-commands.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",

@@ -4,14 +4,10 @@
     "src/renderer/src/reviewer-paged-preview/main.ts",
     "src/renderer/src/reviewer-paged-preview/reviewer-paged-preview.css"
   ],
-  "interfacePaths": [
-    "src/renderer/src/reviewer-paged-preview/main.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/reviewer-paged-preview/main.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/reviewer-paged-preview/main.test.ts"
-    ],
+    "owner": ["src/renderer/src/reviewer-paged-preview/main.test.ts"],
     "contract": [],
     "consumer": []
   },

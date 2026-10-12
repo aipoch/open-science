@@ -3,13 +3,9 @@
     "src/main/settings/backend-resolver.test.ts",
     "src/main/settings/backend-resolver.ts"
   ],
-  "interfacePaths": [
-    "src/main/settings/backend-resolver.ts"
-  ],
+  "interfacePaths": ["src/main/settings/backend-resolver.ts"],
   "testFiles": {
-    "owner": [
-      "src/main/settings/backend-resolver.test.ts"
-    ],
+    "owner": ["src/main/settings/backend-resolver.test.ts"],
     "contract": [
       "src/main/agent-framework/claude-code.test.ts",
       "src/main/agent-framework/codex.test.ts",
@@ -752,15 +748,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "consumerModules": [
-    "artifact_provenance",
-    "reviewer_orchestrator",
-    "settings_service_facade"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["artifact_provenance", "reviewer_orchestrator", "settings_service_facade"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

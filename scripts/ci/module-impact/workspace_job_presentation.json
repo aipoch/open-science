@@ -11,9 +11,7 @@
     "src/renderer/src/components/RemoteJobRow.tsx"
   ],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/components/JobDetailModal.render.test.tsx"
-    ],
+    "owner": ["src/renderer/src/components/JobDetailModal.render.test.tsx"],
     "contract": [
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/HandoffLifecycleStatus.integration.test.tsx",
@@ -121,8 +119,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

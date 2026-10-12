@@ -628,10 +628,6 @@
     "workspace_page",
     "workspace_runtime"
   ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

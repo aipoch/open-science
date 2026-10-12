@@ -1,7 +1,5 @@
 {
-  "ownerPaths": [
-    "src/renderer/src/pages/settings/use-notebook-network-status.ts"
-  ],
+  "ownerPaths": ["src/renderer/src/pages/settings/use-notebook-network-status.ts"],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",
     "src/renderer/src/pages/settings/BatchActionDock.tsx",

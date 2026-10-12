@@ -20,9 +20,7 @@
       "src/renderer/src/pages/workspace/project-file-mention-transfer.test.ts",
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx"
     ],
-    "contract": [
-      "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"
-    ],
+    "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
@@ -129,13 +127,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "workspace_conversation",
-    "workspace_file_presentation",
-    "workspace_page"
-  ],
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "consumerModules": ["workspace_conversation", "workspace_file_presentation", "workspace_page"],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

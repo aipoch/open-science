@@ -1,8 +1,5 @@
 {
-  "ownerPaths": [
-    "src/main/reviewer/bridge-tools.ts",
-    "src/main/reviewer/tool-input-contract.ts"
-  ],
+  "ownerPaths": ["src/main/reviewer/bridge-tools.ts", "src/main/reviewer/tool-input-contract.ts"],
   "interfacePaths": [
     "src/main/reviewer/bridge-tools.ts",
     "src/main/reviewer/tool-input-contract.ts"
@@ -607,10 +604,6 @@
     "workspace_page",
     "workspace_runtime"
   ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

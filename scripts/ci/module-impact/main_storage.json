@@ -698,10 +698,6 @@
       "src/main/storage/usage.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

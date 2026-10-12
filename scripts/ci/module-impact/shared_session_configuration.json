@@ -1,8 +1,5 @@
 {
-  "ownerPaths": [
-    "src/shared/session-configuration.test.ts",
-    "src/shared/session-configuration.ts"
-  ],
+  "ownerPaths": ["src/shared/session-configuration.test.ts", "src/shared/session-configuration.ts"],
   "interfacePaths": [
     "src/shared/acp.ts",
     "src/shared/agents-contract.ts",
@@ -39,12 +36,8 @@
     "src/shared/wsl2-preview-manifest.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/shared/session-configuration.test.ts"
-    ],
-    "contract": [
-      "src/shared/session-persistence.architecture.test.ts"
-    ],
+    "owner": ["src/shared/session-configuration.test.ts"],
+    "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": [
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",

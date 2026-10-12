@@ -99,9 +99,7 @@
     "src/renderer/src/hooks/useUnreadTaskViewSync.ts",
     "src/renderer/src/hooks/useWindowFindAppearanceSync.ts"
   ],
-  "consumerModules": [
-    "renderer_hooks"
-  ],
+  "consumerModules": ["renderer_hooks"],
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",

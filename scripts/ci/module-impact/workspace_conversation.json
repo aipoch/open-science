@@ -291,8 +291,6 @@
       "src/renderer/src/stores/specialist-store.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

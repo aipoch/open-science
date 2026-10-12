@@ -19,9 +19,7 @@
     "src/shared/session-diagnostics.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx"
-    ],
+    "owner": ["src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx"],
     "contract": [
       "src/main/data-content-application-commands.test.ts",
       "src/preload/index.test.ts",
@@ -102,9 +100,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

@@ -34,9 +34,7 @@
     "src/main/settings/vision-model-owner.ts",
     "src/main/settings/file-commands.ts"
   ],
-  "consumerModules": [
-    "workspace_runtime"
-  ],
+  "consumerModules": ["workspace_runtime"],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",

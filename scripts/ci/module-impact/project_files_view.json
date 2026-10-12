@@ -17,20 +17,14 @@
     "src/renderer/src/pages/workspace/use-project-file-mention-availability.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drop.ts"
   ],
-  "consumerModules": [
-    "workspace_page",
-    "workspace_conversation",
-    "workspace_file_presentation"
-  ],
+  "consumerModules": ["workspace_page", "workspace_conversation", "workspace_file_presentation"],
   "testFiles": {
     "owner": [
       "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
     ],
-    "contract": [
-      "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"
-    ],
+    "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
     "consumer": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
@@ -68,8 +62,6 @@
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx"
     ]
   },
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

@@ -14,9 +14,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/workspace/bookmarks/BookmarksProvider.test.tsx"
-    ],
+    "owner": ["src/renderer/src/pages/workspace/bookmarks/BookmarksProvider.test.tsx"],
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",

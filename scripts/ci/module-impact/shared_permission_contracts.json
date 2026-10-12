@@ -1,8 +1,5 @@
 {
-  "ownerPaths": [
-    "src/shared/acp-permission-contract.ts",
-    "src/shared/permission-profiles.ts"
-  ],
+  "ownerPaths": ["src/shared/acp-permission-contract.ts", "src/shared/permission-profiles.ts"],
   "interfacePaths": [
     "src/shared/acp-permission-contract.ts",
     "src/shared/acp.ts",
@@ -41,9 +38,7 @@
   ],
   "testFiles": {
     "owner": [],
-    "contract": [
-      "src/shared/session-persistence.architecture.test.ts"
-    ],
+    "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": [
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",

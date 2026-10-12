@@ -9,9 +9,7 @@
     "src/renderer/src/pages/workspace/PreviewProvenanceSplit.tsx"
   ],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
-    ],
+    "owner": ["src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"],
     "contract": [],
     "consumer": [
       "src/main/literature/library-tool-contracts.test.ts",

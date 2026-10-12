@@ -9,9 +9,7 @@
     "src/renderer/web/raw-imports.d.ts",
     "src/renderer/web/renderer-argument-shape-characterization.test.ts"
   ],
-  "interfacePaths": [
-    "src/renderer/web/api-installer.ts"
-  ],
+  "interfacePaths": ["src/renderer/web/api-installer.ts"],
   "consumerModules": [],
   "testFiles": {
     "owner": [

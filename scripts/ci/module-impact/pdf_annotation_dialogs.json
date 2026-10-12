@@ -1,7 +1,5 @@
 {
-  "ownerPaths": [
-    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
-  ],
+  "ownerPaths": ["src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
   ],
@@ -1075,8 +1073,6 @@
     "project_lifecycle",
     "workspace_previews"
   ],
-  "capabilityOverlays": [
-    "e2e_regressions"
-  ],
+  "capabilityOverlays": ["e2e_regressions"],
   "fallbackCapability": "main_runtime"
 }

@@ -1,15 +1,8 @@
 {
-  "ownerPaths": [
-    "src/main/wsl/wsl2-preview-gate.test.ts",
-    "src/main/wsl/wsl2-preview-gate.ts"
-  ],
-  "interfacePaths": [
-    "src/main/wsl/wsl2-preview-gate.ts"
-  ],
+  "ownerPaths": ["src/main/wsl/wsl2-preview-gate.test.ts", "src/main/wsl/wsl2-preview-gate.ts"],
+  "interfacePaths": ["src/main/wsl/wsl2-preview-gate.ts"],
   "testFiles": {
-    "owner": [
-      "src/main/wsl/wsl2-preview-gate.test.ts"
-    ],
+    "owner": ["src/main/wsl/wsl2-preview-gate.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -226,10 +219,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

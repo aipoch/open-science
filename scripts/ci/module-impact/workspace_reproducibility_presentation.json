@@ -41,9 +41,7 @@
     "src/shared/artifact-reproducibility.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx"
-    ],
+    "owner": ["src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx"],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/ipc.test.ts",
@@ -474,13 +472,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "session_persistence"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["session_persistence"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

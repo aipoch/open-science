@@ -76,11 +76,7 @@
       "src/main/session-diagnostics/projection.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "shared_contract",
   "fullTestReason": "Shared logging and redaction have cross-process and dynamic consumers; retain complete validation when common diagnostic implementation changes."
 }

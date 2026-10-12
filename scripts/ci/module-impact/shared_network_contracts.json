@@ -1,7 +1,5 @@
 {
-  "ownerPaths": [
-    "src/shared/mirror.ts"
-  ],
+  "ownerPaths": ["src/shared/mirror.ts"],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",
     "src/shared/activity-groups.ts",

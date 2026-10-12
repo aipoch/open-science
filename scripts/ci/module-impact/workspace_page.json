@@ -180,8 +180,6 @@
       "src/renderer/src/pages/workspace/use-side-chat-controller.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

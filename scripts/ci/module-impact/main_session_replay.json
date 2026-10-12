@@ -164,9 +164,6 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

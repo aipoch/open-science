@@ -473,11 +473,7 @@
     "packages/pdf-translation/src/resources.ts",
     "packages/pdf-translation/test/paths.ts"
   ],
-  "consumerModules": [
-    "main_literature",
-    "workspace_previews",
-    "shared_application_contracts"
-  ],
+  "consumerModules": ["main_literature", "workspace_previews", "shared_application_contracts"],
   "testFiles": {
     "owner": [
       "packages/pdf-translation/test/actual-text.test.ts",
@@ -548,9 +544,7 @@
       "packages/pdf-translation/test/workflow.test.ts",
       "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts"
     ],
-    "contract": [
-      "scripts/pdf-package-fixtures.test.ts"
-    ],
+    "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [
       "scripts/pdf-translation-corpus.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",

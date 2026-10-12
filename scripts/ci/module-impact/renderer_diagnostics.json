@@ -3,13 +3,9 @@
     "src/renderer/src/renderer-diagnostics.test.ts",
     "src/renderer/src/renderer-diagnostics.ts"
   ],
-  "interfacePaths": [
-    "src/renderer/src/renderer-diagnostics.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/renderer-diagnostics.ts"],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/renderer-diagnostics.test.ts"
-    ],
+    "owner": ["src/renderer/src/renderer-diagnostics.test.ts"],
     "contract": [],
     "consumer": [
       "src/main/renderer-diagnostics.test.ts",
@@ -148,9 +144,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "renderer_hooks"
-  ],
+  "consumerModules": ["renderer_hooks"],
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view"
 }

@@ -5,15 +5,10 @@
     "src/renderer/src/i18n/resources.ts",
     "src/renderer/src/i18n/resources.test.ts"
   ],
-  "interfacePaths": [
-    "src/renderer/src/i18n/resources.ts",
-    "src/renderer/src/i18n/index.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/i18n/resources.ts", "src/renderer/src/i18n/index.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/i18n/resources.test.ts"
-    ],
+    "owner": ["src/renderer/src/i18n/resources.test.ts"],
     "contract": [],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",
@@ -244,8 +239,6 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
-  "capabilityOverlays": [
-    "i18n_catalog"
-  ],
+  "capabilityOverlays": ["i18n_catalog"],
   "fallbackCapability": "renderer_view"
 }

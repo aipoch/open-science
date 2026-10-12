@@ -271,9 +271,6 @@
       "src/renderer/src/stores/session-replay-store.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "renderer_view"
 }

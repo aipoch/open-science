@@ -9,9 +9,7 @@
     "src/renderer/src/office-preview/office-preview-runtime.ts",
     "src/renderer/src/office-preview/office-preview.css"
   ],
-  "interfacePaths": [
-    "src/renderer/src/office-preview/office-preview-runtime.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/office-preview/office-preview-runtime.ts"],
   "consumerModules": [],
   "testFiles": {
     "owner": [
@@ -20,9 +18,7 @@
       "src/renderer/src/office-preview/office-preview-runtime.test.ts"
     ],
     "contract": [],
-    "consumer": [
-      "src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts"
-    ]
+    "consumer": ["src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts"]
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view"

@@ -43,9 +43,7 @@
     "src/shared/artifact-reproducibility.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/managed-file-versions/version-file-operator.test.ts"
-    ],
+    "owner": ["src/main/managed-file-versions/version-file-operator.test.ts"],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/ipc.test.ts",
@@ -480,13 +478,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "session_persistence"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["session_persistence"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

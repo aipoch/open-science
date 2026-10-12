@@ -14,10 +14,7 @@
     "src/main/reviewer/submission-limits.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/reviewer/repository.test.ts",
-      "src/main/reviewer/review-json.test.ts"
-    ],
+    "owner": ["src/main/reviewer/repository.test.ts", "src/main/reviewer/review-json.test.ts"],
     "contract": [
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -616,10 +613,6 @@
     "workspace_page",
     "workspace_runtime"
   ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

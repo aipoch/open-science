@@ -48,9 +48,7 @@
       "src/renderer/src/stores/session-store-compaction-gate.test.ts",
       "src/renderer/src/stores/session-store-attention.test.ts"
     ],
-    "contract": [
-      "src/shared/session-persistence.test.ts"
-    ],
+    "contract": ["src/shared/session-persistence.test.ts"],
     "consumer": [
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/main/session-persistence/usage-regressions.test.ts",
@@ -367,8 +365,6 @@
       "src/renderer/src/stores/specialist-store.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

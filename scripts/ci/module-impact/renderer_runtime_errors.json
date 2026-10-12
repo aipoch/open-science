@@ -1,15 +1,9 @@
 {
-  "ownerPaths": [
-    "src/renderer/src/lib/acp/workspace-operation-error.ts"
-  ],
-  "interfacePaths": [
-    "src/renderer/src/lib/acp/workspace-operation-error.ts"
-  ],
+  "ownerPaths": ["src/renderer/src/lib/acp/workspace-operation-error.ts"],
+  "interfacePaths": ["src/renderer/src/lib/acp/workspace-operation-error.ts"],
   "testFiles": {
     "owner": [],
-    "contract": [
-      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"
-    ],
+    "contract": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
@@ -141,11 +135,7 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
-  "consumerModules": [
-    "workspace_page"
-  ],
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "consumerModules": ["workspace_page"],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

@@ -3,14 +3,10 @@
     "src/renderer/src/i18n/locale-loader.lazy.test.ts",
     "src/renderer/src/i18n/locale-loader.ts"
   ],
-  "interfacePaths": [
-    "src/renderer/src/i18n/locale-loader.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/i18n/locale-loader.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/i18n/locale-loader.lazy.test.ts"
-    ],
+    "owner": ["src/renderer/src/i18n/locale-loader.lazy.test.ts"],
     "contract": [],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",

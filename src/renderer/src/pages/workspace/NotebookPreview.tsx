@@ -51,13 +51,13 @@ import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
 import { shouldProvisionR } from './lazy-r'
 import {
+  resolveRunErrorLine,
   environmentLabel,
   isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
   notebookRunStatusLabel,
   resolveRunEnvironment,
-  resolveRunErrorLine,
   resolveRunKernelKind
 } from './notebook-cell-utils'
 import { NotebookCodeBlock } from './notebook-code'

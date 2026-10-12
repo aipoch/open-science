@@ -62,9 +62,7 @@
     "test/runtime-metadata.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/local-rpc-transport.test.ts"
-    ],
+    "owner": ["src/main/local-rpc-transport.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -985,10 +983,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

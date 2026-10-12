@@ -1,16 +1,9 @@
 {
-  "ownerPaths": [
-    "src/main/net/network-info.test.ts",
-    "src/main/net/network-info.ts"
-  ],
-  "interfacePaths": [
-    "src/main/net/network-info.ts"
-  ],
+  "ownerPaths": ["src/main/net/network-info.test.ts", "src/main/net/network-info.ts"],
+  "interfacePaths": ["src/main/net/network-info.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/net/network-info.test.ts"
-    ],
+    "owner": ["src/main/net/network-info.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -383,10 +376,6 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

@@ -1,15 +1,8 @@
 {
-  "ownerPaths": [
-    "src/main/compute/skill-doc.test.ts",
-    "src/main/compute/skill-doc.ts"
-  ],
-  "interfacePaths": [
-    "src/main/compute/skill-doc.ts"
-  ],
+  "ownerPaths": ["src/main/compute/skill-doc.test.ts", "src/main/compute/skill-doc.ts"],
+  "interfacePaths": ["src/main/compute/skill-doc.ts"],
   "testFiles": {
-    "owner": [
-      "src/main/compute/skill-doc.test.ts"
-    ],
+    "owner": ["src/main/compute/skill-doc.test.ts"],
     "contract": [
       "src/main/application-command-composition.test.ts",
       "src/main/compute/application-commands.test.ts",
@@ -483,13 +476,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "consumerModules": [
-    "workspace_page"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["workspace_page"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

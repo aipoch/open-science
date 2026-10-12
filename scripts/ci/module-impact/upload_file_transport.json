@@ -9,9 +9,7 @@
     "src/main/uploads/storage-helpers.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/uploads/atomic-no-replace-publisher.test.ts"
-    ],
+    "owner": ["src/main/uploads/atomic-no-replace-publisher.test.ts"],
     "contract": [
       "src/main/uploads/command-owner.test.ts",
       "src/main/uploads/ipc.test.ts",
@@ -553,13 +551,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "consumerModules": [
-    "session_persistence"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["session_persistence"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

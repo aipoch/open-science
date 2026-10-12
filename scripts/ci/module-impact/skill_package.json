@@ -86,10 +86,7 @@
     "packages/skills/src/sources.ts",
     "packages/skills/src/projection.ts"
   ],
-  "consumerModules": [
-    "user_skills_repository",
-    "skill_marketplace"
-  ],
+  "consumerModules": ["user_skills_repository", "skill_marketplace"],
   "testFiles": {
     "owner": [
       "packages/skills/src/agent-home-skill-catalog.test.ts",
@@ -1350,10 +1347,6 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

@@ -10,9 +10,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/renderer/src/components/app-icons/registry.test.ts"
-    ],
+    "owner": ["src/renderer/src/components/app-icons/registry.test.ts"],
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",

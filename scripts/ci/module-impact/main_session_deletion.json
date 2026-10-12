@@ -1,16 +1,9 @@
 {
-  "ownerPaths": [
-    "src/main/session-deletion/owner.test.ts",
-    "src/main/session-deletion/owner.ts"
-  ],
-  "interfacePaths": [
-    "src/main/session-deletion/owner.ts"
-  ],
+  "ownerPaths": ["src/main/session-deletion/owner.test.ts", "src/main/session-deletion/owner.ts"],
+  "interfacePaths": ["src/main/session-deletion/owner.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/session-deletion/owner.test.ts"
-    ],
+    "owner": ["src/main/session-deletion/owner.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -26,10 +19,6 @@
       "src/main/session-persistence/ipc.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

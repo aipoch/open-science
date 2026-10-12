@@ -1,8 +1,5 @@
 {
-  "ownerPaths": [
-    "src/main/mac-installation.test.ts",
-    "src/main/mac-installation.ts"
-  ],
+  "ownerPaths": ["src/main/mac-installation.test.ts", "src/main/mac-installation.ts"],
   "interfacePaths": [
     "build/node-runtime.json",
     "scripts/stage-node-runtime.mjs",
@@ -61,9 +58,7 @@
     "test/runtime-metadata.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/mac-installation.test.ts"
-    ],
+    "owner": ["src/main/mac-installation.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -984,10 +979,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

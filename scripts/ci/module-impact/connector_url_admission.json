@@ -3,14 +3,10 @@
     "packages/connector-core/src/url-admission.test.ts",
     "packages/connector-core/src/url-admission.ts"
   ],
-  "interfacePaths": [
-    "packages/connector-core/src/url-admission.ts"
-  ],
+  "interfacePaths": ["packages/connector-core/src/url-admission.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "packages/connector-core/src/url-admission.test.ts"
-    ],
+    "owner": ["packages/connector-core/src/url-admission.test.ts"],
     "contract": [],
     "consumer": [
       "packages/connector-mcp-client/src/client-manager.test.ts",

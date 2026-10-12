@@ -19,9 +19,7 @@
     "src/main/side-chat/application-commands.ts",
     "src/main/side-chat/command-owner.ts"
   ],
-  "consumerModules": [
-    "desktop_composition"
-  ],
+  "consumerModules": ["desktop_composition"],
   "testFiles": {
     "owner": [
       "src/main/side-chat/ipc.test.ts",
@@ -189,10 +187,6 @@
       "src/main/side-chat/host-message-mcp-server.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

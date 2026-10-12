@@ -1082,8 +1082,6 @@
     "project_lifecycle",
     "workspace_previews"
   ],
-  "capabilityOverlays": [
-    "e2e_regressions"
-  ],
+  "capabilityOverlays": ["e2e_regressions"],
   "fallbackCapability": "main_runtime"
 }

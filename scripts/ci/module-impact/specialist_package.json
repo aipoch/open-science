@@ -54,13 +54,8 @@
     "packages/specialists/tsconfig.test.json",
     "packages/specialists/vitest.config.ts"
   ],
-  "interfacePaths": [
-    "packages/specialists/src/index.ts",
-    "packages/specialists/src/node.ts"
-  ],
-  "consumerModules": [
-    "main_specialist"
-  ],
+  "interfacePaths": ["packages/specialists/src/index.ts", "packages/specialists/src/node.ts"],
+  "consumerModules": ["main_specialist"],
   "testFiles": {
     "owner": [
       "packages/specialists/src/builtin-registry.test.ts",
@@ -671,10 +666,6 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

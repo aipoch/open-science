@@ -1,7 +1,5 @@
 {
-  "ownerPaths": [
-    "src/shared/acp-image-contract.ts"
-  ],
+  "ownerPaths": ["src/shared/acp-image-contract.ts"],
   "interfacePaths": [
     "src/shared/acp-image-contract.ts",
     "src/shared/acp.ts",
@@ -40,9 +38,7 @@
   ],
   "testFiles": {
     "owner": [],
-    "contract": [
-      "src/shared/session-persistence.architecture.test.ts"
-    ],
+    "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": [
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",

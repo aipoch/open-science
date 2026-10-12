@@ -45,9 +45,7 @@
     "src/main/notebook/working-file-observer.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/notebook/input-registry.test.ts"
-    ],
+    "owner": ["src/main/notebook/input-registry.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -556,9 +554,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

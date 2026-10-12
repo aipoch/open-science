@@ -3,13 +3,9 @@
     "src/main/side-chat/host-message-mcp-server.test.ts",
     "src/main/side-chat/host-message-mcp-server.ts"
   ],
-  "interfacePaths": [
-    "src/main/side-chat/host-message-mcp-server.ts"
-  ],
+  "interfacePaths": ["src/main/side-chat/host-message-mcp-server.ts"],
   "testFiles": {
-    "owner": [
-      "src/main/side-chat/host-message-mcp-server.test.ts"
-    ],
+    "owner": ["src/main/side-chat/host-message-mcp-server.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -830,13 +826,7 @@
       "test/config/electron.vite.config.test.ts"
     ]
   },
-  "consumerModules": [
-    "desktop_composition"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["desktop_composition"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
