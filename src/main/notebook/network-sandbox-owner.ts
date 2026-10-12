@@ -408,8 +408,6 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         runtimePreparation: this.windowsRuntime?.progress
       })
     if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
-    if (settings?.windowsProtectionEnabled === false)
-      return this.recordStatus({ kind: 'standard' })
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
     } catch (error) {
@@ -418,6 +416,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         diagnosticErrorFields(error)
       )
     }
+    if (settings?.windowsProtectionEnabled === false)
+      return this.recordStatus({ kind: 'standard' })
     try {
       assertProcessTreeSupport(this.platform)
       const status = presentStatus(await this.getOrCreateSandbox().status(this.platform))

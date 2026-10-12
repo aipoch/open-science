@@ -1163,6 +1163,28 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   })
 
+  it('keeps standard status honest when the configured trust bundle is invalid', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      getCaBundlePath: async () => join(tmpdir(), 'missing-notebook-ca-bundle.pem'),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'error',
+        reason: 'trustBundleInvalid'
+      })
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   it('keeps protected mode setup-required until protection is actually installed', async () => {
     backend.status.mockResolvedValue({
       kind: 'setupRequired',
