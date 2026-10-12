@@ -21,6 +21,8 @@ import {
 import { createFrameNotebookLane } from './notebook/lane-identity'
 import { connectToDesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
+import { createAcpRuntimeEventBroadcastCoalescer } from './acp/runtime-event-broadcast-coalescer'
+import { toAcpRuntimeEvent } from './acp/runtime-events'
 
 const diagnostics = vi.hoisted(() => ({ warn: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', () => ({
@@ -303,4 +305,49 @@ it('isolates large Notebook and JSON-escaped file results amid mixed desktop com
     channel: 'settings:get'
   })
   expect(onDisconnect).not.toHaveBeenCalled()
+})
+
+it('delivers a burst of normalized agent text without dropping the shared desktop connection', async () => {
+  const events = new ApplicationEventHub()
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    events,
+    commands: { commandNames: () => ['projects:list'], invoke: async () => [] }
+  })
+  cleanups.push(server.close)
+  const delivered: string[] = []
+  const client = await connectDesktopRuntime({
+    endpoint: server.endpoint,
+    onEvent: (event) => {
+      if (event.channel === 'acp:event')
+        delivered.push(...(event.payload as Array<{ id: string }>).map(({ id }) => id))
+    },
+    onDisconnect: vi.fn()
+  })
+  cleanups.push(client.close)
+  const coalescer = createAcpRuntimeEventBroadcastCoalescer({
+    publish: (batch) => events.publish('acp:event', batch)
+  })
+  const chunks = Array.from({ length: 130 }, (_, index) =>
+    toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'x'.repeat(64 * 1024) }
+        }
+      },
+      `event-${index}`,
+      index + 1
+    )
+  )
+  // An already-buffered provider burst enters synchronously before the presentation timer fires.
+  for (const chunk of chunks) coalescer.enqueue(chunk)
+  coalescer.flush()
+  const result = await client.invoke(randomUUID(), 'projects:list', []).then(
+    () => 'available',
+    (error: Error) => error.message
+  )
+  expect(result, JSON.stringify(diagnostics.warn.mock.calls)).toBe('available')
+  expect(delivered).toEqual(chunks.map(({ id }) => id))
 })

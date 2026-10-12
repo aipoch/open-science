@@ -5,6 +5,8 @@ const EVENT_BROADCAST_INTERVAL_MS = 33
 // midway through that window so every prefix chunk reaches subscribers before bounded history can
 // evict it, while ordinary streams still receive the same frame-level coalescing.
 const MAX_COALESCED_BROADCAST_EVENTS = Math.floor(MAX_ACP_RUNTIME_EVENTS / 2)
+// Leave room for the event envelope in the 16 MiB desktop/Web transport frame.
+const MAX_COALESCED_BROADCAST_BYTES = 8 * 1024 * 1024
 
 type AcpRuntimeEventBroadcastCoalescerOptions = Readonly<{
   publish: (events: readonly AcpRuntimeEvent[]) => void
@@ -34,6 +36,7 @@ const createAcpRuntimeEventBroadcastCoalescer = (
   flush: () => void
 } => {
   const pending: AcpRuntimeEvent[] = []
+  let pendingBytes = 2 // JSON array brackets
   let cancelScheduled: (() => void) | undefined
 
   const flush = (): void => {
@@ -41,6 +44,7 @@ const createAcpRuntimeEventBroadcastCoalescer = (
     cancelScheduled = undefined
     if (pending.length === 0) return
     const events = pending.splice(0, pending.length)
+    pendingBytes = 2
     options.publish(events)
   }
 
@@ -52,8 +56,15 @@ const createAcpRuntimeEventBroadcastCoalescer = (
 
   return {
     enqueue(event) {
+      const eventBytes = Buffer.byteLength(JSON.stringify(event), 'utf8')
+      if (pendingBytes + eventBytes + 1 > MAX_COALESCED_BROADCAST_BYTES) flush()
       pending.push(event)
-      if (isImmediateBroadcastEvent(event) || pending.length >= MAX_COALESCED_BROADCAST_EVENTS) {
+      pendingBytes += eventBytes + (pending.length > 1 ? 1 : 0)
+      if (
+        isImmediateBroadcastEvent(event) ||
+        pending.length >= MAX_COALESCED_BROADCAST_EVENTS ||
+        pendingBytes >= MAX_COALESCED_BROADCAST_BYTES
+      ) {
         flush()
         return
       }
@@ -66,6 +77,7 @@ const createAcpRuntimeEventBroadcastCoalescer = (
 export {
   EVENT_BROADCAST_INTERVAL_MS,
   MAX_COALESCED_BROADCAST_EVENTS,
+  MAX_COALESCED_BROADCAST_BYTES,
   createAcpRuntimeEventBroadcastCoalescer
 }
 export type { AcpRuntimeEventBroadcastCoalescerOptions }
