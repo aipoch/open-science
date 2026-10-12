@@ -13,7 +13,10 @@ import { analyzePythonNotebookSource, analyzePythonSources } from './dependency-
 import { analyzeRNotebookSource, analyzeRSources } from './dependency-analysis-r'
 import { projectNotebookDependencies } from './dependency-projection'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
-import { normalizeNotebookSourceFileAccess } from './source-file-access-analysis'
+import {
+  analyzeNotebookSourceFileAccess,
+  normalizeNotebookSourceFileAccess
+} from './source-file-access-analysis'
 import type {
   NotebookDependencyTypeSummary,
   NotebookRunDependencyFacts
@@ -33,7 +36,11 @@ const prependFunctionBody = (source: string, statements: string): string => {
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, maxRetries: 5, retryDelay: 100 }))
+  )
 })
 
 const completedRun = (
@@ -92,6 +99,296 @@ const projectScripts = async (
   if (!projection) throw new Error('projectScripts requires at least one script')
   return projection
 }
+
+describe('R file wrapper identity in statement order', () => {
+  // Handwritten controls for the sealed native wrapper diagnosis, not new Agent science.
+  const reader = 'reader <- function(path) utils::read.csv(path)'
+  const writer = 'writer <- function(path) base::writeLines("done", con=path)'
+
+  it.each([
+    [
+      'reader redefinition',
+      reader,
+      'reader <- function(path) NULL',
+      'reader("inputs/obsolete.csv")'
+    ],
+    [
+      'reader body replacement',
+      reader,
+      'body(reader) <- quote(NULL)',
+      'reader("inputs/obsolete.csv")'
+    ],
+    ['reader identity assignment', reader, 'reader <- identity', 'reader("inputs/obsolete.csv")'],
+    ['reader rightward assignment', reader, 'identity -> reader', 'reader("inputs/obsolete.csv")'],
+    ['reader parent assignment', reader, 'reader <<- identity', 'reader("inputs/obsolete.csv")'],
+    [
+      'writer redefinition',
+      writer,
+      'writer <- function(path) NULL',
+      'writer("outputs/obsolete.txt")'
+    ],
+    [
+      'reader formal replacement',
+      reader,
+      'formals(reader) <- alist(unused=, path=, last=)',
+      'reader("inputs/decoy.csv", "inputs/actual.csv", 0)'
+    ]
+  ])('discards the obsolete file contract after %s', async (_name, setup, replacement, call) => {
+    const result = await analyzeRNotebookSource(`${setup}\n${replacement}\nresult <- ${call}`)
+    expect(result.fileAccess?.reads).toEqual([])
+    expect(result.fileAccess?.writes).toEqual([])
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([])
+  })
+
+  it('retains an earlier input and exports only a later stable restoration', async () => {
+    const result = await analyzeRNotebookSource(
+      `${reader}\nfirst <- reader("inputs/earlier.csv")\nreader <- identity\n` +
+        'ignored <- reader("inputs/obsolete.csv")\n' +
+        `${reader}\nlast <- reader("inputs/restored.csv")`
+    )
+    expect(result.fileAccess?.reads).toEqual(['inputs/earlier.csv', 'inputs/restored.csv'])
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([
+      expect.objectContaining({ name: 'reader', kind: 'read' })
+    ])
+  })
+
+  it('retains an earlier output without exporting its replaced writer', async () => {
+    const result = await analyzeRNotebookSource(
+      `${writer}\nwriter("outputs/earlier.txt")\nwriter <- function(path) NULL\n` +
+        'writer("outputs/obsolete.txt")'
+    )
+    expect(result.fileAccess?.writes).toEqual(['outputs/earlier.txt'])
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([])
+  })
+
+  it('uses the incoming reader before a same-cell replacement at the public boundary', async () => {
+    const initial = await analyzeRNotebookSource(reader)
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'first <- reader("inputs/earlier.csv")\nreader <- function(path) NULL\n' +
+        'last <- reader("inputs/obsolete.csv")',
+      initial.fileAccess?.context
+    )
+    expect(result.reads).toEqual(['inputs/earlier.csv'])
+  })
+
+  it('visits the old reader on the RHS before replacing its binding', async () => {
+    const result = await analyzeRNotebookSource(
+      `${reader}\nreader <- reader("inputs/earlier.csv")\nreader("inputs/obsolete.csv")`
+    )
+    expect(result.fileAccess?.reads).toEqual(['inputs/earlier.csv'])
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([])
+  })
+
+  it('preserves a first-formal writer path with a later named option', async () => {
+    const result = await analyzeRNotebookSource(
+      'cat <- function(file, append) writeLines("done", file)\n' +
+        'cat("outputs/report.txt", append=TRUE)'
+    )
+    expect(normalizeNotebookSourceFileAccess('r', result.facts, result.fileAccess)).toMatchObject({
+      reads: [],
+      writes: ['outputs/report.txt'],
+      writeState: 'complete'
+    })
+  })
+
+  it('does not guess the first writer formal when its partial name is supplied', async () => {
+    const result = await analyzeRNotebookSource(
+      'cat <- function(file, append) writeLines("done", file)\n' +
+        'cat(f="outputs/actual.txt", "outputs/decoy.txt")'
+    )
+    expect(normalizeNotebookSourceFileAccess('r', result.facts, result.fileAccess)).toMatchObject({
+      reads: [],
+      writes: [],
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    [
+      'a primitive replaced before declaration',
+      'writeLines <- function(...) NULL\nwriter <- function(path) writeLines("done", con=path)'
+    ],
+    [
+      'a redeclaration after its primitive was replaced',
+      'writer <- function(path) writeLines("done", con=path)\n' +
+        'writeLines <- function(...) NULL\nwriter <- function(path) writeLines("done", con=path)'
+    ]
+  ])('does not reactivate a writer contract through %s', async (_label, setup) => {
+    const result = await analyzeRNotebookSource(`${setup}\nwriter("outputs/obsolete.txt")`)
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([])
+    expect(normalizeNotebookSourceFileAccess('r', result.facts, result.fileAccess)).toMatchObject({
+      writes: [],
+      writeState: 'partial'
+    })
+  })
+
+  it('retains an explicit base writer despite replacement of its unqualified name', async () => {
+    const result = await analyzeRNotebookSource(
+      'writeLines <- function(...) NULL\n' + `${writer}\nwriter("outputs/actual.txt")`
+    )
+    expect(result.fileAccess?.writes).toEqual(['outputs/actual.txt'])
+    expect(result.fileAccess?.context.localFileWrappers).toEqual([
+      expect.objectContaining({ name: 'writer', kind: 'write' })
+    ])
+  })
+
+  it.each([
+    ['reader', 'utils::read.csv(path)', 'inputs'],
+    ['writer', 'base::writeLines("done", con=path)', 'outputs']
+  ])(
+    'does not guess a %s path after named arguments consume later formals',
+    async (name, body, directory) => {
+      const result = await analyzeRNotebookSource(
+        `${name} <- function(unused, path, last) ${body}\n` +
+          `${name}(last=0, "${directory}/decoy.csv", "${directory}/actual.csv")`
+      )
+      expect(normalizeNotebookSourceFileAccess('r', result.facts, result.fileAccess)).toMatchObject(
+        {
+          reads: [],
+          writes: [],
+          externalState: 'partial',
+          ...(name === 'reader' ? { readState: 'partial' } : { writeState: 'partial' })
+        }
+      )
+    }
+  )
+
+  it.each([
+    [
+      'ordinary positional reader',
+      'reader',
+      'utils::read.csv(path)',
+      'reader(0, "inputs/actual.csv", 0)',
+      ['inputs/actual.csv'],
+      []
+    ],
+    [
+      'exact named reader',
+      'reader',
+      'utils::read.csv(path)',
+      'reader(path="inputs/actual.csv", last=0, unused=0)',
+      ['inputs/actual.csv'],
+      []
+    ],
+    [
+      'ordinary positional writer',
+      'writer',
+      'base::writeLines("done", con=path)',
+      'writer(0, "outputs/actual.txt", 0)',
+      [],
+      ['outputs/actual.txt']
+    ],
+    [
+      'exact named writer',
+      'writer',
+      'base::writeLines("done", con=path)',
+      'writer(path="outputs/actual.txt", last=0, unused=0)',
+      [],
+      ['outputs/actual.txt']
+    ]
+  ])('preserves the %s contract', async (_label, name, body, call, reads, writes) => {
+    const result = await analyzeRNotebookSource(
+      `${name} <- function(unused, path, last) ${body}\n${call}`
+    )
+    expect(result.fileAccess?.reads).toEqual(reads)
+    expect(result.fileAccess?.writes).toEqual(writes)
+  })
+})
+
+describe('Python annotation-only source I/O preservation', () => {
+  it.each([
+    [
+      'module identity',
+      'import numpy as np\nnp: object',
+      'np.genfromtxt("inputs/observations.csv")'
+    ],
+    [
+      'reader identity',
+      'from numpy import genfromtxt as reader\nreader: object',
+      'reader("inputs/observations.csv")'
+    ],
+    [
+      'static path',
+      'import numpy as np\npath = "inputs/observations.csv"\npath: str',
+      'np.genfromtxt(path)'
+    ]
+  ])('keeps the known input through an annotation-only %s', async (_, setup, read) => {
+    const { fileAccess } = await analyzePythonNotebookSource(`${setup}\narray = ${read}`)
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+  })
+
+  it('keeps module and path evidence for both input and output', async () => {
+    const source =
+      'import numpy as np\npath = "inputs/observations.csv"\n' +
+      'np: object\npath: str\narray = np.genfromtxt(path)\n' +
+      'np.savetxt("outputs/observations.csv", array)'
+    const { fileAccess } = await analyzePythonNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+    expect(fileAccess?.writes).toEqual(['outputs/observations.csv'])
+    expect(fileAccess?.context?.pythonBindings).toContainEqual(
+      expect.objectContaining({ name: 'np', qualifiedName: 'numpy' })
+    )
+    expect(fileAccess?.context?.staticStrings).toContainEqual({
+      name: 'path',
+      value: 'inputs/observations.csv'
+    })
+  })
+
+  it('uses the replacement path after a real annotated assignment', async () => {
+    const { fileAccess } = await analyzePythonNotebookSource(
+      'import numpy as np\npath = "inputs/old.csv"\n' +
+        'path: str = "inputs/observations.csv"\narray = np.genfromtxt(path)'
+    )
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+  })
+
+  it('does not erase a real path rebind within an annotation expression', async () => {
+    const { fileAccess } = await analyzePythonNotebookSource(
+      'import numpy as np\npath = "inputs/old.csv"\n' +
+        'path: (path := "inputs/observations.csv")\narray = np.genfromtxt(path)'
+    )
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+  })
+
+  it.each(['np', 'path'])(
+    'does not borrow a global for an unbound function-local annotation-only %s',
+    async (name) => {
+      const { fileAccess } = await analyzePythonNotebookSource(
+        'import numpy as np\npath = "inputs/global.csv"\n' +
+          `def read_values():\n    ${name}: object\n    values = np.loadtxt(path)\n    return values\n` +
+          'result = read_values()'
+      )
+      expect(fileAccess?.reads ?? []).not.toContain('inputs/global.csv')
+      expect(fileAccess?.unresolvedReads).toBe(true)
+    }
+  )
+
+  it('retains an assigned function-local path beside its annotation-only declaration', async () => {
+    const { fileAccess } = await analyzePythonNotebookSource(
+      'import numpy as np\npath = "inputs/global.csv"\n' +
+        'def read_values():\n    path = "inputs/local.csv"\n    path: str\n' +
+        '    values = np.loadtxt(path)\n    return values\nresult = read_values()'
+    )
+    expect(fileAccess?.reads).toEqual(['inputs/local.csv'])
+  })
+
+  it('keeps partial callback I/O after recovering an annotation-only reader identity', async () => {
+    const { facts, fileAccess } = await analyzePythonNotebookSource(
+      'import numpy as np\nOFFSET = 2.\ndef convert(value): return float(value) + OFFSET\n' +
+        'np: object\narray = np.genfromtxt("inputs/observations.csv", converters={0: convert})\n' +
+        'np.savetxt("outputs/observations.csv", array)'
+    )
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+    expect(fileAccess?.writes).toEqual(['outputs/observations.csv'])
+    expect(facts.state).toBe('unknown')
+    expect(normalizeNotebookSourceFileAccess('python', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial'
+    })
+  })
+})
 
 it('links a local fsspec input into a downstream scientific cell', async () => {
   const projection = await projectScripts(
@@ -797,6 +1094,153 @@ it('does not reuse least_squares result semantics after rebinding', async () => 
       expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' })
     ])
   )
+})
+
+describe('conservative minimize objective and gradient captures', () => {
+  // Isolate the two-callback solver pattern observed in a real multi-cell fit.
+  // These analysis-only controls do not claim scientific execution or complete lineage.
+  const callbacks =
+    'def objective(beta):\n    return (beta[0] - objective_gain)**2\ndef gradient(beta):\n    return [2 * (beta[0] - gradient_gain)]'
+
+  it.each([
+    ['from scipy.optimize import minimize', 'minimize(fun=objective, x0=p0, jac=gradient)'],
+    ['from scipy.optimize import minimize as solve', 'solve(objective, p0, jac=gradient)'],
+    ['import scipy.optimize as opt', 'opt.minimize(objective, p0, (), "BFGS", gradient)']
+  ])('retains separate callback captures through %s', async (imports, call) => {
+    const projection = await projectScripts(
+      'python',
+      [
+        `${imports}\np0 = [0.]\nobjective_gain = 0.2\ngradient_gain = 0.4`,
+        callbacks,
+        `fit = ${call}`,
+        'gradient_gain = 0.7',
+        'objective_gain = 0.9'
+      ],
+      'notebook-minimize-captures-'
+    )
+    for (const [runId, name] of [
+      ['run-4', 'gradient_gain'],
+      ['run-5', 'objective_gain']
+    ]) {
+      expect(projection.invalidatedByRunId[runId]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'run-3', state: 'unknown', names: [name] })
+        ])
+      )
+    }
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['scoped-opaque-call', 'external-state'])
+    })
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+  })
+
+  it('uses the current gradient summary after callback replacement', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'from scipy.optimize import minimize\np0 = [0.]\nobjective_gain = 0.2\ngradient_gain = 0.4\nreplacement_gain = 0.6',
+        callbacks,
+        'def gradient(beta):\n    return [2 * (beta[0] - replacement_gain)]',
+        'fit = minimize(objective, p0, jac=gradient)',
+        'gradient_gain = 0.7',
+        'replacement_gain = 0.9'
+      ],
+      'notebook-minimize-replaced-gradient-'
+    )
+    expect(projection.invalidatedByRunId['run-5'] ?? []).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-4', names: ['gradient_gain'] })
+      ])
+    )
+    expect(projection.invalidatedByRunId['run-6']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-4', state: 'unknown', names: ['replacement_gain'] })
+      ])
+    )
+  })
+
+  it.each([
+    'minimize = replacement\nfit = minimize(objective, p0, jac=gradient)',
+    'import scipy.optimize as opt\nopt.minimize = replacement\nfit = opt.minimize(objective, p0, jac=gradient)'
+  ])('does not reuse a replaced minimize contract: %s', async (call) => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'from scipy.optimize import minimize\np0 = [0.]\nobjective_gain = 0.2\ngradient_gain = 0.4',
+        callbacks,
+        call,
+        'gradient_gain = 0.7'
+      ],
+      'notebook-minimize-shadowed-solver-'
+    )
+    const invalidation = projection.invalidatedByRunId['run-4']?.find(
+      (item) => item.runId === 'run-3'
+    )
+    expect(invalidation?.names ?? []).not.toContain('gradient_gain')
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+  })
+
+  it.each(['gradient', 'True', 'None', '"2-point"'])(
+    'keeps minimize opaque without certifying a return for jac=%s',
+    async (jac) => {
+      const [facts] = await analyzePythonSources([
+        `from scipy.optimize import minimize\n${callbacks}\nfit = minimize(objective, p0, jac=${jac}, args=extra, bounds=limits)\nparameters = fit.x`
+      ])
+      expect(facts.state).toBe('unknown')
+      if (facts.state !== 'unknown') throw new Error('minimize must remain conservative')
+      expect(facts.reasons).toEqual(
+        expect.arrayContaining(['scoped-opaque-call', 'external-state'])
+      )
+      for (const binding of [
+        { target: 'fit', typeName: 'scipy.optimize.OptimizeResult' },
+        { target: 'parameters', typeName: 'numpy.ndarray' }
+      ])
+        expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining(binding))
+    }
+  )
+
+  it('preserves possible mutation of every minimize argument without a definite result alias', async () => {
+    const setup =
+      'from scipy.optimize import minimize\np0 = [0.]\nextra = ([1.],)\nlimits = [(0., 1.)]\nobjective_gain = 0.2\ngradient_gain = 0.4'
+    const call = 'fit = minimize(objective, p0, jac=gradient, args=extra, bounds=limits)'
+    const projection = await projectScripts(
+      'python',
+      [`${setup}\n${callbacks}`, 'print(p0, extra, limits)', call],
+      'notebook-minimize-argument-mutation-'
+    )
+    expect(projection.invalidatedByRunId['run-3']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-2',
+          state: 'unknown',
+          names: expect.arrayContaining(['p0', 'extra', 'limits'])
+        })
+      ])
+    )
+    const [facts] = await analyzePythonSources([[setup, callbacks, call].join('\n')])
+    expect(facts.aliases ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'fit', kind: 'reference' })
+    )
+  })
+
+  it('does not treat an x0 callable value as the minimize gradient callback', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'from scipy.optimize import minimize\nobjective_gain = 0.2\ngradient_gain = 0.4',
+        callbacks,
+        'fit = minimize(objective, gradient, method="BFGS")',
+        'gradient_gain = 0.7'
+      ],
+      'notebook-minimize-data-argument-'
+    )
+    const invalidation = projection.invalidatedByRunId['run-4']?.find(
+      (item) => item.runId === 'run-3'
+    )
+    expect(invalidation?.names ?? []).not.toContain('gradient_gain')
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
 })
 
 it.each(['residuals, p0', 'fun=residuals, x0=p0'])(
@@ -5305,4 +5749,981 @@ describe('R integrate partial callback captures', () => {
       expect(facts.state).toBe('unknown')
     }
   })
+})
+
+// https://stat.ethz.ch/R-manual/R-patched/library/stats/html/optimize.html
+describe('R optimize opaque lexical captures', () => {
+  const captures = ['OFFSET_PATH', 'time_values', 'demand_values', 'read_offset']
+  const producer = [
+    'read_offset <- function(path) as.numeric(readLines(path, warn=FALSE)[1])',
+    'objective <- function(rate) {',
+    '  path <- OFFSET_PATH',
+    '  offset <- read_offset(path)',
+    '  basis <- 1 - exp(-rate * time_values)',
+    '  response <- demand_values + offset',
+    '  amplitude <- sum(response * basis) / sum(basis * basis)',
+    '  sum((response - amplitude * basis)^2)',
+    '}'
+  ].join('\n')
+
+  it.each([
+    ['slot zero', '', 'stats::optimize(objective, interval=c(0.1, 1))'],
+    ['exact f', '', 'stats::optimize(interval=c(0.1, 1), f=objective)'],
+    ['unshadowed bare solver', '', 'optimize(f=objective, interval=c(0.1, 1))'],
+    [
+      'qualified solver after a bare-name shadow',
+      'optimize <- function(...) 0',
+      'stats::optimize(objective, interval=c(0.1, 1))'
+    ]
+  ])('retains captures for %s without completing callback effects', async (_, prelude, call) => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      `${producer}\n${prelude}\nfit <- ${call}`
+    )
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.priorUsedNames).toEqual(
+      expect.arrayContaining(['OFFSET_PATH', 'time_values', 'demand_values'])
+    )
+    expect(facts.state).toBe('unknown')
+    if (facts.state === 'unknown') {
+      expect(facts.reasons).toEqual(expect.arrayContaining(['opaque-call', 'dynamic-namespace']))
+    }
+    expect(facts.safeCallNames ?? []).not.toContain('stats::optimize')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'fit' })])
+    )
+    expect(facts.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'fit', kind: 'reference' })])
+    )
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    ['missing f', 'stats::optimize(interval=c(0.1, 1))'],
+    ['wrong slot', 'stats::optimize(interval=c(0.1, 1), objective)'],
+    ['duplicate f', 'stats::optimize(f=objective, f=objective, interval=c(0.1, 1))'],
+    ['wrong namespace', 'other::optimize(objective, interval=c(0.1, 1))'],
+    ['private namespace', 'stats:::optimize(objective, interval=c(0.1, 1))'],
+    ['unregistered spelling', 'stats::optimise(objective, interval=c(0.1, 1))'],
+    ['solver alias', 'solver <- stats::optimize\nsolver(objective, interval=c(0.1, 1))'],
+    [
+      'shadowed bare solver',
+      'optimize <- function(...) 0\noptimize(objective, interval=c(0.1, 1))'
+    ],
+    [
+      'shadowed namespace operator',
+      '`::` <- function(...) 0\nstats::optimize(objective, interval=c(0.1, 1))'
+    ],
+    [
+      'rebound callback',
+      'objective <- function(rate) rate^2\nstats::optimize(objective, interval=c(0.1, 1))'
+    ],
+    [
+      'rebound callback dependency',
+      'exp <- function(ignored) 1\nstats::optimize(objective, interval=c(0.1, 1))'
+    ]
+  ])('does not borrow old captures for %s', async (_, call) => {
+    const { facts } = await analyzeRNotebookSource(`${producer}\n${call}`)
+    for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+    expect(facts.safeCallNames ?? []).not.toContain('stats::optimize')
+  })
+
+  it('keeps a nested optimizer callback deferred', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'outer <- function() stats::optimize(function(rate) rate + DEFERRED_CAPTURE, interval=c(0.1, 1))'
+    )
+    expect(facts.usedNames ?? []).not.toContain('DEFERRED_CAPTURE')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::optimize')
+  })
+})
+
+// https://stat.ethz.ch/R-manual/R-patched/library/stats/html/optim.html
+describe('R same-cell BFGS callback captures', () => {
+  // Reduced from a real multi-cell ridge fit; these are analysis-only controls.
+  // No direct callback diagnostic follows the solver and masks its slot selection.
+  const callbacks = [
+    'objective <- function(beta) {',
+    '  objective_count <<- objective_count + 1L',
+    '  residual <- response - X %*% beta',
+    '  sum(weights * residual^2) + regularization * FN_ONLY * sum(beta^2)',
+    '}',
+    'gradient <- function(beta) {',
+    '  gradient_count <<- gradient_count + 1L',
+    '  residual <- response - X %*% beta',
+    '  as.numeric(-2 * t(X) %*% (weights * residual) +',
+    '    2 * regularization * GR_ONLY * penalty_mask * beta)',
+    '}'
+  ].join('\n')
+  const captures = [
+    'response',
+    'X',
+    'weights',
+    'regularization',
+    'penalty_mask',
+    'FN_ONLY',
+    'GR_ONLY'
+  ]
+
+  it.each([
+    'stats::optim(par=0, fn=objective, gr=gradient, method="BFGS")',
+    'stats::optim(gr=gradient, method="BFGS", fn=objective, par=0)',
+    'optim(0, objective, gradient, method="BFGS")'
+  ])('retains both callback captures without certifying %s', async (call) => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(`${callbacks}\nfit <- ${call}`)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.usedNames).toEqual(expect.arrayContaining(['objective_count', 'gradient_count']))
+    expect(facts.state).toBe('unknown')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::optim')
+    expect(facts.safeCallNames ?? []).not.toContain('t')
+    expect(facts.safeCallNames ?? []).not.toContain('%*%')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.aliases ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'fit', kind: 'reference' })
+    )
+    expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining({ target: 'fit' }))
+    for (const summary of facts.typeSummaries?.filter((item) => item.kind === 'r-function') ?? []) {
+      expect(summary.methods[0]?.usedNames ?? []).toEqual([])
+      expect(summary.methods[0]?.safeCallNames).toBeUndefined()
+      expect(summary.methods[0]?.returnType).toBeUndefined()
+    }
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('reads the current objective before a solver result replaces its binding', async () => {
+    const call = 'stats::optim(0, fn=objective, method="BFGS")'
+    const control = await analyzeRNotebookSource(`${callbacks}\nfit <- ${call}`)
+    const rebound = await analyzeRNotebookSource(`${callbacks}\nobjective <- ${call}`)
+    const objectiveCaptures = ['response', 'X', 'weights', 'regularization', 'FN_ONLY']
+    expect(control.facts.usedNames).toEqual(expect.arrayContaining(objectiveCaptures))
+    expect(rebound.facts.usedNames).toEqual(expect.arrayContaining(objectiveCaptures))
+    expect(rebound.facts.priorUsedNames).toEqual(expect.arrayContaining(objectiveCaptures))
+    expect(rebound.facts.state).toBe('unknown')
+    expect(rebound.facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'objective' })
+    )
+    expect(normalizeNotebookSourceFileAccess('r', rebound.facts, rebound.fileAccess)).toMatchObject(
+      {
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    ['objective', 'objective = stats::optim(0, fn=objective, method="BFGS")'],
+    ['objective', 'stats::optim(0, fn=objective, method="BFGS") -> objective'],
+    ['gradient', 'gradient <- stats::optim(0, fn=objective, gr=gradient, method="BFGS")'],
+    ['gradient', 'gradient = stats::optim(gr=gradient, method="BFGS", fn=objective, par=0)'],
+    ['gradient', 'stats::optim(0, objective, gradient, method="BFGS") -> gradient']
+  ])(
+    'consumes %s before rebinding it and never exports its old authority: %s',
+    async (name, source) => {
+      const { facts } = await analyzeRNotebookSource(`${callbacks}\n${source}\nalias <- ${name}`)
+      const expected = name === 'gradient' ? captures : ['response', 'X', 'weights', 'FN_ONLY']
+      expect(facts.usedNames).toEqual(expect.arrayContaining(expected))
+      expect(facts.priorUsedNames).toEqual(expect.arrayContaining(expected))
+      expect(facts.state).toBe('unknown')
+      for (const target of [name, 'alias'])
+        expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining({ target }))
+    }
+  )
+
+  it.each([
+    ['duplicate callback', '', 'stats::optim(0, fn=objective, fn=objective, method="BFGS")'],
+    ['partial callback', '', 'stats::optim(0, f=objective, method="BFGS")'],
+    ['expanded arguments', '', 'stats::optim(0, fn=objective, method="BFGS", ...)'],
+    ['unsupported method', '', 'stats::optim(0, fn=objective, method="SANN")'],
+    ['solver alias', 'solver <- stats::optim', 'solver(0, fn=objective, method="BFGS")'],
+    ['shadowed bare solver', 'optim <- function(...) 0', 'optim(0, fn=objective, method="BFGS")'],
+    [
+      'shadowed namespace operator',
+      '`::` <- function(...) 0',
+      'stats::optim(0, fn=objective, method="BFGS")'
+    ]
+  ])('does not defer a callback binding for %s', async (_, prelude, call) => {
+    const { facts } = await analyzeRNotebookSource(`${callbacks}\n${prelude}\nobjective <- ${call}`)
+    for (const capture of captures) expect(facts.usedNames ?? []).not.toContain(capture)
+    expect(facts.state).toBe('unknown')
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'objective' })
+    )
+  })
+
+  it('withdraws a mutated callback body without reconstructing the replacement', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        'body(objective) <- quote((beta - NEW_ONLY)^2)\n' +
+        'fit <- stats::optim(0, fn=objective, method="BFGS")'
+    )
+    expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'objective' })
+    )
+    expect(facts.state).toBe('unknown')
+    if (facts.state === 'unknown') expect(facts.reasons).toContain('dynamic-assignment')
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'body(objective) = quote((beta - NEW_ONLY)^2)',
+    'quote((beta - NEW_ONLY)^2) -> body(objective)',
+    'alias <- objective\nbody(alias) <- quote((beta - NEW_ONLY)^2)\nobjective <- alias',
+    'if (flag) body(objective) <- quote((beta - NEW_ONLY)^2)',
+    'body(objective)[[2]] <- quote(NEW_ONLY)'
+  ])('keeps replacement and alias boundaries conservative: %s', async (replacement) => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        `${replacement}\nfit <- stats::optim(0, fn=objective, method="BFGS")`
+    )
+    expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.state).toBe('unknown')
+    for (const target of ['objective', 'alias'])
+      expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining({ target }))
+  })
+
+  it('reads a replacement RHS before withdrawing the callable authority', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        'body(objective) <- {stats::optim(0, fn=objective, method="BFGS"); ' +
+        'quote((beta - NEW_ONLY)^2)}'
+    )
+    expect(facts.usedNames).toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'objective' })
+    )
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('does not borrow or restore callable authority across solver argument replacement', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      `${callbacks}\nobjective <- stats::optim(` +
+        '{body(gradient) <- quote(NULL); 0}, fn=objective, method="BFGS")\nalias <- gradient'
+    )
+    expect(facts.usedNames ?? []).not.toContain('FN_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('GR_ONLY')
+    for (const target of ['objective', 'gradient', 'alias'])
+      expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining({ target }))
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each([
+    ['positional replacement', '{body(objective) <- quote((beta - NEW_ONLY)^2); 0}'],
+    ['equals replacement', '{body(objective) = quote((beta - NEW_ONLY)^2); 0}'],
+    ['rightward replacement', '{quote((beta - NEW_ONLY)^2) -> body(objective); 0}'],
+    ['nonlocal rebind', '{objective <<- function(beta) (beta - NEW_ONLY)^2; 0}'],
+    ['nonlocal rightward rebind', '{(function(beta) (beta - NEW_ONLY)^2) ->> objective; 0}'],
+    ['conditional replacement', '{if (flag) body(objective) <- quote(NEW_ONLY); 0}'],
+    ['nested constructor', 'c({body(objective)[[2]] <- quote(NEW_ONLY); 0})'],
+    ['computed callee', '({body(objective) <- quote(NEW_ONLY); identity})(0)'],
+    ['immediately invoked function', '(function() {body(objective) <<- quote(NEW_ONLY); 0})()'],
+    [
+      'immediately invoked function default',
+      '(function(x={body(objective) <<- quote(NEW_ONLY); 0}) x)()'
+    ],
+    [
+      'immediately invoked returned function',
+      '(function() function() {body(objective) <<- quote(NEW_ONLY); 0})()()'
+    ],
+    [
+      'immediately invoked conditional returned function',
+      '(function() if (flag) function() {body(objective) <<- quote(NEW_ONLY); 0} else function() 0)()()'
+    ],
+    [
+      'three-level immediately invoked returned function',
+      '(function() function() function() {body(objective) <<- quote(NEW_ONLY); 0})()()()'
+    ],
+    [
+      'forced default in an immediately invoked returned function',
+      '(function() function(x={body(objective) <<- quote(NEW_ONLY); 0}) x)()()'
+    ],
+    [
+      'immediately invoked returned function default',
+      '(function(x=function() {body(objective) <<- quote(NEW_ONLY); 0}) x)()()'
+    ],
+    [
+      'immediate function with a shadowed quote formal',
+      '(function(quote=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'immediate function with a backtick quote formal',
+      '(function(`quote`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'immediate function with a shadowed expression formal',
+      '(function(expression=base::identity) expression({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'default referring to a later quote formal',
+      '(function(x=quote({body(objective) <<- base::quote(NEW_ONLY); 0}), quote=base::identity) x)()'
+    ],
+    [
+      'immediate returned function inheriting a quote formal',
+      '(function(quote=base::identity) function() quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()()'
+    ],
+    [
+      'package quotation with a shadowed namespace operator',
+      '(function(`::`=function(...) identity) base::quote({body(objective) <<- quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'package quotation with a shadowed internal namespace operator',
+      '(function(`:::`=function(...) identity) base:::quote({body(objective) <<- quote(NEW_ONLY); 0}))()'
+    ]
+  ])('does not borrow an obsolete callback for %s in a solver argument', async (_, par) => {
+    for (const target of ['fit', 'objective']) {
+      const { facts, fileAccess } = await analyzeRNotebookSource(
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+          `${target} <- stats::optim(${par}, fn=objective, method="BFGS")`
+      )
+      expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(facts.state).toBe('unknown')
+      if (facts.state === 'unknown') expect(facts.reasons).toContain('function-scope')
+      expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  })
+
+  it.each([
+    'stats::optim(fn=objective, par={body(objective) <- quote(NEW_ONLY); 0}, method="BFGS")',
+    'stats::optim(0, fn=objective, method="BFGS", control={body(objective) <- quote(NEW_ONLY); list()})',
+    'stats::optim(0, fn=objective, gr={body(objective) <- base::quote(NEW_ONLY); NULL}, method="BFGS")',
+    'stats::optimize(f=objective, interval={body(objective) <- quote(NEW_ONLY); c(0, 1)})',
+    'stats::uniroot(f=objective, interval={body(objective) <- quote(NEW_ONLY); c(0, 1)})',
+    'stats::integrate(f=objective, lower={body(objective) <- quote(NEW_ONLY); 0}, upper=1)'
+  ])('denies obsolete captures across the existing solver slots: %s', async (call) => {
+    for (const target of ['fit', 'objective']) {
+      const { facts } = await analyzeRNotebookSource(
+        `objective <- function(beta) (beta - OLD_ONLY)^2\n${target} <- ${call}`
+      )
+      expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(facts.state).toBe('unknown')
+    }
+  })
+
+  it.each([
+    '{body(objective) <- quote(NEW_ONLY); 0}',
+    '(function() function() {body(objective) <<- quote(NEW_ONLY); 0})()()'
+  ])('preserves explicit file evidence around an uncertain solver argument: %s', async (par) => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'observations <- utils::read.csv("inputs/observations.csv")\n' +
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        `fit <- stats::optim(${par}, fn=objective, method="BFGS")\n` +
+        'utils::write.csv(observations, "outputs/observations.csv", row.names=FALSE)'
+    )
+    expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+    expect(fileAccess?.writes).toEqual(['outputs/observations.csv'])
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial'
+    })
+  })
+
+  it.each(['c(0)', 'numeric(1)', 'rep(0, 1)'])(
+    'keeps same-name callback captures with ordinary arguments: %s',
+    async (par) => {
+      const { facts } = await analyzeRNotebookSource(
+        `${callbacks}\nobjective <- stats::optim(${par}, fn=objective, gr=gradient, method="BFGS")`
+      )
+      expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.state).toBe('unknown')
+    }
+  )
+
+  it.each([
+    'control=list(maxit=10, reltol=1e-8)',
+    'unused=quote(body(objective) <- NEW_ONLY)',
+    'unused=base::expression(body(objective) <- NEW_ONLY)',
+    'unused=function() {body(objective) <- NEW_ONLY}',
+    'unused=function() function() {body(objective) <<- quote(NEW_ONLY); 0}',
+    'unused=(function() function() {body(objective) <<- quote(NEW_ONLY); 0})()'
+  ])('keeps ordinary and deferred argument syntax separate: %s', async (argument) => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta, unused) (beta - OLD_ONLY)^2\n' +
+        `objective <- stats::optim(0, fn=objective, method="BFGS", ${argument})`
+    )
+    expect(facts.usedNames).toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each([
+    '{(function() function() {body(objective) <<- quote(NEW_ONLY); 0})(); 0}',
+    '{(function() function() function() {body(objective) <<- quote(NEW_ONLY); 0})()(); 0}',
+    '{(function(x=function() {body(objective) <<- quote(NEW_ONLY); 0}) x)(); 0}',
+    '{(function(quote=base::identity) function() quote({body(objective) <<- base::quote(NEW_ONLY); 0}))(); 0}'
+  ])('keeps an evaluated factory with an uninvoked leaf deferred: %s', async (par) => {
+    for (const target of ['fit', 'objective']) {
+      const { facts } = await analyzeRNotebookSource(
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+          `${target} <- stats::optim(${par}, fn=objective, method="BFGS")`
+      )
+      expect(facts.usedNames).toContain('OLD_ONLY')
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(facts.state).toBe('unknown')
+    }
+  })
+
+  it.each([
+    '(function(quote=base::identity) {base::quote(body(objective) <<- NEW_ONLY); 0})()',
+    '(function(expression=base::identity) {base::expression(body(objective) <<- NEW_ONLY); 0})()',
+    '(function(`::`=function(...) identity) {base:::quote(body(objective) <<- NEW_ONLY); 0})()',
+    '(function(`:::`=function(...) identity) {base::quote(body(objective) <<- NEW_ONLY); 0})()',
+    '{(function(quote=base::identity) 0)(); quote(body(objective) <- NEW_ONLY); 0}'
+  ])('preserves trusted quotation without leaking immediate formal bindings: %s', async (par) => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        `fit <- stats::optim(${par}, fn=objective, method="BFGS")`
+    )
+    expect(facts.usedNames).toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each([
+    [
+      'hex quote',
+      '(function(`qu\\x6fte`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'octal quote',
+      '(function(`quo\\164e`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+    ],
+    [
+      'later default binding',
+      '(function(x=quote({body(objective) <<- base::quote(NEW_ONLY); 0}), `qu\\x6fte`=base::identity) x)()'
+    ],
+    [
+      'inherited returned binding',
+      '(function(`qu\\x6fte`=base::identity) function() quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()()'
+    ],
+    [
+      'invoked returned leaf',
+      '(function() function(`quo\\164e`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()()'
+    ],
+    [
+      'invoked default leaf',
+      '(function(x=function(`qu\\x6fte`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0})) x)()()'
+    ]
+  ])('denies obsolete callback captures for an escaped formal: %s', async (_, par) => {
+    for (const target of ['fit', 'objective']) {
+      const { facts } = await analyzeRNotebookSource(
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+          `${target} <- stats::optim(${par}, fn=objective, method="BFGS")`
+      )
+      expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(facts.state).toBe('unknown')
+      if (facts.state === 'unknown') expect(facts.reasons).toContain('function-scope')
+    }
+  })
+
+  it.each(['`unused\\x41`', '`unused\\101`'])(
+    'keeps an invoked harmless escaped formal conservative: %s',
+    async (formal) => {
+      const { facts } = await analyzeRNotebookSource(
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+          `objective <- stats::optim((function(${formal}=0) 0)(), fn=objective, method="BFGS")`
+      )
+      expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+      expect(facts.typeBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ target: 'objective' })
+      )
+      expect(facts.state).toBe('unknown')
+    }
+  )
+
+  it.each([
+    'unused=function(`qu\\x6fte`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0})',
+    'unused=(function() function(`quo\\164e`=base::identity) quote({body(objective) <<- base::quote(NEW_ONLY); 0}))()'
+  ])('retains captures beside a deferred escaped formal: %s', async (argument) => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta, unused) (beta - OLD_ONLY)^2\n' +
+        `objective <- stats::optim(0, fn=objective, method="BFGS", ${argument})`
+    )
+    expect(facts.usedNames).toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('retains captures when an escaped formal returned leaf remains uninvoked', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        'fit <- stats::optim({(function() function(`qu\\x6fte`=base::identity) ' +
+        'quote({body(objective) <<- base::quote(NEW_ONLY); 0}))(); 0}, ' +
+        'fn=objective, method="BFGS")'
+    )
+    expect(facts.usedNames).toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each(['`qu\\x6fte`', '`quo\\164e`'])(
+    'projects four-cell dependency and explicit file paths for an escaped formal: %s',
+    async (formal) => {
+      const solverCell =
+        'observations <- utils::read.csv("inputs/observations.csv")\n' +
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        `fit <- stats::optim((function(${formal}=base::identity) ` +
+        'quote({body(objective) <<- base::quote((beta - NEW_ONLY)^2); 0}))(), ' +
+        'fn=objective, method="BFGS")\n' +
+        'utils::write.csv(observations, "outputs/observations.csv", row.names=FALSE)'
+      const projection = await projectScripts(
+        'r',
+        ['OLD_ONLY <- 10\nNEW_ONLY <- 3', solverCell, 'estimate <- fit$par', 'OLD_ONLY <- 20'],
+        'r-escaped-formal-solver-'
+      )
+      expect(Object.keys(projection.stalenessByRunId).sort()).toEqual([
+        'run-1',
+        'run-2',
+        'run-3',
+        'run-4'
+      ])
+      expect(
+        (projection.invalidatedByRunId['run-4'] ?? []).some(
+          (item) => item.runId === 'run-2' && item.names.includes('OLD_ONLY')
+        )
+      ).toBe(false)
+      expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+      const { facts, fileAccess } = await analyzeRNotebookSource(solverCell)
+      expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+      expect(fileAccess?.writes).toEqual(['outputs/observations.csv'])
+      expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzeRNotebookSource('estimate <- fit$par')).facts.usedNames).toContain('fit')
+    }
+  )
+
+  it.each([
+    ['stable', 'stats::optim(0, fn=objective, gr=NULL, method="BFGS")', true],
+    [
+      'local quote formal',
+      'stats::optim((function(quote=base::identity) ' +
+        'quote({body(objective) <<- base::quote((beta - NEW_ONLY)^2); 0}))(), ' +
+        'fn=objective, method="BFGS")',
+      false
+    ],
+    [
+      'sibling gradient expression',
+      'stats::optim(0, fn=objective, ' +
+        'gr={body(objective) <- base::quote((beta - NEW_ONLY)^2); NULL}, method="BFGS")',
+      false
+    ]
+  ])(
+    'projects four-cell solver argument authority for %s',
+    async (_, call, expectedInvalidation) => {
+      const solverCell =
+        'observations <- utils::read.csv("inputs/observations.csv")\n' +
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        `fit <- ${call}\n` +
+        'utils::write.csv(observations, "outputs/observations.csv", row.names=FALSE)'
+      const projection = await projectScripts(
+        'r',
+        ['OLD_ONLY <- 10\nNEW_ONLY <- 3', solverCell, 'estimate <- fit$par', 'OLD_ONLY <- 20'],
+        'r-solver-argument-authority-'
+      )
+      expect(Object.keys(projection.stalenessByRunId).sort()).toEqual([
+        'run-1',
+        'run-2',
+        'run-3',
+        'run-4'
+      ])
+      const obsoleteInvalidation = (projection.invalidatedByRunId['run-4'] ?? []).some(
+        (item) => item.runId === 'run-2' && item.names.includes('OLD_ONLY')
+      )
+      expect(obsoleteInvalidation).toBe(expectedInvalidation)
+      expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+      const { facts, fileAccess } = await analyzeRNotebookSource(solverCell)
+      expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+      expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
+      expect(fileAccess?.writes).toEqual(['outputs/observations.csv'])
+      expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const downstream = await analyzeRNotebookSource('estimate <- fit$par')
+      expect(downstream.facts.usedNames).toContain('fit')
+    }
+  )
+
+  it.each([false, true])(
+    'projects independent capture invalidation with solver argument replacement=%s',
+    async (replace) => {
+      const par = replace ? '{body(objective) <- quote((beta - NEW_ONLY)^2); 0}' : '0'
+      const projection = await projectScripts(
+        'r',
+        [
+          'OLD_ONLY <- 10\nNEW_ONLY <- 3',
+          'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+            `fit <- stats::optim(${par}, fn=objective, method="BFGS")`,
+          'estimate <- fit$par',
+          'OLD_ONLY <- 20'
+        ],
+        'r-solver-argument-capture-'
+      )
+      const oldCapture = (projection.invalidatedByRunId['run-4'] ?? []).some(
+        (item) => item.runId === 'run-2' && item.names.includes('OLD_ONLY')
+      )
+      expect(oldCapture).toBe(!replace)
+      expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+    }
+  )
+
+  it('does not invalidate a returned-function solver result for an obsolete capture', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'OLD_ONLY <- 10\nNEW_ONLY <- 3',
+        'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+          'fit <- stats::optim((function() function() {' +
+          'body(objective) <<- quote((beta - NEW_ONLY)^2); 0})()(), ' +
+          'fn=objective, method="BFGS")',
+        'estimate <- fit$par',
+        'OLD_ONLY <- 20'
+      ],
+      'r-returned-solver-argument-'
+    )
+    expect(
+      (projection.invalidatedByRunId['run-4'] ?? []).some(
+        (item) => item.runId === 'run-2' && item.names.includes('OLD_ONLY')
+      )
+    ).toBe(false)
+    expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+  })
+
+  it('retains builtin shadowing after an unknown replacement', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      '`+` <- function(...) 0\nbody(`+`) <- quote(0)\n' +
+        'objective <- function(beta) beta + NEW_ONLY\n' +
+        'fit <- stats::optim(0, fn=objective, method="BFGS")'
+    )
+    expect(facts.usedNames ?? []).not.toContain('NEW_ONLY')
+    expect(facts.safeCallNames ?? []).not.toContain('+')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('reestablishes capture authority only through a new explicit definition', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(beta) (beta - OLD_ONLY)^2\n' +
+        'body(objective) <- quote((beta - UNPROVEN_BODY)^2)\n' +
+        'objective <- function(beta) (beta - NEW_ONLY)^2\n' +
+        'fit <- stats::optim(0, fn=objective, method="BFGS")'
+    )
+    expect(facts.usedNames).toContain('NEW_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('OLD_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('UNPROVEN_BODY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('retains existing optimize captures before replacing its callback binding', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'objective <- function(rate) (rate - OFFSET_ONLY)^2\n' +
+        'objective <- stats::optimize(f=objective, interval=c(0,1))\nalias <- objective'
+    )
+    expect(facts.usedNames).toContain('OFFSET_ONLY')
+    expect(facts.priorUsedNames).toContain('OFFSET_ONLY')
+    for (const target of ['objective', 'alias'])
+      expect(facts.typeBindings ?? []).not.toContainEqual(expect.objectContaining({ target }))
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('invalidates the fit for independent objective and gradient capture changes', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'FN_ONLY <- 1\nGR_ONLY <- 2',
+        `${callbacks}\nfit <- stats::optim(0, objective, gradient, method="BFGS")`,
+        'GR_ONLY <- 3',
+        'FN_ONLY <- 4'
+      ],
+      'r-bfgs-captures-'
+    )
+    for (const [runId, name] of [
+      ['run-3', 'GR_ONLY'],
+      ['run-4', 'FN_ONLY']
+    ]) {
+      expect(projection.invalidatedByRunId[runId]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'run-2', state: 'unknown', names: [name] })
+        ])
+      )
+    }
+    expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+    expect(projection.dependenciesByRunId?.['run-2']).toBeUndefined()
+  })
+
+  it.each([
+    'stats::optim(0, fn=objective, method="BFGS")',
+    'stats::optim(0, fn=objective, gr=NULL, method="BFGS")',
+    'stats::optim(par=0, accidental, gradient, fn=objective, method="BFGS")'
+  ])('does not invent a gradient slot for %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource(`${callbacks}\nfit <- ${call}`)
+    expect(facts.usedNames).toContain('FN_ONLY')
+    expect(facts.usedNames ?? []).not.toContain('GR_ONLY')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each([
+    'stats::optim(method="BFGS", 0, objective, gradient)',
+    'stats::optim(0, f=objective, g=gradient, method="BFGS")',
+    'stats::optim(0, fn=objective, fn=objective, gr=gradient, method="BFGS")',
+    'stats::optim(0, objective, gradient, method=selected_method)',
+    'stats::optim(0, objective, gradient, method="SANN")',
+    'stats::optim(0, objective, gradient, method="BFGS", ...)',
+    'solver <- stats::optim\nsolver(0, objective, gradient, method="BFGS")',
+    'optim <- function(...) 0\noptim(0, objective, gradient, method="BFGS")',
+    '`::` <- function(...) 0\nstats::optim(0, objective, gradient, method="BFGS")'
+  ])('keeps unsupported identities and matching opaque: %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource(`${callbacks}\n${call}`)
+    for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+  })
+
+  it.each(['p', 'pa', 'f', 'g'])(
+    'rejects a tail partial formal tag that shifts positional callbacks: %s',
+    async (tag) => {
+      const { facts } = await analyzeRNotebookSource(
+        `${callbacks}\nstats::optim(0, objective, gradient, ${tag}=other, method="BFGS")`
+      )
+      for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+    }
+  )
+
+  it.each([
+    'n <<- other + 1L\nSENTINEL',
+    'hidden <<- SENTINEL',
+    'n[1] <<- n + 1L\nSENTINEL',
+    'n + 1L ->> n\nSENTINEL',
+    'sum(n <<- n + 1L) + SENTINEL',
+    'n <<- n + 0.5\nSENTINEL',
+    't <<- t + 1L\nt(SENTINEL)',
+    'gradient <<- gradient + 1L\nSENTINEL',
+    't(SENTINEL, extra=1)',
+    '`%*%`(SENTINEL, beta, extra=1)'
+  ])('does not extend capture authority to %s', async (body) => {
+    const { facts } = await analyzeRNotebookSource(
+      `candidate <- function(beta) {${body}}\ngradient <- function(beta) beta\n` +
+        'stats::optim(0, fn=candidate, method="BFGS")'
+    )
+    expect(facts.usedNames ?? []).not.toContain('SENTINEL')
+  })
+
+  it.each(['t', '%*%', '<<-', '+'])('rejects a callback after rebinding %s', async (name) => {
+    const { facts } = await analyzeRNotebookSource(
+      `${callbacks}\n\`${name}\` <- function(...) 0\n` +
+        'stats::optim(0, objective, gradient, method="BFGS")'
+    )
+    for (const capture of name === 't' ? ['GR_ONLY', 'penalty_mask'] : captures)
+      expect(facts.usedNames ?? []).not.toContain(capture)
+  })
+
+  it.each([
+    'function(beta, t) t(X) %*% beta + SENTINEL',
+    'function(beta) { t <- replacement; t(X) %*% beta + SENTINEL }',
+    'function(beta) { if(flag) t <- replacement; t(X) %*% beta + SENTINEL }',
+    'function(beta, n) { n <<- n + 1L; SENTINEL }'
+  ])('rejects shadowed invocation-local operations: %s', async (callback) => {
+    const { facts } = await analyzeRNotebookSource(
+      `candidate <- ${callback}\nstats::optim(0, fn=candidate, method="BFGS")`
+    )
+    expect(facts.usedNames ?? []).not.toContain('SENTINEL')
+  })
+
+  it('uses a current same-cell callback after replacement', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      `${callbacks}\nobjective <- function(beta) beta - REPLACEMENT_ONLY\n` +
+        'stats::optim(0, objective, gradient, method="BFGS")'
+    )
+    expect(facts.usedNames).toEqual(expect.arrayContaining(['REPLACEMENT_ONLY', 'GR_ONLY']))
+    expect(facts.usedNames ?? []).not.toContain('FN_ONLY')
+  })
+
+  it('does not publish BFGS-only captures to other calls or later cells', async () => {
+    const producer = await analyzeRNotebookSource(callbacks)
+    const context = projectNotebookFileContext('r', [
+      {
+        facts: producer.facts,
+        fileContext: producer.fileAccess!.context
+      }
+    ])
+    const later = await analyzeRNotebookSource(
+      'stats::optim(0, objective, gradient, method="BFGS")',
+      context
+    )
+    for (const name of captures) expect(later.facts.usedNames ?? []).not.toContain(name)
+    for (const call of [
+      'stats::uniroot(objective, c(-1,1))',
+      'stats::integrate(objective, 0, 1)',
+      'stats::optimize(objective, c(0,1))',
+      'objective(0)'
+    ]) {
+      const { facts } = await analyzeRNotebookSource(`${callbacks}\n${call}`)
+      for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+    }
+  })
+})
+
+describe('NumPy converter consumption lineage', () => {
+  // Reduce the real cars unit converters to their scalar captures. The public
+  // analyzer must read these at reader invocation, not at converter definition.
+  const converters = [
+    'def speed_converter(value):',
+    '    return float(value) * mph_to_mps',
+    'def distance_converter(value):',
+    '    return float(value) * feet_to_metres * distance_scale'
+  ].join('\n')
+  const dictionary = '{1: speed_converter, 2: distance_converter}'
+  const path = '"outputs/cars-unit-labelled.csv"'
+
+  it.each([
+    ['loadtxt dictionary keyword', `np.loadtxt(${path}, converters=${dictionary})`, true],
+    ['loadtxt dictionary slot four', `np.loadtxt(${path}, float, "#", ",", ${dictionary})`, true],
+    [
+      'loadtxt callable keyword',
+      `np.loadtxt(${path}, converters=distance_converter, usecols=2)`,
+      false
+    ],
+    [
+      'loadtxt callable slot four',
+      `np.loadtxt(${path}, float, "#", ",", distance_converter, usecols=2)`,
+      false
+    ],
+    ['genfromtxt dictionary keyword', `np.genfromtxt(${path}, converters=${dictionary})`, true],
+    [
+      'genfromtxt dictionary slot six',
+      `np.genfromtxt(${path}, float, "#", ",", 1, 0, ${dictionary})`,
+      true
+    ],
+    [
+      'loadtxt imported alias',
+      `reader(${path}, converters=distance_converter, usecols=2)`,
+      false,
+      'from numpy import loadtxt as reader'
+    ],
+    [
+      'genfromtxt imported alias',
+      `reader(${path}, converters=${dictionary})`,
+      true,
+      'from numpy import genfromtxt as reader'
+    ]
+  ])(
+    'invalidates the reader for consumed scalar changes through %s',
+    async (_, call, hasSpeed, imports = 'import numpy as np') => {
+      const projection = await projectScripts(
+        'python',
+        [
+          `${imports}\nmph_to_mps = 0.44704\nfeet_to_metres = 0.3048\ndistance_scale = 1.`,
+          converters,
+          `arr = ${call}`,
+          'distance_scale = 1.5',
+          'mph_to_mps = 0.5'
+        ],
+        'notebook-numpy-converter-lineage-'
+      )
+      expect(projection.invalidatedByRunId['run-4']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'run-3', state: 'unknown', names: ['distance_scale'] })
+        ])
+      )
+      const speedInvalidation = projection.invalidatedByRunId['run-5']?.find(
+        (item) => item.runId === 'run-3'
+      )
+      expect(speedInvalidation?.names?.includes('mph_to_mps') ?? false).toBe(hasSpeed)
+      for (const runId of ['run-4', 'run-5']) {
+        expect(projection.invalidatedByRunId[runId] ?? []).not.toContainEqual(
+          expect.objectContaining({ runId: 'run-2' })
+        )
+      }
+      expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+      expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+      expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+    }
+  )
+})
+
+describe('Python callback dictionary NumPy consumption', () => {
+  // Handwritten controls for the named mapping gap; not newly generated Agent code.
+  const helper = 'def convert(value):\n    return float(value) + temperature_offset'
+  const path = '"inputs/observations.csv"'
+
+  it.each([
+    ['loadtxt integer keys', '{4: convert}', `np.loadtxt(${path}, converters=converters)`],
+    [
+      'genfromtxt string keys',
+      '{"Temp": convert}',
+      `np.genfromtxt(${path}, names=True, converters=converters)`
+    ],
+    ['loadtxt position four', '{4: convert}', `np.loadtxt(${path}, float, "#", ",", converters)`],
+    [
+      'genfromtxt position six',
+      '{4: convert}',
+      `np.genfromtxt(${path}, float, "#", ",", 0, 0, converters)`
+    ],
+    [
+      'trusted imported reader',
+      '{4: convert}',
+      `reader(${path}, converters=converters)`,
+      'from numpy import genfromtxt as reader'
+    ]
+  ])(
+    'retains late scalar invalidation through %s without certifying callback I/O',
+    async (_name, mapping, call, imports = 'import numpy as np') => {
+      const scripts = [
+        `${imports}\ntemperature_offset = 2.`,
+        `${helper}\nconverters = ${mapping}`,
+        `array = ${call}`,
+        'temperature_offset = 3.5'
+      ]
+      const projection = await projectScripts('python', scripts, 'numpy-named-dictionary-')
+      expect(projection.invalidatedByRunId['run-4']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            runId: 'run-3',
+            state: 'unknown',
+            names: ['temperature_offset']
+          })
+        ])
+      )
+      expect(projection.invalidatedByRunId['run-4']).not.toContainEqual(
+        expect.objectContaining({ runId: 'run-2' })
+      )
+      expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+      expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+      expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+      const source = await analyzePythonNotebookSource(scripts.slice(0, 3).join('\n'))
+      expect(
+        normalizeNotebookSourceFileAccess('python', source.facts, source.fileAccess)
+      ).toMatchObject({
+        reads: ['inputs/observations.csv'],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
 })

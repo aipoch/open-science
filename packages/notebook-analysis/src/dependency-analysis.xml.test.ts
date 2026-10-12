@@ -35,7 +35,7 @@ const project = async (scripts: string[]): Promise<NotebookDependencyProjection>
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'project', sessionId: 'session', completedRun: runs.at(-1)! })
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 }
 
