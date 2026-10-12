@@ -4,6 +4,9 @@ inputs:
   enabled:
     description: False retains the complete package baseline
     default: 'true'
+  verification:
+    description: Select installed-consumer inputs instead of portable-test inputs
+    default: 'false'
   base:
     description: Change base revision
     required: true
@@ -23,6 +26,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         PACKAGE_SELECTION_ENABLED: ${{ inputs.enabled }}
+        PACKAGE_VERIFICATION: ${{ inputs.verification }}
         BASE_SHA: ${{ inputs.base }}
         HEAD_SHA: ${{ inputs.head }}
         TRUSTED_BASE_SHA: ${{ inputs.trusted-base }}
@@ -31,7 +35,9 @@ runs:
         policy="$RUNNER_TEMP/package-test-impact.mjs"
         if [[ "$PACKAGE_SELECTION_ENABLED" == "true" ]] && git cat-file -e "${TRUSTED_BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
           git show "${TRUSTED_BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$policy"
-          node "$policy" --base "$BASE_SHA" --head "$HEAD_SHA" --trusted-base "$TRUSTED_BASE_SHA" --github-env
+          args=()
+          if [[ "$PACKAGE_VERIFICATION" == "true" ]]; then args+=(--verification); fi
+          node "$policy" "${args[@]}" --base "$BASE_SHA" --head "$HEAD_SHA" --trusted-base "$TRUSTED_BASE_SHA" --github-env
         else
           echo 'OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS=[]' >> "$GITHUB_ENV"
           if [[ "$PACKAGE_SELECTION_ENABLED" == "true" ]]; then

@@ -167,10 +167,28 @@ jobs:
           PRESENTATION_SCREENING: ${{ steps.presentation_screening.outcome }}
         run: '[[ "$PRESENTATION_SCREENING" == "success" ]]'
 
+  packages:
+    name: Complete installed package verification (Ubuntu)
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify all installed consumers
+        uses: ./.github/actions/verify-packages
+
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [regression]
+    needs: [regression, packages]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

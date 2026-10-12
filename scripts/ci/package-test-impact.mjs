@@ -8,6 +8,60 @@ const rootPattern = /^packages\/[a-z0-9][a-z0-9-]*$/
 const globalInput =
   /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|(?:vitest|vite|electron|tsconfig)[^/]*|test\/|scripts\/|\.github\/|patches\/|build\/|resources\/)/
 
+// These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
+export const verificationFamilies = [
+  { script: 'check:resilient-download-package', packages: ['resilient-download'] },
+  { script: 'check:durable-files-package', packages: ['durable-files', 'skills', 'specialists'] },
+  {
+    script: 'check:connector-packages',
+    packages: ['connector-core', 'connector-builtins', 'connector-mcp-client']
+  },
+  { script: 'check:diagnostics-package', packages: ['diagnostics'] },
+  { script: 'check:environment-package', packages: ['environment'] },
+  { script: 'check:compute-package', packages: ['compute'] },
+  { script: 'check:reproducibility-package', packages: ['reproducibility'] },
+  {
+    script: 'check:notebook-packages',
+    packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  },
+  {
+    script: 'check:package-isolation',
+    packages: [
+      'pdf-structure',
+      'pdf-translation',
+      'literature-citations',
+      'journal-catalog',
+      'literature-discovery',
+      'literature-screening'
+    ]
+  }
+]
+
+// Installed consumers do not use host routing, Electron builds or browser/E2E configuration.
+const verificationSharedInput =
+  /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|vitest[^/]*|tsconfig[^/]*|patches\/|scripts\/(?:(?:check-packages|package-verification-plan|build-dev-packages|build-packages)\.mjs$|ci\/(?:package-test-boundaries\.json$|(?:package-test-impact|npm-ci)\.mjs$))|\.github\/actions\/(?:select-package-tests|verify-packages)\/)/
+const verificationUnrelatedInput =
+  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/config\/|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-|consumer-retirement)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
+
+function verificationPaths(paths, roots) {
+  return paths.flatMap((path) => {
+    const family = verificationFamilies.find(({ script }) =>
+      [
+        `scripts/${script.replace(':', '-')}.mjs`,
+        `scripts/${script.replace(':', '-')}.test.ts`
+      ].includes(path)
+    )
+    if (family) {
+      // An older registry must not silently discard a newly registered verifier consumer.
+      return family.packages.every((name) => roots.includes(`packages/${name}`))
+        ? family.packages.map((name) => `packages/${name}/<installed-consumer-verifier>`)
+        : [path]
+    }
+    if (path.startsWith('packages/') || verificationSharedInput.test(path)) return [path]
+    return verificationUnrelatedInput.test(path) ? [] : [path]
+  })
+}
+
 export function validatePackageTestRegistry(registry) {
   if (registry?.schemaVersion !== 1 || !Array.isArray(registry.packages))
     throw new Error('Invalid package test registry')
@@ -88,12 +142,13 @@ export function environmentPackageVerificationPlan(selectedRoots, excludedRoots)
     : { builds: ['diagnostics', 'environment'], tests: ['environment'] }
 }
 
-export function createPackageTestPlan(paths, registry) {
+export function createPackageTestPlan(paths, registry, { verification = false } = {}) {
   const { packages } = validatePackageTestRegistry(registry)
   const roots = packages.map((entry) => entry.root)
   const reasons = []
   const changed = new Set()
-  for (const path of paths) {
+  const inputs = verification ? verificationPaths(paths, roots) : paths
+  for (const path of inputs) {
     const owner = roots.find((root) => path.startsWith(root + '/'))
     if (owner) {
       changed.add(owner)
@@ -102,7 +157,9 @@ export function createPackageTestPlan(paths, registry) {
       return {
         selected: roots,
         excluded: [],
-        reasons: [`${path} -> shared or unknown input -> all package tests`]
+        reasons: [
+          `${path} -> shared or unknown input -> all ${verification ? 'installed consumers' : 'package tests'}`
+        ]
       }
     }
   }
@@ -118,9 +175,14 @@ export function createPackageTestPlan(paths, registry) {
       }
     }
   }
+  if (verification && inputs.length === 0)
+    reasons.push('no package or installed-consumer inputs changed')
   const excluded = roots.filter((root) => !changed.has(root))
   reasons.push(
-    ...excluded.map((root) => `${root} -> unchanged upstream -> package unit tests excluded`)
+    ...excluded.map(
+      (root) =>
+        `${root} -> unchanged upstream -> ${verification ? 'installed consumers' : 'package unit tests'} excluded`
+    )
   )
   return { selected: roots.filter((root) => changed.has(root)), excluded, reasons }
 }
@@ -154,7 +216,7 @@ export function packageTestPlanFromRevisions(
   base,
   head,
   trustedBase = base,
-  { cwd = process.cwd(), execute = execFileSync } = {}
+  { cwd = process.cwd(), execute = execFileSync, verification = false } = {}
 ) {
   const git = (...args) =>
     execute('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).toString()
@@ -196,7 +258,7 @@ export function packageTestPlanFromRevisions(
     paths.push(
       ...git('diff', '--name-only', '--no-renames', '-z', head, 'HEAD').split('\0').filter(Boolean)
     )
-    return createPackageTestPlan([...new Set(paths)], registry)
+    return createPackageTestPlan([...new Set(paths)], registry, { verification })
   } catch (error) {
     // Missing/invalid trusted policy or Git evidence may never skip tests.
     return {
@@ -216,9 +278,15 @@ export function runPackageTestCli(args = process.argv.slice(2), env = process.en
   const plan = packageTestPlanFromRevisions(
     value('--base'),
     value('--head'),
-    args.includes('--trusted-base') ? value('--trusted-base') : value('--base')
+    args.includes('--trusted-base') ? value('--trusted-base') : value('--base'),
+    { verification: args.includes('--verification') }
   )
   process.stdout.write(JSON.stringify(plan, null, 2) + '\n')
+  if (args.includes('--verification') && env.GITHUB_STEP_SUMMARY)
+    appendFileSync(
+      env.GITHUB_STEP_SUMMARY,
+      `## Installed package selection\n\nSelected: ${plan.selected.join(', ') || 'none'}\n\n${plan.reasons.map((reason) => `- ${reason}`).join('\n')}\n`
+    )
   if (args.includes('--github-env')) {
     if (!env.GITHUB_ENV) throw new Error('GITHUB_ENV is required')
     appendFileSync(

@@ -775,6 +775,10 @@ describe('PR Gate workflow', () => {
         env: {
           ...process.env,
           PREFLIGHT_RESULT: 'success',
+          RUNTIME_REQUIRED: 'false',
+          RUNTIME_RESULT: 'skipped',
+          PACKAGE_RESULT: 'skipped',
+          EVENT_NAME: 'pull_request',
           PR_GATE_PLAN: planJson,
           PR_GATE_NEEDS: needsJson,
           GITHUB_STEP_SUMMARY: join(dir, 'summary')
@@ -1098,12 +1102,12 @@ describe('PR Gate workflow', () => {
     expect(manifest.laneOrder).toContain('i18n')
   })
 
-  it('verifies the published runtime bundle as a named static check', () => {
-    const runtimeBundle = workflow.jobs.static.steps?.find(
+  it('verifies the published runtime bundle as a separate runtime check', () => {
+    const runtimeBundle = workflow.jobs.runtime_checks.steps?.find(
       ({ name }) => name === 'Verify published runtime bundle'
     )
-    const enforce = workflow.jobs.static.steps?.find(
-      ({ name }) => name === 'Enforce selected static checks'
+    const enforce = workflow.jobs.runtime_checks.steps?.find(
+      ({ name }) => name === 'Enforce selected runtime checks'
     )
 
     expect(runtimeBundle).toMatchObject({
@@ -1442,7 +1446,9 @@ describe('PR Gate workflow', () => {
           )
         }
         for (const id of ['interface_contracts', 'cli_sdk']) {
-          const step = workflow.jobs.static.steps?.find((step) => step.id === id)
+          const step = workflow.jobs[id === 'cli_sdk' ? 'runtime_checks' : 'static'].steps?.find(
+            (step) => step.id === id
+          )
           expect(step?.env?.RUN_DEDICATED_TESTS).toBe(
             "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
           )
@@ -1858,17 +1864,19 @@ describe('PR Gate workflow', () => {
   })
 
   it('covers both root CLI and publishable SDK tests in the narrow lane', () => {
-    const testStep = workflow.jobs.static.steps?.find(({ name }) => name === 'Test CLI and SDK')
+    const testStep = workflow.jobs.runtime_checks.steps?.find(
+      ({ name }) => name === 'Test CLI and SDK'
+    )
 
     expect(testStep?.run).toContain('npx vitest run cli packages/open-science')
     expect(testStep?.run).toContain('npm run check:cli-package')
   })
 
   it('keeps Node 22 CLI compatibility blocking even when Node 24 shards cover the full plan', () => {
-    const steps = workflow.jobs.static.steps ?? []
+    const steps = workflow.jobs.runtime_checks.steps ?? []
     const setup = steps.find(({ name }) => name === 'Setup Node 22 for CLI compatibility')
     const compatibility = steps.find(({ id }) => id === 'cli_node22')
-    const enforce = steps.find(({ name }) => name === 'Enforce selected static checks')!
+    const enforce = steps.find(({ name }) => name === 'Enforce selected runtime checks')!
 
     expect(readFileSync(join(process.cwd(), '.nvmrc'), 'utf8').trim()).toBe('24')
     expect(steps.find(({ name }) => name === 'Setup Node')?.with?.['node-version']).toBe(24)
@@ -1884,12 +1892,14 @@ describe('PR Gate workflow', () => {
     expect(steps.indexOf(compatibility!)).toBeLessThan(steps.indexOf(enforce))
     expect(enforce.env?.CLI_NODE22_OUTCOME).toBe('${{ steps.cli_node22.outcome }}')
 
-    for (const outcome of ['success', 'failure', 'cancelled']) {
+    for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
       const result = spawnSync('bash', ['-c', enforce.run!], {
         encoding: 'utf8',
         env: {
           ...process.env,
           ...Object.fromEntries(Object.keys(enforce.env ?? {}).map((key) => [key, 'success'])),
+          CLI_REQUIRED: 'true',
+          BUNDLE_REQUIRED: 'true',
           CLI_NODE22_OUTCOME: outcome
         }
       })
@@ -2103,18 +2113,67 @@ it('derives Ubuntu package exclusions from trusted policy before either test mod
   )
 })
 
-it('gates independent package tarballs using trusted directional selection', () => {
-  const job = Object.values(workflow.jobs).find((job) => job.name === 'Static checks')!
-  const steps = job.steps!
-  const selector = steps.find(
-    (step) => step.name === 'Select independent package verification from trusted policy'
+it('verifies installed packages only in the queue and skips installation for an empty trusted selection', () => {
+  expect(workflow.jobs.static.steps?.some((step) => step.run?.includes('check:packages'))).toBe(
+    false
+  )
+  const job = workflow.jobs.package_verification
+  expect(job.if).toBe(
+    "${{ needs.preflight.result == 'success' && github.event_name == 'merge_group' }}"
+  )
+  const selector = job.steps!.find(
+    (step) => step.uses === './.github/actions/select-package-tests'
   )!
-  const check = steps.find((step) => step.id === 'package_verification')!
-  expect(selector.uses).toBe('./.github/actions/select-package-tests')
-  expect(selector.with?.['trusted-base']).toBe('${{ needs.preflight.outputs.trusted_base }}')
-  expect(steps.indexOf(selector)).toBeLessThan(steps.indexOf(check))
-  expect(check.run).toBe('npm run check:packages -- --ci')
-  const gate = steps.find((step) => step.name === 'Enforce selected static checks')!
-  expect(gate.env?.PACKAGE_VERIFICATION_OUTCOME).toBe('${{ steps.package_verification.outcome }}')
-  expect(gate.run).toContain('check package_verification "$PACKAGE_VERIFICATION_OUTCOME"')
+  expect(selector.with).toMatchObject({
+    verification: 'true',
+    'trusted-base': '${{ needs.preflight.outputs.trusted_base }}'
+  })
+  const check = job.steps!.find((step) => step.uses === './.github/actions/verify-packages')!
+  expect(check.if).toBe("${{ env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS != '[]' }}")
+  expect(check.with).toEqual({ selection: 'ci' })
+  expect(job.steps!.indexOf(selector)).toBeLessThan(job.steps!.indexOf(check))
+  expect(workflow.jobs.gate.needs).toEqual(
+    expect.arrayContaining(['runtime_checks', 'package_verification'])
+  )
 })
+
+it.each(['failure', 'cancelled', 'skipped', ''])(
+  'blocks missing or unsuccessful split executions before an older evaluator: %s',
+  (outcome) => {
+    const step = workflow.jobs.gate.steps!.find(
+      (step) => step.name === 'Evaluate deterministic gate from trusted base'
+    )!
+    // The existing trusted evaluator has no knowledge of these new jobs. Exercise the actual
+    // workflow prefix, stopping immediately before it dispatches to that evaluator.
+    const prefix = step.run!.split('if [[ -f scripts/ci/evaluate-pr-gate.mjs ]]')[0]
+    const run = (extra: Record<string, string>): number | null =>
+      spawnSync('bash', ['-c', prefix], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PREFLIGHT_RESULT: 'success',
+          EVENT_NAME: 'merge_group',
+          RUNTIME_REQUIRED: 'true',
+          RUNTIME_RESULT: 'success',
+          PACKAGE_RESULT: 'success',
+          ...extra
+        }
+      }).status
+    expect(run({})).toBe(0)
+    expect(run({ RUNTIME_RESULT: outcome })).toBe(1)
+    expect(run({ PACKAGE_RESULT: outcome })).toBe(1)
+    expect(
+      run({
+        EVENT_NAME: 'pull_request',
+        RUNTIME_REQUIRED: 'false',
+        RUNTIME_RESULT: 'skipped',
+        PACKAGE_RESULT: 'skipped'
+      })
+    ).toBe(0)
+    expect(step.env?.RUNTIME_REQUIRED).toBe(
+      workflow.jobs.runtime_checks.if?.replace("needs.preflight.result == 'success' && ", '')
+    )
+    expect(step.env?.PR_GATE_NEEDS).toContain('needs.runtime_checks.result')
+    expect(step.env?.PR_GATE_NEEDS).toContain('needs.package_verification.result')
+  }
+)

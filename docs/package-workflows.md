@@ -21,11 +21,30 @@ npm run check:packages -- --packages=pdf-translation
 npm run check:packages -- --ci
 ```
 
-Explicit package names select exactly those consumers, plus prerequisite builds. CI obtains changed
-packages and downstream consumers from the trusted `select-package-tests` action. Its package graph
-is `scripts/ci/package-test-boundaries.json`; tests check that its edges match compiler references
-and package manifests. Missing/partial selection retains all checks. A new package absent from the
-trusted exclusion list cannot silently disappear from verification.
+Explicit package names select exactly those consumers, plus prerequisite builds. Ordinary PR updates
+run affected package unit tests and host integration tests; installed tarball verification runs in
+**merge queue** as a separate blocking job. Static checks no longer install or execute package tarballs;
+CLI/SDK, Node 22 compatibility and published-runtime checks have their own job with unchanged selection.
+
+Queue verification selects changed packages and transitive downstream consumers from the trusted
+`select-package-tests` action using its `verification` input. Its graph is
+`scripts/ci/package-test-boundaries.json`; tests check edges against compiler references and manifests.
+An empty selection skips dependency installation and verification. Upstream packages required to build
+selected consumers are built without selecting their own tests.
+
+Installed-consumer selection ignores host source, documentation, E2E, unrelated workflow changes and
+known host CI routing inputs. Changes to a package's verifier select its consumer family and downstream
+packages. Root dependencies/lockfile, Node/TypeScript/Vitest configuration, package policy, shared
+installation/build helpers and unknown inputs retain broad verification: they can affect packages even
+without changes under `packages/`. This does not narrow the portable unit-test selector's global rules.
+Missing or partial trusted evidence retains full verification. Older trusted policy may still select
+more packages during rollout; a new package absent from trusted evidence cannot silently disappear.
+
+**Source Regression** verifies all installed packages on Ubuntu/Node 24 at its existing twice-daily
+schedule and in manual `full` mode. Its failure participates in the existing scheduled tracking issue.
+The **Package test policy dry-run** is manual-only; policy and actual Vitest discovery regression tests
+also run through the ordinary test suites. Queue, scheduled and manual installation checks reuse
+`.github/actions/verify-packages` and the production dispatcher.
 
 The dispatcher reuses the Connector, Diagnostics, Environment, Compute, Notebook, Skills and
 PDF/Literature verifiers.

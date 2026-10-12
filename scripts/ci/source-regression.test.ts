@@ -318,7 +318,7 @@ describe('independent source regression', () => {
       group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(Object.keys(scheduled.jobs)).toEqual(['regression', 'report'])
+    expect(Object.keys(scheduled.jobs)).toEqual(['regression', 'packages', 'report'])
     expect(scheduled.jobs.regression.needs).toBeUndefined()
     expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
     expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()
@@ -547,4 +547,23 @@ describe('independent source regression', () => {
       }
     }
   )
+})
+
+it('shares complete installed-consumer checks with queue/manual runs and reports scheduled failures', () => {
+  expect(scheduled.jobs.packages.if).toBe(
+    "${{ github.event_name == 'schedule' || inputs.mode == 'full' }}"
+  )
+  expect(scheduled.jobs.packages['runs-on']).toBe('ubuntu-latest')
+  expect(
+    scheduled.jobs.packages.steps.some((step) => step.uses === './.github/actions/verify-packages')
+  ).toBe(true)
+  expect(scheduled.jobs.report.needs).toEqual(['regression', 'packages'])
+  const manual = load(
+    readFileSync('.github/workflows/package-test-policy-dry-run.yml', 'utf8')
+  ) as Workflow
+  expect(Object.keys(manual.on)).toEqual(['workflow_dispatch'])
+  expect(
+    manual.jobs.isolation.steps.find((step) => step.uses === './.github/actions/verify-packages')
+      ?.with
+  ).toEqual({ selection: '${{ inputs.packages }}' })
 })

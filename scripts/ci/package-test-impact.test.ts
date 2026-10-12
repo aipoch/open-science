@@ -15,6 +15,7 @@ import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
 import {
   createPackageTestPlan,
+  verificationFamilies,
   packageTestExcludePatterns,
   notebookPackageVerificationPlan,
   environmentPackageVerificationPlan,
@@ -153,7 +154,8 @@ it('uses only trusted registry data, includes renames/deletions and preserves sy
           BASE_SHA: base,
           HEAD_SHA: head,
           TRUSTED_BASE_SHA: base,
-          PACKAGE_SELECTION_ENABLED: enabled
+          PACKAGE_SELECTION_ENABLED: enabled,
+          PACKAGE_VERIFICATION: 'true'
         }
       })
       return readFileSync(githubEnv, 'utf8')
@@ -487,3 +489,75 @@ it.each([
     expect(plan.testFiles.some((file) => file.startsWith('packages/reproducibility/'))).toBe(false)
   }
 )
+
+describe('installed-consumer input selection', () => {
+  const actual = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+  const select = (paths: string[]) => createPackageTestPlan(paths, actual, { verification: true })
+  it.each([
+    'src/main/application-events.ts',
+    'docs/package-workflows.md',
+    'README.md',
+    '.github/workflows/source-regression.yml',
+    'scripts/ci/windows-test-sequencer.test.ts',
+    'scripts/ci/package-test-impact.test.ts',
+    'scripts/package-verification-plan.test.ts',
+    'scripts/ci/module-test-impact.mjs',
+    'test/config/vite.browser-test.config.test.ts',
+    'e2e/session-diagnostics.spec.ts',
+    'electron.vite.config.ts',
+    'vite.web.config.ts'
+  ])('does not install packages for unrelated input %s', (path) => {
+    expect(select([path]).selected).toEqual([])
+    expect(select([path]).excluded).toHaveLength(actual.packages.length)
+  })
+  it('keeps mixed package/host edits directional and only builds upstream prerequisites', async () => {
+    const { packageVerificationPlan } = await import('../package-verification-plan.mjs')
+    const plan = select(['src/main/application-events.ts', 'packages/pdf-translation/src/index.ts'])
+    expect(plan.selected).toEqual(['packages/pdf-translation'])
+    expect(packageVerificationPlan(actual, plan.selected, plan.excluded)).toEqual({
+      builds: ['packages/pdf-structure', 'packages/pdf-translation'],
+      tests: ['packages/pdf-translation']
+    })
+    expect(select(['packages/pdf-structure/src/index.ts']).selected).toEqual([
+      'packages/pdf-structure',
+      'packages/pdf-translation'
+    ])
+  })
+  it.each([
+    'package.json',
+    'package-lock.json',
+    '.npmrc',
+    '.nvmrc',
+    'tsconfig.packages.json',
+    'vitest.config.ts',
+    'scripts/package-verification-plan.mjs',
+    'scripts/check-packages.mjs',
+    'scripts/build-dev-packages.mjs',
+    'scripts/ci/package-test-boundaries.json',
+    'scripts/ci/package-test-impact.mjs',
+    'scripts/ci/npm-ci.mjs',
+    '.github/actions/verify-packages/action.yml',
+    '.github/actions/select-package-tests/action.yml',
+    'packages/new-package/src/index.ts',
+    'unknown/input.bin',
+    'scripts/unknown-build-helper.mjs',
+    'scripts/ci/unknown-build-helper.mjs'
+  ])('retains every package for shared or unknown verification input %s', (path) => {
+    expect(select([path]).excluded).toEqual([])
+  })
+  it.each(verificationFamilies)(
+    'selects consumers of $script without unrelated packages',
+    ({ script, packages }) => {
+      const plan = select([`scripts/${script.replace(':', '-')}.mjs`])
+      expect(plan.selected).toEqual(
+        expect.arrayContaining(packages.map((name: string) => `packages/${name}`))
+      )
+      expect(plan.excluded.length).toBeGreaterThan(0)
+    }
+  )
+  it('does not let verification rules narrow portable test or ownership policy', () => {
+    expect(
+      createPackageTestPlan(['scripts/ci/windows-test-sequencer.test.ts'], actual).excluded
+    ).toEqual([])
+  })
+})

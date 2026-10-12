@@ -5,34 +5,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verificationPlanFromArguments } from './package-verification-plan.mjs'
 
-// These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
-export const verificationFamilies = [
-  { script: 'check:resilient-download-package', packages: ['resilient-download'] },
-  { script: 'check:durable-files-package', packages: ['durable-files', 'skills', 'specialists'] },
-  {
-    script: 'check:connector-packages',
-    packages: ['connector-core', 'connector-builtins', 'connector-mcp-client']
-  },
-  { script: 'check:diagnostics-package', packages: ['diagnostics'] },
-  { script: 'check:environment-package', packages: ['environment'] },
-  { script: 'check:compute-package', packages: ['compute'] },
-  { script: 'check:reproducibility-package', packages: ['reproducibility'] },
-  {
-    script: 'check:notebook-packages',
-    packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
-  },
-  {
-    script: 'check:package-isolation',
-    packages: [
-      'pdf-structure',
-      'pdf-translation',
-      'literature-citations',
-      'journal-catalog',
-      'literature-discovery',
-      'literature-screening'
-    ]
-  }
-]
+import { verificationFamilies } from './ci/package-test-impact.mjs'
+export { verificationFamilies } from './ci/package-test-impact.mjs'
 
 export function verificationCommands(plan) {
   const selected = plan.tests.map((root) => root.slice('packages/'.length))

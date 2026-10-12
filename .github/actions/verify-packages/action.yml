@@ -1,0 +1,33 @@
+name: Verify installed packages
+description: Run the production tarball verifier and retain timings for queue, scheduled and manual checks
+inputs:
+  selection:
+    description: ci for trusted selection, all, or comma-separated independent package names
+    default: all
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: node scripts/ci/npm-ci.mjs
+    - name: Verify independent package tarballs
+      shell: bash
+      env:
+        PACKAGE_SELECTION: ${{ inputs.selection }}
+      run: |
+        set -euo pipefail
+        args=()
+        case "$PACKAGE_SELECTION" in
+          ci) args+=(--ci) ;;
+          all) ;;
+          *) args+=("--packages=$PACKAGE_SELECTION") ;;
+        esac
+        npm run check:packages -- "${args[@]}"
+    - name: Upload package verification timings
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: package-verification
+        path: test-results/package-verification.json
+        if-no-files-found: ignore
+        retention-days: 14
