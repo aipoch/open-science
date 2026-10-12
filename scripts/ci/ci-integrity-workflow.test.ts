@@ -184,12 +184,12 @@ describe('module registration approval boundary', () => {
       }))
     )
   )(
-    'schedules full portable registration validation at the scheduled acceptance boundary for $event at $path',
+    'runs full portable registration validation in the gate for $event at $path',
     ({ event, path }) => {
       const changes = [{ path, status: 'modified' }]
       const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
       expect(plan.mode).toBe('full')
-      expect(plan.bundles).not.toContain('unit')
+      expect(plan.bundles).toContain('unit')
       expect(plan.bundles).toContain('static')
     }
   )

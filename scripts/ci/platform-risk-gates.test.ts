@@ -57,10 +57,10 @@ describe('platform risk execution policy', () => {
           ['preflight', ...plan.bundles].map((name) => [name, 'success'])
         )
         expect(evaluatePrGate(plan, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
-        for (const unit of ['skipped', 'failure', 'cancelled', undefined]) {
+        for (const unit of ['success', 'skipped', 'failure', 'cancelled', undefined]) {
           expect(
             evaluatePrGate(plan, { ...conclusions, unit }, { executionMode: 'bundles' }).ok
-          ).toBe(unit === 'skipped')
+          ).toBe(unit === 'success')
         }
       }
     }
