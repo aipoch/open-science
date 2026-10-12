@@ -468,7 +468,9 @@ it
           /* Already reaped. */
         }
       }
-      await owner.dispose()
+      // shutdownAll can remove sessions with an unverified stop. The sandbox retains their
+      // original termination callbacks, so retry that owner before releasing its temporary roots.
+      await vi.waitFor(() => owner.dispose(), { timeout: 10_000, interval: 100 })
       await rm(storage, { recursive: true, force: true })
     }
   },
