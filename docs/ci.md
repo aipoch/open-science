@@ -134,6 +134,17 @@ imports, dirty checkouts and missing evidence retain the broader plan. Mixed hos
 edits retain ordinary module selection. The installed test runner explains exclusions;
 the dependency-free preflight continues to report conservative module and platform scope.
 
+For pure host source edits (`src/main`, `src/renderer`, or `src/shared`), the PR tier also
+bounds transitive consumer execution. Owner tests, selected explicit contracts, changed tests,
+CodeGraph evidence, direct runtime consumers and one adapter hop remain in PR. Unresolved
+boundaries stay selected. Historical consumers declared by a changed owner also stay selected
+when any base/head/checkout source graph cannot prove their dependency. Distant consumers
+are deferred to the **blocking merge queue**, whose host plan remains unchanged; they are not
+removed from registration or treated as unrelated. The runner explains each deferral. This
+uses the same repository-owned dependency reader as package tiering, without extra contributor
+tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
+destructive changes, dirty checkouts and missing evidence retain the broad selection.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
@@ -203,7 +214,13 @@ import of the moved source cannot rule out an additional IPC/filesystem dependen
 owner. Moved owner tests with those uncertain dependencies stay registered on both owners.
 This exception does not relax ordinary consumer retirement or runtime test-pruning proofs, and it
 cannot accompany source or runtime-edge changes.
-The split still receives full PR validation; ordinary selective runs acquire no extra graph scan.
+A revision changing only valid module shard JSON runs a bounded registration check in both PR
+and queue: CI policy tests, source architecture tests, manifest-reading tests and the ownership /
+consumer guards. Trusted preflight verifies the complete Git diff and reads regular JSON blobs;
+CI Integrity independently enforces every preservation rule above. Mixed source/policy edits,
+malformed records, unsupported statuses and root-manifest changes retain ordinary fallback.
+Registration data never selects its own contract tests. No application or platform behavior
+changes in this data-only path, so it does not launch desktop or Windows runtime suites.
 
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
 (for example, a generated native addon or computed import). Absence from a static graph alone

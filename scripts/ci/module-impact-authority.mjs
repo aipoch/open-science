@@ -61,7 +61,7 @@ export function runModuleImpactAuthorityCli(
   const base = requireCommit(argumentValue(arguments_, '--base') ?? environment.BASE_SHA, '--base')
   const head = requireCommit(argumentValue(arguments_, '--head') ?? environment.HEAD_SHA, '--head')
   const changes = changesFromGit(base, head, { cwd, execute })
-  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
     base,
     head,
     cwd,
@@ -69,7 +69,8 @@ export function runModuleImpactAuthorityCli(
   })
   const candidatePlan = classifyChanges(changes, undefined, {
     moduleManifest: manifest,
-    registrationModules
+    registrationModules,
+    registrationOnly
   })
   const modulePlan = candidatePlan.bundles.includes('unit')
     ? createAffectedTestPlan(changes, manifestOnlyGraph, manifest, registrationModules)

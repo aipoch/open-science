@@ -1191,16 +1191,27 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it('checks ownership and consumers for selective plans and deferred full PR/queue plans', () => {
+  it('checks selective source imports without duplicating the registration/full contract suite', () => {
     const guard = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Check complete module ownership and consumer evidence'
     )
     expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
     expect(guard?.run).toContain('scripts/ci/module-consumer-coverage.test.ts')
     expect(guard?.if).toBe(
-      "${{ (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full') || (contains(fromJSON('[\"pull_request\",\"merge_group\"]'), github.event_name) && fromJSON(needs.preflight.outputs.plan).mode == 'full') }}"
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}"
     )
     expect(guard?.['continue-on-error']).not.toBe(true)
+  })
+
+  it('runs manifest-reading contracts as a blocking check for registration and full plans', () => {
+    const step = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Check module registration policy and architecture contracts'
+    )
+    expect(step?.run).toBe('node scripts/ci/module-registration-tests.mjs')
+    expect(step?.if).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+    )
+    expect(step?.['continue-on-error']).not.toBe(true)
   })
 
   it('runs the i18n catalog guard as a named static check', () => {

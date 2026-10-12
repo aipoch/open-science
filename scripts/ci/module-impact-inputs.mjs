@@ -65,20 +65,33 @@ export function resolveModuleImpactInputs(
 ) {
   const fallback = { manifest, registrationModules: [] }
   const records = changes.filter(({ path }) => shard.test(path))
-  if (!records.length || records.some(({ status }) => status !== 'modified')) return fallback
+  if (!records.length) return fallback
   try {
     const git = (...args) =>
       execute('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).toString()
     const mergeBase = git('merge-base', base, head).trim()
     const files = (revision) =>
       new Set(git('ls-tree', '-r', '--name-only', '-z', revision).split('\0').filter(Boolean))
-    const resolved = additiveModuleImpact(
-      loadModuleImpactManifestAtRevision(mergeBase, { cwd }),
-      loadModuleImpactManifestAtRevision(head, { cwd }),
-      manifest,
-      files(mergeBase),
-      files(head)
-    )
+    const before = loadModuleImpactManifestAtRevision(mergeBase, { cwd })
+    const after = loadModuleImpactManifestAtRevision(head, { cwd })
+    // A data-only revision cannot change application behavior. Integrity still proves
+    // preservation; this route runs the policy and manifest-reading contract suites.
+    const actualPaths = git('diff', '--name-only', '-z', mergeBase, head)
+      .split('\0')
+      .filter(Boolean)
+    if (
+      changes.length === records.length &&
+      records.every(({ status }) => ['added', 'modified', 'deleted'].includes(status)) &&
+      actualPaths.length > 0 &&
+      actualPaths.every((path) => shard.test(path))
+    ) {
+      validateModuleImpactManifest(before)
+      const headFiles = files(head)
+      validateModuleImpactManifest(after, { pathExists: (path) => headFiles.has(path) })
+      return { ...fallback, registrationOnly: true }
+    }
+    if (records.some(({ status }) => status !== 'modified')) return fallback
+    const resolved = additiveModuleImpact(before, after, manifest, files(mergeBase), files(head))
     if (!resolved) return fallback
     const registrationModules = records.map(({ path }) => shard.exec(path)[1])
     if (registrationModules.some((id) => !resolved.modules[id])) return fallback

@@ -592,10 +592,12 @@ jobs:
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
       - name: Check complete module ownership and consumer evidence
-        # Retain these guards when full portable validation moves to scheduled acceptance.
-        # Selective source plans must also validate newly introduced consumer imports.
-        if: ${{ (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full') || (contains(fromJSON('["pull_request","merge_group"]'), github.event_name) && fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
+        # Registration/full plans include these guards in the contract suite below.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
         run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+      - name: Check module registration policy and architecture contracts
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        run: node scripts/ci/module-registration-tests.mjs
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
