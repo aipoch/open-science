@@ -985,7 +985,7 @@ it.each([
 
   expect(plan.mode).toBe('selective')
   expect(plan.modules).toContain(
-    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'desktop_composition'
+    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'host_process_runtime'
   )
   expect(plan.capabilityOverlays).toContain('windows_sensitive')
   if (path.endsWith('.test.ts')) {
