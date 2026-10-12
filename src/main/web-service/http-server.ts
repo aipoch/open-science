@@ -69,6 +69,7 @@ const MAX_WEB_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
+const MAX_WEB_EVENT_FRAME_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const MAX_WEBSOCKET_INBOUND_BYTES = 1_024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
@@ -1774,7 +1775,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         },
         {
           // Preserve the HTTP event stream’s existing framing allowance.
-          maxFrameBytes: 16 * 1024 * 1024 + 64 * 1024,
+          maxFrameBytes: MAX_WEB_EVENT_FRAME_BYTES,
+          socketByteBudget: MAX_WEB_EVENT_FRAME_BYTES,
           budget: outboundBudget,
           isAuthorized: () => isWebSocketAuthorizationCurrent(socket),
           writeTimeoutMs: 30_000

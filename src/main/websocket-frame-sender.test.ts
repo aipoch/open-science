@@ -219,7 +219,9 @@ it('bounds aggregate small frames across clients independently of the byte budge
 it('checks socket buffer headroom when draining, without rejecting frames waiting behind an active write', () => {
   const socket = new Socket()
   const failure = vi.fn()
-  const sender = createWebSocketFrameSender(socket as unknown as WebSocket, failure)
+  const sender = createWebSocketFrameSender(socket as unknown as WebSocket, failure, {
+    socketByteBudget: 16 * 1024 * 1024
+  })
   const frame = 'x'.repeat(12 * 1024 * 1024)
   sender.send(frame)
   socket.bufferedAmount = 12 * 1024 * 1024
@@ -231,4 +233,12 @@ it('checks socket buffer headroom when draining, without rejecting frames waitin
   expect(socket.send).toHaveBeenCalledOnce()
   expect(failure).toHaveBeenCalledExactlyOnceWith({ reason: 'socket-buffer-budget' })
   expect(socket.terminate).toHaveBeenCalledOnce()
+})
+
+it('preserves the desktop sender policy when no Web socket budget is requested', () => {
+  const { socket, sender, failure } = setup()
+  socket.bufferedAmount = 20 * 1024 * 1024
+  expect(sender.send('desktop frame')).toBe(true)
+  expect(socket.send).toHaveBeenCalledOnce()
+  expect(failure).not.toHaveBeenCalled()
 })

@@ -57,6 +57,7 @@ export function createWebSocketFrameSender(
   onFailure: (failure: OutboundFailure) => void,
   options: {
     maxFrameBytes?: number
+    socketByteBudget?: number
     budget?: ReturnType<typeof createWebSocketFrameBudget>
     isAuthorized?: () => boolean
     writeTimeoutMs?: number
@@ -106,7 +107,10 @@ export function createWebSocketFrameSender(
     }
     active = queue.shift()
     if (!active) return
-    if (socket.bufferedAmount + active.bytes > maxFrameBytes) {
+    if (
+      options.socketByteBudget !== undefined &&
+      socket.bufferedAmount + active.bytes > options.socketByteBudget
+    ) {
       fail({ reason: 'socket-buffer-budget' })
       return
     }
@@ -129,13 +133,20 @@ export function createWebSocketFrameSender(
     send(frame, onSent) {
       if (closed || socket.readyState !== WebSocket.OPEN) return false
       const bytes = Buffer.byteLength(frame)
-      if (bytes > maxFrameBytes || socket.bufferedAmount > maxFrameBytes) {
+      if (bytes > maxFrameBytes) {
         fail({
           reason: 'single-frame-too-large',
           frameBytes: Math.min(bytes, maxFrameBytes + 1),
           bufferedBytes: Math.min(socket.bufferedAmount, maxFrameBytes + 1),
           byteBudget: maxFrameBytes
         })
+        return false
+      }
+      if (
+        options.socketByteBudget !== undefined &&
+        socket.bufferedAmount > options.socketByteBudget
+      ) {
+        fail({ reason: 'socket-buffer-budget' })
         return false
       }
       const count = queue.length + (active ? 1 : 0) + 1

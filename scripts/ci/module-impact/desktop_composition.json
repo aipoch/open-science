@@ -285,7 +285,7 @@
     "src/main/composition/notebook-approvals.ts",
     "src/main/websocket-frame-sender.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
       "src/main/composition/notebook-environment.test.ts",
