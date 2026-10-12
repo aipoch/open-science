@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROMPT = 'Stream the long scroll journey.'
 const COMPLETED = 'Segment 3 paragraph 7.'
@@ -12,8 +13,7 @@ test('continues a restored in-flight snapshot through the real Resume action', a
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Interrupted turn recovery')
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, PROMPT)
 
   // Capture an actual Main-owned in-flight Session, then restore that snapshot through the
   // isolated fixture. This avoids child-first process-tree shutdown recording an ACP error.

@@ -4,6 +4,7 @@ import type { Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Preview context menu journey'
 const TEXT_FILE_NAME = 'context-menu.txt'
@@ -196,10 +197,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   await page.getByTestId('preview-content-context-menu').getByText('Close', { exact: true }).click()
   await expect(page.getByRole('tab').filter({ hasText: PDF_FILE_NAME })).toBeHidden()
 
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({

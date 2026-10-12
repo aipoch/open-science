@@ -3,6 +3,7 @@ import { stat, writeFile, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
@@ -311,8 +312,7 @@ test('exports a Session package and opens the imported Session with replay', asy
     page.getByRole('button', { name: 'Remove attachment raw-results.csv' })
   ).toBeVisible()
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   // Session preparation on Windows is not a response-latency benchmark.
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
     timeout: 60_000
@@ -394,10 +394,7 @@ test('exports a Session package and opens the imported Session with replay', asy
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-background.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Continue another Session during export.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue another Session during export.')
   // The installed fake Agent returns its configured fixed response for every Session.
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
     timeout: 60_000
@@ -525,8 +522,7 @@ test('exports a Session package and opens the imported Session with replay', asy
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page.screenshot({ path: testInfo.outputPath('session-package-imported.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await submitPromptViaUi(page, 'Continue in an ordinary Session.')
   await expect(
     page
       .getByRole('region', { name: 'Conversation', exact: true })

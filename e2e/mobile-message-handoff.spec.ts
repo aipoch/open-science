@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from './fixtures/electron-app'
 import { createProject, openProjectSession, sendPrompt } from './certification/helpers'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test.use({ channel: process.env.OPEN_SCIENCE_E2E_BROWSER_CHANNEL })
 
@@ -53,12 +54,10 @@ for (const queued of [false, true]) {
       await phone.reload()
       await expect(phone.getByText('Existing history turn 5.', { exact: true })).toBeVisible()
       if (queued) {
-        await phone
-          .getByRole('textbox', { name: 'Ask anything' })
-          .fill(
-            `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
-          )
-        await phone.getByRole('button', { name: 'Send message', exact: true }).click()
+        await submitPromptViaUi(
+          phone,
+          `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
+        )
         await expect(phone.getByTestId('composer-queue-submit')).toBeVisible()
       }
       await phone.route(routePattern, async (route) => {

@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { opencodeTransportProviderId } from '../src/main/agent-framework/opencode'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 const TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
 const TERMINAL_REPLY = 'Production delegation reached a terminal result.'
@@ -50,12 +51,7 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
   )
   page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'Settings' }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Model', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Model')
   // The Subagent selector now lives inside the collapsed Scenario models accordion row.
   await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
   const model = settings.getByRole('combobox', { name: 'Subagent model Model' })

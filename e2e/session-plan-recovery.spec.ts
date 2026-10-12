@@ -3,6 +3,7 @@ import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { isTurnAnchor, latestTurnAnchor } from '../src/shared/session-persistence/turn-anchor'
 import { test, type ElectronApp } from './fixtures/electron-app'
 import { createProjectViaUi as createProject } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
 const RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
@@ -17,8 +18,7 @@ async function snapshot(page: Page): Promise<PersistedChatSession> {
 }
 
 async function generatePlan(page: Page, prompt: string): Promise<void> {
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
   await expect.poll(async () => Boolean((await snapshot(page)).activeRun)).toBe(true)
   expect((await snapshot(page)).runtimeContext?.plan?.approval).toBe('pending')

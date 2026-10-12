@@ -2,8 +2,10 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
-import { setTheme } from './fixtures/settings-preferences'
+import { openSettingsPage, setTheme } from './fixtures/settings-preferences'
 import { homeNewProjectButton } from './fixtures/project'
+import { setViewport } from './fixtures/viewport'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -16,11 +18,6 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
   })
-}
-
-const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
-  await page.setViewportSize({ width, height })
-  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
 }
 
 const setVisualState = async (
@@ -114,8 +111,7 @@ const seedHomeActivitySessions = async (page: Page): Promise<void> => {
   ]
   for (const [index, prompt] of prompts.entries()) {
     if (index > 0) await page.getByRole('button', { name: 'New', exact: true }).click()
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-    await page.getByRole('button', { name: 'Send message', exact: true }).click()
+    await submitPromptViaUi(page, prompt)
     await expect(
       page
         .getByText(
@@ -166,12 +162,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   // macOS runner text/icon rasterization differs slightly from the local baseline (about 0.21%).
   await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'General', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'General')
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   const appVersion = settings.getByRole('region', { name: 'App version' })
   await appVersion.getByRole('button').evaluateAll((elements) => {
@@ -296,12 +287,7 @@ test('keeps representative conversation, project, and recovery states visually s
   await page.getByTestId('preview-tab-strip').getByRole('tab', { name: 'Files' }).press('Delete')
 
   await setVisualState(page, { theme: 'Dark', width: 1280 })
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Compute')
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   await setViewport(page, 767)
   await expectStableScreenshot(page, 'compute-narrow-dark.png')

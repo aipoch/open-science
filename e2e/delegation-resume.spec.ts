@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 for (const scenario of ['control', 'resume', 'continue-child'] as const) {
   const stop = scenario !== 'control'
@@ -23,16 +24,14 @@ for (const scenario of ['control', 'resume', 'continue-child'] as const) {
       'aria-label',
       /Delegation On/
     )
-    await page
-      .getByRole('textbox', { name: 'Ask anything' })
-      .fill(
-        scenario === 'continue-child'
-          ? 'Audit delegation explicit continuation.'
-          : stop
-            ? 'Audit delegation after Stop Resume.'
-            : 'Audit delegation without Stop.'
-      )
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(
+      page,
+      scenario === 'continue-child'
+        ? 'Audit delegation explicit continuation.'
+        : stop
+          ? 'Audit delegation after Stop Resume.'
+          : 'Audit delegation without Stop.'
+    )
     if (stop) {
       await expect(
         page.getByText('Delegation audit ready for Stop.', { exact: false })

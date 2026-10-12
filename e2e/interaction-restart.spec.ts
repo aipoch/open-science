@@ -3,6 +3,7 @@ import { test } from './fixtures/electron-app'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import type { NotebookRunRecord } from '../src/shared/notebook'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const scenarios = [
   { action: 'approve', restart: true },
@@ -30,8 +31,7 @@ for (const { action, restart } of scenarios) {
       : action === 'question'
         ? 'Ask a restart verification question.'
         : 'Create a restart verification Plan.'
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, prompt)
     if (permission) await expect(page.getByTestId('permission-card')).toBeVisible()
     else if (action === 'question')
       await expect(
@@ -237,8 +237,7 @@ for (const { action, restart } of scenarios) {
         })
       )
       .toEqual([{ status: 'idle', active: false }])
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify interaction follow-up.')
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, 'Verify interaction follow-up.')
     await expect(page.getByText('Interaction follow-up completed.', { exact: false })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('after-response.png') })
   })
@@ -253,8 +252,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     let page = await app.configureFakeAgent()
     await createProjectViaUi(page, `Permission handoff ${secondDecision}`)
     const prompt = 'Verify consecutive permissions after restart.'
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, prompt)
     await expect(page.getByTestId('permission-card')).toBeVisible()
     const readSession = async (): Promise<PersistedChatSession> =>
       page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
@@ -366,10 +364,7 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Cancellation publication')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Publish then wait for cancellation.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Publish then wait for cancellation.')
   await expect(
     page.getByText('Artifact published; waiting for cancellation.', { exact: false })
   ).toBeVisible({ timeout: 60_000 })
@@ -398,8 +393,7 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
     message.artifactIds?.includes(artifact.id)
   )!
   expect(owner).toBeDefined()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify interaction follow-up.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Verify interaction follow-up.')
   await expect(page.getByText('Interaction follow-up completed.', { exact: false })).toBeVisible()
   await expect
     .poll(async () =>

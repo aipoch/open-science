@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { createProjectViaUi } from '../fixtures/project'
+import { submitPromptViaUi } from '../fixtures/conversation'
 
 const createProject = async (page: Page, name: string): Promise<string> => {
   const existingProjectIds = await page.evaluate(async () => {
@@ -42,8 +43,7 @@ const sendPrompt = async (
   const fixtureFailure = page.getByText(/^E2E fixture failure:/)
   const existingReplyCount = await expectedReply.count()
   const existingFailureCount = await fixtureFailure.count()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(
     expectedReply.nth(existingReplyCount).or(fixtureFailure.nth(existingFailureCount))
   ).toBeVisible({ timeout })

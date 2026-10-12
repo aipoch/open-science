@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Mermaid block project'
 const MERMAID_PROMPT = 'Render the mermaid block journey.'
@@ -16,8 +17,7 @@ const openMermaidConversation = async (app: {
   await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(MERMAID_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, MERMAID_PROMPT)
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
   await expect(

@@ -4,6 +4,7 @@ import type { PersistedChatSession } from '../src/shared/session-persistence'
 import type { ReviewWithChecks } from '../src/shared/reviewer'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 async function snapshot(
   page: Page
@@ -41,12 +42,10 @@ for (const scenario of [
       'aria-label',
       /auto-review On/
     )
-    await page
-      .getByRole('textbox', { name: 'Ask anything' })
-      .fill(
-        `Run auto review ${scenario === 'correction restart stop' ? 'correction stop' : scenario} scenario.`
-      )
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(
+      page,
+      `Run auto review ${scenario === 'correction restart stop' ? 'correction stop' : scenario} scenario.`
+    )
 
     if (scenario.endsWith('stop')) {
       await expect(

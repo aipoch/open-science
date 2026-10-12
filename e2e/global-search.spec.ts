@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test('refreshes global search when another renderer edits a Library collection', async ({
   app
@@ -397,8 +398,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
     mimeType: 'text/markdown',
     buffer: Buffer.from('# Search findings\n\nVerified file preview content.')
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read the attached notes.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Read the attached notes.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
   const dialog = page.getByRole('dialog', { name: 'Global search' })
@@ -528,10 +528,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
       buffer: Buffer.from('CCO')
     }
   ])
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Inspect the attached search files.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Inspect the attached search files.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
   const dialog = page.getByRole('dialog', { name: 'Global search' })
@@ -690,10 +687,7 @@ test('uses the same preview and information tabs for generated files', async ({
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Generated search previews')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({ timeout: 90_000 })

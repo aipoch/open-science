@@ -14,8 +14,10 @@ import {
   type AccessibilityUiFinding
 } from './accessibility-reporter'
 import { test } from './fixtures/electron-app'
-import { setTheme } from './fixtures/settings-preferences'
+import { openSettingsPage, setTheme } from './fixtures/settings-preferences'
 import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
+import { setViewport } from './fixtures/viewport'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
@@ -96,11 +98,6 @@ const waitForFiniteAnimations = async (page: Page): Promise<void> => {
   })
 }
 
-const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
-  await page.setViewportSize({ width, height })
-  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
-}
-
 const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<boolean> => {
   await expect(target).toBeVisible()
   for (let index = 0; index < maxTabs; index += 1) {
@@ -159,12 +156,7 @@ test('reports accessibility violations in core dialog and workspace surfaces', a
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
   await scanAccessibility(page, 'Workspace')
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'General', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'General')
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   await scanAccessibility(page, 'Settings')
 })
@@ -278,12 +270,7 @@ test('reports accessibility violations across representative state combinations'
   await page.getByTestId('preview-tab-strip').getByRole('tab', { name: 'Files' }).press('Delete')
 
   await app.configureFileBrowserFixture()
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Compute')
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   await setViewport(page, 767)
   await scanAccessibility(page, 'Compute settings (narrow, dark)')
@@ -533,8 +520,7 @@ for (const theme of ['Light', 'Dark'] as const) {
         `Model ${width}px`
       )
     }
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Request fixture permission.')
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, 'Request fixture permission.')
     await page.getByRole('button', { name: 'Deny', exact: true }).click()
     await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
     await checkContrast(

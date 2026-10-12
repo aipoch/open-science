@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Shell runs in the default regression suite. Set OPEN_SCIENCE_E2E_PYTHON and
 // COMPUTE_TEST_SSH_ALIAS to exercise an external interpreter and a real SSH host.
@@ -38,8 +39,7 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
     }
     await createProjectViaUi(page, 'Background completion regression')
     if (mode === 'ssh') {
-      await page.getByRole('textbox', { name: 'Ask anything' }).fill('Initialize completion test.')
-      await page.getByRole('button', { name: 'Send message' }).click()
+      await submitPromptViaUi(page, 'Initialize completion test.')
       await expect
         .poll(async () =>
           page.evaluate(async () =>
@@ -74,16 +74,14 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
           })
         : undefined
     try {
-      await page
-        .getByRole('textbox', { name: 'Ask anything' })
-        .fill(
-          mode === 'ssh'
-            ? 'Verify SSH background completion delivery.'
-            : mode === 'python'
-              ? 'Verify Python background completion delivery.'
-              : 'Verify background completion delivery.'
-        )
-      await page.getByRole('button', { name: 'Send message' }).click()
+      await submitPromptViaUi(
+        page,
+        mode === 'ssh'
+          ? 'Verify SSH background completion delivery.'
+          : mode === 'python'
+            ? 'Verify Python background completion delivery.'
+            : 'Verify background completion delivery.'
+      )
       if (mode === 'shell') {
         const review = page.getByRole('group', {
           name: 'Permission request: Review potentially destructive code',

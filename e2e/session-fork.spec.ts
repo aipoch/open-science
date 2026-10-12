@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test.use({ windowMode: 'normal' })
 
@@ -13,8 +14,7 @@ test('forks local and imported research and immediately continues through the re
   await app.configureSessionPackageDialogs()
   await createProjectViaUi(page, 'Fork lifecycle')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
@@ -64,8 +64,7 @@ test('forks local and imported research and immediately continues through the re
       .getByRole('region', { name: 'Conversation', exact: true })
       .getByText(`Deterministic reply: ${prompt}`, { exact: true })
     const previousReplies = await replies.count()
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(followup)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, followup)
     await expect(replies).toHaveCount(previousReplies + 1)
     await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
     await expect(page.getByText(/Project owner is unavailable/)).toHaveCount(0)
@@ -101,8 +100,7 @@ test('forks local and imported research and immediately continues through the re
     .getByRole('region', { name: 'Conversation', exact: true })
     .getByText(`Deterministic reply: ${prompt}`, { exact: true })
   const before = await replies.count()
-  await restarted.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after restart')
-  await restarted.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(restarted, 'Continue after restart')
   await expect(replies).toHaveCount(before + 1)
   await expect(restarted.getByText(/Project owner is unavailable/)).toHaveCount(0)
   await expect
@@ -125,8 +123,7 @@ test('changes branch permissions before the first follow-up without changing sou
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Branch permissions')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   const reply = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
   // The first turn includes provider preparation on Windows. Wait for its actual durable
   // completion before checking paced text presentation; this is not a latency benchmark.
@@ -204,8 +201,7 @@ test('changes branch permissions before the first follow-up without changing sou
       )
     )
     .toBe(true)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue the research')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue the research')
   await expect(reply).toHaveCount(2)
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await expect

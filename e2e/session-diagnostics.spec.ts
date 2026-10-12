@@ -5,6 +5,7 @@ import type { ElectronApplication } from 'playwright'
 import { x as extract } from 'tar'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
 test.use({ windowMode: 'hidden' })
@@ -17,8 +18,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Diagnostic research')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   const identity = await page.evaluate(async () => {

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROMPT = 'Run delegated cold recovery regression.'
 
@@ -20,8 +21,7 @@ test('continues a child after force quit without rewriting persisted state', asy
     await page.getByRole('menuitem', { name: 'Delegation', exact: true }).click()
     await page.keyboard.press('Escape')
   }
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, PROMPT)
   await expect(page.getByText('Cold recovery ready for exit.', { exact: false })).toBeVisible()
   const { interrupted, dataRoot } = await page.evaluate(async (prompt) => {
     const interrupted = (await window.api.sessions.loadAll()).sessions.find((s) =>

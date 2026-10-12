@@ -1,17 +1,7 @@
 import { expect } from '@playwright/test'
-import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
-
-const openGeneralSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: 'Settings' }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'General', exact: true })
-    .click()
-  return settings
-}
+import { openGeneralSettings } from './fixtures/settings-preferences'
 
 test.describe('Windows window system', () => {
   test.skip(process.platform !== 'win32', 'Windows window behavior requires a Windows host.')

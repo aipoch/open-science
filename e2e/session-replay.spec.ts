@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test.use({ windowMode: 'normal' })
 
@@ -568,10 +569,7 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Replay Office preview')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({ timeout: 90_000 })

@@ -85,6 +85,14 @@ Scope ambiguous actions to their owning region rather than selecting the first m
 replace UI journeys with API seeding merely to remove repetition, or delete scenarios because
 they share preparation. Prefer small helpers for repeated operations over a generic page hierarchy.
 
+Other shared preparations live in `e2e/fixtures/`: `settings-preferences.ts` owns Settings section
+navigation, theme and language selection; `library.ts` opens Library's All references view;
+`conversation.ts` submits a prompt without waiting for a reply; and `viewport.ts` waits for a
+requested viewport width to take effect. Keep keyboard submission, conditional navigation,
+reply/failure waits and scenario-specific assertions in the caller. The explicitly named
+`activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
+state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
+
 ## Module-impact registration
 
 Module registration is part of the same change as the source and tests, not a follow-up after CI

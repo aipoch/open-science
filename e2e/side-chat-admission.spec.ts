@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Real Electron + Radix. No renderer-store injection: the permission wait is produced by the
 // deterministic agent through the production protocol.
@@ -51,10 +52,7 @@ test('keeps Side chat across renderer reload but discards it on application rest
   let page = await app.configureFakeAgent()
   await page.setViewportSize({ width: 1400, height: 1000 })
   await createProjectViaUi(page, 'Ephemeral side chat regression')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Summarize the deterministic fixture.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await submitPromptViaUi(page, 'Summarize the deterministic fixture.')
   const mainReply = 'Deterministic reply: Summarize the deterministic fixture.'
   await expect(page.getByText(mainReply, { exact: true })).toBeVisible()
   await page.getByTestId('branch-send-menu-trigger').click()

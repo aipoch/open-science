@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Pacing must actually run: hidden windows emulate reduced motion (instant commits), so this
 // journey needs a normal window with live animation frames.
@@ -161,10 +162,10 @@ test('renders expensive streamed output through the native parser Worker and com
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
   const releaseFile = join(await app.createTestDirectory('markdown-parser'), 'release')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill(`Run the native Markdown parser journey. Release file: ${JSON.stringify(releaseFile)}`)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(
+    page,
+    `Run the native Markdown parser journey. Release file: ${JSON.stringify(releaseFile)}`
+  )
   await expect
     .poll(
       () =>
