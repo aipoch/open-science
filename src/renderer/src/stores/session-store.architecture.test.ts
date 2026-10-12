@@ -1,4 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import {
+  expectTypeOnlyContract,
+  expectModuleBoundary
+} from '../../../../test/module-boundary-assertions'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 
 import {
@@ -894,8 +898,11 @@ describe('Session Store architecture', () => {
       )
       .map((path) => normalizePathSeparators(relative(__dirname, path)))
       .sort()
+    const contractPath = resolve(__dirname, 'session-store-contract.ts')
+    const contracts = existsSync(contractPath) ? ['session-store-contract.ts'] : []
+    if (contracts.length) expectTypeOnlyContract(contractPath, readSource(contractPath))
     expect(actualModules).toEqual(
-      ['session-store.ts', ...ownerNames.map((name) => `${name}.ts`)].sort()
+      ['session-store.ts', ...ownerNames.map((name) => `${name}.ts`), ...contracts].sort()
     )
   })
 
@@ -1017,7 +1024,7 @@ describe('Session Store architecture', () => {
 
   it('keeps the architecture suite in the Session renderer impact set', () => {
     const manifest = loadModuleImpactManifest(moduleImpactPath)
-    expect(manifest.modules.session_renderer).toEqual({
+    expectModuleBoundary(manifest, 'session_renderer', {
       ownerPaths: [
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-store-interaction-state.ts',

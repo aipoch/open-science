@@ -1,3 +1,4 @@
+import { expectModuleBoundary } from '../../../test/module-boundary-assertions'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 
 import {
@@ -405,9 +406,8 @@ describe('Reviewer orchestrator architecture', () => {
 
   it('routes interface changes through every cross-surface and downstream certification suite', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
-    const module = manifest.modules.reviewer_orchestrator
 
-    expect(module).toEqual({
+    expectModuleBoundary(manifest, 'reviewer_orchestrator', {
       ownerPaths: [
         'src/main/reviewer/acp-runtime.ts',
         'src/main/reviewer/orchestrator.ts',
