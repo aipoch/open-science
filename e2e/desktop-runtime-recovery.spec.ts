@@ -637,7 +637,9 @@ test('exits from the recovery notice when the original backend has really stoppe
 for (const scenario of [
   'native quit',
   'native quit without window',
-  'repeated notice quit'
+  'repeated notice quit',
+  'system shutdown',
+  'system shutdown during confirmation'
 ] as const)
   test(`disconnected desktop handles ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-disconnected-quit-'))
@@ -701,6 +703,24 @@ for (const scenario of [
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'disconnected' })
+      const requestSystemShutdown = async (): Promise<void> => {
+        const desktopProcess = app!.process()
+        if (process.platform === 'win32') {
+          // Windows kill bypasses Node signal listeners; exercise the installed adapter directly.
+          await app!.evaluate(() => {
+            setImmediate(() => process.emit('SIGTERM'))
+          })
+        } else {
+          desktopProcess.kill('SIGTERM')
+        }
+        await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
+        app = undefined
+        expect(processHasExited(owner!.pid)).toBe(false)
+      }
+      if (scenario === 'system shutdown') {
+        await requestSystemShutdown()
+        return
+      }
       if (scenario === 'repeated notice quit') {
         await page.evaluate(() => {
           void window.api.desktopRuntime!.quit()
@@ -724,6 +744,10 @@ for (const scenario of [
           })
         )
         .toEqual({ dialogs: ['Quit while disconnected?'], errors: [] })
+      if (scenario === 'system shutdown during confirmation') {
+        await requestSystemShutdown()
+        return
+      }
       await app.evaluate(() => {
         ;(globalThis as typeof globalThis & { quitProbe: { respond(): void } }).quitProbe.respond()
       })

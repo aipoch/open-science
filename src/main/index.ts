@@ -960,6 +960,13 @@ async function startDesktop(): Promise<void> {
     // Preserve committed teardown; an idle disconnected shell must also be quittable without a window.
     if (updateCommitted || plannedRelaunch) return
     const state = recovery.state()
+    if (currentApplicationShutdownTrigger() === 'system' && state.phase !== 'connected') {
+      // OS shutdown cannot wait for consent or an unreachable backend, including an open quit dialog.
+      event.preventDefault()
+      client?.close()
+      app.exit(0)
+      return
+    }
     if (!disconnectedQuit && (state.phase === 'connected' || state.closing)) return
     event.preventDefault()
     void quitDisconnected().catch(reportError)
