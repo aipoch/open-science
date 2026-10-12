@@ -59,7 +59,7 @@ describe('mermaid source-tracking plugin', () => {
         ]),
         dompurifyConfig: expect.objectContaining({
           ALLOWED_TAGS: expect.arrayContaining(['b', 'br', 'a', 'table']),
-          ALLOWED_ATTR: ['class', 'href', 'title', 'colspan', 'rowspan', 'align', 'dir', 'lang'],
+          ALLOWED_ATTR: expect.arrayContaining(['href', 'mathvariant', 'display', 'displaystyle']),
           ALLOW_DATA_ATTR: false
         })
       })

@@ -95,6 +95,7 @@ test('Mermaid HTML labels and diagram configuration cannot fetch images during l
     const label = `flowchart TD\n A["<b>Start</b><br/><img src='${origin}/html' srcset='${origin}/srcset 2x'>"] --> B["Finish"]`
     const sources = [
       label,
+      `flowchart TD\n A["<math><mglyph src='${origin}/math-image'/><mstyle mathbackground='url(${origin}/math-background)'><mi>x</mi></mstyle><annotation-xml encoding='text/html'><img src='${origin}/math-html'></annotation-xml></math>"]`,
       `flowchart TD\n A["<input type='image' src='${origin}/input'>"]`,
       `flowchart TD\n A["<INPUT TYPE='image' SRC='${origin}/input-upper'>"]`,
       `flowchart TD\n A["&lt;input type='image' src='${origin}/input-entity'&gt;"]`,
@@ -168,4 +169,34 @@ test('quoted and escaped Mermaid image metadata remains blocked', async ({ page 
     await expect(page.getByText('Images in Mermaid diagrams are blocked')).toBeVisible()
     expect(requests).toEqual([])
   }
+})
+
+test('Mermaid MathML preserves mathematical meaning and layout', async ({ page }) => {
+  const formulas = [
+    String.raw`\mathbf{x} + \phantom{AB} + \frac{1}{2}`,
+    String.raw`\scriptstyle x_i^2 + \raisebox{1em}{x} + \boxed{a} + \Bigl( \sum_{i=1}^{n} i \Bigr) + a\,b`
+  ]
+  const chart = 'flowchart TD\n A["$$' + formulas[0] + '$$"] --> B["$$' + formulas[1] + '$$"]'
+  await page.goto(`/media-privacy.html?mermaid=runtime&chart=${encodeURIComponent(chart)}`)
+  const svg = page.locator('svg[data-mermaid-render-id]')
+  await expect(svg).toBeVisible()
+  const math = svg.locator('math')
+  await expect(math).toHaveCount(2)
+  await expect(math.first()).toHaveAttribute('display', 'block')
+  await expect(math.first().locator('mi[mathvariant="bold"]')).toHaveText('x')
+  await expect(math.first().locator('mphantom')).toHaveText('AB')
+  await expect(math.first().locator('mfrac')).toHaveText('12')
+  // mphantom must survive as a semantic wrapper, not expose AB as ordinary visible tokens.
+  expect(
+    await math
+      .first()
+      .locator('mphantom')
+      .evaluate((el) => getComputedStyle(el).visibility)
+  ).toBe('hidden')
+  await expect(math.last().locator('mstyle[scriptlevel="1"]')).toHaveCount(1)
+  await expect(math.last().locator('mpadded[voffset="1em"]')).toHaveCount(1)
+  await expect(math.last().locator('menclose[notation="box"]')).toHaveCount(1)
+  await expect(math.last().locator('mo[minsize][maxsize][stretchy="true"]')).toHaveCount(2)
+  await expect(math.last().locator('msubsup')).toHaveCount(2)
+  await expect(math.last().locator('mspace[width]')).toHaveCount(1)
 })
