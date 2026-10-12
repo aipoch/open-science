@@ -5,9 +5,8 @@
   "license": "Apache-2.0",
   "main": "index.cjs",
   "types": "index.d.ts",
-  "gypfile": true,
+  "gypfile": false,
   "scripts": {
-    "install": "node-gyp rebuild",
     "test": "node --test test/probe.test.cjs test/validator.test.cjs"
   }
 }

@@ -11,7 +11,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": ["scripts/native-components.test.ts"],
     "consumer": [
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",

@@ -11,16 +11,7 @@ module.exports = async (context) => {
     throw new Error('Build the desktop Node backend on its target platform/architecture.')
   const root = context.packager.projectDir
   for (const [script, args] of [
-    [
-      require.resolve('node-gyp/bin/node-gyp.js'),
-      [
-        'rebuild',
-        '--directory',
-        'packages/credential-identity-probe-native',
-        '--',
-        '-Dbuild_node_secret=1'
-      ]
-    ],
+    [path.join(root, 'scripts/native-components.mjs'), []],
     [path.join(root, 'scripts/build-backend.mjs'), []]
   ]) {
     const result = spawnSync(process.execPath, [script, ...args], { cwd: root, stdio: 'inherit' })
