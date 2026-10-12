@@ -17,6 +17,9 @@ type ConfirmActionDialogProps = {
   open: boolean
   title: string
   description: string
+  // Optional extra block rendered below the description (e.g. a second paragraph), so callers
+  // never have to concatenate translated sentences into one string.
+  content?: React.ReactNode
   cancelLabel: string
   confirmLabel: string
   loadingLabel?: string
@@ -33,6 +36,7 @@ const ConfirmActionDialog = ({
   open,
   title,
   description,
+  content,
   cancelLabel,
   confirmLabel,
   loadingLabel,
@@ -75,6 +79,7 @@ const ConfirmActionDialog = ({
           <AlertDialog.Description className={dialogDescriptionClassName}>
             {description}
           </AlertDialog.Description>
+          {content}
         </div>
         <div className={dialogFooterClassName}>
           <AlertDialog.Cancel asChild>
