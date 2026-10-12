@@ -584,6 +584,20 @@ imports, dirty checkouts and missing evidence retain the broader plan. Mixed hos
 edits retain ordinary module selection. The installed test runner explains exclusions;
 the dependency-free preflight continues to report conservative module and platform scope.
 
+### Host PR test scope
+
+For source-only edits under `src/main/` and `src/renderer/`, `--tier pr` may defer tests
+introduced only by recursive module expansion to the blocking merge queue. It retains every
+changed owner's declared owner/contract/consumer test, downstream contract and full-owner
+evidence, CodeGraph-selected tests, package suites and platform capabilities. Deferral requires
+complete structural dependency evidence with no path to any changed owner in the merge base,
+PR head and actual checkout, using the union of their runtime-consumer declarations. Type-only
+imports count as dependencies. Opaque runtime inputs, unresolved imports, dirty checkouts,
+unknown ownership, renames, deletions and mixed/shared changes retain the broader plan.
+`--tier queue` retains the ordinary host selection; scheduled Source Regression still runs the
+complete portable suite. This changes execution scope, not module registration or ownership.
+Use `test:affected:explain` with each tier to inspect the exact files and deferral reasons.
+
 ### CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
