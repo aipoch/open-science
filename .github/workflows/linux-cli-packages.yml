@@ -131,12 +131,16 @@ jobs:
             -e OPEN_SCIENCE_TEST_PYTHON=/usr/bin/python3 \
             -e OPEN_SCIENCE_PACKAGE_PAYLOAD=/workspace/out/cli-prepared/payload \
             fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 bash -euo pipefail -c '
-              dnf install -y rpm-build binutils libsecret dbus-daemon systemd bubblewrap openssl-libs libatomic libstdc++ libgomp gnome-keyring python3-ipykernel sudo coreutils tar gzip findutils
-              node=/workspace/out/cli-prepared/payload/node-runtime/node
-              "$node" scripts/linux-cli-packages.mjs rpm /workspace/out/cli-prepared /workspace/out/linux-cli-packages
+              dnf install -y --setopt=install_weak_deps=False rpm-build binutils libsecret dbus-daemon systemd bubblewrap openssl-libs libatomic libstdc++ libgomp gnome-keyring python3-ipykernel sudo coreutils tar gzip findutils
               useradd -m package-test
               echo "package-test ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/package-test
               chmod 0440 /etc/sudoers.d/package-test
+              # Fedora mode-0000 shadow blocks the PAM helper under current OCI runtimes.
+              # Owner read is confined to this disposable container: linux-pam/linux-pam#876.
+              chmod u+r /etc/shadow
+              runuser -u package-test -- sudo -n true
+              node=/workspace/out/cli-prepared/payload/node-runtime/node
+              "$node" scripts/linux-cli-packages.mjs rpm /workspace/out/cli-prepared /workspace/out/linux-cli-packages
               chown -R package-test:package-test out/linux-cli-packages
               runuser -u package-test -- dbus-run-session -- bash -euo pipefail -c '\''
                 printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
