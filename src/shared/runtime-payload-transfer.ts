@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MAX_PERSISTED_SESSION_BYTES } from './session-persistence/errors'
+import { MAX_PERSISTED_SESSION_BYTES } from './session-persistence'
 
 export const RUNTIME_PAYLOAD_CAPABILITY = 'bounded-payload-v1' as const
 export const RUNTIME_PAYLOAD_PAGE_BYTES = 1024 * 1024

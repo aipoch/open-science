@@ -1827,7 +1827,10 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/environment-startup.contract.test.ts',
       'src/main/desktop-runtime-backpressure.integration.test.ts',
       'src/main/desktop-runtime-transport-diagnostics.test.ts',
-      'src/main/node-entry.test.ts'
+      'src/main/node-entry.test.ts',
+      'src/main/desktop-runtime-session-size.integration.test.ts',
+      'src/main/notebook-payload.integration.test.ts',
+      'src/main/web-service/session-payload.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

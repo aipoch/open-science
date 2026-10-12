@@ -720,6 +720,13 @@ describe('Compute service architecture', () => {
     )
     expect(computeService.testFiles.consumer).toEqual(
       expect.arrayContaining([
+        'src/main/desktop-runtime-session-size.integration.test.ts',
+        'src/main/notebook-payload.integration.test.ts',
+        'src/main/web-service/session-payload.integration.test.ts'
+      ])
+    )
+    expect(computeService.testFiles.consumer).toEqual(
+      expect.arrayContaining([
         'src/main/storage/wsl-npm-migration.integration.test.ts',
         'src/main/composition/notebook-environment.test.ts',
         'src/main/literature/command-owner.test.ts',
