@@ -62,6 +62,7 @@
       "cli/index.test.ts",
       "cli/lifecycle.test.ts",
       "cli/locate-app.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/web-service/http-server.test.ts",
@@ -70,8 +71,7 @@
       "scripts/pack-npm-release.test.ts",
       "scripts/publish-npm-release.test.ts",
       "scripts/npm-runtime-workflow.test.ts",
-      "scripts/runtime-archives.test.ts",
-      "src/main/session-package/browser-import-sdk.integration.test.ts"
+      "scripts/runtime-archives.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
