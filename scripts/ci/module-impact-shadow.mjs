@@ -297,7 +297,7 @@ export function runModuleImpactShadowCli(
       environment.PR_GATE_PLAN
   )
   const changes = changesFromGit(base, head, { cwd, execute })
-  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
     base,
     head,
     cwd,
@@ -307,7 +307,8 @@ export function runModuleImpactShadowCli(
     changes,
     manifestOnlyGraph,
     manifest,
-    registrationModules
+    registrationModules,
+    registrationOnly
   )
   const report = createModuleImpactShadowReport(authoritativePlan, modulePlan)
   const output = `${JSON.stringify(report)}\n`
