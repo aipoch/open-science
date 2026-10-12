@@ -261,7 +261,7 @@ describe('NotificationBell', () => {
     const unreadRow = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent?.includes('Approval needed')
     )
-    expect(unreadRow?.className).toContain('bg-bg-100/70')
+    expect(unreadRow?.className).toContain('bg-bg-200/70')
     expect(unreadRow?.querySelector('.size-1\\.5.bg-destructive')).not.toBeNull()
 
     const current = useNotificationInboxStore.getState().items[0]
@@ -275,7 +275,7 @@ describe('NotificationBell', () => {
     const readRow = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent?.includes('Approval needed')
     )
-    expect(readRow?.className).not.toContain('bg-bg-100/70')
+    expect(readRow?.className).not.toContain('bg-bg-200/70')
     expect(readRow?.querySelector('.size-1\\.5.bg-destructive')).toBeNull()
   })
 

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -122,6 +123,7 @@ const SessionPackageEntryRow = ({
           </span>
         </span>
       </button>
+
       <Popover
         open={guideOpen}
         onOpenChange={(open) => {
@@ -135,35 +137,47 @@ const SessionPackageEntryRow = ({
           }
         }}
       >
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-label={t('What is a .science research package?')}
-            className="flex size-[22px] shrink-0 cursor-help items-center justify-center rounded-full text-text-300 transition-colors hover:bg-bg-300 hover:text-text-100 focus-visible:keyboard-focus"
-            onClick={(event) => event.stopPropagation()}
-            onMouseEnter={() => {
-              dismissedRef.current = false
-              triggerHoveredRef.current = true
-              openGuide()
-            }}
-            onMouseLeave={() => {
-              triggerHoveredRef.current = false
-              dismissedRef.current = false
-              scheduleGuideClose()
-            }}
-            onFocus={() => {
-              dismissedRef.current = false
-              triggerFocusedRef.current = true
-              openGuide()
-            }}
-            onBlur={() => {
-              triggerFocusedRef.current = false
-              scheduleGuideClose()
-            }}
-          >
-            <Info className="size-3.5" aria-hidden="true" />
-          </button>
-        </PopoverTrigger>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('What is a .science research package?')}
+                  className="flex size-[22px] shrink-0 cursor-help items-center justify-center rounded-full text-text-300 transition-colors hover:bg-bg-300 hover:text-text-100 focus-visible:keyboard-focus"
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseEnter={() => {
+                    dismissedRef.current = false
+                    triggerHoveredRef.current = true
+                    openGuide()
+                  }}
+                  onMouseLeave={() => {
+                    triggerHoveredRef.current = false
+                    dismissedRef.current = false
+                    scheduleGuideClose()
+                  }}
+                  onFocus={() => {
+                    dismissedRef.current = false
+                    triggerFocusedRef.current = true
+                    openGuide()
+                  }}
+                  onBlur={() => {
+                    triggerFocusedRef.current = false
+                    scheduleGuideClose()
+                  }}
+                >
+                  <Info className="size-3.5" aria-hidden="true" />
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{t('What is a .science research package?')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <PopoverContent
           side="top"
           align="center"
@@ -398,47 +412,73 @@ const NewConversationStart = ({
         </div>
         {/* Overlay controls do not reserve layout space. Keep a keyboard-focused arrow
             visible at its boundary until focus leaves, rather than dropping focus to body. */}
+
         <div
           className={cn(
             'pointer-events-none absolute inset-y-0 left-0 flex w-12 items-center justify-start bg-gradient-to-r from-bg-10 via-bg-10/90 to-bg-10/0',
             edges.start && 'invisible has-[:focus-visible]:visible'
           )}
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('Previous research ideas')}
-            aria-disabled={edges.start}
-            tabIndex={edges.start ? -1 : 0}
-            onClick={() => {
-              if (!edges.start) scroll(-1)
-            }}
-            className="pointer-events-auto rounded-full bg-bg-200 text-text-100 hover:bg-bg-300 focus-visible:outline-offset-[-2px] aria-disabled:opacity-50"
-          >
-            <ChevronLeft className="size-4" aria-hidden="true" />
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Previous research ideas')}
+                  aria-disabled={edges.start}
+                  tabIndex={edges.start ? -1 : 0}
+                  onClick={() => {
+                    if (!edges.start) scroll(-1)
+                  }}
+                  className="pointer-events-auto rounded-full bg-bg-200 text-text-100 hover:bg-bg-300 focus-visible:outline-offset-[-2px] aria-disabled:opacity-50"
+                >
+                  <ChevronLeft className="size-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Previous research ideas')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
+
         <div
           className={cn(
             'pointer-events-none absolute inset-y-0 right-0 flex w-12 items-center justify-end bg-gradient-to-l from-bg-10 via-bg-10/90 to-bg-10/0',
             edges.end && 'invisible has-[:focus-visible]:visible'
           )}
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('Next research ideas')}
-            aria-disabled={edges.end}
-            tabIndex={edges.end ? -1 : 0}
-            onClick={() => {
-              if (!edges.end) scroll(1)
-            }}
-            className="pointer-events-auto rounded-full bg-bg-200 text-text-100 hover:bg-bg-300 focus-visible:outline-offset-[-2px] aria-disabled:opacity-50"
-          >
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Next research ideas')}
+                  aria-disabled={edges.end}
+                  tabIndex={edges.end ? -1 : 0}
+                  onClick={() => {
+                    if (!edges.end) scroll(1)
+                  }}
+                  className="pointer-events-auto rounded-full bg-bg-200 text-text-100 hover:bg-bg-300 focus-visible:outline-offset-[-2px] aria-disabled:opacity-50"
+                >
+                  <ChevronRight className="size-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Next research ideas')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
     </section>

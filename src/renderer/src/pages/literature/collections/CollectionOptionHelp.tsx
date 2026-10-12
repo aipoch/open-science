@@ -12,7 +12,7 @@ export function CollectionOptionHelp({
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <TooltipProvider delayDuration={150}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <button

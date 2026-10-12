@@ -1109,8 +1109,8 @@ const ReplayStageContent = ({
           style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
         >
           {fitContainer && !inspecting ? (
-            <div className="flex h-9 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
-              <TooltipProvider>
+            <TooltipProvider>
+              <div className="flex h-9 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <h2
@@ -1126,16 +1126,27 @@ const ReplayStageContent = ({
                     {t('Follows playback progress')}
                   </TooltipContent>
                 </Tooltip>
-              </TooltipProvider>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Close research materials')}
-                onClick={onCloseMaterials}
-              >
-                <X size={14} />
-              </Button>
-            </div>
+
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Close research materials')}
+                      onClick={onCloseMaterials}
+                    >
+                      <X size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Close research materials')}</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           ) : null}
           {!fitContainer &&
           !inspecting &&
@@ -1428,15 +1439,28 @@ const ReplayStageContent = ({
                 <FilesIcon size={16} aria-hidden="true" />
                 {t('Files')}
               </h2>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Close files')}
-                onClick={onCloseFiles}
-              >
-                <X size={14} aria-hidden="true" />
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Close files')}
+                      onClick={onCloseFiles}
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Close files')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
+
             <div
               ref={filesViewport}
               data-replay-files-scroll

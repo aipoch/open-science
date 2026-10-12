@@ -183,39 +183,80 @@ const BookmarksPopover = (): React.JSX.Element | null => {
                           </>
                         ) : null}
                       </button>
-                      <div className="relative z-10 flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
-                        <button
-                          type="button"
-                          aria-label={t('Show bookmark source')}
-                          disabled={!canReveal || pendingId === bookmark.id}
-                          onClick={canReveal ? () => void revealBookmark(bookmark) : undefined}
-                          className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <ArrowUpRight className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={t('Edit bookmark note')}
-                          disabled={!available || pendingId === bookmark.id}
-                          className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onClick={() => {
-                            setEditingId(bookmark.id)
-                            setEditingNote(bookmark.note)
-                            setOperationError(undefined)
-                          }}
-                        >
-                          <Pencil className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={t('Delete bookmark')}
-                          disabled={!available || pendingId === bookmark.id}
-                          className="grid size-5 place-items-center rounded hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                          onClick={() => void deleteBookmark(bookmark.id)}
-                        >
-                          <Trash2 className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                        </button>
-                      </div>
+                      <TooltipProvider>
+                        <div className="relative z-10 flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t('Show bookmark source')}
+                                disabled={!canReveal || pendingId === bookmark.id}
+                                onClick={
+                                  canReveal ? () => void revealBookmark(bookmark) : undefined
+                                }
+                                className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                <ArrowUpRight
+                                  className="size-3"
+                                  strokeWidth={1.5}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('Show bookmark source')}</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t('Edit bookmark note')}
+                                disabled={!available || pendingId === bookmark.id}
+                                className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => {
+                                  setEditingId(bookmark.id)
+                                  setEditingNote(bookmark.note)
+                                  setOperationError(undefined)
+                                }}
+                              >
+                                <Pencil className="size-3" strokeWidth={1.5} aria-hidden="true" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('Edit bookmark note')}</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t('Delete bookmark')}
+                                disabled={!available || pendingId === bookmark.id}
+                                className="grid size-5 place-items-center rounded hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                                onClick={() => void deleteBookmark(bookmark.id)}
+                              >
+                                <Trash2 className="size-3" strokeWidth={1.5} aria-hidden="true" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('Delete bookmark')}</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      </TooltipProvider>
                     </div>
                     {editingId === bookmark.id ? (
                       <div className="ml-5 mt-1 space-y-1.5 pb-1">

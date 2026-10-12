@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -135,17 +136,29 @@ export function LiteratureSelectionToolbar({
             <span className="text-muted-foreground tabular-nums">{formattedMatchingCount}</span>
           </Button>
         ) : null}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t('Clear selection')}
-          title={t('Clear selection')}
-          disabled={isBatching}
-          onClick={clearSelection}
-        >
-          <X className="size-3.5" aria-hidden="true" />
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Clear selection')}
+                title={t('Clear selection')}
+                disabled={isBatching}
+                onClick={clearSelection}
+              >
+                <X className="size-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Clear selection')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {smartDecisionBatch.progress &&
         smartDecisionBatch.progress.collectionId === collectionId ? (
           <>

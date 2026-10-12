@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import { LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -87,16 +88,32 @@ export function LiteratureAttachmentOperations({
               <AttachmentOperationStatus operation={operation} />
             </div>
             {!operation.pending ? (
-              <button
-                type="button"
-                aria-label={t('Dismiss attachment result for {{title}}', {
-                  title: operation.title
-                })}
-                className="rounded-md p-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => useAttachmentOperations.getState().dismiss(operation)}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={t('Dismiss attachment result for {{title}}', {
+                        title: operation.title
+                      })}
+                      className="rounded-md p-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => useAttachmentOperations.getState().dismiss(operation)}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t('Dismiss attachment result for {{title}}', {
+                      title: operation.title
+                    })}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             ) : null}
           </div>
         ))}

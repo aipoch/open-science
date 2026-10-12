@@ -100,7 +100,7 @@ const SectionHeader = ({
     type="button"
     data-testid="project-file-section-header"
     className={cn(
-      'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100',
+      'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-200',
       id.startsWith('session:') && 'cursor-default',
       !hideTopBorder && 'border-t border-border-300/40'
     )}
@@ -584,7 +584,7 @@ const ProjectFilesViewContent = ({
           isLocalSelected={isLocalMode}
           selectedLocalRootId={selectedLocalRoot?.id}
         />
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <div className="flex shrink-0 items-center gap-1.5">
             {/* Local mode has no search row, so its file count stays in the header. */}
             {isLocalMode ? (
@@ -671,7 +671,7 @@ const ProjectFilesViewContent = ({
               onChange={(event) => setSearchQuery(event.target.value)}
             />
             {searchQuery ? (
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

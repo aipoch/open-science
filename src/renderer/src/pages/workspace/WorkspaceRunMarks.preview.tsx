@@ -47,7 +47,7 @@ const WorkspaceRunMarksPreview = (): React.JSX.Element => {
         {previewStates.map((state) => (
           <div
             key={state.label}
-            className="grid grid-cols-[4rem_1fr] items-center gap-2 rounded-lg bg-bg-100 px-2.5 py-2"
+            className="grid grid-cols-[4rem_1fr] items-center gap-2 rounded-lg bg-bg-200 px-2.5 py-2"
           >
             <span className="text-xs text-text-100">{state.label}</span>
             <button

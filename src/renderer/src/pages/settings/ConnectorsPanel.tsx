@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -539,6 +540,7 @@ export function ConnectorsPanel({
                           />
                         </div>
                       </div>
+
                       <div className="flex shrink-0 items-center gap-2">
                         <ResourceTagMenu
                           reference={{
@@ -560,16 +562,33 @@ export function ConnectorsPanel({
                           onErrorChange={setAccessError}
                           onSetMain={(enabled) => setConnectorEnabled(connector.id, enabled)}
                         />
-                        <button
-                          type="button"
-                          aria-label={t('View details for {{name}}', {
-                            name: connector.displayName
-                          })}
-                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
-                        >
-                          <ChevronRight className="size-4" aria-hidden="true" />
-                        </button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={t('View details for {{name}}', {
+                                  name: connector.displayName
+                                })}
+                                onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
+                              >
+                                <ChevronRight className="size-4" aria-hidden="true" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('View details for {{name}}', {
+                                name: connector.displayName
+                              })}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </div>
                     </div>
                   </li>
@@ -950,17 +969,35 @@ export function ConnectorsPanel({
                           <ResourceTagMenu
                             reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
                           />
+
                           <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                aria-label={t('Actions for {{name}}', { name: server.displayName })}
-                              >
-                                <ChevronDown aria-hidden="true" />
-                              </Button>
-                            </DropdownMenuTrigger>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  asChild
+                                  onFocus={(event) => {
+                                    if (!event.currentTarget.matches(':focus-visible'))
+                                      event.preventDefault()
+                                  }}
+                                >
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label={t('Actions for {{name}}', {
+                                        name: server.displayName
+                                      })}
+                                    >
+                                      <ChevronDown aria-hidden="true" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t('Actions for {{name}}', { name: server.displayName })}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem
                                 className="gap-2 text-xs"
@@ -986,6 +1023,7 @@ export function ConnectorsPanel({
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+
                           <div className="flex shrink-0 items-center gap-2">
                             <ResourceAssignmentControls
                               onOpenSpecialist={onOpenSpecialist}
@@ -1002,16 +1040,33 @@ export function ConnectorsPanel({
                               mainBlocked={cannotEnableCustomServer(server)}
                               onSetMain={(enabled) => setCustomServerEnabled(server.id, enabled)}
                             />
-                            <button
-                              type="button"
-                              aria-label={t('View details for {{name}}', {
-                                name: server.displayName
-                              })}
-                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
-                            >
-                              <ChevronRight className="size-4" aria-hidden="true" />
-                            </button>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  asChild
+                                  onFocus={(event) => {
+                                    if (!event.currentTarget.matches(':focus-visible'))
+                                      event.preventDefault()
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={t('View details for {{name}}', {
+                                      name: server.displayName
+                                    })}
+                                    onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
+                                  >
+                                    <ChevronRight className="size-4" aria-hidden="true" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t('View details for {{name}}', {
+                                    name: server.displayName
+                                  })}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           </div>
                         </div>
                       </li>

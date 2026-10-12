@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
 import { Notice } from '@/components/notice'
 // Remote file browser modal (compute-file-preview, issue 02 + issue 03).
@@ -248,14 +249,26 @@ function DetailPanel({
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           {t('Details')}
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t('Close detail panel')}
-          className="rounded p-0.5 text-muted-foreground hover:bg-accent"
-        >
-          <X className="size-3.5" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={t('Close detail panel')}
+                className="rounded p-0.5 text-muted-foreground hover:bg-accent"
+              >
+                <X className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Close detail panel')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       <div className="flex-1 overflow-auto p-3 space-y-3">
@@ -312,20 +325,32 @@ function DetailPanel({
         )}
 
         {/* Download → OS Downloads (no approval) */}
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="w-full gap-1.5 text-xs"
-          disabled={isLoading}
-          onClick={() => void handleDownload()}
-          aria-label={t('Download file to OS Downloads folder')}
-        >
-          <Download className="size-3.5" />
-          {actionStatus.kind === 'loading' && actionStatus.action === 'download'
-            ? t('Downloading…')
-            : t('Download')}
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-full gap-1.5 text-xs"
+                disabled={isLoading}
+                onClick={() => void handleDownload()}
+                aria-label={t('Download file to OS Downloads folder')}
+              >
+                <Download className="size-3.5" />
+                {actionStatus.kind === 'loading' && actionStatus.action === 'download'
+                  ? t('Downloading…')
+                  : t('Download')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Download file to OS Downloads folder')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Add to project → artifact. Disabled until artifact persistence is wired: the download
             currently scp's to a temp dir but nothing writes it to the project artifact store, so
@@ -726,124 +751,159 @@ export function FileBrowserModal({
           </div>
 
           {/* Toolbar */}
-          <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-1.5">
-            {/* Back */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              disabled={history.length === 0}
-              onClick={handleBack}
-              aria-label={t('Go back')}
-            >
-              <ArrowLeft className="size-4" />
-            </Button>
-            {/* Up */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              disabled={isAtRoot()}
-              onClick={handleUp}
-              aria-label={t('Go up one level')}
-            >
-              <ArrowUp className="size-4" />
-            </Button>
-
-            {/* Go-to dropdown */}
-            <DropdownMenu open={gotoOpen} onOpenChange={setGotoOpen} modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" className="gap-1 text-xs">
-                  <MapPin className="size-3.5" aria-hidden="true" />
-                  {t('Go to')}
-                  <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="z-[80] min-w-[200px]"
-                aria-label={t('Go-to locations')}
-              >
-                {goToItems.map((item) => (
-                  <DropdownMenuItem
-                    key={item.path}
-                    className="gap-2 text-xs"
-                    onSelect={() => void navigate(item.path)}
-                  >
-                    {item.icon}
-                    <span className="flex-1">{item.label}</span>
-                    <span className="truncate max-w-[100px] text-muted-foreground font-mono">
-                      {item.path}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
-                {goToItems.length > 0 && <DropdownMenuSeparator />}
-                {bookmarksState.kind === 'loading' && (
-                  <DropdownMenuLabel>{t('Loading bookmarks...')}</DropdownMenuLabel>
-                )}
-                <DropdownMenuItem
-                  disabled={bookmarksState.kind === 'loading'}
-                  className="gap-2 text-xs"
-                  onSelect={() => void handlePinCurrent()}
+          <TooltipProvider>
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-1.5">
+              {/* Back */}
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
                 >
-                  <MapPin className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {t('Pin current folder')}
-                </DropdownMenuItem>
-                {bookmarks.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>{t('Bookmarks')}</DropdownMenuLabel>
-                    {bookmarks.map((bm) => (
-                      <div key={bm} className="flex items-center gap-1">
-                        <DropdownMenuItem
-                          className="min-w-0 flex-1 gap-2 text-xs"
-                          onSelect={() => void navigate(bm)}
-                        >
-                          <Bookmark className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                          <span className="truncate max-w-[140px] font-mono">{bm}</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          aria-label={t('Remove bookmark {{path}}', { path: bm })}
-                          className="shrink-0 text-muted-foreground"
-                          onSelect={() => void handleRemoveBookmark(bm)}
-                        >
-                          <X className="size-3" aria-hidden="true" />
-                        </DropdownMenuItem>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={history.length === 0}
+                    onClick={handleBack}
+                    aria-label={t('Go back')}
+                  >
+                    <ArrowLeft className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Go back')}</TooltipContent>
+              </Tooltip>
+              {/* Up */}
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={isAtRoot()}
+                    onClick={handleUp}
+                    aria-label={t('Go up one level')}
+                  >
+                    <ArrowUp className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Go up one level')}</TooltipContent>
+              </Tooltip>
 
-            {/* Address bar */}
-            <form onSubmit={handleAddressSubmit} className="flex flex-1 items-center">
-              <input
-                type="text"
-                value={addressEditing ? addressInput : (listing?.resolvedPath ?? cwd)}
-                onChange={(e) => setAddressInput(e.target.value)}
-                onFocus={() => {
-                  setAddressEditing(true)
-                  setAddressInput(listing?.resolvedPath ?? cwd)
-                }}
-                onBlur={() => setAddressEditing(false)}
-                className="h-7 w-full rounded border border-border bg-muted/40 px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                aria-label={t('Current directory path')}
-                spellCheck={false}
-              />
-            </form>
+              {/* Go-to dropdown */}
+              <DropdownMenu open={gotoOpen} onOpenChange={setGotoOpen} modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm" className="gap-1 text-xs">
+                    <MapPin className="size-3.5" aria-hidden="true" />
+                    {t('Go to')}
+                    <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="z-[80] min-w-[200px]"
+                  aria-label={t('Go-to locations')}
+                >
+                  {goToItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.path}
+                      className="gap-2 text-xs"
+                      onSelect={() => void navigate(item.path)}
+                    >
+                      {item.icon}
+                      <span className="flex-1">{item.label}</span>
+                      <span className="truncate max-w-[100px] text-muted-foreground font-mono">
+                        {item.path}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  {goToItems.length > 0 && <DropdownMenuSeparator />}
+                  {bookmarksState.kind === 'loading' && (
+                    <DropdownMenuLabel>{t('Loading bookmarks...')}</DropdownMenuLabel>
+                  )}
+                  <DropdownMenuItem
+                    disabled={bookmarksState.kind === 'loading'}
+                    className="gap-2 text-xs"
+                    onSelect={() => void handlePinCurrent()}
+                  >
+                    <MapPin className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    {t('Pin current folder')}
+                  </DropdownMenuItem>
+                  {bookmarks.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>{t('Bookmarks')}</DropdownMenuLabel>
+                      {bookmarks.map((bm) => (
+                        <div key={bm} className="flex items-center gap-1">
+                          <DropdownMenuItem
+                            className="min-w-0 flex-1 gap-2 text-xs"
+                            onSelect={() => void navigate(bm)}
+                          >
+                            <Bookmark
+                              className="size-3.5 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            <span className="truncate max-w-[140px] font-mono">{bm}</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            aria-label={t('Remove bookmark {{path}}', { path: bm })}
+                            className="shrink-0 text-muted-foreground"
+                            onSelect={() => void handleRemoveBookmark(bm)}
+                          >
+                            <X className="size-3" aria-hidden="true" />
+                          </DropdownMenuItem>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-            {/* Refresh */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={handleRefresh}
-              aria-label={t('Refresh directory listing')}
-            >
-              <RefreshCw className="size-4" />
-            </Button>
-          </div>
+              {/* Address bar */}
+              <form onSubmit={handleAddressSubmit} className="flex flex-1 items-center">
+                <input
+                  type="text"
+                  value={addressEditing ? addressInput : (listing?.resolvedPath ?? cwd)}
+                  onChange={(e) => setAddressInput(e.target.value)}
+                  onFocus={() => {
+                    setAddressEditing(true)
+                    setAddressInput(listing?.resolvedPath ?? cwd)
+                  }}
+                  onBlur={() => setAddressEditing(false)}
+                  className="h-7 w-full rounded border border-border bg-muted/40 px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  aria-label={t('Current directory path')}
+                  spellCheck={false}
+                />
+              </form>
+
+              {/* Refresh */}
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={handleRefresh}
+                    aria-label={t('Refresh directory listing')}
+                  >
+                    <RefreshCw className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Refresh directory listing')}</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
 
           {/* Body: listing + detail panel */}
           <div className="flex min-h-0 flex-1">

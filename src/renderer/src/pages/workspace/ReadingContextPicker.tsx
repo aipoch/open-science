@@ -207,7 +207,7 @@ export const ReadingContextPicker = ({
       >
         {!atLimit ? (
           <>
-            <div className="mb-1 grid grid-cols-2 gap-0.5 rounded-lg bg-bg-100 p-0.5">
+            <div className="mb-1 grid grid-cols-2 gap-0.5 rounded-lg bg-bg-200 p-0.5">
               {(['project', 'library'] as const).map((candidateSource) => (
                 <button
                   key={candidateSource}
@@ -224,7 +224,7 @@ export const ReadingContextPicker = ({
                 </button>
               ))}
             </div>
-            <label className="mb-1 flex h-8 items-center gap-2 rounded-lg border border-border-200 bg-bg-100 px-2 focus-within:border-border-300 focus-within:ring-[3px] focus-within:ring-ring/30">
+            <label className="mb-1 flex h-8 items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 focus-within:border-border-300 focus-within:ring-[3px] focus-within:ring-ring/30">
               <Search className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
               <input
                 autoFocus
@@ -235,7 +235,7 @@ export const ReadingContextPicker = ({
                 }}
                 placeholder={t('Search PDFs')}
                 aria-label={t('Search PDFs')}
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-400"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-300"
               />
             </label>
           </>

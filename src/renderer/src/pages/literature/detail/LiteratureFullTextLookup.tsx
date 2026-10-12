@@ -1,9 +1,9 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   ChevronRight,
   Download,
-  ExternalLink,
   FileUp,
   LoaderCircle,
   Search,
@@ -533,15 +533,12 @@ export const LiteratureFullTextLookup = ({
                     </span>
                   </Button>
                   <Button asChild variant="ghost" size="sm">
-                    <a
+                    <ExternalTextLink
                       href={candidate.sourceUrl ?? new URL(candidate.url).origin}
-                      target="_blank"
-                      rel="noreferrer"
                       title={candidate.sourceUrl ?? new URL(candidate.url).origin}
                     >
-                      <ExternalLink className="size-3.5" aria-hidden="true" />
                       {t('Open source')}
-                    </a>
+                    </ExternalTextLink>
                   </Button>
                 </div>
               </section>

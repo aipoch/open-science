@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   CircleOff,
   Copy,
-  ExternalLink,
   Globe2,
   Laptop,
   LoaderCircle,
@@ -427,7 +426,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   if (!snapshot) {
     if (actionError) {
       return (
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <div className="p-5" data-testid="remote-control-load-error">
             <ErrorNotice
               role="alert"
@@ -444,7 +443,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       )
     }
     return (
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider>
         <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
           <LoaderCircle className="mr-2 size-4 animate-spin" aria-hidden="true" />
           {t('Loading remote access…')}
@@ -499,7 +498,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   ) : null
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div className="space-y-5 p-5" data-testid="remote-control-panel">
         <Dialog.Root open={blockingRemoteOperation}>
           <Dialog.Portal>
@@ -798,10 +797,9 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                               </span>
                             </Button>
                             <Button type="button" variant="outline" size="sm" asChild>
-                              <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
-                                <ExternalLink className="size-3.5" aria-hidden="true" />
+                              <ExternalTextLink href={snapshot.accessUrl}>
                                 {t('Open')}
-                              </a>
+                              </ExternalTextLink>
                             </Button>
                           </div>
                         </div>

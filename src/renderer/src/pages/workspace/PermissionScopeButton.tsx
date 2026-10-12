@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Check, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -201,18 +202,30 @@ export function PermissionScopeButton({
             {scope ? labels[scope] : t('Allow once')}
           </button>
           {available.length > 1 ? (
-            <button
-              ref={trigger}
-              type="button"
-              aria-label={t('Choose authorization scope')}
-              aria-haspopup="menu"
-              aria-expanded={open && !disabled}
-              disabled={disabled}
-              className={cn(style, 'border-l border-primary-foreground/25 px-2')}
-              onClick={() => setOpen(!open)}
-            >
-              <ChevronDown className="size-4" aria-hidden="true" />
-            </button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    ref={trigger}
+                    type="button"
+                    aria-label={t('Choose authorization scope')}
+                    aria-haspopup="menu"
+                    aria-expanded={open && !disabled}
+                    disabled={disabled}
+                    className={cn(style, 'border-l border-primary-foreground/25 px-2')}
+                    onClick={() => setOpen(!open)}
+                  >
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Choose authorization scope')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : null}
         </div>
       </PopoverAnchor>

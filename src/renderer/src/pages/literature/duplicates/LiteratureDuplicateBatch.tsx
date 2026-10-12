@@ -95,7 +95,7 @@ export function LiteratureDuplicateBatch({
     failed: t('Failed')
   }
   return (
-    <div className="space-y-3 rounded-lg border border-border-300/80 bg-bg-100 p-4">
+    <div className="space-y-3 rounded-lg border border-border-300/80 bg-bg-200 p-4">
       {!done ? (
         <>
           <Select

@@ -146,7 +146,7 @@ const NotificationRow = ({
       className={cn(
         'group flex w-full items-start gap-2.5 rounded-lg px-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
         isMobile ? 'py-2.5' : 'py-2',
-        item.readAt === undefined && 'bg-bg-100/70',
+        item.readAt === undefined && 'bg-bg-200/70',
         item.targetInvalidatedAt !== undefined &&
           'cursor-default opacity-60 hover:bg-transparent active:bg-transparent'
       )}
@@ -614,16 +614,30 @@ const NotificationBellContent = ({
                       aria-hidden="true"
                     />
                   ) : null}
+
                   <div className="flex min-w-0 items-center gap-1">
                     {isMobile ? (
-                      <button
-                        type="button"
-                        aria-label={t('Close messages')}
-                        onClick={() => setOpen(false)}
-                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
-                      >
-                        <X className="size-5" strokeWidth={2} aria-hidden="true" />
-                      </button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                          >
+                            <button
+                              type="button"
+                              aria-label={t('Close messages')}
+                              onClick={() => setOpen(false)}
+                              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
+                            >
+                              <X className="size-5" strokeWidth={2} aria-hidden="true" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Close messages')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     ) : null}
                     <div className="min-w-0">
                       <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
@@ -636,6 +650,7 @@ const NotificationBellContent = ({
                       </div>
                     </div>
                   </div>
+
                   <button
                     type="button"
                     disabled={unreadCount === 0}

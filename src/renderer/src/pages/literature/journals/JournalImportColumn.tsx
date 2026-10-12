@@ -50,7 +50,7 @@ export function JournalImportColumn({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   return (
-    <tr className="border-t border-border-300/80 hover:bg-bg-100" key={column.index}>
+    <tr className="border-t border-border-300/80 hover:bg-bg-200" key={column.index}>
       <td className="p-2">
         <LiteratureTextTooltip text={label}>
           <span className="block truncate">{label}</span>

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import type { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -96,19 +97,32 @@ export function LiteratureLibraryHeader({
                 : (selectedProject?.name ?? selectedCollection?.name ?? t('All references'))}
           </h2>
           {section === 'library' && selectedProject ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0"
-              aria-label={t('Open project')}
-              title={t('Open project')}
-              onClick={() => openProject(selectedProject.id, 'user')}
-            >
-              <ExternalLink className="size-4" aria-hidden="true" />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0"
+                    aria-label={t('Open project')}
+                    title={t('Open project')}
+                    onClick={() => openProject(selectedProject.id, 'user')}
+                  >
+                    <ExternalLink className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Open project')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : null}
         </div>
+
         <p className="mt-1 text-sm text-muted-foreground">
           {section === 'inbox'
             ? t('Review references found by Agents before they enter your library.')

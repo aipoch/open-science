@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { readMatchingCandidateIds } from '../../literature/literature-inbox-reconciliation'
 /* Hallmark · component: inbox preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Reuse semantic tokens and shared control states.
@@ -494,29 +495,51 @@ export function LibraryInboxPreview({
         </div>
       )}
       {page && (offset > 0 || page.nextOffset !== undefined) && (
-        <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t('Previous page')}
-            disabled={offset === 0 || Boolean(busyId)}
-            onClick={() => setCursor({ query, offsets: offsets.slice(0, -1) })}
-          >
-            <ChevronLeft aria-hidden="true" />
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {t('Page {{page}}', { page: offsets.length })}
-          </span>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={t('Next page')}
-            disabled={page.nextOffset === undefined || Boolean(busyId)}
-            onClick={() => setCursor({ query, offsets: [...offsets, page.nextOffset!] })}
-          >
-            <ChevronRight aria-hidden="true" />
-          </Button>
-        </div>
+        <TooltipProvider>
+          <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t('Previous page')}
+                  disabled={offset === 0 || Boolean(busyId)}
+                  onClick={() => setCursor({ query, offsets: offsets.slice(0, -1) })}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Previous page')}</TooltipContent>
+            </Tooltip>
+            <span className="text-xs text-muted-foreground">
+              {t('Page {{page}}', { page: offsets.length })}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t('Next page')}
+                  disabled={page.nextOffset === undefined || Boolean(busyId)}
+                  onClick={() => setCursor({ query, offsets: [...offsets, page.nextOffset!] })}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Next page')}</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
       )}
     </div>
   )

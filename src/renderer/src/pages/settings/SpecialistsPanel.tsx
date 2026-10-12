@@ -1781,19 +1781,37 @@ const InstalledSpecialistsPanel = ({
                       <ResourceTagMenu
                         reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                       />
+
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t('Actions for {{name}}', {
-                              name: item.displayName ?? item.name
-                            })}
-                          >
-                            <ChevronDown aria-hidden="true" />
-                          </Button>
-                        </DropdownMenuTrigger>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={t('Actions for {{name}}', {
+                                    name: item.displayName ?? item.name
+                                  })}
+                                >
+                                  <ChevronDown aria-hidden="true" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('Actions for {{name}}', {
+                                name: item.displayName ?? item.name
+                              })}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             className="gap-2 text-xs"
@@ -1822,6 +1840,7 @@ const InstalledSpecialistsPanel = ({
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
+
                       {listing?.updateAvailable ? (
                         <Button
                           type="button"
@@ -1922,86 +1941,106 @@ const InstalledSpecialistsPanel = ({
                             ) : null}
                           </div>
                         </button>
+
                         <span
                           className="mt-1 flex min-w-0 flex-wrap items-center gap-1"
                           data-specialist-metadata-group={item.id}
                         >
-                          <button
-                            type="button"
-                            disabled={catalogReadOnly}
-                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
-                            aria-label={
-                              item.setupPending
-                                ? t('Continue setup for {{name}}', {
-                                    name: item.displayName ?? item.name
-                                  })
-                                : t('Edit {{name}}', { name: item.displayName ?? item.name })
-                            }
-                            className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                          >
-                            <Badge
-                              variant="outline"
-                              className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
-                              data-specialist-metadata="capabilities"
-                            >
-                              {item.setupPending
-                                ? t('Setup incomplete')
-                                : item.capabilityMode === 'full'
-                                  ? t('Full access')
-                                  : t('Selected capabilities')}
-                            </Badge>
-                            {!item.setupPending && item.origin === 'imported' ? (
-                              <>
-                                <Badge
-                                  variant="secondary"
-                                  className="h-5 px-1.5 text-[11px] font-normal"
-                                  data-specialist-metadata="source"
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger
+                                asChild
+                                onFocus={(event) => {
+                                  if (!event.currentTarget.matches(':focus-visible'))
+                                    event.preventDefault()
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={catalogReadOnly}
+                                  onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                                  aria-label={
+                                    item.setupPending
+                                      ? t('Continue setup for {{name}}', {
+                                          name: item.displayName ?? item.name
+                                        })
+                                      : t('Edit {{name}}', { name: item.displayName ?? item.name })
+                                  }
+                                  className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                                 >
-                                  {item.marketplaceProvenance
-                                    ? t('Marketplace')
-                                    : t('Imported ZIP')}
-                                </Badge>
-                                {item.marketplaceProvenance?.publisher ? (
                                   <Badge
                                     variant="outline"
-                                    className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
-                                    data-specialist-metadata="publisher"
-                                    title={t('Publisher: {{publisher}}', {
-                                      publisher: item.marketplaceProvenance.publisher
-                                    })}
+                                    className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground"
+                                    data-specialist-metadata="capabilities"
                                   >
-                                    <span className="truncate">
-                                      {t('Publisher: {{publisher}}', {
-                                        publisher: item.marketplaceProvenance.publisher
-                                      })}
-                                    </span>
+                                    {item.setupPending
+                                      ? t('Setup incomplete')
+                                      : item.capabilityMode === 'full'
+                                        ? t('Full access')
+                                        : t('Selected capabilities')}
                                   </Badge>
-                                ) : null}
-                                <Badge
-                                  variant="outline"
-                                  className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
-                                  data-specialist-metadata="version"
-                                >
-                                  {t('Version {{version}}', {
-                                    version: item.packageVersion ?? '0.1.0'
-                                  })}
-                                </Badge>
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    item.modifiedSinceImport
-                                      ? 'h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/60 dark:bg-status-warning-dark-surface/60 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground'
-                                      : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
-                                  }
-                                  data-specialist-metadata="local-status"
-                                >
-                                  {item.modifiedSinceImport
-                                    ? t('Modified locally')
-                                    : t('Unchanged locally')}
-                                </Badge>
-                              </>
-                            ) : null}
-                          </button>
+                                  {!item.setupPending && item.origin === 'imported' ? (
+                                    <>
+                                      <Badge
+                                        variant="secondary"
+                                        className="h-5 px-1.5 text-[11px] font-normal"
+                                        data-specialist-metadata="source"
+                                      >
+                                        {item.marketplaceProvenance
+                                          ? t('Marketplace')
+                                          : t('Imported ZIP')}
+                                      </Badge>
+                                      {item.marketplaceProvenance?.publisher ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="h-5 max-w-full px-1.5 text-[11px] font-normal text-muted-foreground"
+                                          data-specialist-metadata="publisher"
+                                          title={t('Publisher: {{publisher}}', {
+                                            publisher: item.marketplaceProvenance.publisher
+                                          })}
+                                        >
+                                          <span className="truncate">
+                                            {t('Publisher: {{publisher}}', {
+                                              publisher: item.marketplaceProvenance.publisher
+                                            })}
+                                          </span>
+                                        </Badge>
+                                      ) : null}
+                                      <Badge
+                                        variant="outline"
+                                        className="h-5 px-1.5 text-[11px] font-normal tabular-nums text-muted-foreground"
+                                        data-specialist-metadata="version"
+                                      >
+                                        {t('Version {{version}}', {
+                                          version: item.packageVersion ?? '0.1.0'
+                                        })}
+                                      </Badge>
+                                      <Badge
+                                        variant="outline"
+                                        className={
+                                          item.modifiedSinceImport
+                                            ? 'h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/60 dark:bg-status-warning-dark-surface/60 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                                            : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
+                                        }
+                                        data-specialist-metadata="local-status"
+                                      >
+                                        {item.modifiedSinceImport
+                                          ? t('Modified locally')
+                                          : t('Unchanged locally')}
+                                      </Badge>
+                                    </>
+                                  ) : null}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {item.setupPending
+                                  ? t('Continue setup for {{name}}', {
+                                      name: item.displayName ?? item.name
+                                    })
+                                  : t('Edit {{name}}', { name: item.displayName ?? item.name })}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <ResourceTagBadges
                             reference={{
                               resourceType: 'catalog.specialist',
@@ -2016,7 +2055,7 @@ const InstalledSpecialistsPanel = ({
                         reference={{ resourceType: 'catalog.specialist', resourceId: item.id }}
                       />
                       <DropdownMenu>
-                        <TooltipProvider delayDuration={200}>
+                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger
                               asChild
@@ -2402,7 +2441,7 @@ const InstalledSpecialistsPanel = ({
                             {skill.deletable ? (
                               <span className="mt-0.5 inline-flex">{checkbox}</span>
                             ) : (
-                              <TooltipProvider delayDuration={200}>
+                              <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <span

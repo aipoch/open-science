@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
 import { createBookmarkPreviewItem } from '@/pages/workspace/annotations/annotation-reveal'
@@ -231,18 +232,30 @@ const SearchResultRow = memo(function SearchResultRow({
         </div>
       </div>
       {(result.kind === 'uploads' || result.kind === 'generated') && mentionable && (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label={t('Mention {{name}}', { name: result.item.name })}
-          onClick={(event) => {
-            event.stopPropagation()
-            void onMention(result.item)
-          }}
-          className="rounded p-1 text-muted-foreground opacity-0 hover:bg-bg-300 group-hover:opacity-100 focus:opacity-100"
-        >
-          <AtSign className="size-3.5" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label={t('Mention {{name}}', { name: result.item.name })}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void onMention(result.item)
+                }}
+                className="rounded p-1 text-muted-foreground opacity-0 hover:bg-bg-300 group-hover:opacity-100 focus:opacity-100"
+              >
+                <AtSign className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Mention {{name}}', { name: result.item.name })}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
     </div>
   )

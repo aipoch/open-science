@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useId, useRef, useState } from 'react'
 import {
   ArrowDown,
@@ -144,25 +145,37 @@ export function JournalColumnHeader({
                 aria-hidden="true"
               />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 shrink-0 opacity-0 group-hover/column:opacity-100 group-focus-within/column:opacity-100 [@media(hover:none)]:opacity-100"
-              ref={menuButton}
-              disabled={disabled}
-              aria-label={t('Column actions for {{name}}', { name: label })}
-              onClick={(event) => {
-                const bounds = event.currentTarget.getBoundingClientRect()
-                openMenu({
-                  targetId: identity,
-                  pointer: { x: bounds.right, y: bounds.bottom },
-                  align: 'end',
-                  focusTarget: event.currentTarget
-                })
-              }}
-            >
-              <ChevronDown className="size-3.5" aria-hidden="true" />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0 opacity-0 group-hover/column:opacity-100 group-focus-within/column:opacity-100 [@media(hover:none)]:opacity-100"
+                    ref={menuButton}
+                    disabled={disabled}
+                    aria-label={t('Column actions for {{name}}', { name: label })}
+                    onClick={(event) => {
+                      const bounds = event.currentTarget.getBoundingClientRect()
+                      openMenu({
+                        targetId: identity,
+                        pointer: { x: bounds.right, y: bounds.bottom },
+                        align: 'end',
+                        focusTarget: event.currentTarget
+                      })
+                    }}
+                  >
+                    <ChevronDown className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Column actions for {{name}}', { name: label })}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </ActionMenuTarget>
       </PopoverAnchor>

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useRef, useState } from 'react'
 import { FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
@@ -57,22 +58,34 @@ const AttachmentMenuButton = ({
   const { t } = useTranslation()
   const { openMenu } = useActionMenu()
   return (
-    <button
-      ref={ref}
-      type="button"
-      aria-label={t('Attachment actions for {{title}}', { title })}
-      className="m-1 rounded-md p-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-      onClick={(event) => {
-        const bounds = event.currentTarget.getBoundingClientRect()
-        openMenu({
-          targetId,
-          pointer: { x: bounds.left, y: bounds.bottom },
-          focusTarget: event.currentTarget
-        })
-      }}
-    >
-      <MoreHorizontal className="size-4" aria-hidden="true" />
-    </button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+          }}
+        >
+          <button
+            ref={ref}
+            type="button"
+            aria-label={t('Attachment actions for {{title}}', { title })}
+            className="m-1 rounded-md p-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={(event) => {
+              const bounds = event.currentTarget.getBoundingClientRect()
+              openMenu({
+                targetId,
+                pointer: { x: bounds.left, y: bounds.bottom },
+                focusTarget: event.currentTarget
+              })
+            }}
+          >
+            <MoreHorizontal className="size-4" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{t('Attachment actions for {{title}}', { title })}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

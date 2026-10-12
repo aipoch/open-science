@@ -430,17 +430,33 @@ const TagSelection = ({
             .map((tag) => (
               <span key={tag.id} className="group/tag relative inline-flex min-w-0 shrink-0">
                 <TagBadge tag={tag} />
-                <button
-                  type="button"
-                  disabled={disabled}
-                  aria-label={t('Remove {{tag}} from this resource', {
-                    tag: tagPresentation(tag, t).name
-                  })}
-                  onClick={() => onChange(value.filter((id) => id !== tag.id))}
-                  className="pointer-events-auto absolute top-1/2 right-1.5 inline-flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-background text-foreground opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover/tag:pointer-events-auto sm:group-hover/tag:opacity-100 sm:group-focus-within/tag:pointer-events-auto sm:group-focus-within/tag:opacity-100"
-                >
-                  <X className="size-3" aria-hidden="true" />
-                </button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        aria-label={t('Remove {{tag}} from this resource', {
+                          tag: tagPresentation(tag, t).name
+                        })}
+                        onClick={() => onChange(value.filter((id) => id !== tag.id))}
+                        className="pointer-events-auto absolute top-1/2 right-1.5 inline-flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-background text-foreground opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover/tag:pointer-events-auto sm:group-hover/tag:opacity-100 sm:group-focus-within/tag:pointer-events-auto sm:group-focus-within/tag:opacity-100"
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t('Remove {{tag}} from this resource', {
+                        tag: tagPresentation(tag, t).name
+                      })}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </span>
             ))}
         </div>
@@ -576,7 +592,7 @@ const ResourceTagBadges = ({
               ) : (
                 badge
               )}
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

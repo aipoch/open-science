@@ -229,7 +229,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                       status: t(SUBAGENT_STATUS_LABELS[child.status])
                     })
               }
-              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-100/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2"
+              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-200/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2"
               onClick={() => selectChild(child)}
             >
               <span className="min-w-0">

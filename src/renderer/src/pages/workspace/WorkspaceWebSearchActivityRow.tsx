@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
@@ -68,10 +69,8 @@ const renderSearchDetailsBody = (
           {details.results.map((result) => (
             <div key={result.url} className="text-xs">
               {annotate(
-                <a
+                <ExternalTextLink
                   href={result.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className="break-words text-text-000 hover:underline"
                   onClick={(event) => {
                     const selection = window.getSelection()
@@ -88,7 +87,7 @@ const renderSearchDetailsBody = (
                   }}
                 >
                   {result.title}
-                </a>,
+                </ExternalTextLink>,
                 `result:${encodeURIComponent(result.url)}:title`
               )}
               <div className="truncate text-[10px] text-text-100">{result.url}</div>

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -209,17 +210,30 @@ export function LiteratureDetailDialog({
                   <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
                     <div className="flex min-w-0 flex-1 items-start gap-2">
                       {metadata.mode !== 'view' ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          className="shrink-0"
-                          aria-label={t('Back')}
-                          disabled={metadata.saving}
-                          onClick={leaveMetadataEditor}
-                        >
-                          <ArrowLeft className="size-4" aria-hidden="true" />
-                        </Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                className="shrink-0"
+                                aria-label={t('Back')}
+                                disabled={metadata.saving}
+                                onClick={leaveMetadataEditor}
+                              >
+                                <ArrowLeft className="size-4" aria-hidden="true" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('Back')}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       ) : null}
                       <div className="min-w-0 flex-1">
                         {metadata.mode !== 'view' ? (
@@ -267,20 +281,34 @@ export function LiteratureDetailDialog({
                         )}
                       </div>
                     </div>
+
                     <div className="flex shrink-0 items-center gap-1">
                       {metadata.mode === 'view' ? (
                         <DropdownMenu modal={false}>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="transition-none"
-                              aria-label={t('More actions')}
-                            >
-                              <MoreHorizontal className="size-4" aria-hidden="true" />
-                            </Button>
-                          </DropdownMenuTrigger>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger
+                                asChild
+                                onFocus={(event) => {
+                                  if (!event.currentTarget.matches(':focus-visible'))
+                                    event.preventDefault()
+                                }}
+                              >
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="transition-none"
+                                    aria-label={t('More actions')}
+                                  >
+                                    <MoreHorizontal className="size-4" aria-hidden="true" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('More actions')}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               onSelect={() => {

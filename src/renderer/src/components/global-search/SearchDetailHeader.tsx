@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useTranslation } from 'react-i18next'
 import {
   BookOpenText,
@@ -117,22 +118,36 @@ export const SearchDetailHeader = ({
         <ChevronLeft aria-hidden="true" />
         {t('Back to results')}
       </button>
+
       <div className="search-detail-title-row">
         <Icon className="search-detail-kind-icon" aria-hidden="true" />
         <h3 className="search-detail-title" title={title}>
           {title}
         </h3>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="search-detail-collapse size-[26px] shrink-0 text-action-panel-toggle"
-          aria-label={t('Collapse details')}
-          title={t('Collapse details')}
-          onClick={onCollapse}
-        >
-          <PanelRightClose className="size-4" aria-hidden="true" />
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className="search-detail-collapse size-[26px] shrink-0 text-action-panel-toggle"
+                aria-label={t('Collapse details')}
+                title={t('Collapse details')}
+                onClick={onCollapse}
+              >
+                <PanelRightClose className="size-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Collapse details')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
+
       <div className="search-detail-context">
         {result.kind === 'projects' ? (
           <>

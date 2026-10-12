@@ -248,13 +248,14 @@ also use a real Playwright right-click at non-100% Electron zoom and verify pass
 Radix `Tooltip.Trigger` opens the tooltip on **focus** as well as hover (intentional, for keyboard
 users), and `DropdownMenu`/`Dialog` return focus to their trigger on close. Result: dismiss the menu
 by clicking elsewhere → programmatic focus lands back on the trigger → the tooltip reopens even
-though the pointer is elsewhere (upstream: radix-ui/primitives#2248; no React-side prop exists —
-`ignoreNonKeyboardFocus` was only merged into Radix Vue).
+though the pointer is elsewhere.
 
-**Fix (adopted here):** guard `TooltipTrigger`'s `onFocus` with a `:focus-visible` check.
-Programmatic focus-return never matches `:focus-visible`; keyboard Tab does, so accessibility is
-preserved. Radix's composed event handlers skip the internal open logic when the event is
-default-prevented.
+**Fix (adopted here):** keep the `:focus-visible` guard on menu/dialog trigger call sites below.
+The shared `TooltipTrigger` also tracks pointer/keyboard input through its provider and suppresses
+focus opening after pointer input. Chromium can retain `:focus-visible` when a modal menu restores
+focus after a pointer dismissal, so the selector alone is insufficient. Keyboard input restores
+normal focus hints, including Tab and keyboard dismissal. Radix's composed event handlers skip
+the internal open logic when the event is default-prevented; focus restoration itself is preserved.
 
 ```tsx
 <TooltipTrigger
@@ -265,7 +266,7 @@ default-prevented.
 >
 ```
 
-Apply this to any `Tooltip` + `DropdownMenuTrigger` (or `DialogTrigger`) combo. Avoid the
-alternatives: `onCloseAutoFocus={(e) => e.preventDefault()}` breaks focus return for keyboard/screen
-reader users, and fully controlled `open` state is more code for the same behavior. Reference
-implementation: `ConversationPanel.tsx` (composer "+" and split-send triggers, commit 7aafedca).
+Apply this to any `Tooltip` + `DropdownMenuTrigger` (or `DialogTrigger`) combo. Keep native focus
+restoration enabled; preventing `onCloseAutoFocus` breaks keyboard/screen-reader focus return.
+Reference implementations: shared `TooltipTrigger` and the `ConversationPanel.tsx` composer
+"+" and split-send triggers.

@@ -14,7 +14,7 @@ const RequiredSkillToggle = ({ label }: RequiredSkillToggleProps): React.JSX.Ele
   )
 
   return (
-    <TooltipProvider delayDuration={0}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <span

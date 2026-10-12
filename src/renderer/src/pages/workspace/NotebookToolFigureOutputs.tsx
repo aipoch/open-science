@@ -60,7 +60,7 @@ const NotebookToolFigureCard = ({
               draggable={false}
             />
           ) : (
-            <span className="h-36 w-60 max-w-full bg-bg-100" aria-hidden="true" />
+            <span className="h-36 w-60 max-w-full bg-bg-200" aria-hidden="true" />
           )}
         </span>
         <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 pb-1 pt-3.5 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">

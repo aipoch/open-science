@@ -288,27 +288,39 @@ const SessionNotebookContent = ({
         setExportSuccess(undefined)
       }}
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-border-300/90 px-5 py-3.5">
-        <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
-          <span>{t('Session notebook')}</span>
-          <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal text-muted-foreground">
-            {shortId}
-          </span>
-          <span className="truncate text-xs font-normal text-muted-foreground">
-            {t('{{count}} agents', { defaultValue_one: '{{count}} agent', count: agents })} ·{' '}
-            {t('{{count}} cells', { defaultValue_one: '{{count}} cell', count: cells })}
-            {extraCounts.length > 0 ? ` · ${extraCounts.join(' / ')}` : ''}
-          </span>
-        </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="-m-1 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label={tCommon('Close')}
-        >
-          <X className="size-4" aria-hidden="true" />
-        </button>
-      </div>
+      <TooltipProvider>
+        <div className="flex shrink-0 items-center justify-between border-b border-border-300/90 px-5 py-3.5">
+          <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
+            <span>{t('Session notebook')}</span>
+            <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal text-muted-foreground">
+              {shortId}
+            </span>
+            <span className="truncate text-xs font-normal text-muted-foreground">
+              {t('{{count}} agents', { defaultValue_one: '{{count}} agent', count: agents })} ·{' '}
+              {t('{{count}} cells', { defaultValue_one: '{{count}} cell', count: cells })}
+              {extraCounts.length > 0 ? ` · ${extraCounts.join(' / ')}` : ''}
+            </span>
+          </h2>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                type="button"
+                onClick={onClose}
+                className="-m-1 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label={tCommon('Close')}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{tCommon('Close')}</TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
 
       <div
         ref={viewportRef}

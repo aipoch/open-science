@@ -121,7 +121,7 @@ export const LocalFileHeaderActions = ({
   )
 
   return (
-    <>
+    <TooltipProvider>
       {saveAsArtifactState === 'saved' ? (
         <span
           data-testid="saved-as-artifact"
@@ -133,36 +133,46 @@ export const LocalFileHeaderActions = ({
         </span>
       ) : null}
       {onReload ? (
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="text-text-000 hover:text-text-000"
+              aria-label={t('Reload file')}
+              onClick={onReload}
+            >
+              <RotateCw aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className={tooltipClassName}>{t('Reload from disk')}</TooltipContent>
+        </Tooltip>
+      ) : null}
+
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
                 className="text-text-000 hover:text-text-000"
-                aria-label={t('Reload file')}
-                onClick={onReload}
+                aria-label={t('More actions')}
               >
-                <RotateCw aria-hidden="true" />
+                <MoreHorizontal aria-hidden="true" />
               </Button>
-            </TooltipTrigger>
-            <TooltipContent className={tooltipClassName}>{t('Reload from disk')}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      ) : null}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-000 hover:text-text-000"
-            aria-label={t('More actions')}
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('More actions')}</TooltipContent>
+        </Tooltip>
+
         {/* z-[70] keeps the menu above the full-screen preview modal (z-[61]). */}
         <DropdownMenuContent align="end" className="z-[70] w-56">
           <div className="flex items-center gap-2 px-2 py-1.5">
@@ -188,6 +198,6 @@ export const LocalFileHeaderActions = ({
           />
         </DropdownMenuContent>
       </DropdownMenu>
-    </>
+    </TooltipProvider>
   )
 }

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · component: composer-message-queue · genre: modern-minimal · tone: quiet/technical
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (existing application tokens)
@@ -188,7 +189,7 @@ const ComposerMessageQueueContent = ({
   if (items.length === 0) return null
 
   return (
-    <>
+    <TooltipProvider>
       {expanded ? (
         <section className="border-b border-border-200" aria-label={t('Message queue')}>
           <ol id="composer-message-queue-list" className="max-h-36 overflow-y-auto">
@@ -230,39 +231,52 @@ const ComposerMessageQueueContent = ({
                   data-queue-item-id={item.id}
                   data-testid="composer-queue-item"
                 >
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className={cn(
-                      queueActionClassName,
-                      'w-7 touch-none cursor-grab px-0 select-none active:cursor-grabbing'
-                    )}
-                    aria-label={t('Reorder queued message {{index}}', { index: index + 1 })}
-                    title={t('Drag or use arrow keys to reorder')}
-                    onPointerCancel={finishDrag}
-                    onPointerDown={(event) => {
-                      if (event.isPrimary === false || event.button !== 0) return
-                      event.currentTarget.setPointerCapture?.(event.pointerId)
-                      pointerDragRef.current = {
-                        pointerId: event.pointerId,
-                        itemId: item.id,
-                        startY: event.clientY,
-                        height:
-                          event.currentTarget.closest('li')?.getBoundingClientRect().height ?? 0,
-                        active: false,
-                        target: undefined
-                      }
-                    }}
-                    onPointerMove={movePointerDrag}
-                    onPointerUp={endPointerDrag}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                      event.preventDefault()
-                      actions.move(item.id, event.key === 'ArrowUp' ? 'up' : 'down')
-                    }}
-                  >
-                    <GripVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className={cn(
+                          queueActionClassName,
+                          'w-7 touch-none cursor-grab px-0 select-none active:cursor-grabbing'
+                        )}
+                        aria-label={t('Reorder queued message {{index}}', { index: index + 1 })}
+                        title={t('Drag or use arrow keys to reorder')}
+                        onPointerCancel={finishDrag}
+                        onPointerDown={(event) => {
+                          if (event.isPrimary === false || event.button !== 0) return
+                          event.currentTarget.setPointerCapture?.(event.pointerId)
+                          pointerDragRef.current = {
+                            pointerId: event.pointerId,
+                            itemId: item.id,
+                            startY: event.clientY,
+                            height:
+                              event.currentTarget.closest('li')?.getBoundingClientRect().height ??
+                              0,
+                            active: false,
+                            target: undefined
+                          }
+                        }}
+                        onPointerMove={movePointerDrag}
+                        onPointerUp={endPointerDrag}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                          event.preventDefault()
+                          actions.move(item.id, event.key === 'ArrowUp' ? 'up' : 'down')
+                        }}
+                      >
+                        <GripVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t('Reorder queued message {{index}}', { index: index + 1 })}
+                    </TooltipContent>
+                  </Tooltip>
 
                   <div className="min-w-0 overflow-hidden px-1">
                     <p className="truncate text-[12px] leading-4 text-text-000" title={preview}>
@@ -315,26 +329,52 @@ const ComposerMessageQueueContent = ({
                             : t('Send now')}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      className={cn(queueActionClassName, 'w-7 px-0')}
-                      disabled={busy}
-                      aria-label={t('Edit queued message {{index}}', { index: index + 1 })}
-                      title={t('Edit queued message')}
-                      onClick={() => actions.edit(item.id)}
-                    >
-                      <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className={cn(queueActionClassName, 'w-7 px-0')}
-                      disabled={busy}
-                      aria-label={t('Remove queued message {{index}}', { index: index + 1 })}
-                      title={t('Remove queued message')}
-                      onClick={() => actions.remove(item.id)}
-                    >
-                      <Trash2 className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className={cn(queueActionClassName, 'w-7 px-0')}
+                          disabled={busy}
+                          aria-label={t('Edit queued message {{index}}', { index: index + 1 })}
+                          title={t('Edit queued message')}
+                          onClick={() => actions.edit(item.id)}
+                        >
+                          <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t('Edit queued message {{index}}', { index: index + 1 })}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className={cn(queueActionClassName, 'w-7 px-0')}
+                          disabled={busy}
+                          aria-label={t('Remove queued message {{index}}', {
+                            index: index + 1
+                          })}
+                          title={t('Remove queued message')}
+                          onClick={() => actions.remove(item.id)}
+                        >
+                          <Trash2 className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t('Remove queued message {{index}}', { index: index + 1 })}
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 </li>
               )
@@ -346,7 +386,7 @@ const ComposerMessageQueueContent = ({
       <span className="sr-only" aria-live="polite">
         {queueAnnouncementText(t, announcement)}
       </span>
-    </>
+    </TooltipProvider>
   )
 }
 

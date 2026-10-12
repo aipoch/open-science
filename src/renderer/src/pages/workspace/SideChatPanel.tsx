@@ -271,6 +271,7 @@ const SideChatPanel = ({
               )}
             </div>
             {headerAction}
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -289,6 +290,7 @@ const SideChatPanel = ({
             </Tooltip>
           </div>
         </TooltipProvider>
+
         <div
           data-testid="side-chat-message-viewport"
           className="relative min-h-0 flex-1 overflow-hidden"
@@ -458,7 +460,7 @@ const SideChatPanel = ({
           <div className="flex items-center gap-1">
             <div className="flex-1" />
             {controls}
-            <TooltipProvider delayDuration={200}>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

@@ -127,7 +127,7 @@ export function PdfTranslationEditions({
               </PdfTranslationActionHint>
               {selected ? (
                 <Popover key={selected.key}>
-                  <TooltipProvider delayDuration={100}>
+                  <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger
                         asChild
@@ -229,7 +229,7 @@ export function PdfTranslationEditions({
               ) : null}
               {selected && onDelete ? (
                 <PdfTranslationActionHint reason={disabledReason}>
-                  <TooltipProvider delayDuration={100}>
+                  <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger
                         asChild

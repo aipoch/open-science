@@ -74,7 +74,7 @@ const RuntimeUninstallControl = ({
   if (!hint) return button
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent className="max-w-xs leading-relaxed">{hint}</TooltipContent>

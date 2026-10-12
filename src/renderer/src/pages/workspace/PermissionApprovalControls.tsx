@@ -587,7 +587,7 @@ const PermissionImpactTip = ({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -637,7 +637,7 @@ const PermissionHeaderBadges = ({
           {envName}
         </Badge>
       ) : null}
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -1109,7 +1109,7 @@ const PermissionApprovalCard = ({
                   className={cn(
                     'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
                     isDeleteRequest
-                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+                      ? 'bg-destructive text-primary-foreground hover:bg-destructive/80'
                       : 'bg-primary text-primary-foreground hover:bg-primary/80'
                   )}
                   disabled={disabled || !allowOptionId || isSubmitting}
@@ -1128,37 +1128,43 @@ const PermissionApprovalCard = ({
                 </button>
                 {hasScopePicker ? (
                   <>
-                    <div
-                      className={cn(
-                        'w-px',
-                        isDeleteRequest
-                          ? 'bg-destructive-foreground/25'
-                          : 'bg-primary-foreground/25'
-                      )}
-                    />
-                    <button
-                      ref={scopeTriggerRef}
-                      type="button"
-                      data-testid="scope-chevron"
-                      aria-label={t('Choose authorization scope')}
-                      aria-expanded={scopeOpen}
-                      aria-haspopup="menu"
-                      className={cn(
-                        'inline-flex h-8 select-none items-center justify-center px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
-                        isDeleteRequest
-                          ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                          : 'bg-primary text-primary-foreground hover:bg-primary/80'
-                      )}
-                      disabled={isSubmitting}
-                      onClick={(e) => {
-                        // Stop propagation so this click doesn't reach the dropdown's document
-                        // click-listener and immediately re-close the menu it just opened.
-                        e.stopPropagation()
-                        setScopeOpen((o) => !o)
-                      }}
-                    >
-                      <ChevronDown className="size-4" />
-                    </button>
+                    <div className="w-px bg-primary-foreground/25" />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger
+                          asChild
+                          onFocus={(event) => {
+                            if (!event.currentTarget.matches(':focus-visible'))
+                              event.preventDefault()
+                          }}
+                        >
+                          <button
+                            ref={scopeTriggerRef}
+                            type="button"
+                            data-testid="scope-chevron"
+                            aria-label={t('Choose authorization scope')}
+                            aria-expanded={scopeOpen}
+                            aria-haspopup="menu"
+                            className={cn(
+                              'inline-flex h-8 select-none items-center justify-center px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
+                              isDeleteRequest
+                                ? 'bg-destructive text-primary-foreground hover:bg-destructive/80'
+                                : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                            )}
+                            disabled={isSubmitting}
+                            onClick={(e) => {
+                              // Stop propagation so this click doesn't reach the dropdown's document
+                              // click-listener and immediately re-close the menu it just opened.
+                              e.stopPropagation()
+                              setScopeOpen((o) => !o)
+                            }}
+                          >
+                            <ChevronDown className="size-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('Choose authorization scope')}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </>
                 ) : null}
               </div>

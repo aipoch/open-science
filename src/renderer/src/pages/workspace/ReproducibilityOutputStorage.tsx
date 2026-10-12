@@ -143,7 +143,7 @@ export const ReproducibilityOutputStorage = ({
             <div
               role="group"
               aria-label={t('Clear reproduced outputs')}
-              className="space-y-2 rounded-md border border-border-300/60 bg-bg-100 p-3"
+              className="space-y-2 rounded-md border border-border-300/60 bg-bg-200 p-3"
             >
               <p className="text-xs leading-5 text-text-200">
                 {t(

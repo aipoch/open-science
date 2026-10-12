@@ -84,7 +84,7 @@ const WorkspaceToolSummaryCard = ({
       ) : null}
       {summary.error ? <div className="m-3">{renderError(summary.error)}</div> : null}
       {summary.note ? (
-        <div className="flex items-start gap-2 border-t border-border-200/70 bg-bg-100 px-2.5 py-2 text-[11px] leading-5 text-text-200">
+        <div className="flex items-start gap-2 border-t border-border-200/70 bg-bg-200 px-2.5 py-2 text-[11px] leading-5 text-text-200">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           <p>{summary.note}</p>
         </div>

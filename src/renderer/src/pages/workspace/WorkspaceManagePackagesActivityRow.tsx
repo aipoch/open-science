@@ -311,7 +311,7 @@ const WorkspaceManagePackagesActivityRow = ({
     >
       <button
         type="button"
-        className="flex min-h-[44px] w-full items-start gap-2 rounded-md py-2 text-[13px] hover:bg-bg-100 md:min-h-0"
+        className="flex min-h-[44px] w-full items-start gap-2 rounded-md py-2 text-[13px] hover:bg-bg-200 md:min-h-0"
         aria-expanded={showDetails}
         disabled={isActive}
         onClick={() => onToggle(activity.id, !isExpanded)}

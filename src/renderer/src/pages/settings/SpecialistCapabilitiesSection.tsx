@@ -351,7 +351,7 @@ const SpecialistCapabilitiesSection = ({
     updateConnectorIds((prev) => prev.filter((connectorId) => connectorId !== id))
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <section>
         <h3 className="mb-1 text-base font-semibold text-foreground">{t('Capabilities')}</h3>
         <p className="mb-4 text-[13px] leading-5 text-muted-foreground">

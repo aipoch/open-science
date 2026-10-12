@@ -308,7 +308,7 @@ const ComposerContextUsage = ({
           {showCompactAction ? (
             <div className="flex pt-1">
               {compactHint ? (
-                <TooltipProvider delayDuration={200}>
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>{compactButton}</TooltipTrigger>
                     <TooltipContent side="top" className="max-w-56 text-center leading-relaxed">

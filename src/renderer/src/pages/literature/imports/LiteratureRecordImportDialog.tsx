@@ -287,7 +287,7 @@ export const LiteratureRecordImportDialog = ({
               open={!recordImport.preview.imported}
               className="overflow-hidden rounded-lg border border-border-300/80"
             >
-              <summary className="cursor-pointer bg-bg-100 px-3 py-2.5 text-sm font-medium hover:bg-bg-200 focus-visible:outline-2 focus-visible:outline-ring active:bg-bg-300">
+              <summary className="cursor-pointer bg-bg-200 px-3 py-2.5 text-sm font-medium hover:bg-bg-200 focus-visible:outline-2 focus-visible:outline-ring active:bg-bg-300">
                 {t('View details')} · {recordImport.preview.entries.length}
               </summary>
               <div className="max-h-[min(38vh,360px)] overflow-y-auto overscroll-contain divide-y divide-border-300/80 border-t border-border-300/80">

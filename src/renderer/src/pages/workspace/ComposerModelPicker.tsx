@@ -400,10 +400,7 @@ const ComposerModelPicker = ({
                           tCommon
                         )
                         return (
-                          <TooltipProvider
-                            key={`${option.providerId}:${option.model}`}
-                            delayDuration={200}
-                          >
+                          <TooltipProvider key={`${option.providerId}:${option.model}`}>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <DropdownMenuItem

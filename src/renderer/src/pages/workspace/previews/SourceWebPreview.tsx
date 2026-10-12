@@ -237,7 +237,7 @@ const SourceWebPreviewContent = ({
               {displayedUrl}
             </div>
           </div>
-          <TooltipProvider delayDuration={200}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

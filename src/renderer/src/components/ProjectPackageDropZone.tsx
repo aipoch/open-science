@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useState, type ComponentPropsWithRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
@@ -97,15 +98,27 @@ export const ProjectPackageDropZone = ({
             className="flex max-w-xl items-center gap-3 rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground shadow-lg"
           >
             <span className="min-w-0 break-words">{notice}</span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="pointer-events-auto shrink-0"
-              aria-label={t('Dismiss')}
-              onClick={() => setNotice(undefined)}
-            >
-              <X className="size-4" aria-hidden="true" />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="pointer-events-auto shrink-0"
+                    aria-label={t('Dismiss')}
+                    onClick={() => setNotice(undefined)}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Dismiss')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       )}

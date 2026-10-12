@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Bell } from 'lucide-react'
 import { Component, useEffect, useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -107,21 +108,33 @@ const NotificationRecovery = ({
   }
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          id={id}
-          type="button"
-          data-notification-bell-trigger="true"
-          data-notification-bell-id={id}
-          aria-label={t('Messages unavailable')}
-          className={cn(
-            'inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-status-warning-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            className
-          )}
-        >
-          <Bell className="size-4" aria-hidden="true" />
-        </button>
-      </PopoverTrigger>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <PopoverTrigger asChild>
+              <button
+                id={id}
+                type="button"
+                data-notification-bell-trigger="true"
+                data-notification-bell-id={id}
+                aria-label={t('Messages unavailable')}
+                className={cn(
+                  'inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-status-warning-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  className
+                )}
+              >
+                <Bell className="size-4" aria-hidden="true" />
+              </button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('Messages unavailable')}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <PopoverContent
         aria-label={t('Message center')}
         className="z-[90] max-h-[80dvh] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto bg-bg-000 p-0 text-text-000"

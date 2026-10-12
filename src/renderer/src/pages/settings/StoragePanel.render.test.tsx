@@ -982,7 +982,7 @@ describe('StoragePanel', () => {
     expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
     expect(container.querySelector('.bg-storage-compute')).not.toBeNull()
     expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
-    expect(container.querySelector('.bg-storage-execution-evidence')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-notebook-evidence')).not.toBeNull()
     expect(container.querySelector('.bg-sky-500')).toBeNull()
     expect(container.querySelector('.bg-violet-500')).toBeNull()
 

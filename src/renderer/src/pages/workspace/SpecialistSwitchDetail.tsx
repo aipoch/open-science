@@ -129,7 +129,7 @@ const SpecialistSwitchDetail = ({
             openConfig()
           }
         }}
-        className="group flex w-full items-start gap-3 rounded-xl border border-border bg-muted/60 p-3 text-left transition-[border-color,background-color,box-shadow] hover:border-border-strong hover:bg-card hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong"
+        className="group flex w-full items-start gap-3 rounded-xl border border-border bg-muted/60 p-3 text-left transition-[border-color,background-color,box-shadow] hover:border-border-300 hover:bg-card hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <SpecialistAvatar iconKey={profile.iconKey} colorKey={profile.colorKey} size="md" />
         <div className="min-w-0 flex-1">

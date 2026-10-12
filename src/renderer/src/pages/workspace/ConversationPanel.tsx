@@ -481,14 +481,26 @@ const DismissibleConversationError = ({
 
   return (
     <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
-        aria-label={t('Dismiss error')}
-        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-      >
-        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-      </button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setDismissed(true)}
+              aria-label={t('Dismiss error')}
+              className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
+            >
+              <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Dismiss error')}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       {children}
     </div>
   )
@@ -1458,36 +1470,46 @@ const ConversationPanel = ({
         data-session-id={activeSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
-        <header
-          data-testid="conversation-header"
-          className={`flex shrink-0 items-center gap-2 px-4 pb-3 pt-2 max-md:px-2 max-md:pb-2 max-md:pt-[max(env(safe-area-inset-top),0.5rem)] ${
-            isPreviewPanelCollapsed ? 'md:pr-12' : ''
-          }`}
-        >
-          <button
-            type="button"
-            className="grid size-9 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-surface-control-hover hover:text-text-000 md:hidden"
-            aria-label={t('Open navigation')}
-            onClick={onOpenSidebar}
+        <TooltipProvider>
+          <header
+            data-testid="conversation-header"
+            className={`flex shrink-0 items-center gap-2 px-4 pb-3 pt-2 max-md:px-2 max-md:pb-2 max-md:pt-[max(env(safe-area-inset-top),0.5rem)] ${
+              isPreviewPanelCollapsed ? 'md:pr-12' : ''
+            }`}
           >
-            <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
-          </button>
-          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
-            {activeSession ? (
-              <SessionInfoPopover
-                key={activeSession.id}
-                session={activeSession}
-                sourceSession={sourceSession}
-                onOpenSession={sessionTools.openSession}
-                onEdit={sessionTools.editSession}
-                onTogglePin={sessionTools.togglePin}
-              />
-            ) : (
-              <span className="block truncate">{t('New conversation')}</span>
-            )}
-          </h1>
-          {activeSession && sessionTools.exportDiagnostics && (
-            <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <button
+                  type="button"
+                  className="grid size-9 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-surface-control-hover hover:text-text-000 md:hidden"
+                  aria-label={t('Open navigation')}
+                  onClick={onOpenSidebar}
+                >
+                  <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Open navigation')}</TooltipContent>
+            </Tooltip>
+            <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+              {activeSession ? (
+                <SessionInfoPopover
+                  key={activeSession.id}
+                  session={activeSession}
+                  sourceSession={sourceSession}
+                  onOpenSession={sessionTools.openSession}
+                  onEdit={sessionTools.editSession}
+                  onTogglePin={sessionTools.togglePin}
+                />
+              ) : (
+                <span className="block truncate">{t('New conversation')}</span>
+              )}
+            </h1>
+            {activeSession && sessionTools.exportDiagnostics && (
               <Tooltip>
                 <TooltipTrigger
                   asChild
@@ -1518,35 +1540,47 @@ const ConversationPanel = ({
                   </p>
                 </TooltipContent>
               </Tooltip>
-            </TooltipProvider>
-          )}
-          {activeSession && (
-            <SessionHeaderMenu
-              key={activeSession.id}
-              session={activeSession}
-              bindings={sessionTools.menuBindings}
-              createSideChat={sideChatController.createDraft}
-              credentialPending={pendingCredentialRequest !== undefined}
-              disabledReason={openSideChatReason}
-            />
-          )}
-          <PackageExportProgressButton />
-          <NotificationBell className="md:hidden" />
-          <button
-            type="button"
-            className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
-              isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
-            }`}
-            aria-label={t(
-              isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'
             )}
-            aria-expanded={!isPreviewPanelCollapsed}
-            aria-controls="right-panel"
-            onClick={onTogglePreviewPanel}
-          >
-            <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-          </button>
-        </header>
+            {activeSession && (
+              <SessionHeaderMenu
+                key={activeSession.id}
+                session={activeSession}
+                bindings={sessionTools.menuBindings}
+                createSideChat={sideChatController.createDraft}
+                credentialPending={pendingCredentialRequest !== undefined}
+                disabledReason={openSideChatReason}
+              />
+            )}
+            <PackageExportProgressButton />
+            <NotificationBell className="md:hidden" />
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <button
+                  type="button"
+                  className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
+                    isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
+                  }`}
+                  aria-label={t(
+                    isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'
+                  )}
+                  aria-expanded={!isPreviewPanelCollapsed}
+                  aria-controls="right-panel"
+                  onClick={onTogglePreviewPanel}
+                >
+                  <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t(isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel')}
+              </TooltipContent>
+            </Tooltip>
+          </header>
+        </TooltipProvider>
         <PackageOperationIndicator />
 
         {isNewConversation ? null : activeSession?.contentLoaded === false ? (
@@ -2271,89 +2305,86 @@ const ConversationPanel = ({
                                     </span>
                                   </div>
                                 )}
+
                                 <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                                  <TooltipProvider>
-                                    {pdfContext.bindings.map((binding) => {
-                                      const pending =
-                                        pdfContext.pendingBindingId === binding.bindingId
-                                      return (
-                                        <span
-                                          key={binding.bindingId}
-                                          className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
-                                        >
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <button
-                                                type="button"
-                                                className={cn(
-                                                  'flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
-                                                  composerInteractiveTransitionClassName
-                                                )}
-                                                aria-label={t('Open PDF context {{name}}', {
-                                                  name: binding.name
-                                                })}
-                                                onClick={() =>
-                                                  openReadingContext(binding.bindingId)
-                                                }
-                                              >
-                                                <FileTypeIcon
-                                                  name={binding.name}
-                                                  mimeType="application/pdf"
-                                                  className="size-4 rounded-none border-0 bg-transparent p-0"
-                                                />
-                                                <ExtensionPreservingFileName
-                                                  name={binding.name}
-                                                  className="min-w-0 text-[12px] font-medium leading-4"
-                                                />
-                                              </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent side="top">
-                                              {t(
-                                                'Linked to this conversation. The Agent reads only the pages needed for your question.'
+                                  {pdfContext.bindings.map((binding) => {
+                                    const pending =
+                                      pdfContext.pendingBindingId === binding.bindingId
+                                    return (
+                                      <span
+                                        key={binding.bindingId}
+                                        className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
+                                      >
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <button
+                                              type="button"
+                                              className={cn(
+                                                'flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
+                                                composerInteractiveTransitionClassName
                                               )}
-                                            </TooltipContent>
-                                          </Tooltip>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <button
-                                                type="button"
-                                                className={cn(
-                                                  attachmentRemoveButtonClassName,
-                                                  'focus-visible:-outline-offset-2'
-                                                )}
-                                                disabled={pending || pdfContext.isPending}
-                                                aria-label={t('Remove PDF context {{name}}', {
-                                                  name: binding.name
-                                                })}
-                                                onClick={() =>
-                                                  unlinkReadingContext(binding.bindingId)
-                                                }
-                                              >
-                                                {pending ? (
-                                                  <Loader2
-                                                    className="size-3.5 animate-spin"
-                                                    strokeWidth={2}
-                                                    aria-hidden="true"
-                                                  />
-                                                ) : (
-                                                  <X
-                                                    className="size-3.5"
-                                                    strokeWidth={2.2}
-                                                    aria-hidden="true"
-                                                  />
-                                                )}
-                                              </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent side="top">
-                                              {t('Remove PDF context {{name}}', {
+                                              aria-label={t('Open PDF context {{name}}', {
                                                 name: binding.name
                                               })}
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </span>
-                                      )
-                                    })}
-                                  </TooltipProvider>
+                                              onClick={() => openReadingContext(binding.bindingId)}
+                                            >
+                                              <FileTypeIcon
+                                                name={binding.name}
+                                                mimeType="application/pdf"
+                                                className="size-4 rounded-none border-0 bg-transparent p-0"
+                                              />
+                                              <ExtensionPreservingFileName
+                                                name={binding.name}
+                                                className="min-w-0 text-[12px] font-medium leading-4"
+                                              />
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top">
+                                            {t(
+                                              'Linked to this conversation. The Agent reads only the pages needed for your question.'
+                                            )}
+                                          </TooltipContent>
+                                        </Tooltip>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <button
+                                              type="button"
+                                              className={cn(
+                                                attachmentRemoveButtonClassName,
+                                                'focus-visible:-outline-offset-2'
+                                              )}
+                                              disabled={pending || pdfContext.isPending}
+                                              aria-label={t('Remove PDF context {{name}}', {
+                                                name: binding.name
+                                              })}
+                                              onClick={() =>
+                                                unlinkReadingContext(binding.bindingId)
+                                              }
+                                            >
+                                              {pending ? (
+                                                <Loader2
+                                                  className="size-3.5 animate-spin"
+                                                  strokeWidth={2}
+                                                  aria-hidden="true"
+                                                />
+                                              ) : (
+                                                <X
+                                                  className="size-3.5"
+                                                  strokeWidth={2.2}
+                                                  aria-hidden="true"
+                                                />
+                                              )}
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top">
+                                            {t('Remove PDF context {{name}}', {
+                                              name: binding.name
+                                            })}
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </span>
+                                    )
+                                  })}
                                 </div>
                               </div>
                             ) : null}
@@ -2372,42 +2403,42 @@ const ConversationPanel = ({
                                     {t('Reading')}
                                   </span>
                                 </div>
-                                <TooltipProvider>
-                                  <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                                    {pdfContext.automaticAttachments.map((attachment) => (
-                                      <Tooltip key={attachment.id}>
-                                        <TooltipTrigger asChild>
-                                          <span
-                                            tabIndex={0}
-                                            className="flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-lg bg-bg-200 px-2 py-1 text-text-300 focus-visible:keyboard-focus"
-                                          >
-                                            <FileTypeIcon
-                                              name={attachment.name}
-                                              mimeType="application/pdf"
-                                              className="size-4 rounded-none border-0 bg-transparent p-0"
-                                            />
-                                            <ExtensionPreservingFileName
-                                              name={attachment.name}
-                                              className="min-w-0 text-[12px] font-medium leading-4"
-                                            />
-                                          </span>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top">
-                                          {attachment.name}
-                                          <p>
-                                            {pdfContext.isPending
-                                              ? t('Linking PDFs…')
-                                              : t('{{count}} PDFs will be linked when sent', {
-                                                  count: pdfContext.automaticAttachmentCount,
-                                                  defaultValue_one:
-                                                    '{{count}} PDF will be linked when sent'
-                                                })}
-                                          </p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    ))}
-                                  </div>
-                                </TooltipProvider>
+
+                                <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                                  {pdfContext.automaticAttachments.map((attachment) => (
+                                    <Tooltip key={attachment.id}>
+                                      <TooltipTrigger asChild>
+                                        <span
+                                          tabIndex={0}
+                                          className="flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-lg bg-bg-200 px-2 py-1 text-text-300 focus-visible:keyboard-focus"
+                                        >
+                                          <FileTypeIcon
+                                            name={attachment.name}
+                                            mimeType="application/pdf"
+                                            className="size-4 rounded-none border-0 bg-transparent p-0"
+                                          />
+                                          <ExtensionPreservingFileName
+                                            name={attachment.name}
+                                            className="min-w-0 text-[12px] font-medium leading-4"
+                                          />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {attachment.name}
+                                        <p>
+                                          {pdfContext.isPending
+                                            ? t('Linking PDFs…')
+                                            : t('{{count}} PDFs will be linked when sent', {
+                                                count: pdfContext.automaticAttachmentCount,
+                                                defaultValue_one:
+                                                  '{{count}} PDF will be linked when sent'
+                                              })}
+                                        </p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ))}
+                                </div>
+
                                 <span
                                   role="status"
                                   className="flex shrink-0 items-center gap-1.5 px-1 text-[11px] leading-4 text-text-300"
@@ -2420,31 +2451,30 @@ const ConversationPanel = ({
                                   ) : null}
                                   {pdfContext.isPending ? t('Linking PDFs…') : t('Link on send')}
                                 </span>
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        aria-label={t('Keep as attachments')}
-                                        disabled={pdfContext.isPending}
-                                        onClick={dismissAutomaticReading}
-                                        className={cn(
-                                          'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
-                                          composerInteractiveTransitionClassName
-                                        )}
-                                      >
-                                        <X
-                                          className="size-3.5"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {t('Keep as attachments')}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      aria-label={t('Keep as attachments')}
+                                      disabled={pdfContext.isPending}
+                                      onClick={dismissAutomaticReading}
+                                      className={cn(
+                                        'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
+                                        composerInteractiveTransitionClassName
+                                      )}
+                                    >
+                                      <X
+                                        className="size-3.5"
+                                        strokeWidth={2.2}
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    {t('Keep as attachments')}
+                                  </TooltipContent>
+                                </Tooltip>
                               </div>
                             ) : null}
                           </div>
@@ -2455,7 +2485,7 @@ const ConversationPanel = ({
                         />
                         {isWslSetupDraft || activeSession?.wslSetup === true ? (
                           <div
-                            className="flex items-center justify-between gap-3 rounded-lg border border-status-info-accent/30 bg-status-info-surface px-3 py-2 text-xs text-status-info-foreground"
+                            className="flex items-center justify-between gap-3 rounded-lg border border-status-info-foreground/30 bg-status-info-surface px-3 py-2 text-xs text-status-info-foreground"
                             data-testid="wsl-setup-conversation-actions"
                           >
                             <span>

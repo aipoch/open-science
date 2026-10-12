@@ -161,7 +161,7 @@ export function LiteratureResultsTable({
                 </th>
               </tr>
             </thead>
-            <TooltipProvider disableHoverableContent delayDuration={150} skipDelayDuration={300}>
+            <TooltipProvider disableHoverableContent>
               <LiteratureRowNumbers.Provider value={rowNumbers}>
                 <tbody className="divide-y divide-border-300/70">
                   {items.map((entry) => (

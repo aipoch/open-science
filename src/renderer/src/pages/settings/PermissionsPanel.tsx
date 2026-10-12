@@ -306,7 +306,7 @@ const PermissionsPanel = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div className="px-5 pb-5">
         <SettingsSection
           title={t('New conversations')}

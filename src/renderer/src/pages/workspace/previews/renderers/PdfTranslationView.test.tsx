@@ -222,7 +222,7 @@ it('shows selected paragraph tooltips above the translation sidebar', async () =
     const copy = screen.getByRole('button', { name: 'Copy' })
     fireEvent.pointerOver(copy, { pointerType: 'mouse' })
     fireEvent.pointerMove(copy, { pointerType: 'mouse' })
-    await act(async () => vi.advanceTimersByTimeAsync(100))
+    await act(async () => vi.advanceTimersByTimeAsync(200))
     const tooltip = document.body.querySelector<HTMLElement>('[data-slot="tooltip-content"]')
     expect(tooltip?.textContent).toContain('Copy')
     expect(tooltip?.className).toContain('z-[120]')

@@ -159,7 +159,7 @@ const PdfAreaPreview = ({
   const { t } = useTranslation()
   const palette = annotationColorClasses(color)
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border/70 bg-bg-20/70 p-2">
+    <div className="flex items-center gap-3 rounded-md border border-border/70 bg-bg-10/70 p-2">
       <div
         className="relative h-16 w-24 shrink-0 overflow-hidden rounded border border-border bg-bg-000 shadow-inner"
         aria-label={t('Selected area')}
@@ -250,38 +250,39 @@ const PdfAnnotationTagControls = ({
   const assignedIds = new Set(annotation.tagIds)
   const selectedTags = tags.filter((tag) => assignedIds.has(tag.id))
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1">
-      <ResourceTagMenu
-        selection={{ ids: annotation.tagIds, onChange, max: 24, disabled }}
-        trigger={
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            disabled={disabled}
-            aria-label={t('Add tag')}
-            className="order-first rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <Plus className="size-3.5" aria-hidden="true" />
-          </Button>
-        }
-      />
-      {selectedTags.slice(0, 2).map((tag, index) => {
-        const removeLabel = t('Remove {{tag}} from this annotation', {
-          tag: tagPresentation(tag, t).name
-        })
-        return (
-          <span
-            key={tag.id}
-            className={cn(
-              'group/tag relative hidden min-w-0 max-w-24',
-              index === 0
-                ? '@min-[25rem]/annotation-card:inline-flex'
-                : '@min-[40rem]/annotation-card:inline-flex'
-            )}
-          >
-            <TagBadge tag={tag} className="min-w-0 max-w-24" />
-            <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <ResourceTagMenu
+          selection={{ ids: annotation.tagIds, onChange, max: 24, disabled }}
+          trigger={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              disabled={disabled}
+              aria-label={t('Add tag')}
+              className="order-first rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Plus className="size-3.5" aria-hidden="true" />
+            </Button>
+          }
+        />
+        {selectedTags.slice(0, 2).map((tag, index) => {
+          const removeLabel = t('Remove {{tag}} from this annotation', {
+            tag: tagPresentation(tag, t).name
+          })
+          return (
+            <span
+              key={tag.id}
+              className={cn(
+                'group/tag relative hidden min-w-0 max-w-24',
+                index === 0
+                  ? '@min-[25rem]/annotation-card:inline-flex'
+                  : '@min-[40rem]/annotation-card:inline-flex'
+              )}
+            >
+              <TagBadge tag={tag} className="min-w-0 max-w-24" />
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -306,38 +307,38 @@ const PdfAnnotationTagControls = ({
                 </TooltipTrigger>
                 <TooltipContent className="z-[120]">{removeLabel}</TooltipContent>
               </Tooltip>
-            </TooltipProvider>
-          </span>
-        )
-      })}
-      {selectedTags.length > 0 ? (
-        <ResourceTagMenu
-          selection={{ ids: annotation.tagIds, onChange, max: 24, disabled }}
-          trigger={
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              aria-label={t('Manage Tags')}
-              className={cn(
-                'shrink-0 px-1 text-xs text-muted-foreground',
-                selectedTags.length === 1 && '@min-[25rem]/annotation-card:hidden',
-                selectedTags.length === 2 && '@min-[40rem]/annotation-card:hidden'
-              )}
-            >
-              <span className="@min-[25rem]/annotation-card:hidden">+{selectedTags.length}</span>
-              <span className="hidden @min-[25rem]/annotation-card:inline @min-[40rem]/annotation-card:hidden">
-                +{selectedTags.length - 1}
-              </span>
-              <span className="hidden @min-[40rem]/annotation-card:inline">
-                +{selectedTags.length - 2}
-              </span>
-            </Button>
-          }
-        />
-      ) : null}
-    </div>
+            </span>
+          )
+        })}
+        {selectedTags.length > 0 ? (
+          <ResourceTagMenu
+            selection={{ ids: annotation.tagIds, onChange, max: 24, disabled }}
+            trigger={
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={disabled}
+                aria-label={t('Manage Tags')}
+                className={cn(
+                  'shrink-0 px-1 text-xs text-muted-foreground',
+                  selectedTags.length === 1 && '@min-[25rem]/annotation-card:hidden',
+                  selectedTags.length === 2 && '@min-[40rem]/annotation-card:hidden'
+                )}
+              >
+                <span className="@min-[25rem]/annotation-card:hidden">+{selectedTags.length}</span>
+                <span className="hidden @min-[25rem]/annotation-card:inline @min-[40rem]/annotation-card:hidden">
+                  +{selectedTags.length - 1}
+                </span>
+                <span className="hidden @min-[40rem]/annotation-card:inline">
+                  +{selectedTags.length - 2}
+                </span>
+              </Button>
+            }
+          />
+        ) : null}
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -722,7 +723,7 @@ const PdfNotebookView = ({
   if (!source) {
     return (
       <section
-        className="flex size-full items-center justify-center bg-bg-20 p-6"
+        className="flex size-full items-center justify-center bg-bg-10 p-6"
         aria-label={t('Notes & Annotations')}
       >
         <div className="flex max-w-sm flex-col items-center gap-3 text-center">
@@ -753,7 +754,7 @@ const PdfNotebookView = ({
   return (
     <section
       className={cn(
-        '@container/pdf-notebook size-full min-h-0 flex-col bg-bg-20',
+        '@container/pdf-notebook size-full min-h-0 flex-col bg-bg-10',
         active ? 'flex' : 'hidden'
       )}
       aria-hidden={!active || undefined}
@@ -1304,7 +1305,7 @@ const PdfNotebookView = ({
                           aria-label={t(color[0].toUpperCase() + color.slice(1))}
                         />
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <span className="order-first inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-bg-20 px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                          <span className="order-first inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-bg-10 px-2 py-0.5 text-xs font-normal text-muted-foreground">
                             {page === undefined ? t('Document') : t('Page {{page}}', { page })}
                           </span>
                           <span
@@ -1345,50 +1346,85 @@ const PdfNotebookView = ({
                             onChange={(tagIds) => void updateTags(bookmark.id, tagIds)}
                           />
                         </div>
-                        <div className="flex shrink-0 items-center gap-0.5">
-                          {canReveal ? (
-                            <button
-                              type="button"
-                              aria-label={t('Show annotation source')}
-                              disabled={pendingId === bookmark.id}
-                              onClick={() => void reveal(bookmark)}
-                              className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              <ArrowUpRight className="size-3.5" aria-hidden="true" />
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            aria-label={t('Edit annotation note')}
-                            disabled={
-                              !available ||
-                              annotationPort.canEdit?.(bookmark.id) === false ||
-                              pendingId === bookmark.id ||
-                              editingId !== undefined
-                            }
-                            onClick={() => {
-                              setEditingPage(currentPage)
-                              setEditingId(bookmark.id)
-                              setError(undefined)
-                            }}
-                            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <Pencil className="size-3.5" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={t('Delete annotation')}
-                            disabled={
-                              !available ||
-                              annotationPort.canEdit?.(bookmark.id) === false ||
-                              pendingId === bookmark.id
-                            }
-                            onClick={() => void deleteAnnotation(bookmark.id)}
-                            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <Trash2 className="size-3.5" aria-hidden="true" />
-                          </button>
-                        </div>
+                        <TooltipProvider>
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            {canReveal ? (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  asChild
+                                  onFocus={(event) => {
+                                    if (!event.currentTarget.matches(':focus-visible'))
+                                      event.preventDefault()
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={t('Show annotation source')}
+                                    disabled={pendingId === bookmark.id}
+                                    onClick={() => void reveal(bookmark)}
+                                    className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  >
+                                    <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>{t('Show annotation source')}</TooltipContent>
+                              </Tooltip>
+                            ) : null}
+                            <Tooltip>
+                              <TooltipTrigger
+                                asChild
+                                onFocus={(event) => {
+                                  if (!event.currentTarget.matches(':focus-visible'))
+                                    event.preventDefault()
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  aria-label={t('Edit annotation note')}
+                                  disabled={
+                                    !available ||
+                                    annotationPort.canEdit?.(bookmark.id) === false ||
+                                    pendingId === bookmark.id ||
+                                    editingId !== undefined
+                                  }
+                                  onClick={() => {
+                                    setEditingPage(currentPage)
+                                    setEditingId(bookmark.id)
+                                    setError(undefined)
+                                  }}
+                                  className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <Pencil className="size-3.5" aria-hidden="true" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('Edit annotation note')}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger
+                                asChild
+                                onFocus={(event) => {
+                                  if (!event.currentTarget.matches(':focus-visible'))
+                                    event.preventDefault()
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  aria-label={t('Delete annotation')}
+                                  disabled={
+                                    !available ||
+                                    annotationPort.canEdit?.(bookmark.id) === false ||
+                                    pendingId === bookmark.id
+                                  }
+                                  onClick={() => void deleteAnnotation(bookmark.id)}
+                                  className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <Trash2 className="size-3.5" aria-hidden="true" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('Delete annotation')}</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TooltipProvider>
                       </div>
                       <div className="mt-2">
                         <div className="w-full text-left">
@@ -1419,7 +1455,7 @@ const PdfNotebookView = ({
                             </blockquote>
                           ) : null}
                           {bookmark.note ? (
-                            <div className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-bg-20 px-3 py-2.5 text-sm text-text-200">
+                            <div className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-bg-10 px-3 py-2.5 text-sm text-text-200">
                               <MessageSquareText
                                 className="mt-0.5 size-4 shrink-0 text-muted-foreground"
                                 aria-hidden="true"

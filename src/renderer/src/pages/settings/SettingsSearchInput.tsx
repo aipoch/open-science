@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Search, X } from 'lucide-react'
 import { useRef, useState, type ChangeEvent, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -91,19 +92,31 @@ export const SettingsSearchInput = ({
         </span>
       ) : null}
       {hasText ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          data-slot="settings-search-clear"
-          aria-label={t('Clear search')}
-          title={t('Clear search')}
-          className="absolute inset-y-0 right-1.5 my-auto text-muted-foreground hover:text-foreground"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={clearQuery}
-        >
-          <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                data-slot="settings-search-clear"
+                aria-label={t('Clear search')}
+                title={t('Clear search')}
+                className="absolute inset-y-0 right-1.5 my-auto text-muted-foreground hover:text-foreground"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={clearQuery}
+              >
+                <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Clear search')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       ) : null}
     </div>
   )

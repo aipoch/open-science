@@ -529,33 +529,55 @@ const ReplayPanelContent = ({
     change: (page: number) => void
   ): React.JSX.Element | null =>
     last > 0 ? (
-      <nav className="flex shrink-0 items-center gap-1 text-xs" aria-label={t('Material pages')}>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t('Previous page')}
-          disabled={page === 0}
-          onClick={() => {
-            pause()
-            change(page - 1)
-          }}
-        >
-          <ChevronLeft size={14} />
-        </Button>
-        <span>{t('Page {{current}} of {{total}}', { current: page + 1, total: last + 1 })}</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t('Next page')}
-          disabled={page === last}
-          onClick={() => {
-            pause()
-            change(page + 1)
-          }}
-        >
-          <ChevronRight size={14} />
-        </Button>
-      </nav>
+      <TooltipProvider>
+        <nav className="flex shrink-0 items-center gap-1 text-xs" aria-label={t('Material pages')}>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t('Previous page')}
+                disabled={page === 0}
+                onClick={() => {
+                  pause()
+                  change(page - 1)
+                }}
+              >
+                <ChevronLeft size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Previous page')}</TooltipContent>
+          </Tooltip>
+          <span>{t('Page {{current}} of {{total}}', { current: page + 1, total: last + 1 })}</span>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t('Next page')}
+                disabled={page === last}
+                onClick={() => {
+                  pause()
+                  change(page + 1)
+                }}
+              >
+                <ChevronRight size={14} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Next page')}</TooltipContent>
+          </Tooltip>
+        </nav>
+      </TooltipProvider>
     ) : null
 
   return (

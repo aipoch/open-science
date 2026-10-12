@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { TrustedPrivateServices } from './TrustedPrivateServices'
 import { SettingsSection } from './SettingsLayout'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -518,7 +519,11 @@ const NotebookNetworkDomainsForm = ({
             </Button>
           </div>
           {domainError ? (
-            <p id="public-domain-error" className="mt-2 text-xs text-status-failure" role="alert">
+            <p
+              id="public-domain-error"
+              className="mt-2 text-xs text-status-failure-foreground dark:text-status-failure-dark-foreground"
+              role="alert"
+            >
               {domainError}
             </p>
           ) : null}
@@ -527,22 +532,34 @@ const NotebookNetworkDomainsForm = ({
               {draft.allowedDomains.map((domain) => (
                 <li key={domain} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <code className="break-all">{domain}</code>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    disabled={isSaving}
-                    aria-label={t('Remove {{domain}}', { domain })}
-                    onClick={() => {
-                      setMessage(undefined)
-                      setDraft({
-                        ...draft,
-                        allowedDomains: draft.allowedDomains.filter((item) => item !== domain)
-                      })
-                    }}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          disabled={isSaving}
+                          aria-label={t('Remove {{domain}}', { domain })}
+                          onClick={() => {
+                            setMessage(undefined)
+                            setDraft({
+                              ...draft,
+                              allowedDomains: draft.allowedDomains.filter((item) => item !== domain)
+                            })
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Remove {{domain}}', { domain })}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </li>
               ))}
             </ul>

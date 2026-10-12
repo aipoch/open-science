@@ -814,7 +814,7 @@ const WorkspaceElicitationCard = ({
                   'grid size-6 shrink-0 place-items-center rounded-md',
                   agentDecidesSelected
                     ? 'bg-primary text-primary-foreground'
-                    : 'bg-bg-100 text-text-100'
+                    : 'bg-bg-200 text-text-100'
                 )}
               >
                 {agentDecidesSelected ? (
@@ -828,7 +828,7 @@ const WorkspaceElicitationCard = ({
           </div>
 
           <div className="mt-1.5 flex items-start gap-2 px-2 py-1.5">
-            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-bg-100 text-text-100">
+            <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-bg-200 text-text-100">
               <Pencil className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <Textarea

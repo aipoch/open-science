@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 // "Grant folder access" dialog. Opened from the Files tab filter menu ("Add folder…"). The user
 // browses any folder on any mounted drive via a breadcrumb + folder-only listing, picks an access
 // level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
@@ -467,15 +468,27 @@ const GrantFolderAccessDialogContent = ({
             }}
             className="flex flex-wrap items-center gap-0.5 border-b border-border-200 px-5 py-2.5 text-[13px] text-text-100"
           >
-            <button
-              type="button"
-              aria-label={t('Go to home folder')}
-              data-testid="grant-access-crumb-home"
-              onClick={() => home && navigateTo(home)}
-              className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
-            >
-              <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-            </button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={t('Go to home folder')}
+                    data-testid="grant-access-crumb-home"
+                    onClick={() => home && navigateTo(home)}
+                    className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
+                  >
+                    <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Go to home folder')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             {/* Vertical divider between the Home shortcut and the path crumbs (same hairline
                 style as the settings toolbar divider). */}
             {driveRoot !== undefined ? (

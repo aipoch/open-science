@@ -75,6 +75,6 @@ export const notificationEventToneClasses: Record<
   },
   neutral: {
     tile: 'bg-bg-300 text-text-300',
-    chip: 'border-border-200/70 bg-bg-100 text-text-100'
+    chip: 'border-border-200/70 bg-bg-200 text-text-100'
   }
 }

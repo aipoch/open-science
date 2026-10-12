@@ -569,7 +569,7 @@ const ProvenanceMessagesTimeline = ({
   )
 
   return (
-    <TooltipProvider key={sessionId} delayDuration={200} skipDelayDuration={300}>
+    <TooltipProvider key={sessionId}>
       <MessageScrollerProvider
         key={`${sessionId}:${snapshot.items.at(-1)?.id ?? 'empty'}`}
         autoScroll
@@ -1550,69 +1550,105 @@ const ArtifactProvenancePanel = ({
       className="flex size-full min-h-0 flex-col bg-bg-000"
       data-testid="artifact-provenance"
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('Previous Artifact version')}
-          disabled={selectedIndex <= 0 && !lineage?.previousVersion}
-          onClick={() => {
-            const versionId = (
-              selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
-            )?.versionId
-            if (versionId) selectVersion(versionId)
-          }}
-        >
-          <ChevronLeft aria-hidden="true" />
-        </Button>
-        <span className="text-xs font-medium text-text-100">
-          {selectedVersionDescriptor ? `v${selectedVersionDescriptor.versionNumber}` : t('Version')}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('Next Artifact version')}
-          disabled={
-            !lineage ||
-            ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
-              !lineage.nextVersion)
-          }
-          onClick={() => {
-            const versionId = (
-              selectedIndex >= 0
-                ? (lineage?.versions[selectedIndex + 1] ?? lineage?.nextVersion)
-                : lineage?.nextVersion
-            )?.versionId
-            if (versionId) selectVersion(versionId)
-          }}
-        >
-          <ChevronRight aria-hidden="true" />
-        </Button>
-        <span className="min-w-0 flex-1 truncate text-xs text-text-300">
-          {lineage?.originSession.state === 'deleted'
-            ? [
-                t('Source session deleted'),
-                lineage.originSession.title,
-                lineage.originSession.deletedAt
-                  ? formatDate(lineage.originSession.deletedAt, 'dateTime')
-                  : undefined
-              ]
-                .filter(Boolean)
-                .join(' · ')
-            : lineage?.originSession.title}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('Close Provenance')}
-          onClick={onClose}
-        >
-          <X aria-hidden="true" />
-        </Button>
-      </div>
+      <TooltipProvider>
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('Previous Artifact version')}
+                disabled={selectedIndex <= 0 && !lineage?.previousVersion}
+                onClick={() => {
+                  const versionId = (
+                    selectedIndex > 0
+                      ? lineage?.versions[selectedIndex - 1]
+                      : lineage?.previousVersion
+                  )?.versionId
+                  if (versionId) selectVersion(versionId)
+                }}
+              >
+                <ChevronLeft aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Previous Artifact version')}</TooltipContent>
+          </Tooltip>
+          <span className="text-xs font-medium text-text-100">
+            {selectedVersionDescriptor
+              ? `v${selectedVersionDescriptor.versionNumber}`
+              : t('Version')}
+          </span>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('Next Artifact version')}
+                disabled={
+                  !lineage ||
+                  ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+                    !lineage.nextVersion)
+                }
+                onClick={() => {
+                  const versionId = (
+                    selectedIndex >= 0
+                      ? (lineage?.versions[selectedIndex + 1] ?? lineage?.nextVersion)
+                      : lineage?.nextVersion
+                  )?.versionId
+                  if (versionId) selectVersion(versionId)
+                }}
+              >
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Next Artifact version')}</TooltipContent>
+          </Tooltip>
+          <span className="min-w-0 flex-1 truncate text-xs text-text-300">
+            {lineage?.originSession.state === 'deleted'
+              ? [
+                  t('Source session deleted'),
+                  lineage.originSession.title,
+                  lineage.originSession.deletedAt
+                    ? formatDate(lineage.originSession.deletedAt, 'dateTime')
+                    : undefined
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : lineage?.originSession.title}
+          </span>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('Close Provenance')}
+                onClick={onClose}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Close Provenance')}</TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
 
       <VersionHistoryLoadButton history={history} />
       {(!isUserEdit || literature) && !isLegacyVersion ? (
@@ -1811,7 +1847,7 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <TooltipProvider delayDuration={100}>
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div
@@ -2115,7 +2151,7 @@ const ArtifactProvenancePanel = ({
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <span className="truncate font-medium text-text-100">{lockName}</span>
-                            <span className="rounded bg-bg-100 px-2 py-0.5 text-xs text-text-200">
+                            <span className="rounded bg-bg-200 px-2 py-0.5 text-xs text-text-200">
                               {lock.state === 'available' ? t('Complete lock') : t('Partial lock')}
                             </span>
                           </div>
@@ -2324,7 +2360,7 @@ const ArtifactProvenancePanel = ({
                     />
                     <div className="overflow-hidden rounded-md border border-border-300/60">
                       <table className="w-full table-fixed text-left text-xs">
-                        <thead className="bg-bg-100 text-text-300">
+                        <thead className="bg-bg-200 text-text-300">
                           <tr>
                             <th className="w-1/2 px-3 py-2 font-medium">{t('Package')}</th>
                             <th className="w-1/4 px-3 py-2 font-medium">{t('Version')}</th>
@@ -2367,7 +2403,7 @@ const ArtifactProvenancePanel = ({
                     {hasFilteredEnvironmentPackages && !normalizedPackageQuery ? (
                       <button
                         type="button"
-                        className="text-xs font-medium text-accent-000 hover:underline"
+                        className="text-xs font-medium text-primary hover:underline"
                         onClick={() =>
                           setShowAllPackagesKey((key) =>
                             key === provenanceKey ? undefined : provenanceKey
@@ -2392,7 +2428,7 @@ const ArtifactProvenancePanel = ({
                       </span>
                     </summary>
                     {omittedOperationCount > 0 ? (
-                      <p className="rounded-md bg-bg-100 px-3 py-2 text-xs text-text-300">
+                      <p className="rounded-md bg-bg-200 px-3 py-2 text-xs text-text-300">
                         {omittedOperationCount === 1
                           ? t('{{count}} earlier operation omitted from this bounded history.', {
                               count: omittedOperationCount
@@ -2409,7 +2445,7 @@ const ArtifactProvenancePanel = ({
                     ) : null}
                     <div className="overflow-hidden rounded-md border border-border-300/60">
                       <table className="w-full table-fixed text-left text-xs">
-                        <thead className="bg-bg-100 text-text-300">
+                        <thead className="bg-bg-200 text-text-300">
                           <tr>
                             <th className="w-[34%] break-words px-2 py-2 font-medium">
                               {t('Time')}
@@ -2484,7 +2520,7 @@ const ArtifactProvenancePanel = ({
                                   </td>
                                 </tr>
                                 {hasPackageChanges ? (
-                                  <tr className="border-t border-border-300/30 bg-bg-100/60">
+                                  <tr className="border-t border-border-300/30 bg-bg-200/60">
                                     <td colSpan={4} className="px-2 py-2 text-text-300">
                                       {dependencyChanges.length > 0 ? (
                                         <div>

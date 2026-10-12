@@ -482,7 +482,7 @@ const AnnotationDraftEditor = ({
                 className={cn(
                   'inline-flex h-6 items-center gap-1 rounded px-2 text-[10px] font-normal',
                   activeTab === 'agent'
-                    ? 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                    ? 'bg-background text-foreground shadow-menu ring-1 ring-border/50'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
                 onClick={() => setActiveTab('agent')}
@@ -497,7 +497,7 @@ const AnnotationDraftEditor = ({
                 className={cn(
                   'inline-flex h-6 items-center gap-1 rounded px-2 text-[10px] font-normal',
                   activeTab === 'bookmark'
-                    ? 'bg-background text-foreground shadow-sm ring-1 ring-border/50'
+                    ? 'bg-background text-foreground shadow-menu ring-1 ring-border/50'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
                 onClick={() => {

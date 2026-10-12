@@ -303,7 +303,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
             </span>
           ) : null}
         </span>
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <button

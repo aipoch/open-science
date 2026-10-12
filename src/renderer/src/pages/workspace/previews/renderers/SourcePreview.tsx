@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useMemo, useState, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -71,28 +72,50 @@ export const SourcePreviewContent = ({
               </span>
             ) : null}
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
-              aria-label={t('Previous preview page')}
-              title={t('Previous page')}
-              disabled={!hasPrevious}
-              onClick={previous}
-            >
-              <ChevronLeft className="size-3.5" aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
-              aria-label={t('Next preview page')}
-              title={t('Next page')}
-              disabled={!hasNext}
-              onClick={next}
-            >
-              <ChevronRight className="size-3.5" aria-hidden />
-            </button>
-          </div>
+          <TooltipProvider>
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
+                    aria-label={t('Previous preview page')}
+                    title={t('Previous page')}
+                    disabled={!hasPrevious}
+                    onClick={previous}
+                  >
+                    <ChevronLeft className="size-3.5" aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Previous preview page')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="rounded p-1 hover:bg-bg-200 disabled:opacity-40"
+                    aria-label={t('Next preview page')}
+                    title={t('Next page')}
+                    disabled={!hasNext}
+                    onClick={next}
+                  >
+                    <ChevronRight className="size-3.5" aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Next preview page')}</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
         </div>
       ) : null}
       {slice === 0 && pagination?.startsMidLine ? (

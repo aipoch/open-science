@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
@@ -449,27 +450,47 @@ const useWorkspacePanelLayout = (
       toggle: toggleSidebar,
       toggleRef: sidebarToggleRef,
       toggleButton: (
-        <button
-          ref={sidebarToggleRef}
-          type="button"
-          data-testid="workspace-sidebar-toggle"
-          className="absolute top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-transparent text-action-panel-toggle shadow-none hover:bg-surface-control-hover"
-          style={{
-            left: `calc(${SIDEBAR_PANEL_DEFAULT_SIZE_CSS} - ${SIDEBAR_TOGGLE_RIGHT_INSET}px)`
-          }}
-          aria-label={
-            sidebarState === 'collapsed' ? t('Expand sidebar panel') : t('Collapse sidebar panel')
-          }
-          aria-expanded={sidebarState !== 'collapsed'}
-          aria-controls="left-panel"
-          aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
-          title={
-            sidebarState === 'collapsed' ? t('Expand sidebar panel') : t('Collapse sidebar panel')
-          }
-          onClick={toggleSidebar}
-        >
-          <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                ref={sidebarToggleRef}
+                type="button"
+                data-testid="workspace-sidebar-toggle"
+                className="absolute top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-transparent text-action-panel-toggle shadow-none hover:bg-surface-control-hover"
+                style={{
+                  left: `calc(${SIDEBAR_PANEL_DEFAULT_SIZE_CSS} - ${SIDEBAR_TOGGLE_RIGHT_INSET}px)`
+                }}
+                aria-label={
+                  sidebarState === 'collapsed'
+                    ? t('Expand sidebar panel')
+                    : t('Collapse sidebar panel')
+                }
+                aria-expanded={sidebarState !== 'collapsed'}
+                aria-controls="left-panel"
+                aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
+                title={
+                  sidebarState === 'collapsed'
+                    ? t('Expand sidebar panel')
+                    : t('Collapse sidebar panel')
+                }
+                onClick={toggleSidebar}
+              >
+                <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {sidebarState === 'collapsed'
+                ? t('Expand sidebar panel')
+                : t('Collapse sidebar panel')}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )
     },
     preview: {
@@ -479,31 +500,47 @@ const useWorkspacePanelLayout = (
       toggle: previewPort.toggle,
       collapse: () => previewPort.syncState('collapsed'),
       toggleButton: (
-        <button
-          ref={previewToggleRef}
-          type="button"
-          data-testid="workspace-preview-toggle"
-          className={`absolute right-2 top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg ${
-            previewPort.state === 'collapsed'
-              ? 'bg-transparent shadow-none text-action-panel-toggle hover:bg-surface-control-hover'
-              : 'bg-primary/20 shadow-card backdrop-blur text-action-panel-toggle'
-          }`}
-          aria-label={
-            previewPort.state === 'collapsed'
-              ? t('Expand preview panel')
-              : t('Collapse preview panel')
-          }
-          aria-expanded={previewPort.state !== 'collapsed'}
-          aria-controls="right-panel"
-          title={
-            previewPort.state === 'collapsed'
-              ? t('Expand preview panel')
-              : t('Collapse preview panel')
-          }
-          onClick={previewPort.toggle}
-        >
-          <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                ref={previewToggleRef}
+                type="button"
+                data-testid="workspace-preview-toggle"
+                className={`absolute right-2 top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg ${
+                  previewPort.state === 'collapsed'
+                    ? 'bg-transparent shadow-none text-action-panel-toggle hover:bg-surface-control-hover'
+                    : 'bg-primary/20 shadow-card backdrop-blur text-action-panel-toggle'
+                }`}
+                aria-label={
+                  previewPort.state === 'collapsed'
+                    ? t('Expand preview panel')
+                    : t('Collapse preview panel')
+                }
+                aria-expanded={previewPort.state !== 'collapsed'}
+                aria-controls="right-panel"
+                title={
+                  previewPort.state === 'collapsed'
+                    ? t('Expand preview panel')
+                    : t('Collapse preview panel')
+                }
+                onClick={previewPort.toggle}
+              >
+                <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {previewPort.state === 'collapsed'
+                ? t('Expand preview panel')
+                : t('Collapse preview panel')}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )
     }
   }

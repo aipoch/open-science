@@ -328,7 +328,7 @@ export const SessionDiagnosticsDialog = ({
                   contentClassName="max-w-[320px]"
                 />
               </div>
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -404,7 +404,7 @@ export const SessionDiagnosticsDialog = ({
                             className={`overflow-hidden rounded-2xl border transition-colors ${
                               selectedCount > 0
                                 ? 'border-primary/10 bg-primary/5'
-                                : 'border-border-200/40 bg-bg-100/50'
+                                : 'border-border-200/40 bg-bg-200/50'
                             }`}
                           >
                             <Checkbox.Root
@@ -569,7 +569,7 @@ export const SessionDiagnosticsDialog = ({
               </p>
             )}
             {result && (
-              <div className="mt-5 space-y-3 rounded-2xl bg-bg-100/60 p-4">
+              <div className="mt-5 space-y-3 rounded-2xl bg-bg-200/60 p-4">
                 <div role="status">
                   <p
                     className={`flex items-start gap-2 text-sm font-medium leading-6 ${

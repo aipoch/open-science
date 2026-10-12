@@ -288,6 +288,7 @@ const WorkspacePlanCard = ({
                     }}
                   />
                 </div>
+
                 <div className="mt-2 flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-t border-border/70 pt-2">
                   <p
                     id={`plan-response-shortcuts-${projection.artifactVersionId}`}
@@ -310,16 +311,32 @@ const WorkspacePlanCard = ({
                       <span>{t('New line')}</span>
                     </span>
                   </p>
-                  <Button
-                    type="submit"
-                    variant="outline"
-                    size="icon-lg"
-                    aria-label={t('Send Plan feedback')}
-                    disabled={decisionBusy || responseText.trim().length === 0}
-                    className="[@media(pointer:coarse)]:size-11"
-                  >
-                    <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          size="icon-lg"
+                          aria-label={t('Send Plan feedback')}
+                          disabled={decisionBusy || responseText.trim().length === 0}
+                          className="[@media(pointer:coarse)]:size-11"
+                        >
+                          <CornerDownLeft
+                            className="size-4"
+                            strokeWidth={1.75}
+                            aria-hidden="true"
+                          />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Send Plan feedback')}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </div>
             </form>
@@ -652,7 +669,7 @@ const PlanPreviewSurface = ({
             </>
           ) : null}
           {onToggleFullScreen ? (
-            <TooltipProvider delayDuration={200}>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

@@ -293,7 +293,7 @@ const SessionBackgroundActivityLedger = ({
   }
 
   const sectionHeader = (label: string, count: number): React.JSX.Element => (
-    <div className="min-w-[680px] border-t border-border-200 bg-bg-100 px-3 py-1 text-[10px] font-semibold tracking-wide text-text-300 uppercase">
+    <div className="min-w-[680px] border-t border-border-200 bg-bg-200 px-3 py-1 text-[10px] font-semibold tracking-wide text-text-300 uppercase">
       {label} · {count}
     </div>
   )
@@ -322,7 +322,7 @@ const SessionBackgroundActivityLedger = ({
       ) : null}
       {jobs.length > 0 ? (
         <>
-          <div className="flex min-w-[680px] items-center justify-between border-t border-border-200 bg-bg-100 px-3 py-1 text-[10px] font-semibold tracking-wide text-text-300 uppercase">
+          <div className="flex min-w-[680px] items-center justify-between border-t border-border-200 bg-bg-200 px-3 py-1 text-[10px] font-semibold tracking-wide text-text-300 uppercase">
             <span>
               {t('Compute jobs')} · {jobs.length}
             </span>

@@ -529,17 +529,31 @@ const PreviewFileHeader = ({
               ) : null}
               {provenanceEntry === 'menu' && managedMenuEntries.length > 0 ? (
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={previewHeaderActionClassName}
-                      aria-label={t('File actions for {{title}}', { title: item.title })}
-                    >
-                      <MoreHorizontal aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className={previewHeaderActionClassName}
+                            aria-label={t('File actions for {{title}}', { title: item.title })}
+                          >
+                            <MoreHorizontal aria-hidden="true" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t('File actions for {{title}}', { title: item.title })}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <DropdownMenuContent align="end" className="z-[70] min-w-36">
                     <ActionMenuItems
                       entries={managedMenuEntries}
@@ -621,47 +635,69 @@ const ArtifactVersionNavigation = ({
   if (!selected) return null
 
   return (
-    <div
-      data-testid="artifact-preview-version-navigation"
-      className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
-    >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('Previous Artifact version')}
-        disabled={selectedIndex <= 0 && !lineage.previousVersion}
-        onClick={() => {
-          const versionId = (
-            selectedIndex > 0 ? lineage.versions[selectedIndex - 1] : lineage.previousVersion
-          )?.versionId
-          if (versionId) onSelect(versionId)
-        }}
+    <TooltipProvider>
+      <div
+        data-testid="artifact-preview-version-navigation"
+        className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
       >
-        <ChevronLeft aria-hidden="true" />
-      </Button>
-      <span className="text-xs font-medium text-text-100">v{selected.versionNumber}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('Next Artifact version')}
-        disabled={
-          (selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
-          !lineage.nextVersion
-        }
-        onClick={() => {
-          const versionId = (
-            selectedIndex >= 0
-              ? (lineage.versions[selectedIndex + 1] ?? lineage.nextVersion)
-              : lineage.nextVersion
-          )?.versionId
-          if (versionId) onSelect(versionId)
-        }}
-      >
-        <ChevronRight aria-hidden="true" />
-      </Button>
-    </div>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('Previous Artifact version')}
+              disabled={selectedIndex <= 0 && !lineage.previousVersion}
+              onClick={() => {
+                const versionId = (
+                  selectedIndex > 0 ? lineage.versions[selectedIndex - 1] : lineage.previousVersion
+                )?.versionId
+                if (versionId) onSelect(versionId)
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Previous Artifact version')}</TooltipContent>
+        </Tooltip>
+        <span className="text-xs font-medium text-text-100">v{selected.versionNumber}</span>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('Next Artifact version')}
+              disabled={
+                (selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+                !lineage.nextVersion
+              }
+              onClick={() => {
+                const versionId = (
+                  selectedIndex >= 0
+                    ? (lineage.versions[selectedIndex + 1] ?? lineage.nextVersion)
+                    : lineage.nextVersion
+                )?.versionId
+                if (versionId) onSelect(versionId)
+              }}
+            >
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Next Artifact version')}</TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -677,49 +713,72 @@ const ManagedVersionNavigation = ({
     (version) => version.id === inspect.selectedVersionId
   )
   return (
-    <div
-      data-testid="managed-preview-version-navigation"
-      className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
-    >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('Previous file version')}
-        disabled={selectedIndex <= 0 && !inspect.previousVersion}
-        onClick={() => {
-          const id = (
-            selectedIndex > 0 ? inspect.versions[selectedIndex - 1] : inspect.previousVersion
-          )?.id
-          if (id) onSelect(id)
-        }}
+    <TooltipProvider>
+      <div
+        data-testid="managed-preview-version-navigation"
+        className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2"
       >
-        <ChevronLeft aria-hidden="true" />
-      </Button>
-      <span className="min-w-8 text-center text-xs font-medium text-text-000">
-        v{inspect.selectedVersion?.versionNumber ?? inspect.versions[selectedIndex]?.versionNumber}
-      </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t('Next file version')}
-        disabled={
-          (selectedIndex < 0 || selectedIndex >= inspect.versions.length - 1) &&
-          !inspect.nextVersion
-        }
-        onClick={() => {
-          const id = (
-            selectedIndex >= 0
-              ? (inspect.versions[selectedIndex + 1] ?? inspect.nextVersion)
-              : inspect.nextVersion
-          )?.id
-          if (id) onSelect(id)
-        }}
-      >
-        <ChevronRight aria-hidden="true" />
-      </Button>
-    </div>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('Previous file version')}
+              disabled={selectedIndex <= 0 && !inspect.previousVersion}
+              onClick={() => {
+                const id = (
+                  selectedIndex > 0 ? inspect.versions[selectedIndex - 1] : inspect.previousVersion
+                )?.id
+                if (id) onSelect(id)
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Previous file version')}</TooltipContent>
+        </Tooltip>
+        <span className="min-w-8 text-center text-xs font-medium text-text-000">
+          v
+          {inspect.selectedVersion?.versionNumber ?? inspect.versions[selectedIndex]?.versionNumber}
+        </span>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('Next file version')}
+              disabled={
+                (selectedIndex < 0 || selectedIndex >= inspect.versions.length - 1) &&
+                !inspect.nextVersion
+              }
+              onClick={() => {
+                const id = (
+                  selectedIndex >= 0
+                    ? (inspect.versions[selectedIndex + 1] ?? inspect.nextVersion)
+                    : inspect.nextVersion
+                )?.id
+                if (id) onSelect(id)
+              }}
+            >
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Next file version')}</TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -1983,7 +2042,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   variant="outline"
                   size="sm"
                   data-testid="artifact-literature-entry"
-                  className={`absolute right-3 z-40 gap-1.5 whitespace-nowrap border-border-300/50 bg-bg-000/90 shadow-sm backdrop-blur hover:bg-bg-100 active:bg-bg-200 ${resolvedPreviewItem.format === 'pdf' ? 'bottom-14' : 'bottom-3'}`}
+                  className={`absolute right-3 z-40 gap-1.5 whitespace-nowrap border-border-300/50 bg-bg-000/90 shadow-sm backdrop-blur hover:bg-bg-200 active:bg-bg-200 ${resolvedPreviewItem.format === 'pdf' ? 'bottom-14' : 'bottom-3'}`}
                   aria-label={t('Literature')}
                   onClick={() => updateFileView({ provenanceOpen: true, provenanceTab: 'sources' })}
                 >

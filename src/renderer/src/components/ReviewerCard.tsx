@@ -154,7 +154,7 @@ const ItemCard = ({
       {/* Footer row: model pill (left) + Go to transcript button (right) */}
       <div className="mt-3 flex items-center justify-between gap-2">
         <span
-          className="rounded bg-bg-200 px-1.5 py-0.5 text-[11px] text-text-400"
+          className="rounded bg-bg-200 px-1.5 py-0.5 text-[11px] text-text-300"
           data-testid="reviewer-model-pill"
         >
           {model}
@@ -369,14 +369,14 @@ export const ReviewerCard = ({
       return (
         <AlertTriangle className="h-3 w-3 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
       )
-    if (isEmptyAssessment) return <CircleMinus className="h-3 w-3 text-text-400" />
+    if (isEmptyAssessment) return <CircleMinus className="h-3 w-3 text-text-300" />
     if (isStale)
       return (
         <AlertTriangle className="h-3 w-3 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
       )
     if (isFlagged) return <AlertTriangle className="h-3 w-3 text-red-500" />
     if (isComplete) return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
-    return <Loader className="h-3 w-3 text-text-400" />
+    return <Loader className="h-3 w-3 text-text-300" />
   })()
 
   return (
@@ -398,15 +398,15 @@ export const ReviewerCard = ({
       >
         {statusIcon}
         <span className="font-medium text-text-200">{t('Reviewer')}</span>
-        <span className="mx-1 text-text-400">&middot;</span>
+        <span className="mx-1 text-text-300">&middot;</span>
         <span className={cn('text-text-300', isFlagged && 'text-red-600 dark:text-red-400')}>
           {summaryText()}
         </span>
         {/* Total check count — shown for any completed review (pass or flagged), never for zero checks. */}
         {isComplete && totalCheckCount > 0 && (
           <>
-            <span className="mx-1 text-text-400">&middot;</span>
-            <span className="text-text-400">
+            <span className="mx-1 text-text-300">&middot;</span>
+            <span className="text-text-300">
               {t('{{count}} checks', {
                 defaultValue_one: '{{count}} check',
                 count: totalCheckCount
@@ -417,28 +417,28 @@ export const ReviewerCard = ({
         {/* Fix limit reached — shown when the loop was capped with unaddressed warn/fail checks. */}
         {isCapReached && (
           <>
-            <span className="mx-1 text-text-400">&middot;</span>
+            <span className="mx-1 text-text-300">&middot;</span>
             <span className="text-yellow-600 dark:text-yellow-400">{t('fix limit reached')}</span>
           </>
         )}
         {isCorrectionFailed && (
           <>
-            <span className="mx-1 text-text-400">&middot;</span>
+            <span className="mx-1 text-text-300">&middot;</span>
             <span className="text-yellow-600 dark:text-yellow-400">{t('correction failed')}</span>
           </>
         )}
         {isInterrupted && (
           <>
-            <span className="mx-1 text-text-400">&middot;</span>
+            <span className="mx-1 text-text-300">&middot;</span>
             <span className="text-yellow-600 dark:text-yellow-400">{t('interrupted')}</span>
           </>
         )}
         {canExpand && (
           <span className="ml-auto">
             {expanded ? (
-              <ChevronDown className="h-3 w-3 text-text-400" />
+              <ChevronDown className="h-3 w-3 text-text-300" />
             ) : (
-              <ChevronRight className="h-3 w-3 text-text-400" />
+              <ChevronRight className="h-3 w-3 text-text-300" />
             )}
           </span>
         )}
@@ -563,7 +563,7 @@ export const ReviewerCard = ({
             !isCorrectionFailed &&
             !isInterrupted &&
             !canRerunUnresolved && (
-              <p className="mt-1 text-[11px] italic text-text-400">
+              <p className="mt-1 text-[11px] italic text-text-300">
                 {t('The agent reads these findings and self-corrects in its next message.')}
               </p>
             )}

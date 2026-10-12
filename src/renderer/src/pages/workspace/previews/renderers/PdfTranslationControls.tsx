@@ -183,32 +183,45 @@ function TargetLanguageCombobox({
           onKeyDown={handleKeyDown}
           className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent pr-1 shadow-none ring-0 focus-visible:border-0 focus-visible:ring-0"
         />
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label={t('Show target languages')}
-          aria-expanded={open && !disabled}
-          aria-haspopup="listbox"
-          disabled={disabled}
-          onMouseDown={(event) => {
-            event.preventDefault()
-          }}
-          onClick={() => {
-            if (open) {
-              setOpen(false)
-              setActiveIndex(-1)
-            } else {
-              openWithIndex(-1)
-            }
-          }}
-          className="flex h-full w-9 shrink-0 cursor-pointer items-center justify-center rounded-e-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <ChevronDown
-            aria-hidden="true"
-            className={`size-4 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
-          />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label={t('Show target languages')}
+                aria-expanded={open && !disabled}
+                aria-haspopup="listbox"
+                disabled={disabled}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                }}
+                onClick={() => {
+                  if (open) {
+                    setOpen(false)
+                    setActiveIndex(-1)
+                  } else {
+                    openWithIndex(-1)
+                  }
+                }}
+                className="flex h-full w-9 shrink-0 cursor-pointer items-center justify-center rounded-e-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronDown
+                  aria-hidden="true"
+                  className={`size-4 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Show target languages')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
+
       {open && !disabled ? (
         <div
           id={listboxId}
@@ -378,7 +391,7 @@ function TranslationSettingsFields({
         <div className="flex items-center gap-1">
           <span id={modelLabelId}>{t('Translation method')}</span>
           {target && target.mode !== 'local' ? (
-            <TooltipProvider delayDuration={100}>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -438,7 +451,7 @@ function TranslationSettingsFields({
         <LocalPdfTranslationModel model={localModel} running={state.status === 'running'} />
       ) : null}
       {target?.id === 'api' && (!disabled || options.apiModel) ? (
-        <TooltipProvider delayDuration={100}>
+        <TooltipProvider>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1">
               <span id={apiModelId}>{t('Model')}</span>
@@ -599,7 +612,7 @@ function TranslationSettingsFields({
                       options.agentModel!.modelId ?? ''
                     )
                 ) ? (
-                  <TooltipProvider delayDuration={100}>
+                  <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <SelectItem
@@ -642,7 +655,7 @@ function TranslationSettingsFields({
                           t
                         )
                   return (
-                    <TooltipProvider key={entry.key} delayDuration={100}>
+                    <TooltipProvider key={entry.key}>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <SelectItem
@@ -989,7 +1002,7 @@ export function PdfTranslationControls({
             </span>
           ) : null}
           {!running ? (
-            <TooltipProvider delayDuration={100}>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="ghost" size="icon-sm" aria-label={t('More information')}>
@@ -1247,7 +1260,7 @@ export function PdfTranslationControls({
                 </PdfTranslationActionHint>
               ) : null}
               {pinned ? (
-                <TooltipProvider delayDuration={100}>
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger
                       asChild

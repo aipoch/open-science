@@ -351,7 +351,7 @@ export function JournalImportReview({
             {review.rows?.map((row) => (
               <tr
                 key={row.row}
-                className="border-b border-border-300/80 bg-bg-000 last:border-b-0 hover:bg-bg-100"
+                className="border-b border-border-300/80 bg-bg-000 last:border-b-0 hover:bg-bg-200"
               >
                 <td className="h-16 px-3 py-3 text-muted-foreground tabular-nums">{row.row}</td>
                 <td className="px-3 py-3">

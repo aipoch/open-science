@@ -551,21 +551,38 @@ const ComposerAgentControlsMenu = ({
                         >
                           {grant.label}
                         </span>
-                        <button
-                          type="button"
-                          className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
-                          aria-label={t('Revoke session grant for {{label}}', {
-                            label: grant.label
-                          })}
-                          disabled={grantActionsReadOnly}
-                          onClick={(event) => {
-                            event.preventDefault()
-                            event.stopPropagation()
-                            onRevokeGrant?.(grant.categoryKey)
-                          }}
-                        >
-                          <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        </button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger
+                              asChild
+                              onFocus={(event) => {
+                                if (!event.currentTarget.matches(':focus-visible'))
+                                  event.preventDefault()
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="flex size-5 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-text-300"
+                                aria-label={t('Revoke session grant for {{label}}', {
+                                  label: grant.label
+                                })}
+                                disabled={grantActionsReadOnly}
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  onRevokeGrant?.(grant.categoryKey)
+                                }}
+                              >
+                                <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('Revoke session grant for {{label}}', {
+                                label: grant.label
+                              })}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </div>
                     ))}
                   </div>

@@ -272,7 +272,7 @@ const NotebookRunCell = ({
       </div>
       <NotebookInputDataStrip
         inputFiles={run.inputFiles ?? []}
-        className="mb-2 rounded-md border border-border-100 bg-bg-100 px-2 py-1.5"
+        className="mb-2 rounded-md border border-border-100 bg-bg-200 px-2 py-1.5"
       />
       <NotebookCodeBlock
         code={run.script}
@@ -1378,7 +1378,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const initialStateError = !notebookState && actionError
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <section
         className="@container/notebook relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
         data-testid="kernel-notebook-pane"

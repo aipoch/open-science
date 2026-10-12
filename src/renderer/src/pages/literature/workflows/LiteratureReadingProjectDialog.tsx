@@ -127,7 +127,7 @@ export function LiteratureReadingProjectDialog({
                     onSelect={(id) => void startReadingInProject(id)}
                   />
                 ) : (
-                  <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
+                  <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-200 p-4">
                     <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
                     <div>
                       <h3 className="text-sm font-medium">{t('No projects yet')}</h3>

@@ -726,7 +726,13 @@ const MemoryList = ({
                     {selectedCategory && !isAboutYou(selectedCategory) ? (
                       <DropdownMenu>
                         <Tooltip>
-                          <TooltipTrigger asChild>
+                          <TooltipTrigger
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                            asChild
+                          >
                             <DropdownMenuTrigger asChild>
                               <Button
                                 type="button"
@@ -745,6 +751,7 @@ const MemoryList = ({
                           </TooltipTrigger>
                           <TooltipContent>{t('Category actions')}</TooltipContent>
                         </Tooltip>
+
                         <DropdownMenuContent align="end" className="min-w-44">
                           <DropdownMenuItem
                             onSelect={() =>

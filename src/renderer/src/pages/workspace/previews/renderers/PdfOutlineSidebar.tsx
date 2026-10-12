@@ -360,16 +360,26 @@ const PdfOutlineTree = ({
               style={{ paddingInlineStart: `${Math.max(0, level - 1) * 16 + 2}px` }}
             >
               {hasChildren ? (
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="relative z-10 flex size-6 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  aria-label={isExpanded ? t('Collapse') : t('Expand')}
-                  aria-expanded={isExpanded}
-                  onClick={() => toggle(item.id)}
-                >
-                  <ChevronRight className={cn('size-3.5', isExpanded && 'rotate-90')} />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      className="relative z-10 flex size-6 shrink-0 items-center justify-center rounded text-text-300 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      aria-label={isExpanded ? t('Collapse') : t('Expand')}
+                      aria-expanded={isExpanded}
+                      onClick={() => toggle(item.id)}
+                    >
+                      <ChevronRight className={cn('size-3.5', isExpanded && 'rotate-90')} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{isExpanded ? t('Collapse') : t('Expand')}</TooltipContent>
+                </Tooltip>
               ) : (
                 <span className="size-6 shrink-0" />
               )}
@@ -455,7 +465,7 @@ export const PdfOutlineSidebar = ({
     mode === 'outline' && items.length > 0 ? 'outline' : 'pages'
 
   return (
-    <TooltipProvider skipDelayDuration={300}>
+    <TooltipProvider>
       <aside
         id="pdf-navigation-sidebar"
         className={cn(

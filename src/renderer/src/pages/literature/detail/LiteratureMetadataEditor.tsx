@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -563,6 +564,7 @@ const LiteratureMetadataEditor = ({
                       </SelectContent>
                     </Select>
                   </div>
+
                   <div className="flex items-center gap-2">
                     {creator.nameMode === 'organization' ? (
                       <Input
@@ -592,20 +594,35 @@ const LiteratureMetadataEditor = ({
                         />
                       </>
                     )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t('Remove creator')}
-                      onClick={() =>
-                        setDraft((current) => ({
-                          ...current,
-                          creators: current.creators.filter((_, entryIndex) => entryIndex !== index)
-                        }))
-                      }
-                    >
-                      <Trash2 className="size-3.5" aria-hidden="true" />
-                    </Button>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger
+                          asChild
+                          onFocus={(event) => {
+                            if (!event.currentTarget.matches(':focus-visible'))
+                              event.preventDefault()
+                          }}
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={t('Remove creator')}
+                            onClick={() =>
+                              setDraft((current) => ({
+                                ...current,
+                                creators: current.creators.filter(
+                                  (_, entryIndex) => entryIndex !== index
+                                )
+                              }))
+                            }
+                          >
+                            <Trash2 className="size-3.5" aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('Remove creator')}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
               ))}
@@ -671,22 +688,34 @@ const LiteratureMetadataEditor = ({
                     />
                     {t('Preferred for {{scheme}}', { scheme: identifier.scheme.toUpperCase() })}
                   </label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t('Remove identifier')}
-                    onClick={() =>
-                      setDraft((current) => ({
-                        ...current,
-                        identifiers: current.identifiers.filter(
-                          (_, entryIndex) => entryIndex !== index
-                        )
-                      }))
-                    }
-                  >
-                    <Trash2 className="size-3.5" aria-hidden="true" />
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        asChild
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                      >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('Remove identifier')}
+                          onClick={() =>
+                            setDraft((current) => ({
+                              ...current,
+                              identifiers: current.identifiers.filter(
+                                (_, entryIndex) => entryIndex !== index
+                              )
+                            }))
+                          }
+                        >
+                          <Trash2 className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Remove identifier')}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               ))}
             </div>

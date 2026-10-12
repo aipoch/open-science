@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { SettingsFormFooter } from './SettingsLayout'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
@@ -1543,10 +1544,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     data-slot="settings-navigation-footer"
                     className="shrink-0 border-t border-border px-3 py-2"
                   >
-                    <a
+                    <ExternalTextLink
                       href={APP.links.githubFeedback}
-                      target="_blank"
-                      rel="noreferrer"
                       className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <MessageSquare
@@ -1554,7 +1553,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate">{t('Feedback')}</span>
-                    </a>
+                    </ExternalTextLink>
                   </div>
                 </nav>
               </div>

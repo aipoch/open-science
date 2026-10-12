@@ -630,7 +630,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(notice?.parentElement).toBe(generate?.parentElement)
     vi.useFakeTimers()
     await act(async () => notice?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })))
-    await act(async () => vi.advanceTimersByTime(100))
+    await act(async () => vi.advanceTimersByTime(200))
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason?.textContent)
     await act(async () => notice?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })))
     vi.useRealTimers()

@@ -318,17 +318,30 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           </Button>
         </div>
         {!active ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            aria-label={t('Dismiss')}
-            onClick={dismiss}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  aria-label={t('Dismiss')}
+                  onClick={dismiss}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Dismiss')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ) : null}
       </div>
+
       {active && cancelError?.id === operation.id ? (
         <ErrorNotice
           inline
@@ -505,7 +518,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-1">
               <Label htmlFor={speedId}>{t('Disk activity limit')}</Label>
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -604,7 +617,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                       operation={operation}
                       onAction={respond}
                     />
-                    <TooltipProvider delayDuration={200}>
+                    <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

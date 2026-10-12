@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useId } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -63,16 +64,30 @@ export function PdfTranslationGlossaryEditor({
                   )
                 }
               />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                aria-label={t('Remove glossary term {{number}}', { number: index + 1 })}
-                onClick={() => onChange(value.filter((_, i) => i !== index))}
-              >
-                <Trash2 aria-hidden="true" className="size-3.5" />
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      aria-label={t('Remove glossary term {{number}}', { number: index + 1 })}
+                      onClick={() => onChange(value.filter((_, i) => i !== index))}
+                    >
+                      <Trash2 aria-hidden="true" className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t('Remove glossary term {{number}}', { number: index + 1 })}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           ))}
         </div>

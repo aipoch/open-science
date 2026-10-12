@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
@@ -137,6 +138,7 @@ export function TrustedPrivateServices({
                   })}
                 </p>
               </div>
+
               <div className="flex shrink-0 gap-1">
                 <Button
                   variant="ghost"
@@ -150,15 +152,31 @@ export function TrustedPrivateServices({
                 >
                   {t('Review service')}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={disabled || editing}
-                  aria-label={t('Remove {{domain}}', { domain: `${rule.hostname}:${rule.port}` })}
-                  onClick={() => onChange(rules.filter((entry) => entry !== rule))}
-                >
-                  <Trash2 aria-hidden="true" />
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={disabled || editing}
+                        aria-label={t('Remove {{domain}}', {
+                          domain: `${rule.hostname}:${rule.port}`
+                        })}
+                        onClick={() => onChange(rules.filter((entry) => entry !== rule))}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t('Remove {{domain}}', { domain: `${rule.hostname}:${rule.port}` })}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </li>
           ))}

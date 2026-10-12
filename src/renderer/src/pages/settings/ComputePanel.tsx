@@ -93,7 +93,7 @@ const HostCard = ({
       </button>
 
       <div className="relative z-10 flex items-center gap-3">
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">

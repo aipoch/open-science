@@ -96,7 +96,7 @@ const WorkspaceSubagentMessageRow = ({
       }
       className="overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-card-foreground shadow-sm"
     >
-      <header className="flex min-w-0 items-center gap-2.5 border-b border-border-200 bg-bg-100/60 px-3 py-2.5">
+      <header className="flex min-w-0 items-center gap-2.5 border-b border-border-200 bg-bg-200/60 px-3 py-2.5">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <IntentIcon className="size-3.5" aria-hidden="true" />
         </span>

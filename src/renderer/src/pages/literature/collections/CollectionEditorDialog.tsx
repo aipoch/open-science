@@ -528,7 +528,7 @@ export const CollectionEditorDialog = forwardRef<
                         {t('Description')}
                       </label>
                       {
-                        <TooltipProvider delayDuration={200}>
+                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button

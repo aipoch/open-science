@@ -581,7 +581,7 @@ export const ArtifactMentionPopup = ({
           <>
             <li
               aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-300 select-none"
             >
               {t(SECTION_UPLOADS_KEY)}
             </li>
@@ -592,7 +592,7 @@ export const ArtifactMentionPopup = ({
           <>
             <li
               aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-300 select-none"
             >
               {t(SECTION_ARTIFACTS_KEY)}
             </li>
@@ -603,7 +603,7 @@ export const ArtifactMentionPopup = ({
           <>
             <li
               aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-300 select-none"
             >
               {t(SECTION_LIBRARY_KEY)}
             </li>
@@ -616,7 +616,7 @@ export const ArtifactMentionPopup = ({
           <>
             <li
               aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-300 select-none"
             >
               {t('References')}
             </li>
@@ -629,7 +629,7 @@ export const ArtifactMentionPopup = ({
           </>
         ) : null}
       </ul>
-      <div className="shrink-0 mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
+      <div className="shrink-0 mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-300 select-none">
         <span>
           <span className="text-text-300">↑↓</span> {t('navigate')}
         </span>

@@ -910,7 +910,10 @@ describe('SkillsPanel (list view)', () => {
     expect(remove?.textContent?.trim()).toBe('Delete')
     expect(remove?.querySelector('[data-slot="skill-delete-blocked-tip"]')).not.toBeNull()
 
-    await act(async () => remove?.focus())
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      remove?.focus()
+    })
     expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
       'Owned by Literature Reviewer. Delete this Skill when deleting that Specialist.'
     )

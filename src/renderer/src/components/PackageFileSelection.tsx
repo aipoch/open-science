@@ -223,7 +223,7 @@ export const PackageFileSelection = ({
           ))}
         </fieldset>
         {compactUnavailable ? (
-          <p className="text-xs text-status-warning">
+          <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
             {t(
               'Essential export is unavailable because a Literature PDF is required evidence. Use Full export or customize the contents.'
             )}
@@ -249,7 +249,7 @@ export const PackageFileSelection = ({
           <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               {t('Estimated size')}
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -308,7 +308,7 @@ export const PackageFileSelection = ({
             />
             {t('Customize contents')}
           </Button>
-          <TooltipProvider delayDuration={200}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -342,7 +342,7 @@ export const PackageFileSelection = ({
                 <div className="flex flex-wrap items-center gap-2">
                   <Files className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <span className="font-medium">{t('Required files')}</span>
-                  <TooltipProvider delayDuration={200}>
+                  <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -560,7 +560,7 @@ export const PackageFileSelection = ({
                           <span className="text-xs text-muted-foreground">{t('Literature')}</span>
                         ) : null}
                         {entries.some((file) => file.requiredForEvidence) ? (
-                          <TooltipProvider delayDuration={200}>
+                          <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button

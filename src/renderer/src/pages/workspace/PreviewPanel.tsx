@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
@@ -393,20 +394,34 @@ const PreviewTab = ({
           )}
         </button>
       </PreviewTabActionTarget>
-      <button
-        type="button"
-        data-preview-close={tabTitle}
-        aria-label={t('Close preview of {{title}}', { title: tabTitle })}
-        title={t('Close preview of {{title}}', { title: tabTitle })}
-        tabIndex={isActive ? 0 : -1}
-        className={cn(
-          'flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-bg-000/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2',
-          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
-        )}
-        onClick={() => onClose(tab.id)}
-      >
-        <X className="size-3.5" aria-hidden="true" />
-      </button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <button
+              type="button"
+              data-preview-close={tabTitle}
+              aria-label={t('Close preview of {{title}}', { title: tabTitle })}
+              title={t('Close preview of {{title}}', { title: tabTitle })}
+              tabIndex={isActive ? 0 : -1}
+              className={cn(
+                'flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-bg-000/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2',
+                isActive
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+              )}
+              onClick={() => onClose(tab.id)}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Close preview of {{title}}', { title: tabTitle })}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   )
 }

@@ -155,7 +155,7 @@ const FileActionButtons = ({
           iconSize="icon-sm"
           className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
         />
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -256,7 +256,7 @@ const FileTile = ({
     // The focus ring stays non-inset: an inset ring paints below the opaque preview area, so the
     // focus returned by the preview dialog (Escape) would show only the ring's bottom half.
     <div
-      className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+      className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-200 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
       draggable={mentionDrag.draggable}
       onDragStart={mentionDrag.onDragStart}
       onDragEnd={mentionDrag.onDragEnd}

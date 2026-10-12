@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
@@ -782,162 +783,117 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     >
       <div className="m-[0.7px] flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
         <div className="px-3 pt-3">
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={onGoHome}
-              aria-label={t('All projects')}
-              title={t('All projects')}
-              className={cn(
-                'grid h-7 w-5 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-bg-300 hover:text-text-000',
-                sidebarInteractiveTransitionClassName
-              )}
-            >
-              <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
-            <DropdownMenu onOpenChange={onProjectMenuOpenChange}>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  title={projectName}
-                  className={cn(
-                    'flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-left font-serif text-[15px] font-bold tracking-[-0.02em] text-text-000 hover:bg-bg-300 data-[state=open]:bg-bg-300',
-                    sidebarInteractiveTransitionClassName
-                  )}
+          <TooltipProvider>
+            <div className="flex items-center">
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
                 >
-                  <span className="min-w-0 flex-1 truncate">{projectName}</span>
-                  <ChevronDown
-                    className="size-3.5 shrink-0 text-text-100"
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                </button>
-              </DropdownMenuTrigger>
-              {/* Project action menu: mirrors the session row menu chrome below. */}
-              <DropdownMenuContent
-                aria-label={t('Project actions')}
-                className={cn(
-                  'max-h-[var(--radix-dropdown-menu-content-available-height)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto',
-                  mobileMode && 'z-[80]'
-                )}
-                side="bottom"
-                align="start"
-                sideOffset={6}
-                collisionPadding={8}
-                onFocus={(event) => {
-                  if (event.target !== event.currentTarget) return
-                  const search =
-                    event.currentTarget.querySelector<HTMLInputElement>('[data-project-search]')
-                  if (!search) return
-                  search.focus()
-                }}
-              >
-                <DropdownMenuItem
-                  data-project-menu-action
-                  className="gap-2"
-                  onSelect={() => onOpenProjectSettings()}
-                  onKeyDown={handleProjectMenuActionKeyDown}
-                >
-                  <span className={sessionMenuIconClassName}>
-                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                  </span>
-                  {t('Project settings')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-project-menu-action
-                  className="gap-2"
-                  disabled={!canDownloadProjectArtifacts || !onDownloadProjectArtifacts}
-                  onSelect={() => onDownloadProjectArtifacts?.()}
-                  onKeyDown={handleProjectMenuActionKeyDown}
-                >
-                  <span className={sessionMenuIconClassName}>
-                    <Download className="size-4" strokeWidth={2} aria-hidden="true" />
-                  </span>
-                  {t('Download artifacts…')}
-                </DropdownMenuItem>
-                {importProjectId ? <SessionPackageImportMenu projectId={importProjectId} /> : null}
-                <DropdownMenuSeparator />
-                {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
-                  // Keep the input outside the Radix item collection so typing never selects a row.
-                  <div className="relative mx-1 mb-1">
-                    <Search
-                      className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                  <button
+                    type="button"
+                    onClick={onGoHome}
+                    aria-label={t('All projects')}
+                    title={t('All projects')}
+                    className={cn(
+                      'grid h-7 w-5 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-bg-300 hover:text-text-000',
+                      sidebarInteractiveTransitionClassName
+                    )}
+                  >
+                    <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('All projects')}</TooltipContent>
+              </Tooltip>
+              <DropdownMenu onOpenChange={onProjectMenuOpenChange}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    title={projectName}
+                    className={cn(
+                      'flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-left font-serif text-[15px] font-bold tracking-[-0.02em] text-text-000 hover:bg-bg-300 data-[state=open]:bg-bg-300',
+                      sidebarInteractiveTransitionClassName
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{projectName}</span>
+                    <ChevronDown
+                      className="size-3.5 shrink-0 text-text-100"
+                      strokeWidth={2}
                       aria-hidden="true"
                     />
-                    <Input
-                      data-project-search
-                      type="search"
-                      aria-label={t('Search projects')}
-                      placeholder={t('Search projects…')}
-                      value={projectQuery}
-                      autoComplete="off"
-                      className="h-8 pl-7 pr-8 [&::-webkit-search-cancel-button]:hidden"
-                      onChange={(event) => onProjectQueryChange?.(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing) {
-                          event.stopPropagation()
-                          return
-                        }
-                        if (event.key === 'ArrowDown') {
-                          event.preventDefault()
-                          event.currentTarget
-                            .closest<HTMLElement>('[role="menu"]')
-                            ?.querySelector<HTMLElement>(FIRST_PROJECT_MENU_DESTINATION_SELECTOR)
-                            ?.focus()
-                          event.stopPropagation()
-                          return
-                        }
-                        if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
-                          event.preventDefault()
-                          const actions = Array.from(
-                            event.currentTarget
-                              .closest<HTMLElement>('[role="menu"]')
-                              ?.querySelectorAll<HTMLElement>(
-                                '[data-project-menu-action]:not([data-disabled])'
-                              ) ?? []
-                          )
-                          actions.at(-1)?.focus()
-                          event.stopPropagation()
-                          return
-                        }
-                        if (event.key === 'Tab') {
-                          event.preventDefault()
-                          const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
-                          const nextTarget = projectQuery
-                            ? menu?.querySelector<HTMLElement>('[data-project-clear]')
-                            : menu?.querySelector<HTMLElement>(
-                                FIRST_PROJECT_MENU_DESTINATION_SELECTOR
-                              )
-                          nextTarget?.focus()
-                          event.stopPropagation()
-                          return
-                        }
-                        if (event.key !== 'Escape') event.stopPropagation()
-                      }}
-                    />
-                    {projectQuery ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        data-project-clear
-                        aria-label={t('Clear search')}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
-                        onMouseDown={(event) => event.preventDefault()}
+                  </button>
+                </DropdownMenuTrigger>
+                {/* Project action menu: mirrors the session row menu chrome below. */}
+                <DropdownMenuContent
+                  aria-label={t('Project actions')}
+                  className={cn(
+                    'max-h-[var(--radix-dropdown-menu-content-available-height)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto',
+                    mobileMode && 'z-[80]'
+                  )}
+                  side="bottom"
+                  align="start"
+                  sideOffset={6}
+                  collisionPadding={8}
+                  onFocus={(event) => {
+                    if (event.target !== event.currentTarget) return
+                    const search =
+                      event.currentTarget.querySelector<HTMLInputElement>('[data-project-search]')
+                    if (!search) return
+                    search.focus()
+                  }}
+                >
+                  <DropdownMenuItem
+                    data-project-menu-action
+                    className="gap-2"
+                    onSelect={() => onOpenProjectSettings()}
+                    onKeyDown={handleProjectMenuActionKeyDown}
+                  >
+                    <span className={sessionMenuIconClassName}>
+                      <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </span>
+                    {t('Project settings')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    data-project-menu-action
+                    className="gap-2"
+                    disabled={!canDownloadProjectArtifacts || !onDownloadProjectArtifacts}
+                    onSelect={() => onDownloadProjectArtifacts?.()}
+                    onKeyDown={handleProjectMenuActionKeyDown}
+                  >
+                    <span className={sessionMenuIconClassName}>
+                      <Download className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </span>
+                    {t('Download artifacts…')}
+                  </DropdownMenuItem>
+                  {importProjectId ? (
+                    <SessionPackageImportMenu projectId={importProjectId} />
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
+                    // Keep the input outside the Radix item collection so typing never selects a row.
+
+                    <div className="relative mx-1 mb-1">
+                      <Search
+                        className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <Input
+                        data-project-search
+                        type="search"
+                        aria-label={t('Search projects')}
+                        placeholder={t('Search projects…')}
+                        value={projectQuery}
+                        autoComplete="off"
+                        className="h-8 pl-7 pr-8 [&::-webkit-search-cancel-button]:hidden"
+                        onChange={(event) => onProjectQueryChange?.(event.currentTarget.value)}
                         onKeyDown={(event) => {
-                          if (
-                            event.key === 'ArrowUp' ||
-                            event.key === 'ArrowLeft' ||
-                            (event.key === 'Tab' && event.shiftKey)
-                          ) {
-                            event.preventDefault()
-                            event.currentTarget.parentElement
-                              ?.querySelector<HTMLInputElement>('[data-project-search]')
-                              ?.focus()
+                          if (event.nativeEvent.isComposing) {
                             event.stopPropagation()
                             return
                           }
-                          if (event.key === 'ArrowDown' || event.key === 'Tab') {
+                          if (event.key === 'ArrowDown') {
                             event.preventDefault()
                             event.currentTarget
                               .closest<HTMLElement>('[role="menu"]')
@@ -946,159 +902,260 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                             event.stopPropagation()
                             return
                           }
+                          if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+                            event.preventDefault()
+                            const actions = Array.from(
+                              event.currentTarget
+                                .closest<HTMLElement>('[role="menu"]')
+                                ?.querySelectorAll<HTMLElement>(
+                                  '[data-project-menu-action]:not([data-disabled])'
+                                ) ?? []
+                            )
+                            actions.at(-1)?.focus()
+                            event.stopPropagation()
+                            return
+                          }
+                          if (event.key === 'Tab') {
+                            event.preventDefault()
+                            const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                            const nextTarget = projectQuery
+                              ? menu?.querySelector<HTMLElement>('[data-project-clear]')
+                              : menu?.querySelector<HTMLElement>(
+                                  FIRST_PROJECT_MENU_DESTINATION_SELECTOR
+                                )
+                            nextTarget?.focus()
+                            event.stopPropagation()
+                            return
+                          }
                           if (event.key !== 'Escape') event.stopPropagation()
                         }}
-                        onClick={(event) => {
-                          // Restore focus before the controlled clear unmounts this keyboard target.
-                          event.currentTarget.parentElement
+                      />
+                      {projectQuery ? (
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                          >
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              data-project-clear
+                              aria-label={t('Clear search')}
+                              className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key === 'ArrowUp' ||
+                                  event.key === 'ArrowLeft' ||
+                                  (event.key === 'Tab' && event.shiftKey)
+                                ) {
+                                  event.preventDefault()
+                                  event.currentTarget.parentElement
+                                    ?.querySelector<HTMLInputElement>('[data-project-search]')
+                                    ?.focus()
+                                  event.stopPropagation()
+                                  return
+                                }
+                                if (event.key === 'ArrowDown' || event.key === 'Tab') {
+                                  event.preventDefault()
+                                  event.currentTarget
+                                    .closest<HTMLElement>('[role="menu"]')
+                                    ?.querySelector<HTMLElement>(
+                                      FIRST_PROJECT_MENU_DESTINATION_SELECTOR
+                                    )
+                                    ?.focus()
+                                  event.stopPropagation()
+                                  return
+                                }
+                                if (event.key !== 'Escape') event.stopPropagation()
+                              }}
+                              onClick={(event) => {
+                                // Restore focus before the controlled clear unmounts this keyboard target.
+                                event.currentTarget.parentElement
+                                  ?.querySelector<HTMLInputElement>('[data-project-search]')
+                                  ?.focus()
+                                onProjectQueryChange?.('')
+                              }}
+                            >
+                              <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Clear search')}</TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {projectQuery.trim() && projectMatches.length === 0 ? (
+                    <p
+                      role="status"
+                      className="px-2 py-3 text-center text-sm text-muted-foreground"
+                    >
+                      {t('No matching projects')}
+                    </p>
+                  ) : null}
+                  {visibleProjectMatches.map(
+                    ({ project, description, titlePositions, descriptionPositions }, index) => (
+                      <DropdownMenuItem
+                        key={project.id}
+                        data-project-id={project.id}
+                        className="items-start py-2"
+                        disabled={!onOpenProject}
+                        onSelect={() => onOpenProject?.(project.id)}
+                        onKeyDown={(event) => {
+                          if (index !== 0 || event.key !== 'ArrowUp') return
+                          const search = event.currentTarget
+                            .closest<HTMLElement>('[role="menu"]')
                             ?.querySelector<HTMLInputElement>('[data-project-search]')
-                            ?.focus()
-                          onProjectQueryChange?.('')
+                          if (!search) return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          search.focus()
                         }}
                       >
-                        <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {projectQuery.trim() && projectMatches.length === 0 ? (
-                  <p role="status" className="px-2 py-3 text-center text-sm text-muted-foreground">
-                    {t('No matching projects')}
-                  </p>
-                ) : null}
-                {visibleProjectMatches.map(
-                  ({ project, description, titlePositions, descriptionPositions }, index) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      data-project-id={project.id}
-                      className="items-start py-2"
-                      disabled={!onOpenProject}
-                      onSelect={() => onOpenProject?.(project.id)}
-                      onKeyDown={(event) => {
-                        if (index !== 0 || event.key !== 'ArrowUp') return
-                        const search = event.currentTarget
-                          .closest<HTMLElement>('[role="menu"]')
-                          ?.querySelector<HTMLInputElement>('[data-project-search]')
-                        if (!search) return
-                        event.preventDefault()
-                        event.stopPropagation()
-                        search.focus()
-                      }}
-                    >
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span
-                          data-project-title
-                          className="truncate font-medium"
-                          title={project.name}
-                        >
-                          <HighlightedText
-                            text={project.name}
-                            positions={titlePositions}
-                            highlightClassName="bg-transparent text-primary"
-                          />
-                        </span>
-                        {description ? (
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <span
-                            data-project-description
-                            className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                            data-project-title
+                            className="truncate font-medium"
+                            title={project.name}
                           >
                             <HighlightedText
-                              text={description}
-                              positions={descriptionPositions}
+                              text={project.name}
+                              positions={titlePositions}
                               highlightClassName="bg-transparent text-primary"
                             />
                           </span>
-                        ) : null}
-                      </span>
+                          {description ? (
+                            <span
+                              data-project-description
+                              className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                            >
+                              <HighlightedText
+                                text={description}
+                                positions={descriptionPositions}
+                                highlightClassName="bg-transparent text-primary"
+                              />
+                            </span>
+                          ) : null}
+                        </span>
+                      </DropdownMenuItem>
+                    )
+                  )}
+                  {!showAllProjects && remainingProjectCount > 0 ? (
+                    <DropdownMenuItem
+                      asChild
+                      onSelect={(event) => {
+                        event.preventDefault()
+                        const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
+                          '[role="menu"]'
+                        )
+                        onShowAllProjectsChange?.(true)
+                        // The selected control unmounts after expansion; restore focus after that commit.
+                        window.setTimeout(() => {
+                          menu?.querySelector<HTMLElement>('[data-project-id]')?.focus()
+                        }, 0)
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
+                      >
+                        <ChevronDown
+                          className="size-3.5 shrink-0"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {t('Show remaining {{count}} projects', {
+                            count: remainingProjectCount,
+                            defaultValue_one: 'Show remaining {{count}} project'
+                          })}
+                        </span>
+                      </button>
                     </DropdownMenuItem>
-                  )
-                )}
-                {!showAllProjects && remainingProjectCount > 0 ? (
+                  ) : null}
+                  {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
                   <DropdownMenuItem
-                    asChild
-                    onSelect={(event) => {
+                    data-project-new
+                    className="gap-2"
+                    onSelect={() => onNewProject()}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp') return
+                      const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                      if (menu?.querySelector('[data-project-id]')) return
+                      const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
+                      if (!search) return
                       event.preventDefault()
-                      const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
-                        '[role="menu"]'
-                      )
-                      onShowAllProjectsChange?.(true)
-                      // The selected control unmounts after expansion; restore focus after that commit.
-                      window.setTimeout(() => {
-                        menu?.querySelector<HTMLElement>('[data-project-id]')?.focus()
-                      }, 0)
+                      event.stopPropagation()
+                      search.focus()
+                    }}
+                  >
+                    <span className={sessionMenuIconClassName}>
+                      <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </span>
+                    {t('New project')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!mobileMode && sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <button
+                      ref={sidebarToggleButtonRef}
+                      type="button"
+                      data-testid="workspace-sidebar-toggle"
+                      className={cn(
+                        'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
+                        sidebarInteractiveTransitionClassName
+                      )}
+                      aria-label={t('Collapse sidebar panel')}
+                      aria-expanded={true}
+                      aria-controls="left-panel"
+                      aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
+                      title={t('Collapse sidebar panel')}
+                      onClick={sidebarToggle.onToggle}
+                    >
+                      <PanelLeft
+                        className="size-4"
+                        strokeWidth={2}
+                        fill="none"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Collapse sidebar panel')}</TooltipContent>
+                </Tooltip>
+              ) : null}
+              {mobileMode ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
                     }}
                   >
                     <button
                       type="button"
-                      className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
+                      onClick={onMobileClose}
+                      className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+                      aria-label={t('Close navigation')}
                     >
-                      <ChevronDown
-                        className="size-3.5 shrink-0"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                      <span>
-                        {t('Show remaining {{count}} projects', {
-                          count: remainingProjectCount,
-                          defaultValue_one: 'Show remaining {{count}} project'
-                        })}
-                      </span>
+                      <X className="size-4" aria-hidden="true" />
                     </button>
-                  </DropdownMenuItem>
-                ) : null}
-                {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem
-                  data-project-new
-                  className="gap-2"
-                  onSelect={() => onNewProject()}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'ArrowUp') return
-                    const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
-                    if (menu?.querySelector('[data-project-id]')) return
-                    const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
-                    if (!search) return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    search.focus()
-                  }}
-                >
-                  <span className={sessionMenuIconClassName}>
-                    <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-                  </span>
-                  {t('New project')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {!mobileMode && sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
-              <button
-                ref={sidebarToggleButtonRef}
-                type="button"
-                data-testid="workspace-sidebar-toggle"
-                className={cn(
-                  'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
-                  sidebarInteractiveTransitionClassName
-                )}
-                aria-label={t('Collapse sidebar panel')}
-                aria-expanded={true}
-                aria-controls="left-panel"
-                aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
-                title={t('Collapse sidebar panel')}
-                onClick={sidebarToggle.onToggle}
-              >
-                <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-              </button>
-            ) : null}
-            {mobileMode ? (
-              <button
-                type="button"
-                onClick={onMobileClose}
-                className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-                aria-label={t('Close navigation')}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Close navigation')}</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </div>
+          </TooltipProvider>
         </div>
 
         <nav aria-label={t('Sessions')} className="flex min-h-0 flex-1 flex-col">
@@ -1285,18 +1342,31 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
             />
             <UpdateCapsule variant="session" className="mb-1.5" />
+
             <div className="flex items-center gap-1 pb-2">
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                className={cn(
-                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
-                  sidebarInteractiveTransitionClassName
-                )}
-                aria-label={t('Settings')}
-              >
-                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-              </button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={onOpenSettings}
+                      className={cn(
+                        'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
+                        sidebarInteractiveTransitionClassName
+                      )}
+                      aria-label={t('Settings')}
+                    >
+                      <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Settings')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <NotificationBell
                 side="top"
                 align="start"

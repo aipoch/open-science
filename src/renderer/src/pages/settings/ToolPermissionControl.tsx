@@ -32,7 +32,7 @@ export function ToolPermissionControl({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <RadioGroup.Root
         aria-label={label}
         disabled={disabled}

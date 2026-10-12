@@ -203,7 +203,7 @@ const WorkspaceToolCodeBlock = ({
                 data-testid="code-copy-button"
                 aria-label={copyLabel}
                 onClick={() => void copyCode()}
-                className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded bg-bg-100/80 p-1.5 text-text-200 backdrop-blur-sm hover:bg-bg-200 hover:text-text-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded bg-bg-200/80 p-1.5 text-text-200 backdrop-blur-sm hover:bg-bg-200 hover:text-text-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
                 <span key={copyLabel} className="button-feedback">
                   {copied ? (

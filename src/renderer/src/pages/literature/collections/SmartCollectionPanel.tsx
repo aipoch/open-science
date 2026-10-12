@@ -58,22 +58,34 @@ function MoreActions(): React.JSX.Element {
   const { t } = useTranslation()
   const { openMenu } = useActionMenu()
   return (
-    <Button
-      variant="outline"
-      size="icon"
-      aria-label={t('Collection actions')}
-      onClick={(event) => {
-        const bounds = event.currentTarget.getBoundingClientRect()
-        openMenu({
-          targetId: 'smart-actions',
-          pointer: { x: bounds.right, y: bounds.bottom },
-          align: 'end',
-          focusTarget: event.currentTarget
-        })
-      }}
-    >
-      <MoreHorizontal className="size-4" aria-hidden="true" />
-    </Button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+          }}
+        >
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={t('Collection actions')}
+            onClick={(event) => {
+              const bounds = event.currentTarget.getBoundingClientRect()
+              openMenu({
+                targetId: 'smart-actions',
+                pointer: { x: bounds.right, y: bounds.bottom },
+                align: 'end',
+                focusTarget: event.currentTarget
+              })
+            }}
+          >
+            <MoreHorizontal className="size-4" aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('Collection actions')}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 export function SmartCollectionPanel({
@@ -427,48 +439,63 @@ export function SmartCollectionPanel({
               {view.run?.total}
             </span>
           </button>
-          <div className="flex items-center gap-1">
-            {(view.run?.state === 'interrupted' || view.run?.state === 'cancelled') && !paused && (
-              <TooltipProvider delayDuration={300}>
+          <TooltipProvider>
+            <div className="flex items-center gap-1">
+              {(view.run?.state === 'interrupted' || view.run?.state === 'cancelled') &&
+                !paused && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={t('Abandon run')}
+                        disabled={busy || decisionPending || refreshFailed || !view.run?.id}
+                        onClick={() => setConfirmAbandon(view.run?.id)}
+                      >
+                        <Trash2 className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="bg-black text-white">
+                      {t(
+                        'Abandon this run. Completed results will be kept, and this run will not resume.'
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              {paused ? (
                 <Tooltip>
-                  <TooltipTrigger asChild>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={t('Abandon run')}
-                      disabled={busy || decisionPending || refreshFailed || !view.run?.id}
-                      onClick={() => setConfirmAbandon(view.run?.id)}
+                      aria-label={
+                        view.automaticPauseReason === 'run-limit'
+                          ? t('Continue in a new run')
+                          : canResumeAutomaticRun
+                            ? t('Resume automatic updates')
+                            : t('Start a fresh automatic run')
+                      }
+                      disabled={disabled}
+                      onClick={() => void run('resume-automatic')}
                     >
-                      <Trash2 className="size-4" aria-hidden="true" />
+                      <RotateCcw className="size-4" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="bg-black text-white">
-                    {t(
-                      'Abandon this run. Completed results will be kept, and this run will not resume.'
-                    )}
+                  <TooltipContent>
+                    {view.automaticPauseReason === 'run-limit'
+                      ? t('Continue in a new run')
+                      : canResumeAutomaticRun
+                        ? t('Resume automatic updates')
+                        : t('Start a fresh automatic run')}
                   </TooltipContent>
                 </Tooltip>
-              </TooltipProvider>
-            )}
-            {paused ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={
-                  view.automaticPauseReason === 'run-limit'
-                    ? t('Continue in a new run')
-                    : canResumeAutomaticRun
-                      ? t('Resume automatic updates')
-                      : t('Start a fresh automatic run')
-                }
-                disabled={disabled}
-                onClick={() => void run('resume-automatic')}
-              >
-                <RotateCcw className="size-4" aria-hidden="true" />
-              </Button>
-            ) : view.run?.manualResumeAllowed === false ? (
-              !automaticPauseVisible && (
-                <TooltipProvider delayDuration={300}>
+              ) : view.run?.manualResumeAllowed === false ? (
+                !automaticPauseVisible && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -485,20 +512,30 @@ export function SmartCollectionPanel({
                       {t('Continue in a new run')}
                     </TooltipContent>
                   </Tooltip>
-                </TooltipProvider>
-              )
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Resume analysis')}
-                disabled={disabled || (automaticPauseVisible && !view.automaticPauseRunId)}
-                onClick={() => void run('resume', view.run?.id)}
-              >
-                <Play className="size-4" aria-hidden="true" />
-              </Button>
-            )}
-          </div>
+                )
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Resume analysis')}
+                      disabled={disabled || (automaticPauseVisible && !view.automaticPauseRunId)}
+                      onClick={() => void run('resume', view.run?.id)}
+                    >
+                      <Play className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Resume analysis')}</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          </TooltipProvider>
         </div>
       ) : (
         <Button className="w-full" disabled={disabled} onClick={() => void run('refresh')}>
@@ -561,20 +598,33 @@ export function SmartCollectionPanel({
             >
               {name}
             </h2>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Collection rule')}
-              aria-expanded={details}
-              aria-controls={`smart-details-${collectionId}`}
-              onClick={() => setDetails((value) => !value)}
-            >
-              <ChevronDown
-                className={details ? 'size-4 rotate-180' : 'size-4'}
-                aria-hidden="true"
-              />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Collection rule')}
+                    aria-expanded={details}
+                    aria-controls={`smart-details-${collectionId}`}
+                    onClick={() => setDetails((value) => !value)}
+                  >
+                    <ChevronDown
+                      className={details ? 'size-4 rotate-180' : 'size-4'}
+                      aria-hidden="true"
+                    />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Collection rule')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
+
           <p className="mt-1 text-sm text-muted-foreground">{t('Smart collection')}</p>
         </div>
         <ActionMenuProvider onActionError={() => setError(true)}>

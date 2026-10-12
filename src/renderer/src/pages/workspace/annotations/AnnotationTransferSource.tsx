@@ -94,7 +94,7 @@ export function AnnotationTransferSource({
           <Dialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}>
             <div className={dialogHeaderClassName}>
               <div className="flex items-center gap-3">
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border-200 bg-bg-100 text-text-200">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border-200 bg-bg-200 text-text-200">
                   <ArrowRightLeft className="size-4" aria-hidden="true" />
                 </span>
                 <Dialog.Title className={dialogTitleClassName}>
@@ -126,7 +126,7 @@ export function AnnotationTransferSource({
                       <button
                         key={view.id}
                         type="button"
-                        className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-bg-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         disabled={Boolean(
                           targets.unavailableReason(
                             { sessionId: view.parentSessionId, projectId: view.projectId },

@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   PackageExportProgressButton,
@@ -657,14 +658,12 @@ const HomePage = ({
           <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <a
+                <ExternalTextLink
                   href={APP.links.website}
-                  target="_blank"
-                  rel="noreferrer"
                   className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 hover:text-text-100"
                 >
                   Open-Science
-                </a>
+                </ExternalTextLink>
                 {hasCompleteSessionCatalog &&
                 (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
                   <div className="flex items-center gap-1.5 text-xs font-medium">

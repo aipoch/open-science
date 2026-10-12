@@ -270,7 +270,7 @@ export const ComposerYourFilesMenu = ({
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="max-h-[340px] w-[300px] overflow-y-auto">
           {/* One provider for every row tooltip inside the portaled submenu. */}
-          <TooltipProvider delayDuration={200}>
+          <TooltipProvider>
             {/* Header: the grant action stays one click away even when no root is granted yet. */}
             <div className="flex items-center justify-end px-1.5 pb-1 pt-0.5">
               <button

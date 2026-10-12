@@ -379,26 +379,49 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
             }
           }}
         >
-          <div className="mb-1 flex shrink-0 items-center gap-2 px-1">
-            {selected ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={t('Browse steps')}
-                onClick={returnToList}
-              >
-                <ChevronLeft size={14} />
-              </Button>
-            ) : null}
-            <h3 className="min-w-0 flex-1 truncate text-xs font-medium">
-              {selected ? label(selected) : t('Browse steps')}
-            </h3>
-            <PopoverClose asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={t('Close step list')}>
-                <X size={14} />
-              </Button>
-            </PopoverClose>
-          </div>
+          <TooltipProvider>
+            <div className="mb-1 flex shrink-0 items-center gap-2 px-1">
+              {selected ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={t('Browse steps')}
+                      onClick={returnToList}
+                    >
+                      <ChevronLeft size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Browse steps')}</TooltipContent>
+                </Tooltip>
+              ) : null}
+              <h3 className="min-w-0 flex-1 truncate text-xs font-medium">
+                {selected ? label(selected) : t('Browse steps')}
+              </h3>
+
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <PopoverClose asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label={t('Close step list')}>
+                      <X size={14} />
+                    </Button>
+                  </PopoverClose>
+                </TooltipTrigger>
+                <TooltipContent>{t('Close step list')}</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
           {selected ? (
             <div className="min-h-0 space-y-3 overflow-auto p-2 text-xs">
               <p className="text-muted-foreground">
@@ -537,108 +560,152 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
             </ol>
           )}
           {!selected && lastPage > 0 ? (
-            <nav
-              className="mt-2 flex shrink-0 items-center justify-between border-t border-border pt-2"
-              aria-label={t('Browse steps')}
-            >
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Previous page')}
-                disabled={page === 0}
-                onClick={() => setPage((value) => value - 1)}
+            <TooltipProvider>
+              <nav
+                className="mt-2 flex shrink-0 items-center justify-between border-t border-border pt-2"
+                aria-label={t('Browse steps')}
               >
-                <ChevronLeft size={14} />
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {t('Page {{current}} of {{total}}', { current: page + 1, total: lastPage + 1 })}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Next page')}
-                disabled={page >= lastPage}
-                onClick={() => setPage((value) => value + 1)}
-              >
-                <ChevronRight size={14} />
-              </Button>
-            </nav>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Previous page')}
+                      disabled={page === 0}
+                      onClick={() => setPage((value) => value - 1)}
+                    >
+                      <ChevronLeft size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Previous page')}</TooltipContent>
+                </Tooltip>
+                <span className="text-xs text-muted-foreground">
+                  {t('Page {{current}} of {{total}}', { current: page + 1, total: lastPage + 1 })}
+                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Next page')}
+                      disabled={page >= lastPage}
+                      onClick={() => setPage((value) => value + 1)}
+                    >
+                      <ChevronRight size={14} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Next page')}</TooltipContent>
+                </Tooltip>
+              </nav>
+            </TooltipProvider>
           ) : null}
         </PopoverContent>
       </Popover>
-      <div className="flex items-center gap-1" role="group" aria-label={t('Playback controls')}>
-        <Button
-          variant="ghost"
-          type="button"
-          className={controlClass}
-          onClick={props.onPrevious}
-          disabled={empty || props.stepIndex <= 0}
-          title={t('Previous step')}
-          aria-label={t('Previous step')}
-        >
-          <SkipBack size={16} />
-        </Button>
-        <Button
-          variant="secondary"
-          type="button"
-          className={controlClass}
-          onClick={props.onToggle}
-          disabled={empty}
-          aria-label={playLabel}
-        >
-          {ended ? (
-            <RotateCcw size={16} />
-          ) : props.playing ? (
-            <Pause size={16} />
-          ) : (
-            <Play size={16} />
-          )}
-          <span className="sr-only">{playLabel}</span>
-          <span role="status" className="sr-only">
-            {props.playing && !props.ready ? t('Preparing recorded material…') : null}
-          </span>
-        </Button>
-        <Button
-          variant="ghost"
-          type="button"
-          className={controlClass}
-          onClick={props.onNext}
-          disabled={empty || props.stepIndex >= count - 1}
-          title={t('Next step')}
-          aria-label={t('Next step')}
-        >
-          <SkipForward size={16} />
-        </Button>
-        <div className="ml-auto flex min-w-0 flex-1 justify-end">
-          <span className="truncate px-1 text-xs text-muted-foreground">
-            {empty ? (
-              t('No steps')
-            ) : ended ? (
-              t('Completed')
+      <TooltipProvider>
+        <div className="flex items-center gap-1" role="group" aria-label={t('Playback controls')}>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                type="button"
+                className={controlClass}
+                onClick={props.onPrevious}
+                disabled={empty || props.stepIndex <= 0}
+                title={t('Previous step')}
+                aria-label={t('Previous step')}
+              >
+                <SkipBack size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Previous step')}</TooltipContent>
+          </Tooltip>
+          <Button
+            variant="secondary"
+            type="button"
+            className={controlClass}
+            onClick={props.onToggle}
+            disabled={empty}
+            aria-label={playLabel}
+          >
+            {ended ? (
+              <RotateCcw size={16} />
+            ) : props.playing ? (
+              <Pause size={16} />
             ) : (
-              <span className="font-mono tabular-nums">
-                {formatReplayTime(props.positionMs)}
-                {' / '}
-                {formatReplayTime(props.durationMs)}
-              </span>
+              <Play size={16} />
             )}
-          </span>
+            <span className="sr-only">{playLabel}</span>
+            <span role="status" className="sr-only">
+              {props.playing && !props.ready ? t('Preparing recorded material…') : null}
+            </span>
+          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                type="button"
+                className={controlClass}
+                onClick={props.onNext}
+                disabled={empty || props.stepIndex >= count - 1}
+                title={t('Next step')}
+                aria-label={t('Next step')}
+              >
+                <SkipForward size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Next step')}</TooltipContent>
+          </Tooltip>
+          <div className="ml-auto flex min-w-0 flex-1 justify-end">
+            <span className="truncate px-1 text-xs text-muted-foreground">
+              {empty ? (
+                t('No steps')
+              ) : ended ? (
+                t('Completed')
+              ) : (
+                <span className="font-mono tabular-nums">
+                  {formatReplayTime(props.positionMs)}
+                  {' / '}
+                  {formatReplayTime(props.durationMs)}
+                </span>
+              )}
+            </span>
+          </div>
+          <Select
+            value={String(props.speed)}
+            onValueChange={(value) => props.onSpeed(Number(value) as ReplaySpeed)}
+            disabled={empty}
+          >
+            <SelectTrigger aria-label={t('Playback speed')} className="h-8 w-16 shrink-0 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {REPLAY_SPEEDS.map((speed) => (
+                <SelectItem key={speed} value={String(speed)}>{`${speed}×`}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <Select
-          value={String(props.speed)}
-          onValueChange={(value) => props.onSpeed(Number(value) as ReplaySpeed)}
-          disabled={empty}
-        >
-          <SelectTrigger aria-label={t('Playback speed')} className="h-8 w-16 shrink-0 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REPLAY_SPEEDS.map((speed) => (
-              <SelectItem key={speed} value={String(speed)}>{`${speed}×`}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      </TooltipProvider>
     </div>
   )
 }

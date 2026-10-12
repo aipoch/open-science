@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 /* Hallmark · component: named credential editor · genre: modern-minimal · theme: Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
@@ -249,17 +250,33 @@ function ConnectorNamedCredentialEditor({
                     <SelectItem value={NEW_CREDENTIAL_VALUE}>{t('New credential')}</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={kind === 'environment' ? t('Remove variable') : t('Remove header')}
-                  disabled={disabled || ('virtual' in row && row.virtual)}
-                  className="col-start-2 row-start-2 sm:col-auto sm:row-auto"
-                  onClick={() => removeLine(row.index, row.name)}
-                >
-                  <Trash2 aria-hidden="true" />
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={
+                          kind === 'environment' ? t('Remove variable') : t('Remove header')
+                        }
+                        disabled={disabled || ('virtual' in row && row.virtual)}
+                        className="col-start-2 row-start-2 sm:col-auto sm:row-auto"
+                        onClick={() => removeLine(row.index, row.name)}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {kind === 'environment' ? t('Remove variable') : t('Remove header')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {previewState === 'loading' && visibleIndex === 0 ? (
                   <span className="col-span-full text-xs text-muted-foreground" role="status">
                     {t('Loading…')}

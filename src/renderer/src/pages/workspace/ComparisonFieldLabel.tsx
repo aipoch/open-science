@@ -19,7 +19,7 @@ export const ComparisonFieldLabel = ({
         {label}
       </label>
       <span className="shrink-0">
-        <FieldHelp content={help} delayDuration={0} contentClassName={overlayClassName} />
+        <FieldHelp content={help} contentClassName={overlayClassName} />
       </span>
     </div>
     {error ? (

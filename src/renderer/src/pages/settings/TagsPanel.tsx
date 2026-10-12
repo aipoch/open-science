@@ -729,7 +729,7 @@ const TagsList = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
         <SettingsPanelHeader
           className="mb-3"

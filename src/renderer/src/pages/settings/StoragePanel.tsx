@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { storageErrorMessage } from '@/lib/storage-error'
 import { Notice } from '@/components/notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -92,7 +93,7 @@ const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   notebooks: 'bg-storage-notebooks',
   models: 'bg-storage-runtime',
   'pdf-structure': 'bg-storage-artifacts',
-  'execution-file-evidence': 'bg-storage-execution-evidence',
+  'execution-file-evidence': 'bg-storage-notebook-evidence',
   workspaces: 'bg-storage-workspaces'
 }
 
@@ -833,21 +834,35 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                                   <span className="block">{t('Retained after deletion')}</span>
                                 ) : null}
                               </div>
+
                               <div className="flex shrink-0 items-center gap-1">
                                 <span className="tabular-nums text-muted-foreground">
                                   {formatBytes(child.bytes)}
                                 </span>
                                 {category.key === 'workspaces' && canOpenWorkspaceFolders ? (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label={t('Open folder')}
-                                    title={t('Open folder')}
-                                    onClick={() => void handleOpenWorkspace(child.name)}
-                                  >
-                                    <FolderOpen className="size-3.5" aria-hidden="true" />
-                                  </Button>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        asChild
+                                        onFocus={(event) => {
+                                          if (!event.currentTarget.matches(':focus-visible'))
+                                            event.preventDefault()
+                                        }}
+                                      >
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon-sm"
+                                          aria-label={t('Open folder')}
+                                          title={t('Open folder')}
+                                          onClick={() => void handleOpenWorkspace(child.name)}
+                                        >
+                                          <FolderOpen className="size-3.5" aria-hidden="true" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>{t('Open folder')}</TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
                                 ) : null}
                               </div>
                             </div>

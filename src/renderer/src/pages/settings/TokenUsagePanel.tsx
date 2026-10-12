@@ -392,7 +392,7 @@ function TokenUsagePanel({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
         <section
           data-settings-anchor="usage.list"

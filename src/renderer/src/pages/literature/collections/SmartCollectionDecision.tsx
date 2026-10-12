@@ -484,9 +484,7 @@ export function SmartCollectionDecisionActions({
     </div>
   )
   return compact && withTooltipProvider ? (
-    <TooltipProvider disableHoverableContent delayDuration={150} skipDelayDuration={300}>
-      {buttons}
-    </TooltipProvider>
+    <TooltipProvider disableHoverableContent>{buttons}</TooltipProvider>
   ) : (
     buttons
   )

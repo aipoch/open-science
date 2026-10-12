@@ -740,41 +740,63 @@ function LibraryResults({
           </>
         )}
         {(page.offset > 0 || displayedPage.nextOffset !== undefined) && (
-          <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Previous page')}
-              disabled={offset === 0}
-              onClick={() =>
-                onChange({
-                  ...selection,
-                  offset: Math.max(0, offset - PAGE_SIZE),
-                  expanded: undefined
-                })
-              }
-            >
-              <ChevronLeft aria-hidden="true" />
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {t('Page {{page}}', { page: Math.floor(offset / PAGE_SIZE) + 1 })}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Next page')}
-              disabled={displayedPage.nextOffset === undefined}
-              onClick={() =>
-                onChange({
-                  ...selection,
-                  offset: displayedPage.nextOffset ?? offset,
-                  expanded: undefined
-                })
-              }
-            >
-              <ChevronRight aria-hidden="true" />
-            </Button>
-          </div>
+          <TooltipProvider>
+            <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Previous page')}
+                    disabled={offset === 0}
+                    onClick={() =>
+                      onChange({
+                        ...selection,
+                        offset: Math.max(0, offset - PAGE_SIZE),
+                        expanded: undefined
+                      })
+                    }
+                  >
+                    <ChevronLeft aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Previous page')}</TooltipContent>
+              </Tooltip>
+              <span className="text-xs text-muted-foreground">
+                {t('Page {{page}}', { page: Math.floor(offset / PAGE_SIZE) + 1 })}
+              </span>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Next page')}
+                    disabled={displayedPage.nextOffset === undefined}
+                    onClick={() =>
+                      onChange({
+                        ...selection,
+                        offset: displayedPage.nextOffset ?? offset,
+                        expanded: undefined
+                      })
+                    }
+                  >
+                    <ChevronRight aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Next page')}</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
         )}
       </div>
     </>

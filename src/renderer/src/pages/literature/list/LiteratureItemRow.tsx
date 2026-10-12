@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   BookOpenText,
   ChevronDown,
@@ -340,18 +341,29 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
       <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
         <div className="flex items-center justify-end">
           <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('More actions')}
-                disabled={smartTableBlocked}
-                className="transition-none"
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
               >
-                <MoreHorizontal className="size-4" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('More actions')}
+                    disabled={smartTableBlocked}
+                    className="transition-none"
+                  >
+                    <MoreHorizontal className="size-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t('More actions')}</TooltipContent>
+            </Tooltip>
+
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 disabled={trash}

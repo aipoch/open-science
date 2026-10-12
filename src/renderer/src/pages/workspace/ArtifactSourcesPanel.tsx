@@ -211,7 +211,7 @@ const ArtifactSourcesPanel = ({
         {versionSummary}
       </div>
       {formatOpen && formatContext ? (
-        <section className="mt-3 rounded-lg border border-border-300/70 bg-bg-100 p-3">
+        <section className="mt-3 rounded-lg border border-border-300/70 bg-bg-200 p-3">
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-0 basis-56 flex-1 text-xs font-medium text-text-200">
               {t('Citation style')}
@@ -289,7 +289,7 @@ const ArtifactSourcesPanel = ({
         </section>
       ) : null}
       {literature.corpus ? (
-        <div className="mt-3 rounded-lg border border-border-300/60 bg-bg-100 px-3 py-2.5">
+        <div className="mt-3 rounded-lg border border-border-300/60 bg-bg-200 px-3 py-2.5">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-medium text-text-000">{t('Frozen review corpus')}</h3>
             <span className="text-xs tabular-nums text-text-300">
@@ -315,7 +315,7 @@ const ArtifactSourcesPanel = ({
               <li key={`${retrieval.scope}:${retrieval.collectionId ?? ''}:${index}`}>
                 <span className="font-medium text-text-200">{scopeLabel(retrieval.scope)}</span>
                 {retrieval.query ? <span> · {retrieval.query}</span> : null}
-                <span className="ml-1 tabular-nums text-text-400">
+                <span className="ml-1 tabular-nums text-text-300">
                   · {retrieval.resultCount} / {retrieval.totalCount}
                 </span>
               </li>

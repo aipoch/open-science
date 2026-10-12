@@ -69,27 +69,27 @@ export function PdfTranslationPreparation({
           defaultOpen
           className="overflow-hidden rounded-lg border border-border/70 bg-muted/20"
         >
-          <TooltipProvider delayDuration={100} skipDelayDuration={300}>
-            <div className="flex items-center">
-              <Collapsible.Trigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="group grid min-h-9 min-w-0 flex-1 grid-cols-[16px_24px_minmax(0,1fr)] items-center gap-2 rounded-none px-3 text-left hover:bg-muted/60 aria-expanded:bg-muted/50"
+          <div className="flex items-center">
+            <Collapsible.Trigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="group grid min-h-9 min-w-0 flex-1 grid-cols-[16px_24px_minmax(0,1fr)] items-center gap-2 rounded-none px-3 text-left hover:bg-muted/60 aria-expanded:bg-muted/50"
+              >
+                <ChevronRight
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                />
+                <span
+                  aria-hidden="true"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground"
                 >
-                  <ChevronRight
-                    aria-hidden="true"
-                    className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
-                  />
-                  <span
-                    aria-hidden="true"
-                    className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground"
-                  >
-                    1
-                  </span>
-                  <span className="min-w-0 truncate">{t('Full-text preparation')}</span>
-                </Button>
-              </Collapsible.Trigger>
+                  1
+                </span>
+                <span className="min-w-0 truncate">{t('Full-text preparation')}</span>
+              </Button>
+            </Collapsible.Trigger>
+            <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -106,8 +106,9 @@ export function PdfTranslationPreparation({
                   <p>{t('Preparation runs locally without calling a model.')}</p>
                 </TooltipContent>
               </Tooltip>
-            </div>
-          </TooltipProvider>
+            </TooltipProvider>
+          </div>
+
           <Collapsible.Content className="w-full space-y-3 border-t border-border/70 bg-background/60 px-3 pb-3 pt-3 data-[state=closed]:hidden">
             <Button className="w-full" size="sm" onClick={onStart} disabled={pageCount < 1}>
               {t('Prepare full text')}
@@ -202,7 +203,7 @@ export function PdfTranslationPreparation({
               </Collapsible.Trigger>
             </div>
             <Collapsible.Content className="w-full space-y-3 border-t border-border/70 bg-background/60 px-3 pb-3 pt-3 data-[state=closed]:hidden">
-              <TooltipProvider delayDuration={100} skipDelayDuration={300}>
+              <TooltipProvider>
                 <dl className="space-y-2 text-xs">
                   {[
                     [t('Pages checked'), coverage.pageCount],
@@ -248,26 +249,26 @@ export function PdfTranslationPreparation({
                 </dl>
               </TooltipProvider>
               {independent.length > 0 ? (
-                <TooltipProvider delayDuration={100} skipDelayDuration={300}>
-                  <div className="flex items-center gap-1 rounded-md border border-border/60 bg-background/70">
-                    <Select value="" onValueChange={(page) => onNavigate(Number(page))}>
-                      <SelectTrigger
-                        aria-label={t('Original-layout pages')}
-                        className="min-w-0 flex-1 border-0 bg-transparent text-xs shadow-none"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-left">
-                          {t('Original-layout pages')}
-                        </span>
-                        <span className="shrink-0 tabular-nums">{independentPages.length}</span>
-                      </SelectTrigger>
-                      <SelectContent className="z-[120] max-h-56">
-                        {independentPages.map((page) => (
-                          <SelectItem key={page} value={String(page)}>
-                            {t('Page {{page}}', { page })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="flex items-center gap-1 rounded-md border border-border/60 bg-background/70">
+                  <Select value="" onValueChange={(page) => onNavigate(Number(page))}>
+                    <SelectTrigger
+                      aria-label={t('Original-layout pages')}
+                      className="min-w-0 flex-1 border-0 bg-transparent text-xs shadow-none"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-left">
+                        {t('Original-layout pages')}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{independentPages.length}</span>
+                    </SelectTrigger>
+                    <SelectContent className="z-[120] max-h-56">
+                      {independentPages.map((page) => (
+                        <SelectItem key={page} value={String(page)}>
+                          {t('Page {{page}}', { page })}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
@@ -285,8 +286,8 @@ export function PdfTranslationPreparation({
                         )}
                       </TooltipContent>
                     </Tooltip>
-                  </div>
-                </TooltipProvider>
+                  </TooltipProvider>
+                </div>
               ) : null}
               {coverage.pagesWithoutText.length > 0 ? (
                 <Collapsible.Root className="overflow-hidden rounded-md border border-border/60 bg-background/70 text-xs">

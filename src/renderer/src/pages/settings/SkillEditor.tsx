@@ -472,7 +472,7 @@ const SkillEditor = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
           <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4 p-5">

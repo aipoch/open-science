@@ -127,7 +127,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 )
 
                 return (
-                  <TooltipProvider key={option.key} delayDuration={200}>
+                  <TooltipProvider key={option.key}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <SelectItem

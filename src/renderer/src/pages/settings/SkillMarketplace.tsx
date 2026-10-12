@@ -1379,7 +1379,7 @@ export function SkillMarketplace({
                     })}
                   </p>
                 </div>
-                <TooltipProvider skipDelayDuration={300}>
+                <TooltipProvider>
                   <div className="skill-marketplace-grid grid gap-3">
                     {matches.slice(0, visibleCount).map((item) => (
                       <article

@@ -205,7 +205,7 @@ export function LiteratureNoteControl({
         aria-busy={isSaving}
         aria-invalid={failed || undefined}
         placeholder={t('Add a note…')}
-        className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
+        className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-200 focus-visible:border-border focus-visible:bg-bg-000"
         onFocus={() => {
           if (disabled) return
           if (!dirty) setEdit({ base: entry, draft: entry.item.personalNote ?? '' })

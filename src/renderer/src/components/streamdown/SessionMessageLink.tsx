@@ -382,7 +382,7 @@ const SessionMessageLink = ({
                 >
                   {sourceItem.url}
                 </a>
-                <TooltipProvider delayDuration={200}>
+                <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

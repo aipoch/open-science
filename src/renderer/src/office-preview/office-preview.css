@@ -46,7 +46,7 @@ body {
   width: 100%;
   padding: 0.125rem 0.75rem;
   border-bottom: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
 }
 
 .spreadsheet-review-toolbar {
@@ -59,7 +59,7 @@ body {
   min-height: 2.5rem;
   padding: 0.35rem 0.6rem;
   border-bottom: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
 }
 
 .spreadsheet-review-find,
@@ -199,7 +199,7 @@ body {
   min-height: 2.5rem;
   padding: 0.35rem 0.6rem;
   border-bottom: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
 }
 
 .pptx-review-next {
@@ -239,7 +239,7 @@ body {
   overflow: auto;
   padding: 0.6rem;
   border-right: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
 }
 
 .pptx-review-thumbnail {
@@ -257,7 +257,7 @@ body {
 }
 
 .pptx-review-thumbnail:hover {
-  border-color: var(--border-strong, var(--border, #cbd5e1));
+  border-color: var(--color-border-300);
   background: var(--bg-200, #f1f5f9);
   outline: none;
 }
@@ -270,7 +270,7 @@ body {
 
 .pptx-review-thumbnail[data-active='true'] {
   border-color: var(--primary, #0f766e);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
   outline: none;
 }
 
@@ -285,7 +285,7 @@ body {
   overflow: hidden;
   border-radius: 0.2rem;
   border: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
   box-shadow: none;
 }
 
@@ -321,7 +321,7 @@ body {
 .pptx-review-thumbnails,
 .pptx-review-notes {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong, #cbd5e1) transparent;
+  scrollbar-color: var(--color-border-300) transparent;
 }
 
 .pptx-review-stage::-webkit-scrollbar,
@@ -341,7 +341,7 @@ body {
 .pptx-review-thumbnails::-webkit-scrollbar-thumb,
 .pptx-review-notes::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: var(--border-strong, #cbd5e1);
+  background: var(--color-border-300);
 }
 
 .pptx-review-stage--panning {
@@ -350,7 +350,7 @@ body {
 }
 
 .pptx-review-stage:focus-visible {
-  outline: 1px solid var(--border-strong, var(--border, #cbd5e1));
+  outline: 1px solid var(--color-border-300);
   outline-offset: -1px;
 }
 
@@ -364,7 +364,7 @@ body {
   overflow: auto;
   padding: 0.65rem 1rem 0.8rem;
   border-top: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: var(--bg-200, #ffffff);
 }
 
 .pptx-review-notes-heading {

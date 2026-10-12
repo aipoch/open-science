@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Check } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -437,14 +438,12 @@ const OnboardingWizard = ({
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
       <div className="mx-auto min-h-full w-full max-w-[1040px] px-4 py-5 sm:px-8 sm:py-7">
-        <a
+        <ExternalTextLink
           href={APP.links.website}
-          target="_blank"
-          rel="noreferrer"
           className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
         >
           Open-Science
-        </a>
+        </ExternalTextLink>
 
         <div
           data-onboarding-layout="split"
@@ -469,7 +468,7 @@ const OnboardingWizard = ({
           {/* One stable work surface keeps the setup steps aligned as their content changes. */}
           <Card
             ref={stepCard}
-            className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200"
+            className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card"
           >
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}

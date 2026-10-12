@@ -339,7 +339,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
     [normalizedQuery, filter, unfilledIds, translation.units]
   )
   return (
-    <TooltipProvider delayDuration={100} skipDelayDuration={300}>
+    <TooltipProvider>
       <div className="shrink-0 border-t border-border" data-state={reviewOpen ? 'open' : 'closed'}>
         <div
           className="sticky top-0 z-10 border-b border-border bg-background"

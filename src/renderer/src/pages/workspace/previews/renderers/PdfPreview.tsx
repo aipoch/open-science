@@ -621,7 +621,7 @@ const PdfInteractionControls = ({
   ]
 
   return (
-    <TooltipProvider delayDuration={200} skipDelayDuration={300}>
+    <TooltipProvider>
       <div
         data-pdf-controls="interaction"
         role="group"
@@ -1020,7 +1020,7 @@ const PdfSearchControls = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+    <TooltipProvider>
       <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         {onScopeChange ? (
           <Button
@@ -1042,7 +1042,7 @@ const PdfSearchControls = ({
           value={query}
           aria-label={t('Search document')}
           placeholder={t('Search document')}
-          className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
+          className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-300"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') onFindAgain(event.shiftKey)
@@ -1170,7 +1170,7 @@ const PdfZoomControls = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200} skipDelayDuration={300}>
+    <TooltipProvider>
       <div
         data-pdf-controls="view"
         role="group"
@@ -1191,7 +1191,7 @@ const PdfZoomControls = ({
               max={pageCount}
               value={pageDraft}
               aria-label={pageLabel}
-              className="h-6 w-10 rounded-sm bg-bg-100 px-1 text-center text-text-000 outline-none [appearance:textfield] focus:ring-1 focus:ring-ring/60 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className="h-6 w-10 rounded-sm bg-bg-200 px-1 text-center text-text-000 outline-none [appearance:textfield] focus:ring-1 focus:ring-ring/60 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               onFocus={(event) => event.currentTarget.select()}
               onChange={(event) => setPageDraft(event.currentTarget.value)}
               onBlur={() => finishPageEdit(true)}
@@ -1653,26 +1653,38 @@ const PdfEvidenceLayer = ({
           }
           const rect = annotation.selector.rect
           return (
-            <button
-              key={`${annotation.id}-remove`}
-              type="button"
-              data-pdf-area-remove={annotation.id}
-              className="pointer-events-auto absolute z-10 flex size-[21px] items-center justify-center rounded-full border border-border-300/60 bg-bg-000/95 text-text-200 shadow-sm hover:bg-bg-100 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              style={{
-                left: `${(rect.x + rect.width) * 100}%`,
-                top: `${rect.y * 100}%`,
-                transform: 'translate(-50%, -50%)'
-              }}
-              aria-label={t('Remove PDF area')}
-              title={t('Remove')}
-              onClick={(event) => {
-                event.stopPropagation()
-                onRemoveAnnotation(annotation.id)
-                onSelected()
-              }}
-            >
-              <X className="size-3" aria-hidden="true" />
-            </button>
+            <TooltipProvider key={`${annotation.id}-remove`}>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    key={`${annotation.id}-remove`}
+                    type="button"
+                    data-pdf-area-remove={annotation.id}
+                    className="pointer-events-auto absolute z-10 flex size-[21px] items-center justify-center rounded-full border border-border-300/60 bg-bg-000/95 text-text-200 shadow-sm hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    style={{
+                      left: `${(rect.x + rect.width) * 100}%`,
+                      top: `${rect.y * 100}%`,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    aria-label={t('Remove PDF area')}
+                    title={t('Remove')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onRemoveAnnotation(annotation.id)
+                      onSelected()
+                    }}
+                  >
+                    <X className="size-3" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Remove PDF area')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )
         })}
         {matchingBookmarks.flatMap((bookmark) => {
@@ -3734,7 +3746,7 @@ export const PdfPreviewContent = ({
     supportsTranslatedPdf &&
     pairedDocument &&
     (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading') ? (
-      <TooltipProvider delayDuration={100}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -4088,7 +4100,7 @@ export const PdfPreviewContent = ({
         className={
           presentation === 'search'
             ? 'flex min-h-64 w-full flex-col'
-            : 'flex size-full flex-col overflow-hidden bg-bg-20'
+            : 'flex size-full flex-col overflow-hidden bg-bg-10'
         }
         data-pdf-preview-root
         data-pdf-tool-active={
@@ -4873,16 +4885,29 @@ export const PdfPreviewContent = ({
                 <h2 className="min-w-0 truncate text-sm font-medium">
                   {t('Full-text translation')}
                 </h2>
-                <Button
-                  ref={translationCloseRef}
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={t('Close translation')}
-                  onClick={closeTranslationSidebar}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <Button
+                        ref={translationCloseRef}
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label={t('Close translation')}
+                        onClick={closeTranslationSidebar}
+                      >
+                        <X className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('Close translation')}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
+
               {translationPanelLoading ? (
                 <div
                   role="status"
@@ -5038,7 +5063,7 @@ export const PdfPreviewContent = ({
                   </div>
                 ) : null}
                 {!restoringTranslation && currentTranslation ? (
-                  <TooltipProvider delayDuration={100} skipDelayDuration={300}>
+                  <TooltipProvider>
                     <div
                       className="flex items-center gap-1 px-4 py-3"
                       data-pdf-translation-view-actions

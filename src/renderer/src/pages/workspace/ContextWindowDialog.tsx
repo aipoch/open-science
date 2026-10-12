@@ -1045,7 +1045,7 @@ const ContextCallEmptyState = (): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <div
-      className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center"
+      className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-200/40 px-6 text-center"
       data-slot="context-call-empty"
     >
       <div className="max-w-md">
@@ -1193,7 +1193,7 @@ const ContextWindowDialogData = ({
           {points.length ? (
             <ContextHistory points={points} />
           ) : (
-            <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
+            <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-200/40 px-6 text-center">
               <div className="max-w-sm">
                 <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
                 <h3 className="mt-3 text-sm font-medium text-foreground">

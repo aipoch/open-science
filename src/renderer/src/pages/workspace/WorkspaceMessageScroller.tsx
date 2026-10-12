@@ -1572,11 +1572,7 @@ const WorkspaceMessageScrollerImpl = ({
     ) : null
 
   return (
-    <TooltipProvider
-      key={activeSession?.id ?? 'empty-conversation'}
-      delayDuration={200}
-      skipDelayDuration={300}
-    >
+    <TooltipProvider key={activeSession?.id ?? 'empty-conversation'}>
       <MessageScrollerProvider
         key={activeSession?.id ?? 'empty-conversation'}
         autoScroll={autoScroll}

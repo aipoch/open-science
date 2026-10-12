@@ -181,7 +181,7 @@ const TableDetails = ({
             </table>
           </div>
           {table!.unassignedText.length ? (
-            <div className="space-y-1 rounded-md border border-border-200 bg-bg-20 p-3">
+            <div className="space-y-1 rounded-md border border-border-200 bg-bg-10 p-3">
               <p className="font-medium">{t('Unplaced table text')}</p>
               <p className="text-xs leading-5 text-text-200">
                 {t(
@@ -1021,6 +1021,7 @@ export const PdfFiguresView = ({
             )}
           </TooltipContent>
         </Tooltip>
+
         <SelectContent
           onCloseAutoFocus={() => {
             // Select can retain :focus-visible after pointer selection. Keep its focus return,
@@ -1228,75 +1229,107 @@ export const PdfFiguresView = ({
         </div>
       ) : entries.length ? (
         <div className="flex min-h-0 flex-1 flex-col @min-[640px]:flex-row">
-          <div className="flex shrink-0 items-center gap-1 border-b border-border-200 px-3 py-1.5 @min-[640px]:hidden">
-            <Select
-              value={active ? entryKey(active) : undefined}
-              onValueChange={(value) =>
-                setSelected(entries.find((entry) => entryKey(entry) === value))
-              }
-            >
-              <SelectTrigger className="min-w-0 flex-1" aria-label={t('Figure and table index')}>
-                <SelectValue>
-                  {active ? (
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate">{entryLabel(active)}</span>
-                      <span className="shrink-0 text-xs text-text-300">
-                        {entryPageLabel(active)}
+          <TooltipProvider>
+            <div className="flex shrink-0 items-center gap-1 border-b border-border-200 px-3 py-1.5 @min-[640px]:hidden">
+              <Select
+                value={active ? entryKey(active) : undefined}
+                onValueChange={(value) =>
+                  setSelected(entries.find((entry) => entryKey(entry) === value))
+                }
+              >
+                <SelectTrigger className="min-w-0 flex-1" aria-label={t('Figure and table index')}>
+                  <SelectValue>
+                    {active ? (
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate">{entryLabel(active)}</span>
+                        <span className="shrink-0 text-xs text-text-300">
+                          {entryPageLabel(active)}
+                        </span>
                       </span>
-                    </span>
-                  ) : null}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent className="z-[70] max-w-[var(--radix-select-trigger-width)]">
-                {entries.map((entry) => (
-                  <SelectItem
-                    key={entryKey(entry)}
-                    value={entryKey(entry)}
-                    textValue={entryLabel(entry)}
-                    className="[&>span:first-child]:min-w-0 [&>span:first-child]:flex-1"
+                    ) : null}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="z-[70] max-w-[var(--radix-select-trigger-width)]">
+                  {entries.map((entry) => (
+                    <SelectItem
+                      key={entryKey(entry)}
+                      value={entryKey(entry)}
+                      textValue={entryLabel(entry)}
+                      className="[&>span:first-child]:min-w-0 [&>span:first-child]:flex-1"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="min-w-0 flex-1 truncate">{entryLabel(entry)}</span>
+                        <span className="shrink-0 text-xs text-text-300">
+                          {entryPageLabel(entry)}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t('Previous figure or table')}
+                    disabled={activeIndex <= 0}
+                    onClick={() => setSelected(entries[activeIndex - 1])}
                   >
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span className="min-w-0 flex-1 truncate">{entryLabel(entry)}</span>
-                      <span className="shrink-0 text-xs text-text-300">
-                        {entryPageLabel(entry)}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={t('Previous figure or table')}
-              disabled={activeIndex <= 0}
-              onClick={() => setSelected(entries[activeIndex - 1])}
-            >
-              <ChevronLeft className="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={t('Next figure or table')}
-              disabled={activeIndex >= entries.length - 1}
-              onClick={() => setSelected(entries[activeIndex + 1])}
-            >
-              <ChevronRight className="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={t('Show in PDF')}
-              title={t('Show in PDF')}
-              disabled={!active}
-              onClick={() => active && onNavigate(active.element.regions[0].page)}
-            >
-              <ArrowUpRight className="size-4" aria-hidden="true" />
-            </Button>
-            {analysisComplete ? analysisOptions : null}
-          </div>
+                    <ChevronLeft className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Previous figure or table')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t('Next figure or table')}
+                    disabled={activeIndex >= entries.length - 1}
+                    onClick={() => setSelected(entries[activeIndex + 1])}
+                  >
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Next figure or table')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t('Show in PDF')}
+                    title={t('Show in PDF')}
+                    disabled={!active}
+                    onClick={() => active && onNavigate(active.element.regions[0].page)}
+                  >
+                    <ArrowUpRight className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Show in PDF')}</TooltipContent>
+              </Tooltip>
+              {analysisComplete ? analysisOptions : null}
+            </div>
+          </TooltipProvider>
           <nav
-            className="hidden shrink-0 overflow-y-auto border-r border-border-200 bg-bg-20 p-2 @min-[640px]:block @min-[640px]:w-60"
+            className="hidden shrink-0 overflow-y-auto border-r border-border-200 bg-bg-10 p-2 @min-[640px]:block @min-[640px]:w-60"
             aria-label={t('Figure and table index')}
             onKeyDown={(event) => {
               if (

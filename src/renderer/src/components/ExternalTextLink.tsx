@@ -9,14 +9,15 @@ const ExternalTextLink = ({
   href,
   children,
   className,
-  'aria-label': ariaLabel
+  'aria-label': ariaLabel,
+  ...props
 }: {
   href: string
   children: React.ReactNode
   className?: string
-  'aria-label'?: string
-}): React.JSX.Element => (
+} & Omit<React.ComponentProps<'a'>, 'href' | 'children' | 'target' | 'rel'>): React.JSX.Element => (
   <a
+    {...props}
     href={href}
     target="_blank"
     rel="noreferrer"

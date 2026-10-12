@@ -1398,12 +1398,12 @@ export const ArtifactReproducibilityPanel = ({
           <span>{logRecordedTime(entry.recordedAt)}</span>
         </time>
       ) : (
-        <span aria-hidden="true" className="border-r border-border-300/50 pr-3 text-text-400">
+        <span aria-hidden="true" className="border-r border-border-300/50 pr-3 text-text-300">
           —
         </span>
       )}
       <div className="min-w-0">
-        <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 text-text-400">
+        <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 text-text-300">
           <span>
             {entry.source === 'notebook'
               ? t('Notebook run {{number}}', { number: entry.runIndex + 1 })
@@ -1434,18 +1434,18 @@ export const ArtifactReproducibilityPanel = ({
   const persistedLogContent = (key: string): React.JSX.Element => {
     const state = persistedCheckLogs[key]
     return (
-      <section className="mt-3 overflow-hidden rounded-lg border border-border-300/60 bg-bg-100/55">
+      <section className="mt-3 overflow-hidden rounded-lg border border-border-300/60 bg-bg-200/55">
         <div className="flex items-center gap-2 border-b border-border-300/50 px-3 py-2">
           <TerminalSquare className="size-3.5" aria-hidden="true" />
           <h5 className="text-xs font-medium text-text-100">{t('Log')}</h5>
         </div>
         <div className="max-h-52 space-y-3 overflow-auto px-3 py-2.5 font-mono text-[11px] leading-5">
-          {state?.loading ? <p className="text-text-400">{t('Loading…')}</p> : null}
+          {state?.loading ? <p className="text-text-300">{t('Loading…')}</p> : null}
           {state?.error ? (
             <p className="text-danger-000">{t('Check log could not be loaded.')}</p>
           ) : null}
           {state?.record?.truncated ? (
-            <p className="text-text-400">{t('Output truncated')}</p>
+            <p className="text-text-300">{t('Output truncated')}</p>
           ) : null}
           {state?.record?.entries.map((entry, index) => reproducibilityLogEntry(entry, index))}
         </div>
@@ -1993,7 +1993,7 @@ export const ArtifactReproducibilityPanel = ({
   return (
     <div ref={panelRef} className="space-y-3.5 p-4 text-sm sm:p-5">
       {sourceEvidence ? (
-        <div className="flex items-start gap-2.5 rounded-lg border border-border-300/60 bg-bg-100 px-3.5 py-3">
+        <div className="flex items-start gap-2.5 rounded-lg border border-border-300/60 bg-bg-200 px-3.5 py-3">
           <Info className="mt-0.5 size-4 shrink-0 text-text-300" aria-hidden="true" />
           <div className="space-y-1">
             <p className="text-sm font-medium">{t('Checks from the source installation')}</p>
@@ -2163,7 +2163,7 @@ export const ArtifactReproducibilityPanel = ({
                           data-reproducibility-check-unavailable
                           aria-describedby={checkBlockerId}
                           tabIndex={0}
-                          className="inline-flex h-7 shrink-0 self-start items-center gap-1.5 rounded-full border border-border-300/70 bg-bg-100 px-2.5 text-[11px] font-medium text-text-000/70 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                          className="inline-flex h-7 shrink-0 self-start items-center gap-1.5 rounded-full border border-border-300/70 bg-bg-200 px-2.5 text-[11px] font-medium text-text-000/70 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                         >
                           <CircleSlash2 className="size-3.5" aria-hidden="true" />
                           {t('Unavailable')}
@@ -2356,7 +2356,7 @@ export const ArtifactReproducibilityPanel = ({
               id={checkBlockerId}
               data-reproducibility-check-blocker
               role="status"
-              className="flex flex-col gap-2 border-t border-border-300/50 bg-bg-100/45 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-2 border-t border-border-300/50 bg-bg-200/45 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="flex min-w-0 items-start gap-2 text-xs leading-5 text-text-000/75">
                 <Info className="mt-0.5 size-3.5 shrink-0 text-text-000/70" aria-hidden="true" />
@@ -2562,7 +2562,7 @@ export const ArtifactReproducibilityPanel = ({
                 key={checkState?.status === 'running' ? 'running-log' : 'completed-log'}
                 open={checkState?.status === 'running' ? true : undefined}
                 data-reproducibility-check-log
-                className="my-3 overflow-hidden rounded-lg border border-border-300/60 bg-bg-100/55"
+                className="my-3 overflow-hidden rounded-lg border border-border-300/60 bg-bg-200/55"
                 aria-labelledby="reproducibility-check-log-title"
               >
                 <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 outline-none hover:bg-bg-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">

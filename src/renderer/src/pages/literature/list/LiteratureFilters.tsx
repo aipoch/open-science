@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
@@ -361,19 +362,31 @@ export function LiteratureFilters({
                   update(row.id, { key, operator: 'equals', value: '' })
                 }}
               />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8 text-muted-foreground sm:col-start-4 sm:row-start-1"
-                aria-label={t('Remove condition')}
-                onClick={() => {
-                  clearField(row.key)
-                  setRows((current) => current.filter((entry) => entry.id !== row.id))
-                }}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-muted-foreground sm:col-start-4 sm:row-start-1"
+                      aria-label={t('Remove condition')}
+                      onClick={() => {
+                        clearField(row.key)
+                        setRows((current) => current.filter((entry) => entry.id !== row.id))
+                      }}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Remove condition')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               {dynamic ? (
                 <Select
                   value={row.operator}

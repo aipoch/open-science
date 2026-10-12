@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -82,53 +83,75 @@ export function LiteraturePagination({
           </Select>
         </div>
         {pageCount > 1 ? (
-          <nav aria-label={t('Page {{page}}', { page })} className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Previous page')}
-              disabled={page <= 1 || loading}
-              onClick={() => onOffsetChange((page - 2) * pageSize)}
-            >
-              <ChevronLeft className="size-4" aria-hidden="true" />
-            </Button>
-            {items.map((item, index) =>
-              item === 'ellipsis' ? (
-                <span
-                  key={`ellipsis-${index}`}
-                  aria-hidden="true"
-                  className="grid size-7 place-items-center text-xs text-muted-foreground"
+          <TooltipProvider>
+            <nav aria-label={t('Page {{page}}', { page })} className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
                 >
-                  …
-                </span>
-              ) : (
-                <Button
-                  key={item}
-                  type="button"
-                  variant={item === page ? 'secondary' : 'ghost'}
-                  size="icon-sm"
-                  aria-label={t('Page {{page}}', { page: item })}
-                  aria-current={item === page ? 'page' : undefined}
-                  disabled={loading}
-                  className="tabular-nums"
-                  onClick={() => onOffsetChange((item - 1) * pageSize)}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Previous page')}
+                    disabled={page <= 1 || loading}
+                    onClick={() => onOffsetChange((page - 2) * pageSize)}
+                  >
+                    <ChevronLeft className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Previous page')}</TooltipContent>
+              </Tooltip>
+              {items.map((item, index) =>
+                item === 'ellipsis' ? (
+                  <span
+                    key={`ellipsis-${index}`}
+                    aria-hidden="true"
+                    className="grid size-7 place-items-center text-xs text-muted-foreground"
+                  >
+                    …
+                  </span>
+                ) : (
+                  <Button
+                    key={item}
+                    type="button"
+                    variant={item === page ? 'secondary' : 'ghost'}
+                    size="icon-sm"
+                    aria-label={t('Page {{page}}', { page: item })}
+                    aria-current={item === page ? 'page' : undefined}
+                    disabled={loading}
+                    className="tabular-nums"
+                    onClick={() => onOffsetChange((item - 1) * pageSize)}
+                  >
+                    {item}
+                  </Button>
+                )
+              )}
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
                 >
-                  {item}
-                </Button>
-              )
-            )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('Next page')}
-              disabled={page >= pageCount || loading}
-              onClick={() => onOffsetChange(page * pageSize)}
-            >
-              <ChevronRight className="size-4" aria-hidden="true" />
-            </Button>
-          </nav>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Next page')}
+                    disabled={page >= pageCount || loading}
+                    onClick={() => onOffsetChange(page * pageSize)}
+                  >
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Next page')}</TooltipContent>
+              </Tooltip>
+            </nav>
+          </TooltipProvider>
         ) : null}
       </div>
     </fieldset>

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import {
@@ -238,7 +238,7 @@ export const ClassificationPanel = ({
                 <p>{t('No model services added')}</p>
               </div>
             ) : (
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <ul className="space-y-2">
                   {snapshot.services.map((service) => (
                     <li
@@ -338,7 +338,7 @@ export const ClassificationPanel = ({
               {t('Add service')}
             </SettingsListAddAction>
           </SettingsSection>
-          <TooltipProvider delayDuration={200}>
+          <TooltipProvider>
             <SettingsSection separated title={t('Feature settings')}>
               <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
                 <ClassificationBindingRow
@@ -396,16 +396,31 @@ const ClassificationBindingRow = ({
           <label htmlFor={feature} className="text-sm font-medium text-foreground">
             {label}
           </label>
+
           <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                aria-label={smart ? t('Smart collections') : t('About classification models')}
-                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Info className="size-4" aria-hidden="true" />
-              </button>
-            </PopoverTrigger>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={smart ? t('Smart collections') : t('About classification models')}
+                      className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Info className="size-4" aria-hidden="true" />
+                    </button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {smart ? t('Smart collections') : t('About classification models')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <PopoverContent
               align="end"
               aria-label={smart ? t('Smart collections') : t('About classification models')}

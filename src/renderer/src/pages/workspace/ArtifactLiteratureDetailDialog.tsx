@@ -299,7 +299,7 @@ const ArtifactLiteratureDetailDialog = ({
                       return version ? (
                         <div
                           key={attachment.id}
-                          className="flex items-center gap-3 rounded-lg border border-border-300/80 bg-bg-100 px-3 py-2"
+                          className="flex items-center gap-3 rounded-lg border border-border-300/80 bg-bg-200 px-3 py-2"
                         >
                           <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
                           <div className="min-w-0 flex-1">

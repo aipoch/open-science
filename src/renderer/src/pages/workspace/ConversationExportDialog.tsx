@@ -195,7 +195,7 @@ const ConversationExportDialogContent = ({
                     key={value}
                     value={value}
                     aria-label={label}
-                    className="group flex min-h-16 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100"
+                    className="group flex min-h-16 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-200"
                   >
                     <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-bg-200 text-text-100 group-data-[state=checked]:text-text-000">
                       <Icon className="size-4" aria-hidden="true" />
@@ -235,7 +235,7 @@ const ConversationExportDialogContent = ({
                   <RadioGroup.Item
                     key={value}
                     value={value}
-                    className="group flex min-h-14 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100"
+                    className="group flex min-h-14 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-200"
                   >
                     <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-border-100 group-data-[state=checked]:border-text-000">
                       <RadioGroup.Indicator className="size-2 rounded-full bg-text-000" />
@@ -271,7 +271,7 @@ const ConversationExportDialogContent = ({
                   <Checkbox.Root
                     checked={allSelected ? true : partlySelected ? 'indeterminate' : false}
                     onCheckedChange={toggleAll}
-                    className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-100 outline-none hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40"
+                    className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-100 outline-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/40"
                   >
                     <span className="flex size-4 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000">
                       <Checkbox.Indicator>
@@ -306,7 +306,7 @@ const ConversationExportDialogContent = ({
                         key={turn.promptMessageId}
                         checked={selected}
                         onCheckedChange={() => toggleTurn(turn.promptMessageId)}
-                        className="group flex min-h-20 w-full min-w-0 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100"
+                        className="group flex min-h-20 w-full min-w-0 items-start gap-3 rounded-xl border border-border-200 bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-100 hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-200"
                       >
                         <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-text-000">
                           <Checkbox.Indicator>

@@ -1,6 +1,7 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { connectorDescription, connectorToolDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
-import { ArrowUpRight, ChevronRight } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -361,15 +362,12 @@ const ConnectorDetailView = ({
                 <span aria-hidden="true" className="text-muted-foreground">
                   —
                 </span>{' '}
-                <a
+                <ExternalTextLink
                   href={detail.termsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-0.5 align-baseline text-primary"
                 >
                   <span className="underline">{t('Terms')}</span>
-                  <ArrowUpRight className="size-3.5" aria-hidden="true" />
-                </a>
+                </ExternalTextLink>
               </>
             ) : null}
           </DetailRow>

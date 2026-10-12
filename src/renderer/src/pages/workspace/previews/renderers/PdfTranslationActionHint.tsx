@@ -12,7 +12,7 @@ export function PdfTranslationActionHint({
   className?: string
 }): React.JSX.Element {
   return (
-    <TooltipProvider delayDuration={100}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <div

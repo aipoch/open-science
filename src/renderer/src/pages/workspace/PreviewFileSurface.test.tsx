@@ -4729,7 +4729,7 @@ describe('PreviewFileSurface local file header', () => {
     expect(zIndexFromClassName(menu!)).toBeGreaterThan(zIndexFromClassName(dialog!))
   })
 
-  it('shows no tooltip for the More actions trigger', async () => {
+  it('labels the More actions trigger with the shared tooltip', async () => {
     await act(async () => {
       root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
     })
@@ -4743,7 +4743,7 @@ describe('PreviewFileSurface local file header', () => {
     // Tooltip content carries bg-text-000; the dropdown menu content (bg-popover) must not match.
     expect(
       document.body.querySelector('[data-radix-popper-content-wrapper] .bg-text-000')
-    ).toBeNull()
+    ).not.toBeNull()
   })
 
   it('saves as artifact, then swaps the menu item for a saved chip', async () => {

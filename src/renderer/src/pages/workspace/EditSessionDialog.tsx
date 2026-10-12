@@ -85,7 +85,7 @@ const EditSessionDialog = ({
           >
             <div className={dialogHeaderClassName}>
               <Dialog.Title className={dialogTitleClassName}>{t('Edit session')}</Dialog.Title>
-              <TooltipProvider delayDuration={200}>
+              <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger
                     asChild

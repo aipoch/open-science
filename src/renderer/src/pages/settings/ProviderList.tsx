@@ -214,7 +214,7 @@ const ProviderList = ({
   const activeFramework = { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <ul className="space-y-2">
         {displayedProviders.map((provider) => {
           const isActiveSource = provider.id === activeProviderId

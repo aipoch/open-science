@@ -572,7 +572,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   if (view.kind === 'marketplace-sources') {
     return (
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider>
         <div className="p-5">
           <div>
             <h2 className="text-lg font-semibold text-foreground">{t('Marketplace sources')}</h2>
@@ -808,7 +808,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   if (view.kind === 'marketplace-release') {
     return (
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider>
         <div className="p-5">
           {releaseLoading ? <MarketplaceLoading label={t('Loading…')} /> : null}
           {releaseError ? (
@@ -1175,7 +1175,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       <div className="p-5">
         <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -106,7 +107,7 @@ const kernelStatusClassName = (status: NotebookProjectKernelActivity['status']):
     return 'inline-flex rounded-full bg-status-success-surface px-2 py-0.5 text-[10px] font-semibold text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground'
   }
   if (status === 'idle') {
-    return 'inline-flex rounded-full bg-bg-100 px-2 py-0.5 text-[10px] font-semibold text-text-100'
+    return 'inline-flex rounded-full bg-bg-200 px-2 py-0.5 text-[10px] font-semibold text-text-100'
   }
   return 'inline-flex rounded-full bg-status-warning-surface px-2 py-0.5 text-[10px] font-semibold text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
 }
@@ -295,7 +296,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       className="relative border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
                     >
                       <div className="flex min-w-0 items-center gap-2 pr-8 @3xl/compute:hidden">
-                        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-100">
                           <Cpu className="size-3.5" aria-hidden="true" />
                         </span>
                         <div className="min-w-0 flex-1">
@@ -311,7 +312,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                             <span className="shrink-0">{kernelLabel(kernel, t)}</span>
                             {workload ? (
                               <>
-                                <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
+                                <span className="shrink-0 rounded border border-border-300 bg-bg-200 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
                                   {t('Background')}
                                 </span>
                                 <span className="truncate" title={workload.title}>
@@ -326,7 +327,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                         <div>
                           <dt className="sr-only">{t('Session')}</dt>
                           <dd className="flex min-w-0 items-center gap-2 font-medium">
-                            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-100 text-text-100">
+                            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-100">
                               <Cpu className="size-3.5" aria-hidden="true" />
                             </span>
                             <span className="truncate">
@@ -340,7 +341,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                             <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-medium">
                               <span className="truncate">{kernelLabel(kernel, t)}</span>
                               {workload ? (
-                                <span className="shrink-0 rounded border border-border-300 bg-bg-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
+                                <span className="shrink-0 rounded border border-border-300 bg-bg-200 px-1.5 py-0.5 text-[10px] font-semibold text-text-200">
                                   {t('Background')}
                                 </span>
                               ) : null}
@@ -365,18 +366,31 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                         </div>
                         <div aria-hidden="true" />
                       </dl>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
-                        disabled={!session}
-                        aria-label={t('Go to Session')}
-                        title={t('Go to Session')}
-                        onClick={() => goToSession(kernel.sessionId)}
-                      >
-                        <ArrowUpRight aria-hidden="true" />
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                          >
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
+                              disabled={!session}
+                              aria-label={t('Go to Session')}
+                              title={t('Go to Session')}
+                              onClick={() => goToSession(kernel.sessionId)}
+                            >
+                              <ArrowUpRight aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Go to Session')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                   )
                 })}
@@ -504,18 +518,31 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                         </div>
                         <div aria-hidden="true" />
                       </dl>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
-                        disabled={!session}
-                        aria-label={t('Go to Session')}
-                        title={t('Go to Session')}
-                        onClick={() => goToSession(job.session_id)}
-                      >
-                        <ArrowUpRight aria-hidden="true" />
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible'))
+                                event.preventDefault()
+                            }}
+                          >
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
+                              disabled={!session}
+                              aria-label={t('Go to Session')}
+                              title={t('Go to Session')}
+                              onClick={() => goToSession(job.session_id)}
+                            >
+                              <ArrowUpRight aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('Go to Session')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                   )
                 })}

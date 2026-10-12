@@ -124,9 +124,9 @@ const CheckRow = ({
 
       {/* Locator reference — only shown for warn/fail checks that have a locator */}
       {check.isWarnOrFail && locatorRef && (
-        <div className="mt-2 text-[10px] text-text-400">
+        <div className="mt-2 text-[10px] text-text-300">
           <span className="font-medium">{t('Ref:')}</span> {locatorRef}{' '}
-          <span className="text-text-500/60">
+          <span className="text-text-300/60">
             {t('· hash {{hash}}', { hash: check.locator!.contentHash.slice(0, 8) })}
           </span>
         </div>
@@ -138,7 +138,7 @@ const CheckRow = ({
 // Icon for a reviewer log text entry (thought / message). Tool entries render their own
 // chevron-based collapsible header, so they never go through this icon.
 const LogEntryIcon = ({ kind }: { kind: 'thought' | 'message' }): React.JSX.Element => (
-  <span className="text-text-400 select-none" aria-hidden>
+  <span className="text-text-300 select-none" aria-hidden>
     {kind === 'thought' ? '✦' : '›'}
   </span>
 )
@@ -157,7 +157,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
         <span className="mt-0.5 w-3.5 shrink-0 text-center">
           <LogEntryIcon kind="thought" />
         </span>
-        <span className="text-text-400 italic">{entry.text}</span>
+        <span className="text-text-300 italic">{entry.text}</span>
       </div>
     )
   }
@@ -190,7 +190,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
     <div className="py-0.5">
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 text-left text-[11px] leading-[1.45] text-text-400 transition-colors duration-150 hover:text-text-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
+        className="flex w-full items-center gap-1.5 text-left text-[11px] leading-[1.45] text-text-300 transition-colors duration-150 hover:text-text-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
         aria-controls={hasDetails ? detailsId : undefined}
@@ -208,7 +208,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
         </span>
         <span className="font-semibold text-text-300">{entry.toolName || t('Tool')}</span>
         {summary ? (
-          <code className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-text-400">
+          <code className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-text-300">
             {summary}
           </code>
         ) : null}
@@ -219,20 +219,20 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
         <div id={detailsId} className="ml-5 mt-1 space-y-1" data-testid="tool-log-row-details">
           {entry.rawInput ? (
             <div>
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-400">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-300">
                 {t('Input')}
               </div>
-              <pre className="overflow-auto rounded border border-border-200 bg-bg-100 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
+              <pre className="overflow-auto rounded border border-border-200 bg-bg-200 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
                 {entry.rawInput}
               </pre>
             </div>
           ) : null}
           {entry.rawOutput ? (
             <div>
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-400">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-300">
                 {t('Output')}
               </div>
-              <pre className="overflow-auto rounded border border-border-200 bg-bg-100 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
+              <pre className="overflow-auto rounded border border-border-200 bg-bg-200 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
                 {entry.rawOutput}
                 {entry.exitCode !== undefined && entry.exitCode !== null ? (
                   <span
@@ -327,7 +327,7 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
         bodyClassName="mt-2 border-l-2 border-border-200 pl-2.5 opacity-75 space-y-0.5"
       >
         {wasTruncated && (
-          <p className="pb-1 text-[10px] text-text-400" data-testid="reviewer-log-truncated">
+          <p className="pb-1 text-[10px] text-text-300" data-testid="reviewer-log-truncated">
             {t('Reviewer log content was truncated to fit the size limit.')}
           </p>
         )}
@@ -358,7 +358,9 @@ const SessionReviewerPanel = ({
           {review.model} &middot; {formatDate(review.createdAt, 'dateTime')}
         </p>
         {historical && review.errorMessage ? (
-          <p className="mt-2 text-xs text-status-failure">{review.errorMessage}</p>
+          <p className="mt-2 text-xs text-status-failure-foreground dark:text-status-failure-dark-foreground">
+            {review.errorMessage}
+          </p>
         ) : null}
         {historical ? (
           <p className="mt-2 text-xs text-text-300">
@@ -381,11 +383,11 @@ const SessionReviewerPanel = ({
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-300">
             {t('Checks')}
             {presentedChecks.length > 0 && (
-              <span className="font-normal text-text-400"> &middot; {presentedChecks.length}</span>
+              <span className="font-normal text-text-300"> &middot; {presentedChecks.length}</span>
             )}
           </h3>
           {presentedChecks.length === 0 ? (
-            <p className="text-xs text-text-400">{t('No checks recorded.')}</p>
+            <p className="text-xs text-text-300">{t('No checks recorded.')}</p>
           ) : (
             <div className="space-y-2">
               {presentedChecks.map((presented) => (

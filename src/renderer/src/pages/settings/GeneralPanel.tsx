@@ -656,35 +656,29 @@ const GeneralPanel = (): React.JSX.Element => {
       >
         <div className="flex flex-wrap items-center gap-2">
           <GitHubStarBadge className="border border-border" />
-          <a
+          <ExternalTextLink
             href={APP.links.discord}
-            target="_blank"
-            rel="noreferrer"
             aria-label={t('Join the {{appName}} community on Discord', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <DiscordMark className="size-4" />
             Discord
-          </a>
-          <a
+          </ExternalTextLink>
+          <ExternalTextLink
             href={APP.links.x}
-            target="_blank"
-            rel="noreferrer"
             aria-label={t('Follow {{appName}} on X', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <XMark className="size-4" />X
-          </a>
-          <a
+          </ExternalTextLink>
+          <ExternalTextLink
             href={APP.links.website}
-            target="_blank"
-            rel="noreferrer"
             aria-label={t('Open the {{appName}} website', { appName: APP.name })}
             className={socialLinkClassName}
           >
             <Globe className="size-4" strokeWidth={2} aria-hidden="true" />
             {t('Website')}
-          </a>
+          </ExternalTextLink>
         </div>
       </SettingsSection>
     </div>

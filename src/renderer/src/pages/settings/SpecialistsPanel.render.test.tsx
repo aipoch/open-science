@@ -2069,7 +2069,10 @@ describe('SpecialistsPanel', () => {
     )
     expect(disabledSkillTriggers).toHaveLength(3)
     expect(disabledSkillTriggers.every((trigger) => trigger.tabIndex === 0)).toBe(true)
-    await act(async () => disabledSkillTriggers[0]?.focus())
+    await act(async () => {
+      fireEvent.keyDown(document, { key: 'Tab' })
+      disabledSkillTriggers[0]?.focus()
+    })
     expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe(
       'Used by the Main Agent and will be kept.'
     )

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { memo, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Pencil, X } from 'lucide-react'
@@ -122,46 +123,78 @@ export const JournalEntryRow = memo(function JournalEntryRow({
             </td>
           )
         })}
-      <td className="sticky right-0 z-20 w-20 min-w-20 max-w-20 border-l border-transparent bg-inherit group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-2 py-2 align-middle before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100">
-        {draft?.id === entry.id ? (
-          <div className="flex items-center justify-end gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              aria-label={t('Save journal row')}
-              disabled={busy || saveDisabled}
-              onClick={() => void onSave?.()}
-            >
-              <Check className="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              aria-label={t('Cancel editing journal row')}
-              disabled={busy}
-              onClick={() => onDraft(undefined)}
-            >
-              <X className="size-4" aria-hidden="true" />
-            </Button>
-          </div>
-        ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            aria-label={t('Edit journal attributes')}
-            disabled={disabled}
-            onClick={() => onDraft({ id: entry.id, values: entry.values })}
-          >
-            <Pencil className="size-4" aria-hidden="true" />
-          </Button>
-        )}
-      </td>
+      <TooltipProvider>
+        <td className="sticky right-0 z-20 w-20 min-w-20 max-w-20 border-l border-transparent bg-inherit group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-2 py-2 align-middle before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100">
+          {draft?.id === entry.id ? (
+            <div className="flex items-center justify-end gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    aria-label={t('Save journal row')}
+                    disabled={busy || saveDisabled}
+                    onClick={() => void onSave?.()}
+                  >
+                    <Check className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Save journal row')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    aria-label={t('Cancel editing journal row')}
+                    disabled={busy}
+                    onClick={() => onDraft(undefined)}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Cancel editing journal row')}</TooltipContent>
+              </Tooltip>
+            </div>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  aria-label={t('Edit journal attributes')}
+                  disabled={disabled}
+                  onClick={() => onDraft({ id: entry.id, values: entry.values })}
+                >
+                  <Pencil className="size-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Edit journal attributes')}</TooltipContent>
+            </Tooltip>
+          )}
+        </td>
+      </TooltipProvider>
     </tr>
   )
 })

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import {
   noticeSurfaceClassName,
   noticeCapsuleClassName,
@@ -83,14 +84,26 @@ const ActionToast = ({
               {actionLabel}
             </button>
           ) : null}
-          <button
-            type="button"
-            aria-label={dismissLabel}
-            onClick={onDismiss}
-            className={noticeDismissClassName}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <button
+                  type="button"
+                  aria-label={dismissLabel}
+                  onClick={onDismiss}
+                  className={noticeDismissClassName}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{dismissLabel}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </>
       )}
     </div>

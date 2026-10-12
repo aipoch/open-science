@@ -420,7 +420,7 @@ const SensitiveLocalPathDialog = ({
                       'This file may contain credentials or secrets. Open it only if you trust its contents.'
                     )}
               </p>
-              <p className="mt-3 break-all rounded-lg bg-bg-100 px-3 py-2 font-mono text-xs text-text-100">
+              <p className="mt-3 break-all rounded-lg bg-bg-200 px-3 py-2 font-mono text-xs text-text-100">
                 {retainedPending?.path}
               </p>
             </div>
@@ -700,7 +700,7 @@ export const LocalFileBrowser = ({
       aria-label={t('Local file browser')}
     >
       {/* Toolbar */}
-      <TooltipProvider delayDuration={200}>
+      <TooltipProvider>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border-300/40 px-3 py-1.5">
           {/* One arrow only: it goes to the parent directory. A separate up-arrow beside it read as a
               duplicate of the same action, so this is the single way to move a level out. */}

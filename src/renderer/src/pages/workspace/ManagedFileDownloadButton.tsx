@@ -177,7 +177,7 @@ const ManagedFileDownloadButtonState = ({
   )
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider>
       {canOpenVersionMenu ? (
         <span
           data-testid="download-tooltip-trigger"

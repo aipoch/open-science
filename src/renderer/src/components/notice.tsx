@@ -219,17 +219,29 @@ const Notice = ({
             </div>
           ) : null}
           {dismissButton ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={noticeDismissClassName}
-              aria-label={dismissButton.label}
-              data-testid={dismissButton.testId}
-              onClick={dismissButton.onClick}
-            >
-              <X aria-hidden="true" />
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={noticeDismissClassName}
+                    aria-label={dismissButton.label}
+                    data-testid={dismissButton.testId}
+                    onClick={dismissButton.onClick}
+                  >
+                    <X aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{dismissButton.label}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : null}
         </div>
       ) : null}
