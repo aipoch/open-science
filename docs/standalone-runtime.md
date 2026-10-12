@@ -79,6 +79,54 @@ only; it never publishes a Release, npm package or tag. Unsigned dry-runs do not
 signing, notarization or historical Keychain access. Linux CI additionally exercises the real installed
 Web/Notebook, cancellation, recovery and shutdown paths; the model is a deterministic Agent fixture.
 
+## Linux CLI distribution packages
+
+Linux CLI packages are named `open-science-cli` and are separate from the Electron
+desktop Debian package. They include the same backend, Web UI and private Node as
+the standalone archive. Download the package for your architecture and verify it
+against `CLI-PACKAGE-SHA256SUMS.txt` from the same Release:
+
+```bash
+# Debian/Ubuntu (amd64 or arm64)
+sudo apt install ./open-science-cli_<version>_<architecture>.deb
+# Fedora (x86_64 or aarch64)
+sudo dnf install ./open-science-cli-<version>-1.<architecture>.rpm
+
+open-science-cli start --no-open
+open-science-cli status --json
+open-science-cli stop
+```
+
+The package owns `/opt/open-science-cli` and `/usr/bin/open-science-cli`. It also
+registers `open-science` with the OS alternatives manager at priority 90. The desktop
+Debian candidate retains priority 100, and manual alternatives choices are preserved.
+Use `open-science-cli` explicitly when both packages are installed. Unmanaged system
+commands cause installation to fail; user PATH entries can still shadow system commands.
+The package does not adopt or remove manually extracted archives or user launchers.
+
+Stop **all profiles started by this package** before upgrade or removal. Package hooks
+refuse to replace/remove the payload when a process is executing a binary from it;
+do not start another profile during the package transaction. No system service is
+created or automatically started. `sudo apt remove open-science-cli` (including purge)
+and `sudo dnf remove open-science-cli` preserve research data and credentials. Shared
+Python/R environments and other installations are not removed.
+
+The native validation targets Ubuntu 24.04 and Fedora 44 on x64/arm64. ELF dependency
+metadata includes the actual library/ABI requirements; other distributions and older
+glibc systems are not certified. The OS vault, D-Bus, Python/R and sandbox setup below
+still applies. There is no AIPOCH apt/dnf repository: download the next version and
+install that local file to upgrade. This does not imply inclusion in distro repositories.
+
+`CLI-PACKAGE-PROVENANCE.json` records the original archive checksum and source commit.
+A supplemental package backfill preserves the original Release archives, tag and
+`SHA256SUMS.txt`; its packages are covered by the separate CLI package checksum file.
+Future stable Releases additionally include packages in the main checksum/attestation set.
+
+Maintainers can run **Runtime distribution dry-run** with `distribution=linux-packages`,
+`source_release=v<version>` and a Linux target (or `all`). It verifies original Release
+attestations, repacks without rebuilding, exercises real installs and uploads Actions
+artifacts only. It does not modify Releases, tags or repositories.
+
 ## Build and start
 
 Use Node 24 for source development. The local npm tarball requires ordinary Node >=22.13.0; Release archives carry their own Node.
