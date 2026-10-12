@@ -26,7 +26,7 @@ fs.writeFileSync(path.join(root,'web-token'),token);
 fs.writeFileSync(path.join(root,'launched.json'),JSON.stringify({electron:process.versions.electron??null,asNode:process.env.ELECTRON_RUN_AS_NODE??null,argv:process.argv,configRoot:root,userData:process.env.OPEN_SCIENCE_USER_DATA??null}));
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
- res.end(JSON.stringify({generation,pid:process.pid}));
+ res.end(JSON.stringify({generation,pid:process.pid,credentialStore:process.argv.includes('--fixture-file')?'file':'os'}));
 });
 server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:crypto.randomUUID(),secret:'a'.repeat(64),version:'test'}})));
 process.once('SIGTERM',()=>server.close());
@@ -69,6 +69,39 @@ describe('ordinary Node desktop launcher', () => {
     expect(second.endpoint).toEqual(first.endpoint)
     expect(second.startedProcess).toBeUndefined()
     expect(first.startedProcess?.exitCode).toBeNull()
+  })
+  it('rejects a file-mode process discovered after spawn and preserves its records', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-file-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(entry, fixtureSource)
+    const options = {
+      configRoot: root,
+      profilePath: join(root, 'profile'),
+      version: 'test',
+      command: process.execPath,
+      entry,
+      packaged: true,
+      timeoutMs: 10000,
+      args: ['--fixture-file']
+    }
+    // This models a competing file-mode winner becoming discoverable during startup polling.
+    await expect(startOrAttachDesktopBackend(options)).rejects.toThrow(
+      'does not confirm OS credential storage'
+    )
+    const record = JSON.parse(await readFile(join(root, 'runtime-owner.json'), 'utf8'))
+    try {
+      await writeFile(join(root, 'credentials.json'), '{"keyRef":"file:v1:Zml4dHVyZQ=="}')
+      const before = await readFile(join(root, 'credentials.json'), 'utf8')
+      await expect(
+        startOrAttachDesktopBackend({ ...options, command: 'must-not-spawn' })
+      ).rejects.toThrow('does not confirm OS credential storage')
+      expect(await readFile(join(root, 'credentials.json'), 'utf8')).toBe(before)
+      expect(JSON.parse(await readFile(join(root, 'runtime-owner.json'), 'utf8'))).toEqual(record)
+      expect(() => process.kill(record.pid, 0)).not.toThrow()
+    } finally {
+      process.kill(record.pid, 'SIGTERM')
+    }
   })
   it('reports fatal child startup promptly without terminating an unrelated process', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-failure-'))

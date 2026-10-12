@@ -1,4 +1,9 @@
-import { createMermaidPlugin, type DiagramPlugin, type MermaidInstance } from '@streamdown/mermaid'
+import {
+  createMermaidPlugin,
+  type DiagramPlugin,
+  type MermaidConfig,
+  type MermaidInstance
+} from '@streamdown/mermaid'
 
 import { MERMAID_RENDER_ID_ATTRIBUTE, rememberMermaidSource } from './mermaid-source-registry'
 
@@ -6,8 +11,43 @@ import { MERMAID_RENDER_ID_ATTRIBUTE, rememberMermaidSource } from './mermaid-so
 const annotateSvg = (svg: string, renderId: string): string =>
   svg.replace('<svg', `<svg ${MERMAID_RENDER_ID_ATTRIBUTE}="${renderId}"`)
 
+// Mermaid inserts HTML labels into the live document while measuring them. Its final SVG
+// sanitizer runs too late to prevent requests. Keep this policy immutable to diagram directives.
+const mediaSafeConfig = (config: MermaidConfig = {}): MermaidConfig => ({
+  ...config,
+  securityLevel: 'strict',
+  secure: [
+    ...(config.secure ?? []),
+    'secure',
+    'securityLevel',
+    'startOnLoad',
+    'maxTextSize',
+    'suppressErrorRendering',
+    'maxEdges',
+    'dompurifyConfig',
+    'themeCSS',
+    'fontFamily'
+  ],
+  dompurifyConfig: {
+    FORBID_TAGS: [
+      'style',
+      'img',
+      'image',
+      'use',
+      'video',
+      'audio',
+      'source',
+      'track',
+      'iframe',
+      'object',
+      'embed'
+    ],
+    FORBID_ATTR: ['style']
+  }
+})
+
 const wrapInstance = (instance: MermaidInstance): MermaidInstance => ({
-  initialize: (config) => instance.initialize(config),
+  initialize: (config) => instance.initialize(mediaSafeConfig(config)),
   render: async (renderId, source) => {
     // Remembered even when rendering fails: the error panel can fall back to the same source.
     rememberMermaidSource(renderId, source)
@@ -28,10 +68,10 @@ const wrapInstance = (instance: MermaidInstance): MermaidInstance => ({
 
 // Same plugin as the upstream default export, with per-render source capture layered on.
 const createSourceTrackingPlugin = (): DiagramPlugin => {
-  const plugin = createMermaidPlugin()
+  const plugin = createMermaidPlugin({ config: mediaSafeConfig() })
   return {
     ...plugin,
-    getMermaid: (config) => wrapInstance(plugin.getMermaid(config))
+    getMermaid: (config) => wrapInstance(plugin.getMermaid(mediaSafeConfig(config)))
   }
 }
 

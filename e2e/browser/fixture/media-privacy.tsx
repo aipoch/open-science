@@ -5,13 +5,15 @@ import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { SessionMessageMarkdown } from '@/pages/workspace/SessionMessageMarkdown'
 
 initI18n('en')
-const mermaidCase = new URLSearchParams(location.search).get('mermaid')
+const params = new URLSearchParams(location.search)
+const mermaidCase = params.get('mermaid')
 const imageChart =
   '```mermaid\nflowchart TD\n A@{ img: "https://privacy-canary.invalid/image.png", label: "Image", h: 60 }\n```'
 const chart =
-  mermaidCase === 'ordinary'
+  params.get('chart') ??
+  (mermaidCase === 'ordinary'
     ? '```mermaid\nflowchart TD\n A@{ shape: rect, label: "Start" } --> B["Finish"]\n```'
-    : imageChart
+    : imageChart)
 createRoot(document.getElementById('root')!).render(
   mermaidCase ? (
     <PresentedAgentMarkdown content={chart} allowMedia={mermaidCase !== 'disabled'} />

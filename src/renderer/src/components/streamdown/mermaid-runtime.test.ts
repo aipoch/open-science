@@ -21,6 +21,7 @@ vi.mock('@streamdown/mermaid', () => {
 import { mermaid } from './mermaid-runtime'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const instance = ((await import('@streamdown/mermaid')) as any).__instance as {
+  initialize: ReturnType<typeof vi.fn>
   render: ReturnType<typeof vi.fn>
 }
 import {
@@ -38,6 +39,30 @@ describe('mermaid source-tracking plugin', () => {
     expect(mermaid.name).toBe('mermaid')
     expect(mermaid.type).toBe('diagram')
     expect(mermaid.language).toBe('mermaid')
+  })
+
+  it('enforces the pre-layout media policy through both initialization entry points', () => {
+    const api = mermaid.getMermaid({ theme: 'dark' })
+    api.initialize({
+      securityLevel: 'loose',
+      secure: ['fontFamily'],
+      dompurifyConfig: { FORBID_TAGS: [] }
+    })
+    expect(instance.initialize).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        securityLevel: 'strict',
+        secure: expect.arrayContaining([
+          'fontFamily',
+          'securityLevel',
+          'dompurifyConfig',
+          'themeCSS'
+        ]),
+        dompurifyConfig: expect.objectContaining({
+          FORBID_TAGS: expect.arrayContaining(['img', 'image']),
+          FORBID_ATTR: ['style']
+        })
+      })
+    )
   })
 
   it('records the source by render id and stamps the id onto the svg', async () => {

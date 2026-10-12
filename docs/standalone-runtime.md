@@ -173,7 +173,12 @@ open-science start --no-open --password-store=gnome-libsecret
 
 Missing or locked secure storage fails explicitly. Existing Linux headless `--credential-store=file`
 is an explicit plaintext opt-in, never an automatic fallback, and does not enable Compute's
-OS-protected credentials. Desktop OS mode does not attach to a file-mode credential profile.
+OS-protected credentials. Desktop checks the live backend's credential mode in its authenticated discovery response before
+attachment, including when another backend wins a startup race. Only confirmed OS mode is
+compatible. File mode or a missing/unknown mode produces a desktop startup error instructing the
+user to stop that server explicitly and restart with `--credential-store=os`. Desktop does not stop
+the server, change its mode, or migrate/delete existing credentials. File references remain readable
+only when file mode is explicitly selected; selecting OS mode does not convert them.
 
 Linux Notebook isolation still requires bubblewrap and permitted unprivileged user namespaces.
 Missing sandbox support is an error; the Node host does not disable protection. Source Linux

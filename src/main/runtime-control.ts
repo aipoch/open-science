@@ -4,6 +4,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadOrCreateWebToken } from './web-service/auth'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { getCredentialStore } from './settings/credential-store-mode'
 import type { DesktopEndpoint } from './desktop-connection'
 
 export const RUNTIME_OWNER_FILE = 'runtime-owner.json'
@@ -26,6 +27,7 @@ export async function startRuntimeControl(
 ): Promise<{ close(): Promise<void> }> {
   const token = Buffer.from(await loadOrCreateWebToken(configRoot))
   const generation = randomUUID()
+  const credentialStore = getCredentialStore()
   const path = join(configRoot, RUNTIME_OWNER_FILE)
   const server = createServer((request, response) => {
     const supplied = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') ?? '')
@@ -42,7 +44,7 @@ export async function startRuntimeControl(
     }
     if (request.method === 'GET' && url.pathname === '/owner') {
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ generation, pid: process.pid }))
+      response.end(JSON.stringify({ generation, pid: process.pid, credentialStore }))
       return
     }
     const port = Number(url.searchParams.get('port'))
