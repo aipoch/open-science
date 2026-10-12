@@ -1,4 +1,4 @@
-import type { DownloadProgress } from './download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 
 export const OPEN_SCIENCE_DOMAIN_GROUP_IDS = [
   'packageRegistries',

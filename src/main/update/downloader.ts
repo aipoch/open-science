@@ -1,9 +1,7 @@
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import type { PlatformDownload } from '../../shared/update'
 import { netFetchStandard } from '../network-fetch'
-import { resilientDownload } from '../net/resilient-download'
-
-export { DownloadChecksumError } from '../net/resilient-download'
+import { resilientDownload } from '@aipoch/resilient-download'
 
 export type DownloadDeps = {
   fetchImpl?: typeof fetch
@@ -28,5 +26,5 @@ export const downloadInstaller = async (
     expectedOrigin: new URL(download.url).origin,
     signal: deps.signal,
     onProgress: deps.onProgress,
-    deps: { fetchImpl: deps.fetchImpl ?? netFetchStandard }
+    fetchImpl: deps.fetchImpl ?? netFetchStandard
   })

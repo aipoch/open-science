@@ -197,7 +197,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       'packages/compute/src/compute.integration.test.ts',
       'packages/durable-files/src/publication.test.ts',
       'packages/durable-files/src/publication.architecture.test.ts',
-      'packages/durable-files/src/publication.integration.test.ts'
+      'packages/durable-files/src/publication.integration.test.ts',
+      'packages/resilient-download/src/transport.test.ts'
     ]) {
       const file = join(fixture, path)
       mkdirSync(join(file, '..'), { recursive: true })
@@ -210,6 +211,10 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
     writeFileSync(
       join(fixture, 'packages/durable-files/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/durable-files'))}, test: {name:'durable-files',include:['src/**/*.test.ts']}}`
+    )
+    writeFileSync(
+      join(fixture, 'packages/resilient-download/vitest.config.ts'),
+      `export default {root: ${JSON.stringify(join(fixture, 'packages/resilient-download'))}, test: {name:'resilient-download',include:['src/**/*.test.ts']}}`
     )
     const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
       JSON.parse(
@@ -237,9 +242,12 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         )
       )
     expect(
-      list('1', [core, 'packages/compute', 'packages/durable-files']).map(({ file }) =>
-        normalize(file)
-      )
+      list('1', [
+        core,
+        'packages/compute',
+        'packages/durable-files',
+        'packages/resilient-download'
+      ]).map(({ file }) => normalize(file))
     ).toEqual([join(fixture, 'src/host.test.ts')])
     // A trusted baseline predating these standalone packages must still discover the new package, exactly once.
     expect(
@@ -254,12 +262,13 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         'packages/compute/src/compute.integration.test.ts',
         'packages/durable-files/src/publication.test.ts',
         'packages/durable-files/src/publication.architecture.test.ts',
-        'packages/durable-files/src/publication.integration.test.ts'
+        'packages/durable-files/src/publication.integration.test.ts',
+        'packages/resilient-download/src/transport.test.ts'
       ]
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(10)
+    expect(list('0')).toHaveLength(11)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

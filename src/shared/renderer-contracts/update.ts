@@ -1,5 +1,6 @@
+import type { DownloadProgress } from '@aipoch/resilient-download'
 // Ordered fragments keep the public registration order when capabilities interleave.
-import type { AppInfo, DownloadProgress, UpdateApplyOptions, UpdateStatus } from '../update'
+import type { AppInfo, UpdateApplyOptions, UpdateStatus } from '../update'
 
 import { callable, LOCAL, type RemoveListener, EVENT } from './definition'
 

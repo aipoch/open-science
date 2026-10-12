@@ -76,6 +76,10 @@
     {
       "root": "packages/durable-files",
       "dependencies": []
+    },
+    {
+      "root": "packages/resilient-download",
+      "dependencies": []
     }
   ]
 }

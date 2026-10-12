@@ -1,5 +1,5 @@
 import { netFetchStandard } from '../network-fetch'
-import { resilientDownload } from '../net/resilient-download'
+import { resilientDownload } from '@aipoch/resilient-download'
 import {
   createFetchBundleAdapter as createEnvironmentBundleAdapter,
   type DownloadProgress
@@ -44,7 +44,7 @@ const downloadFile = async (
     stallTimeoutMs: PACK_STALL_TIMEOUT_MS,
     signal: external,
     onProgress,
-    deps: { fetchImpl: netFetchStandard }
+    fetchImpl: netFetchStandard
   })
 }
 

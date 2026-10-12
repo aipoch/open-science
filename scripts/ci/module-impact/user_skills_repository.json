@@ -642,7 +642,9 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
-      "src/main/notebook/environment-startup.contract.test.ts"
+      "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/environment-download.contract.test.ts",
+      "src/main/notebook/windows-runtime-download.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -162,6 +162,7 @@ it.each([
           profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
         testTimeout: 60_000
       })),
+      { name: 'resilient-download', hookTimeout: 10000, testTimeout: 60000 },
       { name: 'durable-files', hookTimeout: 10000, testTimeout: 60000 },
       { name: 'compute', hookTimeout: 10000, testTimeout: 60000 }
     ])
@@ -331,6 +332,59 @@ it.each([false, true])(
       expect(result.specs.every(({ name }: { name: string }) => name === 'durable-files')).toBe(
         true
       )
+      expect(result.setup).toEqual([])
+      expect(result.workers).toBeUndefined()
+    }
+  }
+)
+
+it.each([false, true])(
+  'discovers resilient-download exactly once with package-owned setup (excluded=%s)',
+  (excluded) => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    import { createVitest } from 'vitest/node'
+    const ctx = await createVitest('test', { watch: false })
+    try {
+      const specs = await ctx.globTestSpecifications(['packages/resilient-download'])
+      const project = ctx.projects.find(({name}) => name === 'resilient-download')
+      console.log(JSON.stringify({
+        specs: specs.map((spec) => ({name: spec.project.name, path: spec.moduleId})),
+        setup: project?.config.setupFiles,
+        workers: project?.config.maxWorkers
+      }))
+    } finally { await ctx.close() }
+  `
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 30000,
+        env: {
+          ...process.env,
+          VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+            excluded ? ['packages/resilient-download'] : []
+          ),
+          OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(
+            excluded ? [] : ['packages/resilient-download']
+          )
+        }
+      }
+    )
+    expect(probe.error).toBeUndefined()
+    expect(probe.status, probe.stderr).toBe(0)
+    const result = JSON.parse(probe.stdout)
+    if (excluded) expect(result.specs).toEqual([])
+    else {
+      expect(result.specs).toHaveLength(3)
+      expect(new Set(result.specs.map(({ path }: { path: string }) => path)).size).toBe(3)
+      expect(
+        result.specs.every(({ name }: { name: string }) => name === 'resilient-download')
+      ).toBe(true)
       expect(result.setup).toEqual([])
       expect(result.workers).toBeUndefined()
     }

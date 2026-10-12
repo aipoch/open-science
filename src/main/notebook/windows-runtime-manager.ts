@@ -2,7 +2,7 @@ import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { join } from 'node:path'
 import catalog from './windows-runtime-catalog.json'
 import { extractPackArchive } from '@aipoch/environment'
-import { resilientDownload } from '../net/resilient-download'
+import { resilientDownload } from '@aipoch/resilient-download'
 import { netFetchStandard } from '../network-fetch'
 import {
   WindowsRuntimeComponentStore,
@@ -65,7 +65,7 @@ export class WindowsNotebookRuntimeManager {
           signal,
           stallTimeoutMs: 60_000,
           onProgress: (value) => progress?.(value.transferred, value.total, value),
-          deps: { fetchImpl: netFetchStandard }
+          fetchImpl: netFetchStandard
         })
       }
     })

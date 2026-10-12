@@ -682,7 +682,9 @@
       "src/main/artifacts/provenance-reproducibility-projection.test.ts",
       "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
       "packages/reproducibility/src/recipe.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/environment-download.contract.test.ts",
+      "src/main/notebook/windows-runtime-download.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

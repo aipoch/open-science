@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { net } from 'electron'
-import { DownloadChecksumError } from '../net/resilient-download'
+import { DownloadChecksumError } from '@aipoch/resilient-download'
 import { createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
 import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import { LOCAL_MODEL_NOT_INSTALLED } from '../../shared/local-models'
 import {
   acquireDataRootWriter,

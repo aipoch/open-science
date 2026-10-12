@@ -57,6 +57,9 @@
     },
     {
       "path": "./packages/literature-screening/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/resilient-download/tsconfig.dev.json"
     }
   ]
 }

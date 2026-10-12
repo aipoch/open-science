@@ -11,7 +11,7 @@ import type {
 } from '../shared/acp'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
-import type { DownloadProgress } from '../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import type {
   Project,
   ProjectDeletedEvent,

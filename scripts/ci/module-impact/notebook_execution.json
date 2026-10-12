@@ -139,7 +139,9 @@
     "src/main/notebook/environment-runner.ts",
     "src/main/notebook/environment-startup.contract.test.ts",
     "src/main/notebook/environment-lifecycle-diagnostics.ts",
-    "src/main/notebook/environment-lifecycle-diagnostics.test.ts"
+    "src/main/notebook/environment-lifecycle-diagnostics.test.ts",
+    "src/main/notebook/environment-download.contract.test.ts",
+    "src/main/notebook/windows-runtime-download.contract.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -268,7 +270,9 @@
       "src/main/notebook/environment-resources.test.ts",
       "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
       "src/main/notebook/environment-runner.test.ts",
-      "src/main/notebook/environment-startup.contract.test.ts"
+      "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/environment-download.contract.test.ts",
+      "src/main/notebook/windows-runtime-download.contract.test.ts"
     ],
     "consumer": [
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",

@@ -1,4 +1,4 @@
-import type { DownloadProgress } from '../../../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import type {
   ProvisionOperationScope,
   ProvisionProgress,

@@ -168,3 +168,14 @@ describe('independent package verification', () => {
     ).toEqual({ npm_config_cache: '/cache' })
   })
 })
+
+it('verifies resilient-download alone without inventing environment or sibling prerequisites', () => {
+  const plan = verificationPlanFromArguments(['--packages=resilient-download'], {})
+  expect(plan).toEqual({
+    builds: ['packages/resilient-download'],
+    tests: ['packages/resilient-download']
+  })
+  expect(verificationCommands(plan)).toEqual([
+    { script: 'check:resilient-download-package', packages: ['resilient-download'] }
+  ])
+})

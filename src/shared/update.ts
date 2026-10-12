@@ -41,7 +41,7 @@ export type UpdateStatus = {
   totalBytes?: number // total installer size in bytes
   // Full progress detail (speed/ETA/reconnect) mirrored from the last update:progress broadcast so
   // the dialog can render the shared DownloadProgressLine.
-  downloadProgress?: import('./download-progress').DownloadProgress
+  downloadProgress?: import('@aipoch/resilient-download').DownloadProgress
   localPath?: string // set when state === 'ready'
   // Terminal lifecycle failure, or retryable action feedback while a ready installer remains usable.
   error?: string
@@ -54,10 +54,6 @@ export type UpdateStatus = {
   // restart into an in-place electron-updater install (win/linux). Set by the active strategy.
   applyKind?: 'installer' | 'restart'
 }
-
-// DownloadProgress now lives in download-progress.ts as a superset (adds phase/bytesPerSecond/
-// etaSeconds/attempt). Re-exported here so existing importers of this module keep working.
-export type { DownloadProgress } from './download-progress'
 
 export type AppInfo = { name: string; version: string; copyright: string }
 

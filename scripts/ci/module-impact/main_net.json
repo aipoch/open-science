@@ -1,24 +1,9 @@
 {
-  "ownerPaths": [
-    "src/main/net/download-speed.test.ts",
-    "src/main/net/download-speed.ts",
-    "src/main/net/network-info.test.ts",
-    "src/main/net/network-info.ts",
-    "src/main/net/resilient-download.test.ts",
-    "src/main/net/resilient-download.ts"
-  ],
-  "interfacePaths": [
-    "src/main/net/download-speed.ts",
-    "src/main/net/network-info.ts",
-    "src/main/net/resilient-download.ts"
-  ],
+  "ownerPaths": ["src/main/net/network-info.test.ts", "src/main/net/network-info.ts"],
+  "interfacePaths": ["src/main/net/network-info.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/net/download-speed.test.ts",
-      "src/main/net/network-info.test.ts",
-      "src/main/net/resilient-download.test.ts"
-    ],
+    "owner": ["src/main/net/network-info.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",

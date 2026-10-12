@@ -142,6 +142,7 @@ it.each([
   'connector-mcp-client',
   'diagnostics',
   'durable-files',
+  'resilient-download',
   'environment',
   'notebook-analysis',
   'notebook-code-risk',

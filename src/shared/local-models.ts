@@ -1,6 +1,6 @@
 export type LocalModelCapability = 'pdf-tables' | 'pdf-translation'
 
-import type { DownloadProgress } from './download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 
 export type LocalModelAvailability = 'notInstalled' | 'installing' | 'ready' | 'error'
 

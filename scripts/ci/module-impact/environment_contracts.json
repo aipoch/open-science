@@ -1338,7 +1338,9 @@
       "packages/reproducibility/src/scientific-output-comparison.test.ts",
       "packages/reproducibility/src/recipe.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
-      "scripts/electron-vite-config.test.ts"
+      "scripts/electron-vite-config.test.ts",
+      "src/main/notebook/environment-download.contract.test.ts",
+      "src/main/notebook/windows-runtime-download.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

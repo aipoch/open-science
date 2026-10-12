@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
-import { DownloadChecksumError, resilientDownload } from './resilient-download'
+import { DownloadChecksumError } from './index'
+import { downloadWithDependencies as resilientDownload } from './resilient-download'
 
 // Build the destPath with the host's own join/sep (the plan's Windows-safe path rule) rather than a
 // hardcoded literal. The memFs doubles key files by this exact string and never touch the real
@@ -876,3 +877,66 @@ it('removes the external cancellation listener after completed retry backoff', a
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// These storage mechanics formerly lived in the host mirror failover suite. The host now tests
+// its source-selection policy through the download port; this package retains the fault assertions.
+it.each(['ENOSPC', 'EACCES', 'EIO'])(
+  'preserves %s from opening storage without retrying',
+  async (code) => {
+    const fs = memFs()
+    const failure = Object.assign(new Error(code), { code })
+    const fetchImpl = fakeFetch(Buffer.from('bytes'))
+    await expect(
+      resilientDownload('https://example.test/file', OUT_PATH, {
+        deps: {
+          ...fs,
+          fetchImpl,
+          createWriteStreamImpl: () => {
+            throw failure
+          },
+          sleep: async () => {}
+        }
+      })
+    ).rejects.toBe(failure)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  }
+)
+
+it.each([
+  { kind: 'checksum', suffix: '.part' },
+  { kind: 'checksum', suffix: '.part.meta' },
+  { kind: 'response', suffix: '.part' },
+  { kind: 'response', suffix: '.part.meta' },
+  { kind: 'http', suffix: '.part.meta' }
+])(
+  'preserves storage failure cleaning $suffix after $kind without retrying',
+  async ({ kind, suffix }) => {
+    const fs = memFs()
+    const body = Buffer.from('bytes')
+    const failure = Object.assign(new Error('cannot remove partial'), { code: 'EACCES' })
+    let downloading = false
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      downloading = true
+      if (kind === 'http') return new Response(null, { status: 403 })
+      return new Response(body, { status: kind === 'response' ? 206 : 200 })
+    })
+    await expect(
+      resilientDownload('https://example.test/file', OUT_PATH, {
+        expectedSha256: sha(Buffer.from('other')),
+        expectedSize: body.length,
+        deps: {
+          ...fs,
+          fetchImpl,
+          sleep: async () => {},
+          rmImpl: async (path) => {
+            if (downloading && path === OUT_PATH + suffix) throw failure
+            await fs.rmImpl(path)
+          }
+        }
+      })
+    ).rejects.toBe(failure)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fs.files.has(OUT_PATH)).toBe(false)
+  }
+)

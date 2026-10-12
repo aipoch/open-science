@@ -1270,7 +1270,9 @@
       "src/main/notebook/environment-capture.contract.test.ts",
       "scripts/windows-signing-policy.test.ts",
       "src/main/literature/batch-job-journal.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/environment-download.contract.test.ts",
+      "src/main/notebook/windows-runtime-download.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

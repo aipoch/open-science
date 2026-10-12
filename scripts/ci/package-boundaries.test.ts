@@ -436,3 +436,72 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   })
   expect(invocations.flat()).toContain('packages/durable-files/src/durable-json-file.test.ts')
 })
+
+it('routes download package changes downstream and host adapters without unchanged package units', async () => {
+  const { createAffectedTestPlan, executeModuleTestPlan } = await import('./module-test-impact.mjs')
+  const graph = { status: 'not-used', testFiles: [] }
+  const packageRoot = 'packages/resilient-download'
+  for (const path of [
+    `${packageRoot}/src/resilient-download.ts`,
+    `${packageRoot}/src/index.ts`,
+    `${packageRoot}/src/types.ts`,
+    `${packageRoot}/src/errors.ts`,
+    `${packageRoot}/src/download-speed.ts`
+  ]) {
+    expect(createPackageTestPlan([path], registry).selected, path).toEqual([packageRoot])
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toEqual(
+      expect.arrayContaining([
+        `${packageRoot}/src/resilient-download.test.ts`,
+        `${packageRoot}/src/transport.test.ts`,
+        'src/main/update/downloader.test.ts',
+        'src/main/local-models/download.test.ts',
+        'src/main/local-models/owner.test.ts',
+        'src/main/notebook/environment-download.contract.test.ts',
+        'src/main/notebook/windows-runtime-download.contract.test.ts',
+        'src/main/session-package/transfer.test.ts'
+      ])
+    )
+    expect(plan.capabilityOverlays).toEqual(
+      expect.arrayContaining(['windows_sensitive', 'notebook_network_sandbox'])
+    )
+    for (const entry of registry.packages)
+      expect(
+        plan.testFiles.some((file) => file.startsWith(entry.root + '/')),
+        `${path} -> ${entry.root}`
+      ).toBe(entry.root === packageRoot)
+  }
+  for (const [path, test] of [
+    ['src/main/update/downloader.ts', 'src/main/update/downloader.test.ts'],
+    ['src/main/local-models/download.ts', 'src/main/local-models/download.test.ts'],
+    [
+      'src/main/notebook/environment-download.ts',
+      'src/main/notebook/environment-download.contract.test.ts'
+    ],
+    [
+      'src/main/notebook/windows-runtime-manager.ts',
+      'src/main/notebook/windows-runtime-download.contract.test.ts'
+    ],
+    ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
+  ]) {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toContain(test)
+    for (const entry of registry.packages)
+      expect(
+        plan.testFiles.some((file) => file.startsWith(entry.root + '/')),
+        `${path} -> ${entry.root}`
+      ).toBe(false)
+    const invocations: string[][] = []
+    executeModuleTestPlan(plan, {
+      environment: {},
+      spawn: (_command: string, args: string[]) => {
+        invocations.push(args)
+        return { status: 0 }
+      }
+    })
+    expect(invocations.flat()).toContain(test)
+    expect(invocations.flat().some((value) => value.startsWith(packageRoot + '/'))).toBe(false)
+  }
+})

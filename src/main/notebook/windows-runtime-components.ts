@@ -1,4 +1,4 @@
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import { APP } from '../../shared/app-config'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'

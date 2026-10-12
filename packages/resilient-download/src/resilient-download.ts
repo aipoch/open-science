@@ -4,24 +4,9 @@ import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { ResilientDownloadOpts } from './types'
+import { DownloadChecksumError, DownloadSourceError } from './errors'
 import { SpeedMeter } from './download-speed'
-
-// Only failures attributable to the remote representation/transport permit trying another source.
-// Local storage failures and caller cancellation retain their original errors and fail closed.
-export class DownloadSourceError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
-    this.name = 'DownloadSourceError'
-  }
-}
-
-export class DownloadChecksumError extends DownloadSourceError {
-  constructor(message = 'Checksum mismatch') {
-    super(message)
-    this.name = 'DownloadChecksumError'
-  }
-}
 
 export type ResilientDownloadDeps = {
   fetchImpl?: typeof fetch
@@ -36,20 +21,7 @@ export type ResilientDownloadDeps = {
   now?: () => number
 }
 
-export type ResilientDownloadOpts = {
-  expectedSha256?: string
-  // Exact byte size, normally from a manifest. It is both the short-read target and a hard write
-  // ceiling, including response metadata and each streamed chunk. If this and Content-Length are
-  // absent, a silently truncated stream cannot be distinguished from a complete unknown-size body.
-  expectedSize?: number
-  // When set, every final response URL must remain on this origin after fetch follows redirects.
-  expectedOrigin?: string
-  maxRetries?: number
-  stallTimeoutMs?: number
-  signal?: AbortSignal
-  onProgress?: (p: DownloadProgress) => void
-  deps?: ResilientDownloadDeps
-}
+type InternalDownloadOptions = ResilientDownloadOpts & { deps?: ResilientDownloadDeps }
 
 const DEFAULT_MAX_RETRIES = 5
 const DEFAULT_STALL_MS = 60_000
@@ -155,13 +127,13 @@ const parseContentLength = (value: string | null): number | undefined => {
   return Number.isSafeInteger(length) ? length : undefined
 }
 
-export const resilientDownload = async (
+export const downloadWithDependencies = async (
   url: string,
   destPath: string,
-  opts: ResilientDownloadOpts = {}
+  opts: InternalDownloadOptions = {}
 ): Promise<string> => {
   const d = opts.deps ?? {}
-  const fetchImpl = d.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? d.fetchImpl ?? fetch
   const mkWrite = d.createWriteStreamImpl ?? ((p, o) => createWriteStream(p, o))
   const statFile = d.statImpl ?? ((p) => stat(p))
   const removeFile = d.rmImpl ?? ((p) => rm(p, { force: true }))

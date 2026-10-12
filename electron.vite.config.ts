@@ -36,7 +36,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|skills|specialists)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|resilient-download|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },
@@ -119,7 +119,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|skills|specialists)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|resilient-download|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },

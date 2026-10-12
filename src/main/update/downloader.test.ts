@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import { downloadInstaller } from './downloader'
 import { parseManifest } from './manifest'
 
