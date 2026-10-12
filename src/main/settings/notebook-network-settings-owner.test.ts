@@ -99,6 +99,18 @@ describe('NotebookNetworkSettingsOwner', () => {
     })
   })
 
+  it('rejects malformed mode values without clearing the saved selection', async () => {
+    const state = harness({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, windowsProtectionEnabled: true })
+    await expect(
+      state.owner.set({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: null as unknown as boolean
+      })
+    ).rejects.toThrow('Invalid Windows Notebook execution mode.')
+    expect(state.read().windowsProtectionEnabled).toBe(true)
+    expect(state.repository.setNotebookNetwork).not.toHaveBeenCalled()
+  })
+
   it('stops active execution before persisting a mode change and does not write when stopping fails', async () => {
     const { repository, apply, read } = harness()
     const beforeProtectionChange = vi.fn(async () => {

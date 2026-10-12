@@ -76,6 +76,11 @@ class NotebookNetworkSettingsOwner {
     current: NotebookNetworkSettings,
     request: SetNotebookNetworkRequest
   ): Promise<NotebookNetworkSettings> {
+    if (
+      request.windowsProtectionEnabled !== undefined &&
+      typeof request.windowsProtectionEnabled !== 'boolean'
+    )
+      throw new Error('Invalid Windows Notebook execution mode.')
     let requested = normalizeNotebookNetworkSettings(request)
     if (request.windowsProtectionEnabled === undefined) {
       requested = {
