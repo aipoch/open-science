@@ -135,6 +135,25 @@ export function createConsumerDependencyReader(
     )
     const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
     if (ast.parseDiagnostics.length) result.complete = false
+    const loaderNames = new Set(['createRequire', 'register', 'registerHooks'])
+    const importedLoaders = new Set()
+    const moduleNamespaces = new Set()
+    for (const statement of ast.statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !['node:module', 'module'].includes(statement.moduleSpecifier.text) ||
+        statement.importClause?.isTypeOnly
+      )
+        continue
+      const clause = statement.importClause
+      if (clause?.name) moduleNamespaces.add(clause.name.text)
+      const bindings = clause?.namedBindings
+      if (bindings && ts.isNamespaceImport(bindings)) moduleNamespaces.add(bindings.name.text)
+      if (bindings && ts.isNamedImports(bindings))
+        for (const binding of bindings.elements)
+          if (!binding.isTypeOnly && loaderNames.has((binding.propertyName ?? binding.name).text))
+            importedLoaders.add(binding.name.text)
+    }
     const visit = (node) => {
       // Keep value imports conservative, including mixed named type/value imports and export *.
       // Type references still belong to the default structural graph and typecheck scope.
@@ -152,6 +171,8 @@ export function createConsumerDependencyReader(
         )
           specs.add(node.moduleReference.expression.text)
       }
+      if (ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isInterfaceDeclaration(node))
+        return
       // Test pruning needs stronger evidence than registration auditing: these globals
       // can reach IPC, external processes or filesystem resources without an import edge.
       if (
@@ -175,17 +196,34 @@ export function createConsumerDependencyReader(
       )
         result.complete = false
       // A loader passed as a value escapes literal-call import discovery.
-      if (ts.isIdentifier(node) && ['require', 'eval', 'Function'].includes(node.text)) {
+      if (
+        ts.isIdentifier(node) &&
+        (['require', 'eval', 'Function'].includes(node.text) ||
+          importedLoaders.has(node.text) ||
+          moduleNamespaces.has(node.text))
+      ) {
         const parent = node.parent
         const directRequire =
           node.text === 'require' &&
+          !importedLoaders.has(node.text) &&
+          !moduleNamespaces.has(node.text) &&
           ((ts.isCallExpression(parent) && parent.expression === node) ||
             (ts.isPropertyAccessExpression(parent) &&
               parent.expression === node &&
               parent.name.text === 'resolve' &&
               ts.isCallExpression(parent.parent) &&
               parent.parent.expression === parent))
-        if (!directRequire) result.complete = false
+        const assertion =
+          node.text === 'Function' &&
+          ts.isCallExpression(parent) &&
+          parent.expression.getText(ast) === 'expect.any' &&
+          parent.arguments[0] === node
+        const moduleProperty =
+          moduleNamespaces.has(node.text) &&
+          ts.isPropertyAccessExpression(parent) &&
+          parent.expression === node &&
+          !loaderNames.has(parent.name.text)
+        if (!directRequire && !assertion && !moduleProperty) result.complete = false
       }
       if (
         ts.isElementAccessExpression(node) &&
@@ -213,17 +251,16 @@ export function createConsumerDependencyReader(
           if (
             argument &&
             (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
-          )
+          ) {
             specs.add(argument.text)
-          else result.complete = false
+            if (['node:module', 'module'].includes(argument.text)) result.complete = false
+          } else result.complete = false
         }
       }
       ts.forEachChild(node, visit)
     }
     visit(ast)
     for (const spec of specs) {
-      // createRequire/register hooks can load repository code outside the import graph.
-      if (spec === 'node:module' || spec === 'module') result.complete = false
       const resolved = ts.resolveModuleName(
         spec,
         posix.join(root, path),

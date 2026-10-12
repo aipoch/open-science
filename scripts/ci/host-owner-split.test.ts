@@ -356,7 +356,12 @@ it.each([
   'process.env.HOST_TEST',
   'window.api.readState()',
   "import { readFileSync } from 'node:fs'; readFileSync('runtime-input')",
-  "import logger from 'external-logger'; logger.info('host')"
+  "import logger from 'external-logger'; logger.info('host')",
+  "import { expect } from 'vitest'; expect.any(Function)",
+  'type Callback = Function; const value = {} as Function',
+  "import { builtinModules } from 'node:module'; builtinModules.includes('fs')",
+  "import * as modules from 'node:module'; modules.builtinModules.includes('fs')",
+  "import { createRequire } from 'node:module'"
 ])('does not treat host facilities as unknown import edges: %s', (facility) => {
   const state = fixture()
   state.put(app, 'export const value = 2')

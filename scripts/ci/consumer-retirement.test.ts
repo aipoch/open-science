@@ -433,3 +433,33 @@ it('retains evidence for selected downstream packages and missing dependency reg
     expect(state.retire(state.git('rev-parse', 'HEAD')).ok).toBe(false)
   }
 }, 30_000)
+
+it.each([
+  ["import { builtinModules } from 'node:module'; builtinModules.includes('fs')", true],
+  ["import * as moduleApi from 'node:module'; moduleApi.builtinModules.includes('fs')", true],
+  ["import { createRequire } from 'node:module'", true],
+  ["import { expect } from 'vitest'; expect.any(Function)", true],
+  ['type Callback = Function; interface API { handler: Function }', true],
+  [
+    "import { createRequire as require } from 'node:module'; const load = require(import.meta.url)",
+    false
+  ],
+  [
+    "import * as moduleApi from 'node:module'; const load = moduleApi.createRequire(import.meta.url)",
+    false
+  ],
+  ["import { register as hook } from 'node:module'; hook('./owner', import.meta.url)", false],
+  [
+    "import Module from 'node:module'; const api = Module; api.createRequire(import.meta.url)",
+    false
+  ],
+  ["const load = require; load('./owner')", false],
+  ['const Evaluate = Function; Evaluate(source)()', false]
+])('distinguishes loader use from harmless module/type references: %s', (text, complete) => {
+  const source = new Map([[consumer, text as string]])
+  const inspect = createConsumerDependencyReader(
+    { files: new Set(source.keys()), read: (path: string) => source.get(path) },
+    []
+  )
+  expect(inspect(consumer, new Set()).complete).toBe(complete)
+})
