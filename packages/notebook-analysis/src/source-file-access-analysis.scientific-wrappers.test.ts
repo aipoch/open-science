@@ -446,7 +446,10 @@ describe('bounded Python checksum helpers', () => {
       'return {"path": p, "sha256": hashlib.sha256(data).hexdigest(), "bytes": pathlib.Path(p).stat().st_size}',
       'open("side-effect.txt", "w").write("x")\n    return {"path": p}'
     ),
-    checksumHelper.replace('files = [file_meta(p) for p in paths]', 'files = (file_meta(p) for p in paths)')
+    checksumHelper.replace(
+      'files = [file_meta(p) for p in paths]',
+      'files = (file_meta(p) for p in paths)'
+    )
   ])('keeps an unstable checksum helper unresolved: %s', async (source) => {
     expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toEqual([])
   })

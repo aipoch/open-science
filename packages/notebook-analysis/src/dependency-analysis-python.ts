@@ -8081,10 +8081,12 @@ const analyzePythonFileAccessTree = (
       const name = pythonDottedName(node.func)
       const args = Array.isArray(node.args) ? node.args : []
       if (name === 'hashlib.sha256' || name === 'len')
-        return args.length === 1 &&
+        return (
+          args.length === 1 &&
           !(node.keywords ?? []).length &&
           isPyNode(args[0]) &&
           checksumExpressionSafe(args[0], names)
+        )
       if (
         node.func?.type === 'Attribute' &&
         node.func.attr === 'hexdigest' &&
@@ -8126,7 +8128,11 @@ const analyzePythonFileAccessTree = (
     const names = new Set([parameter])
     if (fn.body.length === 1 && fn.body[0]?.type === 'Return') {
       returnNode = fn.body[0]
-    } else if (fn.body.length === 2 && fn.body[0]?.type === 'Assign' && fn.body[1]?.type === 'Return') {
+    } else if (
+      fn.body.length === 2 &&
+      fn.body[0]?.type === 'Assign' &&
+      fn.body[1]?.type === 'Return'
+    ) {
       const assignment = fn.body[0]
       const target = assignment.targets?.length === 1 ? assignment.targets[0] : undefined
       const local = target?.type === 'Name' ? target.id : undefined
@@ -8135,15 +8141,18 @@ const analyzePythonFileAccessTree = (
       names.add(local)
       returnNode = fn.body[1]
     }
-    if (!returnNode || !isPyNode(returnNode.value) || !checksumExpressionSafe(returnNode.value, names))
+    if (
+      !returnNode ||
+      !isPyNode(returnNode.value) ||
+      !checksumExpressionSafe(returnNode.value, names)
+    )
       return undefined
     const pathRead =
       walkPy(returnNode.value).some((node) => checksumPathCall(node, parameter)) ||
       (fn.body.length === 2 &&
         isPyNode(fn.body[0]?.value) &&
         walkPy(fn.body[0].value).some((node) => checksumPathCall(node, parameter)))
-    if (!pathRead)
-      return undefined
+    if (!pathRead) return undefined
     return { function: fn, parameter }
   }
   for (const statement of Array.isArray(tree.body) ? tree.body : []) {
@@ -8299,8 +8308,8 @@ const analyzePythonFileAccessTree = (
     shadowHelper = true
   ): void => {
     if (!name) return
-      if (shadowHelper && (isHelperName(name) || checksumHelpers.has(name)))
-        shadowedHelperNames.add(name)
+    if (shadowHelper && (isHelperName(name) || checksumHelpers.has(name)))
+      shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
       for (const { target, source } of possibleAliases) {

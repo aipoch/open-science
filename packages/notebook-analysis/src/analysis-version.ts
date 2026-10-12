@@ -2,4 +2,4 @@
 // The format version is independent: rule additions do not require a data migration.
 export const NOTEBOOK_ANALYZER_VERSION = 1 as const
 export const NOTEBOOK_ANALYZER_REVISION =
-  'tree-sitter-in-process-195-bounded-checksum-comprehension-inputs'
+  'tree-sitter-in-process-196-bounded-checksum-comprehension-inputs-optim-positional-method'

@@ -3749,8 +3749,14 @@ describe('file context after mutable path collections', () => {
 
   it.each([
     ['an alias', '    reader = load_coordinates\n    frame = reader(input_csv)'],
-    ['a rebound reader', '    load_coordinates = replacement\n    frame = load_coordinates(input_csv)'],
-    ['a shadowing parameter', 'def main(load_coordinates):\n    frame = load_coordinates("outputs/coordinates.csv")']
+    [
+      'a rebound reader',
+      '    load_coordinates = replacement\n    frame = load_coordinates(input_csv)'
+    ],
+    [
+      'a shadowing parameter',
+      'def main(load_coordinates):\n    frame = load_coordinates("outputs/coordinates.csv")'
+    ]
   ])('does not replay a nested reader helper through %s', async (_label, body) => {
     const source = [
       'import pandas as pd',

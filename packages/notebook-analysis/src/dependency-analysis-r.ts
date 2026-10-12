@@ -2827,6 +2827,31 @@ const analyzeRSource = (
     return !expr.names[contract.position] ? contract.position : -1
   }
 
+  const opaqueSolverMethodIndex = (
+    expr: Extract<RExpr, { kind: 'call' }>,
+    sameSourceBfgs = false
+  ): number => {
+    const names = expr.names.filter((name): name is string => Boolean(name))
+    const prefix = ['par', 'fn', 'gr', 'method']
+    if (
+      new Set(names).size !== names.length ||
+      expr.args.some(
+        (arg) => isSymbol(arg) && (arg.name === '...' || (sameSourceBfgs && !arg.name))
+      ) ||
+      (sameSourceBfgs &&
+        names.some((name) => prefix.some((formal) => formal !== name && formal.startsWith(name))))
+    )
+      return -1
+    const named = expr.names.indexOf('method')
+    if (named >= 0) return named
+    if (!sameSourceBfgs || expr.args.length <= 3) return -1
+    // R binds leading unnamed arguments positionally until the first named
+    // argument.  Only certify the method slot when par, fn, gr, and method
+    // are all supplied positionally; partial tags and shifted slots remain
+    // opaque.
+    return expr.names.slice(0, 4).some(Boolean) ? -1 : 3
+  }
+
   const directOpaqueSolver = (
     expr: RExpr | null | undefined
   ): [string, NonNullable<ReturnType<typeof R_OPAQUE_CALLBACK_CAPTURE_CALLS.get>>] | undefined =>
@@ -5498,7 +5523,8 @@ const analyzeRSource = (
       if (!defined.includes(solverName)) priorUsed.push(solverName)
       unknown.push('opaque-call', 'dynamic-namespace')
       const sameSourceBfgs = captureContract.method === 'BFGS'
-      const method = expr.args[expr.names.indexOf('method')]
+      const methodIndex = opaqueSolverMethodIndex(expr, sameSourceBfgs)
+      const method = methodIndex >= 0 ? expr.args[methodIndex] : undefined
       const methodAvailable =
         !captureContract.method || (isCharacter(method) && method.value === captureContract.method)
       const argumentsPreserveCallbacks = opaqueSolverArgumentsPreserveCallbacks(expr)
@@ -6287,7 +6313,8 @@ const analyzeRSource = (
         const contract = solver[1]
         if (!opaqueSolverArgumentsPreserveCallbacks(value)) return false
         const sameSourceBfgs = contract.method === 'BFGS'
-        const method = value.args[value.names.indexOf('method')]
+        const methodIndex = opaqueSolverMethodIndex(value, sameSourceBfgs)
+        const method = methodIndex >= 0 ? value.args[methodIndex] : undefined
         if (contract.method && (!isCharacter(method) || method.value !== contract.method))
           return false
         return contract.callbacks.some((slot) => {

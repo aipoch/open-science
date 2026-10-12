@@ -5871,7 +5871,8 @@ describe('R same-cell BFGS callback captures', () => {
   it.each([
     'stats::optim(par=0, fn=objective, gr=gradient, method="BFGS")',
     'stats::optim(gr=gradient, method="BFGS", fn=objective, par=0)',
-    'optim(0, objective, gradient, method="BFGS")'
+    'optim(0, objective, gradient, method="BFGS")',
+    'optim(0, objective, gradient, "BFGS")'
   ])('retains both callback captures without certifying %s', async (call) => {
     const { facts, fileAccess } = await analyzeRNotebookSource(`${callbacks}\nfit <- ${call}`)
     expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
