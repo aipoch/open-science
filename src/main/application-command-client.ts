@@ -48,18 +48,20 @@ const createApplicationCommandClient = (): ApplicationCommandClient => {
   return Object.freeze({
     invoke: async (dispatcher, commandName, callerContext, args, payloadOptions = {}) => {
       const caller = callerFor(callerContext)
+      const dispatch = (arguments_: readonly unknown[]): Promise<unknown> =>
+        dispatcher.invoke(commandName, {
+          callerContext,
+          callerLease: caller.lease.lease,
+          args: arguments_
+        })
+      if (payloadOptions.acceptPayload !== 1 && !payloadOptions.transfer) return dispatch(args)
       return runtimePayloadTransfers.invoke(
         commandName,
         args,
         callerContext,
         caller.lease.lease,
         payloadOptions,
-        (arguments_) =>
-          dispatcher.invoke(commandName, {
-            callerContext,
-            callerLease: caller.lease.lease,
-            args: arguments_
-          })
+        dispatch
       )
     },
     releaseClient: (surface, clientId): void => {
