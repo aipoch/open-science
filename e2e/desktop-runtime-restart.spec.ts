@@ -8,6 +8,7 @@ import type { ElectronApplication, Page } from 'playwright'
 import { launchEnvironment, launchOpenScience } from './fixtures/electron-app'
 import { NotebookRunRepository } from '../src/main/notebook/repository'
 import { createRootNotebookLane } from '../src/main/notebook/lane-identity'
+import { createProjectViaUi } from './fixtures/project'
 
 for (const borrowed of [false, true])
   for (const retainBackend of [true, false]) {
@@ -119,10 +120,7 @@ for (const borrowed of [false, true])
         let page = await launch()
         await page.evaluate(() => window.api.settings.markOnboardingComplete())
         await page.reload({ waitUntil: 'domcontentloaded' })
-        await page.getByRole('button', { name: 'New project' }).click()
-        const projectDialog = page.getByRole('dialog', { name: 'New project' })
-        await projectDialog.getByLabel('Name').fill('Restart fixtures')
-        await projectDialog.getByRole('button', { name: 'Create project' }).click()
+        await createProjectViaUi(page, 'Restart fixtures')
         await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
         const setup = await page.evaluate(
           async ({ cwd, largeConversations }) => {

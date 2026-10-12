@@ -1,16 +1,14 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
+import { createProjectViaUi } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
 
 test('discusses and replays an ordinary Session directly from its menu', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Ordinary replay')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Ordinary replay')
   const projectId = await page.evaluate(
     async () =>
       (await window.api.projects.list()).find((project) => project.name === 'Ordinary replay')!.id
@@ -92,10 +90,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Replay research')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Replay research')
   const projectId = await page.evaluate(
     async () =>
       (await window.api.projects.list()).find((project) => project.name === 'Replay research')!.id
@@ -572,10 +567,7 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Replay Office preview')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Replay Office preview')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
     .fill('Create preview context menu artifacts.')

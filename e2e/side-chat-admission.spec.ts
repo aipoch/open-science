@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Real Electron + Radix. No renderer-store injection: the permission wait is produced by the
 // deterministic agent through the production protocol.
@@ -9,10 +10,7 @@ test('offers Side chat while idle and hides its new-chat entry while main awaits
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.setViewportSize({ width: 1400, height: 1000 })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Side chat admission regression')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Side chat admission regression')
   const mainComposer = page.getByRole('textbox', { name: 'Ask anything' })
   await mainComposer.fill('Summarize the deterministic fixture.')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
@@ -52,10 +50,7 @@ test('keeps Side chat across renderer reload but discards it on application rest
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await page.setViewportSize({ width: 1400, height: 1000 })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Ephemeral side chat regression')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Ephemeral side chat regression')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
     .fill('Summarize the deterministic fixture.')

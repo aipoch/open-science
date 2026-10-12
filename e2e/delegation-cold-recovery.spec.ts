@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROMPT = 'Run delegated cold recovery regression.'
 
@@ -12,10 +13,7 @@ test('continues a child after force quit without rewriting persisted state', asy
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Delegation cold recovery')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Delegation cold recovery')
   const controls = page.getByTestId('composer-controls-trigger')
   if (!(await controls.getAttribute('aria-label'))?.includes('Delegation On')) {
     await controls.click()

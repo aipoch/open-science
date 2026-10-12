@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
 
@@ -10,10 +11,7 @@ test('forks local and imported research and immediately continues through the re
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Fork lifecycle')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Fork lifecycle')
   const prompt = 'Summarize the deterministic fixture.'
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
   await page.getByRole('button', { name: 'Send message' }).click()
@@ -125,10 +123,7 @@ test('changes branch permissions before the first follow-up without changing sou
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Branch permissions')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Branch permissions')
   const prompt = 'Summarize the deterministic fixture.'
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
   await page.getByRole('button', { name: 'Send message' }).click()

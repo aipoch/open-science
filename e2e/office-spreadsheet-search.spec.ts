@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import type { FileViewerSearchProvider } from '@file-viewer/core'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Exercise real iframe pointer and native Find focus on a presented Electron window.
 test.use({ windowMode: 'normal' })
@@ -9,10 +10,7 @@ test.use({ windowMode: 'normal' })
 test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await projectDialog.getByLabel('Name').fill('Spreadsheet search feasibility')
-  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Spreadsheet search feasibility')
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page

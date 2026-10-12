@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test('restores app interaction after navigating from a search file preview to its conversation', async ({
   app
@@ -7,10 +8,7 @@ test('restores app interaction after navigating from a search file preview to it
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search file navigation')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Search file navigation')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
     .fill('Create preview context menu artifacts.')
@@ -50,10 +48,7 @@ test('previews a recent upload without leaving search and locates its source mes
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Recent upload navigation')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Recent upload navigation')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'source-notes.md',
     mimeType: 'text/markdown',

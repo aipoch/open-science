@@ -72,6 +72,19 @@ included or excluded, and identify uncovered risks. State that the checks ran af
 edit. Only mark the change verified after an independent review confirms that this mapping covers the
 final state.
 
+## Reuse E2E preparation, preserve scenario assertions
+
+Use `createProjectViaUi` from `e2e/fixtures/project.ts` when an English-language E2E needs
+a project as setup. It clicks the Home header entry and submits the real form; the spec keeps
+its own readiness checks and behavior assertions. Certification helpers compose this operation
+while retaining their project-ID discovery. Tests that inspect the form, fill additional fields,
+or activate it with the keyboard can use `homeNewProjectButton` without hiding those steps.
+
+Keep explicit accessible-name assertions in tests for copy, translations and accessibility.
+Scope ambiguous actions to their owning region rather than selecting the first match. Do not
+replace UI journeys with API seeding merely to remove repetition, or delete scenarios because
+they share preparation. Prefer small helpers for repeated operations over a generic page hierarchy.
+
 ## Module-impact registration
 
 Module registration is part of the same change as the source and tests, not a follow-up after CI

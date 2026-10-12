@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { JSHandle, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
 
 const PROJECT_NAME = 'Agent journey project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -151,10 +152,7 @@ const persistedMemoryState = async (
   }, USER_MESSAGE)
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -214,7 +212,7 @@ test('returns from Library to the originating conversation and New Conversation 
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
+  await expect(homeNewProjectButton(page)).toBeVisible()
 })
 
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {

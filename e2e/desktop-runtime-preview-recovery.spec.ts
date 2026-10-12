@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { launchEnvironment, launchOpenScience } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test('reacquires a mounted managed image capability after recovery', async () => {
   const root = await mkdtemp(join(tmpdir(), 'open-science-preview-recovery-'))
@@ -24,10 +25,7 @@ test('reacquires a mounted managed image capability after recovery', async () =>
       .toMatchObject({ phase: 'ready' })
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill('Preview recovery')
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, 'Preview recovery')
     await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
     await page.evaluate(async () => {
       const project = (await window.api.projects.list()).find(

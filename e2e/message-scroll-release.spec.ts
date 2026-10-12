@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Scroll release project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -13,10 +14,7 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })

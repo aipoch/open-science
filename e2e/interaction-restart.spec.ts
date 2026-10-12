@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import type { NotebookRunRecord } from '../src/shared/notebook'
+import { createProjectViaUi } from './fixtures/project'
 
 const scenarios = [
   { action: 'approve', restart: true },
@@ -22,10 +23,7 @@ for (const { action, restart } of scenarios) {
     test.setTimeout(180_000)
     await app.completeOnboarding()
     let page = await app.configureFakeAgent()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(`Restart ${action}`)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, `Restart ${action}`)
     const permission = action === 'permission-allow' || action === 'permission-deny'
     const prompt = permission
       ? 'Request restart verification permission.'
@@ -253,10 +251,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     test.setTimeout(240_000)
     await app.completeOnboarding()
     let page = await app.configureFakeAgent()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(`Permission handoff ${secondDecision}`)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, `Permission handoff ${secondDecision}`)
     const prompt = 'Verify consecutive permissions after restart.'
     await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
     await page.getByRole('button', { name: 'Send message' }).click()
@@ -370,10 +365,7 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Cancellation publication')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Cancellation publication')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
     .fill('Publish then wait for cancellation.')

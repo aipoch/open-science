@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Mermaid block project'
 const MERMAID_PROMPT = 'Render the mermaid block journey.'
@@ -12,10 +13,7 @@ const openMermaidConversation = async (app: {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(MERMAID_PROMPT)

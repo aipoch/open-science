@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { ElectronApplication } from 'playwright'
 import { x as extract } from 'tar'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
 test.use({ windowMode: 'hidden' })
@@ -14,10 +15,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Diagnostic research')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Diagnostic research')
   const prompt = 'Summarize the deterministic fixture.'
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
   await page.getByRole('button', { name: 'Send message' }).click()

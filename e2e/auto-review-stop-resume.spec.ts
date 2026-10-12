@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import type { ReviewWithChecks } from '../src/shared/reviewer'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 async function snapshot(
   page: Page
@@ -32,10 +33,7 @@ for (const scenario of [
     test.setTimeout(180_000)
     await app.completeOnboarding()
     let page = await app.configureFakeAgent()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(`Review diagnostic ${scenario}`)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, `Review diagnostic ${scenario}`)
     await page.getByTestId('composer-controls-trigger').click()
     await page.getByRole('menuitem', { name: 'Auto-review', exact: true }).click()
     await page.keyboard.press('Escape')

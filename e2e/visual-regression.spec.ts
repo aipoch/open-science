@@ -3,6 +3,7 @@ import type { Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { setTheme } from './fixtures/settings-preferences'
+import { homeNewProjectButton } from './fixtures/project'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -151,7 +152,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 
   await expectStableScreenshot(page, 'home-empty.png')
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await homeNewProjectButton(page).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
   await expectStableScreenshot(page, 'project-create-dialog.png')

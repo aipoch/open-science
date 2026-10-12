@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const openGeneralSettings = async (page: Page): Promise<Locator> => {
   await page.getByRole('button', { name: 'Settings' }).click()
@@ -210,10 +211,7 @@ test.describe('Windows window system', () => {
 
   test('opens the whole-window find overlay with Ctrl+F in a workspace', async ({ app }) => {
     const page = await app.completeOnboarding()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const projectDialog = page.getByRole('dialog', { name: 'New project' })
-    await projectDialog.getByLabel('Name').fill('Windows find project')
-    await projectDialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, 'Windows find project')
     await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
     await expect.poll(() => app.findOverlayIsVisible()).toBe(false)

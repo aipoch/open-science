@@ -4,6 +4,7 @@ import type { Locator, Page } from 'playwright'
 import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
+import { createProjectViaUi } from './fixtures/project'
 
 // file:// modules do not reliably populate Resource Timing. CDP reports the scripts Chromium
 // actually parsed, including those loaded before the test attached to the restarted window.
@@ -142,10 +143,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
   await page.reload({ waitUntil: 'domcontentloaded' })
 
   const projectName = 'Memory project scope'
-  await page.getByRole('button', { name: 'New project' }).click()
-  const createProject = page.getByRole('dialog', { name: 'New project' })
-  await createProject.getByLabel('Name').fill(projectName)
-  await createProject.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, projectName)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page.evaluate(async () => {
@@ -209,10 +207,7 @@ test('injects recent auto-recall memory after reopen into an unrelated Agent tur
   })
   page = await app.restart()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Memory recall project')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Memory recall project')
   await sendPrompt(
     page,
     'Verify automatic memory recall.',

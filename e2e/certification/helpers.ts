@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
+import { createProjectViaUi } from '../fixtures/project'
 
 const createProject = async (page: Page, name: string): Promise<string> => {
   const existingProjectIds = await page.evaluate(async () => {
@@ -8,10 +9,7 @@ const createProject = async (page: Page, name: string): Promise<string> => {
     }
     return (await bridge.api.projects.list()).map((project) => project.id)
   })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(name)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, name)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   let projectId: string | undefined

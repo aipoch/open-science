@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Skill permission project'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
@@ -22,10 +23,7 @@ const SKILL_BODY = [
 const SCREENSHOT_ROOT = resolve(process.cwd(), 'test-results')
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 

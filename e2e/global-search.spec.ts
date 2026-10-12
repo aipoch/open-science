@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test('refreshes global search when another renderer edits a Library collection', async ({
   app
@@ -390,10 +391,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search files')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Search files')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'search-notes.md',
     mimeType: 'text/markdown',
@@ -497,10 +495,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search preview formats')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Search preview formats')
   const notebook = JSON.stringify({
     nbformat: 4,
     nbformat_minor: 5,
@@ -694,10 +689,7 @@ test('uses the same preview and information tabs for generated files', async ({
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Generated search previews')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Generated search previews')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
     .fill('Create preview context menu artifacts.')

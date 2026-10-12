@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
 import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test('imports external notes, preserves provenance through undo, and persists an empty annotated export', async ({
   app
@@ -425,10 +426,7 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await projectDialog.getByLabel('Name').fill('Shared PDF project')
-  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Shared PDF project')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'shared-paper.pdf',
     mimeType: 'application/pdf',
@@ -605,10 +603,7 @@ test('shares independently imported native notes without duplication or resurrec
   await writeFile(path, bytes)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await projectDialog.getByLabel('Name').fill('Independent native notes')
-  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Independent native notes')
   await page.locator('input[type="file"][multiple]').setInputFiles(path)
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read this annotated PDF.')
   await page.getByRole('button', { name: 'Send message' }).click()

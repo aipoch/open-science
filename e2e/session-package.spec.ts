@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import { stat, writeFile, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
@@ -272,10 +273,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   const page = await app.completeOnboarding()
   const archive = await app.configureSessionPackageDialogs({ availableBytes: 0 })
   await writeFile(archive, 'No archive bytes should be parsed')
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Capacity test')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Capacity test')
   await page.getByRole('button', { name: 'Capacity test', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
   const operation = page.getByRole('dialog', { name: 'Import Session package', exact: true })
@@ -296,10 +294,7 @@ test('exports a Session package and opens the imported Session with replay', asy
     if (message.type() === 'warning' || message.type() === 'error') console.log(message.text())
   })
   const archive = await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Portable research')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Portable research')
   await page.locator('input[type="file"][multiple]').setInputFiles([
     {
       name: 'research-notes.md',

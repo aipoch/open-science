@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Shell runs in the default regression suite. Set OPEN_SCIENCE_E2E_PYTHON and
 // COMPUTE_TEST_SSH_ALIAS to exercise an external interpreter and a real SSH host.
@@ -35,10 +36,7 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
         await window.api.runtime.setEnvironmentEnabled('python', external.envId, true)
       }, process.env.OPEN_SCIENCE_E2E_PYTHON!)
     }
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill('Background completion regression')
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, 'Background completion regression')
     if (mode === 'ssh') {
       await page.getByRole('textbox', { name: 'Ask anything' }).fill('Initialize completion test.')
       await page.getByRole('button', { name: 'Send message' }).click()

@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROMPT = 'Stream the long scroll journey.'
 const COMPLETED = 'Segment 3 paragraph 7.'
@@ -10,10 +11,7 @@ test('continues a restored in-flight snapshot through the real Resume action', a
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Interrupted turn recovery')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Interrupted turn recovery')
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()
 
