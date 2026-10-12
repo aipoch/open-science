@@ -19,7 +19,8 @@ import {
   resolveShellInvocation,
   resolveShellProcessInvocation,
   runShellCommand,
-  terminateShellOnTimeout
+  terminateShellOnTimeout,
+  type NotebookShellProcessRequest
 } from './shell-process'
 import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -42,6 +43,424 @@ afterEach(async () => {
 })
 
 const previewAvailable = (): boolean => true
+
+describe('bounded Shell adapter lifecycle', () => {
+  const request = (
+    overrides: Partial<NotebookShellProcessRequest> = {}
+  ): NotebookShellProcessRequest => ({
+    command: 'echo fixture',
+    cwd: portableRuntimeRoot,
+    handoffDir: portableRuntimeRoot,
+    runtimeRoot: portableRuntimeRoot,
+    projectId: 'project',
+    sessionId: 'session',
+    laneKey: 'lane',
+    runId: 'run',
+    timeoutMs: 10_000,
+    ...overrides
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'scopes shutdown and waits for the original process cleanup',
+    async () => {
+      let allowCleanup!: () => void
+      const gate = new Promise<void>((resolve) => {
+        allowCleanup = resolve
+      })
+      const cleanup = vi.fn(async () => {
+        await gate
+        return { processesTerminated: true, networkClosed: true, temporaryResourcesRemoved: true }
+      })
+      const children = new Map<string, ChildProcess>()
+      const released = vi.fn()
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        {
+          wrap: async (invocation) => ({
+            executable: process.execPath,
+            args: ['-e', 'setInterval(()=>{},1000)'],
+            env: invocation.env,
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          })
+        },
+        {
+          claim: (child, identity) => {
+            children.set(identity.runId, child)
+            return () => released(identity.runId)
+          }
+        },
+        'bounded'
+      )
+      const completions = [
+        request(),
+        request({ runId: 'other-project', projectId: 'other' }),
+        request({ runId: 'other-session', sessionId: 'other' }),
+        request({ runId: 'other-lane', laneKey: 'other' })
+      ].map((input) => adapter.execute(input))
+      let shutdownSettled = false
+      try {
+        await vi.waitFor(() => expect(children.size).toBe(4), { timeout: 5_000 })
+        const shutdown = adapter
+          .shutdown({ projectId: 'project', sessionId: 'session', laneKey: 'lane' })
+          .then((result) => {
+            shutdownSettled = true
+            return result
+          })
+        await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce(), { timeout: 5_000 })
+        expect(shutdownSettled).toBe(false)
+        expect(() => process.kill(children.get('run')!.pid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+        for (const id of ['other-project', 'other-session', 'other-lane'])
+          expect(() => process.kill(children.get(id)!.pid!, 0)).not.toThrow()
+        expect(released).not.toHaveBeenCalled()
+        allowCleanup()
+        await expect(shutdown).resolves.toEqual({ reaped: true })
+        await expect(completions[0]).resolves.toMatchObject({ cancelled: true })
+        expect(released).toHaveBeenCalledExactlyOnceWith('run')
+      } finally {
+        allowCleanup()
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        await Promise.all(completions)
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'retains failed cleanup, blocks the lane and deduplicates shutdown retries',
+    async () => {
+      let verified = false
+      const cleanup = vi.fn(async () => {
+        if (cleanup.mock.calls.length === 2) throw new Error('temporary cleanup failure')
+        return {
+          processesTerminated: true,
+          networkClosed: verified,
+          temporaryResourcesRemoved: verified
+        }
+      })
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        executable: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+        env: invocation.env,
+        annotateStderr: (stderr) => stderr,
+        cleanup
+      }))
+      const release = vi.fn()
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        { wrap },
+        { claim: () => release },
+        'bounded'
+      )
+      try {
+        expect(await adapter.execute(request())).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          ownedTreeReaped: false
+        })
+        expect(release).not.toHaveBeenCalled()
+        expect(await adapter.execute(request({ runId: 'blocked-run' }))).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'not-started' }
+        })
+        expect(wrap).toHaveBeenCalledOnce()
+        expect(await Promise.all([adapter.shutdown(), adapter.shutdown()])).toEqual([
+          { reaped: false },
+          { reaped: false }
+        ])
+        expect(cleanup).toHaveBeenCalledTimes(2)
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(release).toHaveBeenCalledOnce()
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(cleanup).toHaveBeenCalledTimes(3)
+      } finally {
+        verified = true
+        await adapter.shutdown()
+      }
+    }
+  )
+
+  it.each(['incomplete', 'throw'] as const)(
+    'retains preparation cleanup after %s and retries without spawning',
+    async (failure) => {
+      let verified = false
+      const retryCleanup = vi.fn(async () => {
+        if (!verified && failure === 'throw') throw new Error('cleanup unavailable')
+        return verified
+      })
+      const wrap = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(
+            new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'),
+            { retryCleanup }
+          )
+        )
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        { wrap },
+        undefined,
+        'bounded'
+      )
+      expect(await adapter.execute(request())).toMatchObject({
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      expect(await adapter.shutdown()).toEqual({ reaped: false })
+      verified = true
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(retryCleanup).toHaveBeenCalledTimes(2)
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(retryCleanup).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'retains failed-claim cleanup without creating a replacement process',
+    async () => {
+      let verified = false
+      const cleanup = vi.fn(async () => ({
+        processesTerminated: true,
+        networkClosed: verified,
+        temporaryResourcesRemoved: verified
+      }))
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        executable: process.execPath,
+        args: ['-e', 'setInterval(()=>{},1000)'],
+        env: invocation.env,
+        annotateStderr: (stderr) => stderr,
+        cleanup
+      }))
+      let child: ChildProcess | undefined
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        { wrap },
+        {
+          claim: (owned) => {
+            child = owned
+            throw new Error('receipt unavailable')
+          }
+        },
+        'bounded'
+      )
+      try {
+        expect(await adapter.execute(request())).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete'
+        })
+        expect(() => process.kill(child!.pid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(wrap).toHaveBeenCalledOnce()
+        expect(cleanup).toHaveBeenCalledTimes(2)
+      } finally {
+        verified = true
+        await adapter.shutdown()
+      }
+    }
+  )
+
+  it.each(['shutdown', 'caller'] as const)(
+    'cancels in-flight preparation through %s and retains cleanup',
+    async (source) => {
+      let finishPreparation!: () => void
+      const gate = new Promise<void>((resolve) => {
+        finishPreparation = resolve
+      })
+      let verified = false,
+        seenSignal: AbortSignal | undefined
+      const cleanup = vi.fn(async () => ({
+        processesTerminated: true,
+        networkClosed: verified,
+        temporaryResourcesRemoved: verified
+      }))
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => {
+        seenSignal = invocation.signal
+        await gate
+        return {
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr) => stderr,
+          cleanup
+        }
+      })
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        { wrap },
+        undefined,
+        'bounded'
+      )
+      const controller = new AbortController()
+      const completion = adapter.execute(request({ signal: controller.signal }))
+      try {
+        await vi.waitFor(() => expect(wrap).toHaveBeenCalledOnce())
+        if (source === 'caller') {
+          controller.abort()
+          expect(seenSignal?.aborted).toBe(true)
+        }
+        const shutdown = adapter.shutdown()
+        expect(seenSignal?.aborted).toBe(true)
+        finishPreparation()
+        await expect(completion).resolves.toMatchObject({
+          cancelled: true,
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'not-started' }
+        })
+        await expect(shutdown).resolves.toEqual({ reaped: false })
+        expect(cleanup).toHaveBeenCalledTimes(2)
+        expect(cleanup).toHaveBeenLastCalledWith('cancel', {
+          processesTerminated: true,
+          processState: 'never-started'
+        })
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      } finally {
+        finishPreparation()
+        verified = true
+        await adapter.shutdown()
+        await completion
+      }
+    }
+  )
+
+  it('honors an already-aborted caller without preparing or retaining an execution', async () => {
+    const wrap = vi.fn(),
+      controller = new AbortController()
+    controller.abort()
+    const adapter = new NotebookShellProcessAdapter(
+      process.platform,
+      { wrap },
+      undefined,
+      'bounded'
+    )
+    await expect(adapter.execute(request({ signal: controller.signal }))).resolves.toMatchObject({
+      cancelled: true
+    })
+    expect(wrap).not.toHaveBeenCalled()
+    expect(await adapter.shutdown()).toEqual({ reaped: true })
+  })
+
+  it.each(['beginSpawn', 'beginLaunch'] as const)(
+    'cleans an active sandbox after %s throws and retains failed cleanup',
+    async (stage) => {
+      let verified = false
+      const endExecution = vi.fn(),
+        notStarted = vi.fn(),
+        started = vi.fn(),
+        claim = vi.fn()
+      const cleanup = vi.fn(async () => ({
+        processesTerminated: true,
+        networkClosed: verified,
+        temporaryResourcesRemoved: verified
+      }))
+      const beginSpawn = vi.fn(() => {
+        if (stage === 'beginSpawn') throw new Error('admission unavailable')
+        return { started, notStarted }
+      })
+      const beginLaunch = vi.fn(() => {
+        throw new Error('launch intent write failed')
+      })
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        {
+          wrap: async (invocation) => ({
+            executable: invocation.executable,
+            args: invocation.args,
+            env: invocation.env,
+            beginExecution: () => endExecution,
+            beginSpawn,
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          })
+        },
+        { claim, beginLaunch },
+        'bounded'
+      )
+      try {
+        expect(await adapter.execute(request())).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'not-started' }
+        })
+        expect(endExecution).toHaveBeenCalledOnce()
+        expect(notStarted).toHaveBeenCalledTimes(stage === 'beginLaunch' ? 1 : 0)
+        expect(beginLaunch).toHaveBeenCalledTimes(stage === 'beginLaunch' ? 1 : 0)
+        expect(started).not.toHaveBeenCalled()
+        expect(claim).not.toHaveBeenCalled()
+        expect(cleanup).toHaveBeenLastCalledWith('spawn-failed', {
+          processesTerminated: true,
+          processState: 'never-started'
+        })
+        expect(await adapter.shutdown()).toEqual({ reaped: false })
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(endExecution).toHaveBeenCalledOnce()
+        expect(beginSpawn).toHaveBeenCalledOnce()
+      } finally {
+        verified = true
+        await adapter.shutdown()
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32').each(['before-spawn', 'after-claim'] as const)(
+    'retains a throwing launch abort at %s while releasing the other original resources',
+    async (stage) => {
+      let verified = false
+      const abort = vi.fn(() => {
+        if (!verified) throw new Error('receipt unlink failed')
+      })
+      const endExecution = vi.fn(),
+        notStarted = vi.fn(),
+        started = vi.fn()
+      const cleanup = vi.fn(async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      const claim = vi.fn(() => {
+        throw new Error('claim failed')
+      })
+      const beginLaunch = vi.fn(() => ({ claim, abort }))
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        {
+          wrap: async (invocation) => ({
+            executable: process.execPath,
+            args: stage === 'before-spawn' ? ['\0'] : ['-e', 'setInterval(()=>{},1000)'],
+            env: invocation.env,
+            beginExecution: () => endExecution,
+            beginSpawn: () => ({ started, notStarted }),
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          })
+        },
+        { claim, beginLaunch },
+        'bounded'
+      )
+      try {
+        expect(await adapter.execute(request())).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete'
+        })
+        expect(endExecution).toHaveBeenCalledOnce()
+        expect(cleanup).toHaveBeenCalledOnce()
+        expect(notStarted).toHaveBeenCalledTimes(stage === 'before-spawn' ? 1 : 0)
+        expect(started).toHaveBeenCalledTimes(stage === 'after-claim' ? 1 : 0)
+        expect(await adapter.shutdown()).toEqual({ reaped: false })
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        expect(abort).toHaveBeenCalledTimes(3)
+        expect(cleanup).toHaveBeenCalledOnce()
+        expect(beginLaunch).toHaveBeenCalledOnce()
+      } finally {
+        verified = true
+        await adapter.shutdown()
+      }
+    }
+  )
+})
 
 describe('notebook shell process behavior', () => {
   it.skipIf(process.platform === 'win32' && !process.env.OPEN_SCIENCE_TEST_BASH)(

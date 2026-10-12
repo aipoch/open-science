@@ -1,4 +1,4 @@
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox, validateLocalService } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, type Stats } from 'node:fs'
@@ -15,7 +15,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
@@ -431,6 +431,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    if (invocation.localService) {
+      invocation = {
+        ...invocation,
+        localService: validateLocalService(
+          invocation.localService,
+          this.platform,
+          invocation.target?.kind
+        )
+      }
+    }
+    if (
+      invocation.localService &&
+      invocation.localService.executionId !== invocation.executionReference
+    ) {
+      throw new Error('Notebook local service does not belong to this execution.')
+    }
+    if (
+      invocation.localService &&
+      !invocation.filesystem.readWriteRoots.includes(dirname(invocation.localService.socketPath))
+    ) {
+      throw new Error('Notebook local service directory requires an explicit write grant.')
+    }
     if (
       this.windowsRuntime &&
       invocation.target?.kind !== 'wsl2' &&
@@ -507,6 +529,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let wrapped: Awaited<ReturnType<NotebookNetworkSandbox['wrap']>> | undefined
     try {
       wrapped = await this.sandbox!.wrap({
+        ...(invocation.localService ? { localService: invocation.localService } : {}),
         target,
         command: commandLine(
           invocation,

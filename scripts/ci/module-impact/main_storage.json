@@ -715,7 +715,10 @@
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

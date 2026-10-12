@@ -662,7 +662,10 @@
       "packages/notebook-analysis/src/dependency-analysis.r-directory.native.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.iteration-snapshots.native.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
+      "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -1052,7 +1052,10 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/shared/run-error-classification.test.ts",
       "src/shared/runtime-session-projection.test.ts",
-      "src/shared/update.test.ts"
+      "src/shared/update.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [

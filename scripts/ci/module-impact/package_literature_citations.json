@@ -1345,7 +1345,10 @@
       "packages/literature-library/test/library.test.ts",
       "packages/literature-library/test/merge-batch.test.ts",
       "packages/literature-library/test/reconcile.test.ts",
-      "packages/literature-library/test/item.test.ts"
+      "packages/literature-library/test/item.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],
