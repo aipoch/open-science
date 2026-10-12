@@ -165,7 +165,7 @@ export function createPackageTestPlan(paths, registry, { verification = false } 
         excluded: [],
         reasons: [`${path} -> package compilation, discovery or policy input -> all package tests`]
       }
-    } else if (packageExemptInput.test(path)) {
+    } else if (!verification && packageExemptInput.test(path)) {
       reasons.push(`${path} -> non-package test or script input -> package unit tests excluded`)
     } else if (!/^(?:src\/|docs\/|[^/]+\.md$)/.test(path)) {
       return {
