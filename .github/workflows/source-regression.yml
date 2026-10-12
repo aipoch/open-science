@@ -32,7 +32,8 @@ jobs:
     name: Complete source regression (macOS)
     if: ${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' }}
     runs-on: macos-15
-    timeout-minutes: 120
+    # Serial suite budgets total 160 minutes; reserve setup, accessibility and upload time.
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
