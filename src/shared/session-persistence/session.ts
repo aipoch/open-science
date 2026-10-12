@@ -163,11 +163,31 @@ export type PersistedRuntimeSessionAdmission = {
   runtimeSegmentId: string
 }
 
+const researchIdentity = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[^\s/\\]+$/)
+  .refine((value) => value !== '.' && value !== '..' && !value.includes('\0'))
+
+// Local organization only; never exported in a .science package or inferred from reading focus.
+export const researchMembershipSchema = z
+  .object({
+    sourceProjectId: researchIdentity,
+    sourceSessionId: researchIdentity,
+    sourceImportId: researchIdentity,
+    sourceTitle: z.string().max(4096)
+  })
+  .strict()
+export type ResearchMembership = z.infer<typeof researchMembershipSchema>
+
 export type PersistedChatSession = {
   // Main-only transient read projection. Never accepted from callers or encoded in Session JSON.
   recordProblems?: readonly import('./attention').SessionRecordProblem[]
   // Imported history has no execution authority. Absence preserves existing local Session behavior.
   packageOrigin?: import('../session-package').SessionPackageOrigin
+  // Main-owned stable research grouping; initial renderer saves are validated by Main.
+  researchMembership?: ResearchMembership
   // Copy receipt and recovery identity; unlike packageOrigin this grants no read-only status.
   forkOrigin?: import('../session-package').SessionPackageOrigin
   // Local message identity at Fork creation; independent of source links and usage attribution.
@@ -301,6 +321,8 @@ export type PersistedChatSession = {
 // context, and artifact payloads; those remain in Session JSON and load only when opened.
 export type SessionSummary = Readonly<{
   number: number
+  researchMembership?: ResearchMembership
+  importedResearch?: Readonly<{ importId: string }>
   id: string
   projectId: string
   title: string

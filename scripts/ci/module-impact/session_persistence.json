@@ -95,7 +95,8 @@
     "src/main/session-persistence/create-local-session.test.ts",
     "src/main/session-persistence/create-local-session.ts",
     "src/main/session-persistence/create-managed-session.test.ts",
-    "src/main/session-persistence/create-managed-session.ts"
+    "src/main/session-persistence/create-managed-session.ts",
+    "src/main/session-persistence/research-membership.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -126,9 +127,12 @@
     "src/main/session-persistence/flush-protocol.ts",
     "src/main/session-persistence/conversation-pdf-electron.ts",
     "src/main/session-persistence/create-local-session.ts",
-    "src/main/session-persistence/create-managed-session.ts"
+    "src/main/session-persistence/create-managed-session.ts",
+    "src/main/session-persistence/research-membership.ts"
   ],
-  "consumerModules": ["project_lifecycle"],
+  "consumerModules": [
+    "project_lifecycle"
+  ],
   "testFiles": {
     "owner": [
       "src/main/session-persistence/coordinator.architecture.test.ts",
@@ -655,6 +659,10 @@
       "src/main/observation-desktop/bridge.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

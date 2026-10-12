@@ -86,7 +86,10 @@
     "packages/skills/src/sources.ts",
     "packages/skills/src/projection.ts"
   ],
-  "consumerModules": ["user_skills_repository", "skill_marketplace"],
+  "consumerModules": [
+    "user_skills_repository",
+    "skill_marketplace"
+  ],
   "testFiles": {
     "owner": [
       "packages/skills/src/agent-home-skill-catalog.test.ts",
@@ -1470,9 +1473,20 @@
       "src/shared/project-recording.test.ts",
       "src/main/project-recordings/declarations.test.ts",
       "src/main/run-observation/managed-port.test.ts",
-      "src/main/run-observation/managed-status.test.ts"
+      "src/main/run-observation/managed-status.test.ts",
+      "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
+      "src/shared/session-replay.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -1,9 +1,20 @@
 {
-  "ownerPaths": ["src/shared/pdf-document-source.ts", "src/shared/pdf-document-source.test.ts"],
-  "interfacePaths": ["src/shared/pdf-document-source.ts"],
-  "consumerModules": ["main_literature", "workspace_previews", "workspace_bookmarks"],
+  "ownerPaths": [
+    "src/shared/pdf-document-source.ts",
+    "src/shared/pdf-document-source.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/pdf-document-source.ts"
+  ],
+  "consumerModules": [
+    "main_literature",
+    "workspace_previews",
+    "workspace_bookmarks"
+  ],
   "testFiles": {
-    "owner": ["src/shared/pdf-document-source.test.ts"],
+    "owner": [
+      "src/shared/pdf-document-source.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/main/literature/pdf-translation/checkpoints.test.ts",
@@ -1283,7 +1294,9 @@
       "src/main/run-observation-external-port.test.ts",
       "src/main/browser-recordings/owner.test.ts",
       "src/main/run-observation/media-collector.test.ts",
-      "src/main/project-recordings/recorder.test.ts"
+      "src/main/project-recordings/recorder.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

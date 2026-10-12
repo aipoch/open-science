@@ -1,3 +1,8 @@
+import { resolveResearchMembership } from './research-membership'
+import {
+  setResearchMembershipRequestSchema,
+  type SetResearchMembershipRequest
+} from '../../shared/session-replay'
 import { preserveMainTurnOutcomes, recordRestartTurnOutcome } from './turn-outcome-authority'
 import {
   setTurnOutcome,
@@ -20,6 +25,7 @@ import {
   sanitizeSessionRuntimeContext,
   SessionConfigurationBusyError,
   sessionRevision,
+  SessionRevisionConflictError,
   type DelegationPolicy,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -1374,10 +1380,13 @@ class SessionPersistenceStateOwner {
     return persisted
   }
 
-  private async persistTaskSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+  private async persistTaskSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession> {
     let persisted: PersistedChatSession
     try {
-      persisted = await saveSessionWithRevision(this.options.repository, session)
+      persisted = await saveSessionWithRevision(this.options.repository, session, expectedRevision)
     } catch (error) {
       if (!(error instanceof SessionProjectionAfterCommitError)) throw error
       persisted = error.committedSession
@@ -1385,6 +1394,41 @@ class SessionPersistenceStateOwner {
     }
     this.recordSession(persisted)
     return persisted
+  }
+
+  async setResearchMembership(input: SetResearchMembershipRequest): Promise<PersistedChatSession> {
+    const request = setResearchMembershipRequestSchema.parse(input)
+    this.options.assertMutable(request.projectId, request.sessionId, 'mutate')
+    const loaded = await loadAuthority(
+      this.options.repository,
+      request.projectId,
+      request.sessionId
+    )
+    if (loaded.status !== 'found') throw new Error('The discussion Session is unavailable.')
+    const current = loaded.session
+    if (current.packageOrigin || current.archivedAt !== undefined)
+      throw new Error('Research membership requires a writable discussion Session.')
+    if (sessionRevision(current) !== request.expectedRevision)
+      throw new SessionRevisionConflictError(request.expectedRevision, sessionRevision(current))
+    const membership = request.source
+      ? await resolveResearchMembership(
+          current,
+          {
+            sourceProjectId: request.source.projectId,
+            sourceSessionId: request.source.sourceSessionId,
+            sourceImportId: request.source.importId,
+            sourceTitle: ''
+          },
+          (projectId, sessionId) => loadAuthority(this.options.repository, projectId, sessionId)
+        )
+      : undefined
+    if (isDeepStrictEqual(current.researchMembership, membership)) return current
+    const candidate = { ...current, researchMembership: membership }
+    // Organization changes do not reorder the conversation or alter reading focus.
+    if (!membership) delete candidate.researchMembership
+    const saved = await this.persistTaskSession(candidate, request.expectedRevision)
+    this.options.notifyRuntimeContextSessionUpdated(saved)
+    return saved
   }
 
   private async saveSessionWithAuthority(
@@ -1441,6 +1485,19 @@ class SessionPersistenceStateOwner {
       )
     )
       throw new Error('Conversation Branch changed before the user Message was admitted.')
+    // Membership is supplied only on first creation. Every later renderer snapshot preserves
+    // Main's durable grouping, including explicit removal by the dedicated command.
+    const researchMembership = authority
+      ? authority.researchMembership
+      : session.researchMembership
+        ? await resolveResearchMembership(
+            session,
+            session.researchMembership,
+            (sourceProjectId, sourceSessionId) =>
+              loadAuthority(this.options.repository, sourceProjectId, sourceSessionId)
+          )
+        : undefined
+    session = { ...session, researchMembership }
     session = preserveMainTurnOutcomes(session, authority)
     const prepareMainOwnership =
       authority && options.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')

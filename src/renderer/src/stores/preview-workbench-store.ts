@@ -90,6 +90,7 @@ export type PreviewToolItem = PreviewItemBase & {
   replaySourceSessionId?: string
   replayStepId?: string
   replayBranchId?: string
+  // Transient explicit navigation to the player; excluded from durable preview state.
   replayRevealRequest?: number
   notebook?: NotebookSessionReference
   notebookRunId?: string

@@ -1083,7 +1083,11 @@
       "src/main/replay-viewer/http-host.integration.test.ts",
       "src/main/browser-recordings/external-port.test.ts",
       "src/main/observation-desktop/bridge.test.ts",
-      "src/main/run-observation-external-port.test.ts"
+      "src/main/run-observation-external-port.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "capabilityOverlays": [

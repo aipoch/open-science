@@ -1402,7 +1402,14 @@
       "src/shared/project-recording.test.ts",
       "src/main/project-recordings/declarations.test.ts",
       "src/main/run-observation/managed-port.test.ts",
-      "src/main/run-observation/managed-status.test.ts"
+      "src/main/run-observation/managed-status.test.ts",
+      "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
+      "src/shared/session-replay.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
     ]
   },
   "capabilityOverlays": [],

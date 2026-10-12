@@ -1091,7 +1091,9 @@
       "src/main/run-observation/managed-port.test.ts",
       "src/main/run-observation/managed-status.test.ts",
       "src/main/browser-recordings/owner.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

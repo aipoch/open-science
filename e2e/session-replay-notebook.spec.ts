@@ -132,10 +132,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   const stepId = await replay.locator('[data-replay-active]').getAttribute('data-replay-step')
   const branchId = await page.getByTestId('replay-stage').getAttribute('data-replay-branch')
   await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Ask in a conversation' })
-    .getByRole('button', { name: 'New conversation', exact: true })
-    .click()
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
   await expect(page.locator('[data-session-discussion-source]')).toContainText(source.title)
   await expect(editor).not.toContainText('#session-replay:')
@@ -145,6 +142,11 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   await editor.focus()
   await page.keyboard.press('ControlOrMeta+End')
   await page.keyboard.insertText('\nExplain the input of this standalone run.')
+  // Asking freezes the visible input, even if the reader reveals the result before sending.
+  await slider.focus()
+  await page.keyboard.press('End')
+  await replay.getByRole('button', { name: 'Notebook', exact: true }).click()
+  await expect(replay.getByText('ARCHIVED_RESULT_42', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   const conversation = page.getByRole('region', { name: 'Conversation', exact: true })
   await expect(conversation).toContainText('Deterministic reply:')

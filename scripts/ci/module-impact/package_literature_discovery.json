@@ -1002,7 +1002,9 @@
       "src/main/run-observation-external-port.test.ts",
       "src/main/browser-recordings/owner.test.ts",
       "src/main/run-observation/media-collector.test.ts",
-      "src/main/project-recordings/recorder.test.ts"
+      "src/main/project-recordings/recorder.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

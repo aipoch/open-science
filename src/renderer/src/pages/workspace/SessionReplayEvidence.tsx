@@ -211,12 +211,14 @@ export const SessionReplayEvidence = ({
   step,
   resources,
   onBack,
+  backLabel,
   onOpenResource
 }: {
   source: ReplaySourceIdentity
   step: ReplayStep
   resources: ReplayResource[]
   onBack: () => void
+  backLabel?: string
   onOpenResource: (resource: ReplayResource) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -247,7 +249,7 @@ export const SessionReplayEvidence = ({
           onClick={onBack}
         >
           <ArrowLeft size={14} aria-hidden="true" />
-          {t('Back to replay')}
+          {backLabel ?? t('Back to replay')}
         </Button>
         <h2 className="min-w-0 truncate text-sm font-medium">{t('Original recorded evidence')}</h2>
       </header>

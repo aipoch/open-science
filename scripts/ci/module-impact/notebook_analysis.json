@@ -31,7 +31,9 @@
   ],
   "testFiles": {
     "owner": [],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
@@ -1293,7 +1295,9 @@
       "src/shared/run-observation-capture.test.ts",
       "src/shared/browser-recording.test.ts",
       "src/shared/project-recording.test.ts",
-      "src/main/project-recordings/declarations.test.ts"
+      "src/main/project-recordings/declarations.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [
