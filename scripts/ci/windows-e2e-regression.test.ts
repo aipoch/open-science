@@ -72,12 +72,24 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
     uses: './.github/workflows/windows-notebook-runtime.yml'
   })
   expect(preparation.if).toContain("needs.plan.outputs.should_test == 'true'")
-  expect(preparation.steps).toEqual(pr.jobs.windows_e2e_setup.steps)
+  for (const name of ['Install dependencies', 'Build Electron application']) {
+    expect(step(preparation, name)).toEqual(step(pr.jobs.windows_e2e, name))
+  }
+  expect(step(preparation, 'Download Windows Notebook runtime').with).toEqual(
+    step(pr.jobs.windows_e2e, 'Download Windows Notebook runtime').with
+  )
+  expect(step(preparation, 'Pack E2E setup').run).toContain('e2e-setup-snapshot.mjs pack')
   const execution = workflow.jobs.windows_e2e
   expect(execution.if).toContain("needs.windows_e2e_setup.result == 'success'")
-  for (const name of ['Setup Node', 'Download E2E setup', 'Restore E2E setup']) {
-    expect(step(execution, name)).toEqual(step(pr.jobs.windows_e2e, name))
-  }
+  expect(step(execution, 'Setup Node').with).toMatchObject({
+    'node-version': '${{ needs.windows_e2e_setup.outputs.node_version }}',
+    'package-manager-cache': false
+  })
+  expect(step(execution, 'Download E2E setup').with).toMatchObject({
+    'artifact-ids': '${{ needs.windows_e2e_setup.outputs.artifact_id }}',
+    'merge-multiple': true
+  })
+  expect(step(execution, 'Restore E2E setup').run).toContain('e2e-setup-snapshot.mjs restore')
   for (const [id, command] of suites) {
     const run = execution.steps.find((candidate) => candidate.id === id)!
     expect(run.if).toBe(
