@@ -86,10 +86,7 @@ test('stages the same archive independently in two windows without creating or s
       .getByTestId('replay-panel')
       .getByRole('button', { name: 'Ask about this step', exact: true })
       .click()
-    await page
-      .getByRole('dialog', { name: 'Ask in a conversation' })
-      .getByRole('button', { name: 'New conversation', exact: true })
-      .click()
+    await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
     const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
     await expect(page.locator('[data-session-discussion-source]').last()).toContainText(
       source.title

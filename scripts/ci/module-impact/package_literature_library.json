@@ -1299,7 +1299,14 @@
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/uploads.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
+      "src/shared/session-replay.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
     ]
   },
   "capabilityOverlays": [],

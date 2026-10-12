@@ -26,14 +26,14 @@ it('upgrades the prior schema with empty unified tables and is idempotent', asyn
   await dropCurrentTables()
   await client.$executeRawUnsafe('DROP TABLE "PdfTranslationUsage"')
   await client.$executeRawUnsafe(
-    'DELETE FROM "_open_science_migrations" WHERE id = ?',
+    'DELETE FROM "_open_science_migrations" WHERE id >= ?',
     '0050_literature_translation'
   )
   const item = await client.literatureItem.create({
     data: { itemType: 'journalArticle', title: 'Existing paper' }
   })
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: ['0050_literature_translation']
+    applied: ['0050_literature_translation', '0051_session_research_membership']
   })
   expect(await client.literatureItem.findUnique({ where: { id: item.id } })).toEqual(item)
   expect(await client.pdfTranslation.count()).toBe(0)

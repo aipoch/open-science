@@ -1413,7 +1413,14 @@
       "src/main/notebook/environment-process.contract.test.ts",
       "cli/connector-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
+      "src/shared/session-replay.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

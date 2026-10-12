@@ -156,7 +156,7 @@ describe('AnnotationCards image projection', () => {
       )
     )
     expect(container.textContent).toContain('Saved analysis')
-    expect(container.textContent).toContain('Discuss')
+    expect(container.textContent).toContain('Question scope')
     expect(container.textContent).not.toContain('Reading')
     const source = container.querySelector('[data-session-discussion-source]')!
     expect(source.textContent).not.toContain('Discuss')
@@ -224,7 +224,7 @@ describe('AnnotationCards image projection', () => {
       )
       const source = container.querySelector('[data-session-discussion-source]')!
       expect(source.textContent).toContain('Study')
-      expect(source.textContent).not.toContain('Entire research')
+      expect(source.textContent?.includes('Entire research')).toBe(annotation === entire)
       expect(source.textContent?.includes('Step 7')).toBe(annotation === selected)
     }
   })

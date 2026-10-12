@@ -28,6 +28,23 @@ const mount = (): HTMLElement => {
   return screen.getByTestId('session-package-entry')
 }
 
+it('starts source-aware questions from the discussion welcome', () => {
+  const onStartResearch = vi.fn()
+  render(
+    <EmptyConversationBanner researchTitle="Tuanzi research" onStartResearch={onStartResearch} />
+  )
+
+  for (const [label, prompt] of [
+    ['Summarize research', 'Summarize this research and its main findings.'],
+    ['Examine the evidence', 'What evidence supports the conclusions?'],
+    ['Identify limitations', 'What has not been verified yet?']
+  ]) {
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    expect(onStartResearch).toHaveBeenLastCalledWith(prompt)
+  }
+  expect(onStartResearch).toHaveBeenCalledTimes(3)
+})
+
 it('opens a file picker on click and imports the picked package into the current Project', async () => {
   const pickerClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {})
   mount()

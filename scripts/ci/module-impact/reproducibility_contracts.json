@@ -1037,7 +1037,9 @@
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
       "src/main/artifacts/reproducibility-host.test.ts",
       "scripts/electron-vite-config.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

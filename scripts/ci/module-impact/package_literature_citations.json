@@ -1345,7 +1345,14 @@
       "packages/literature-library/test/library.test.ts",
       "packages/literature-library/test/merge-batch.test.ts",
       "packages/literature-library/test/reconcile.test.ts",
-      "packages/literature-library/test/item.test.ts"
+      "packages/literature-library/test/item.test.ts",
+      "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
+      "src/shared/session-replay.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
     ]
   },
   "capabilityOverlays": [],

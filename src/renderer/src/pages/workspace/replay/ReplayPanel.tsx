@@ -18,6 +18,7 @@ import {
   Maximize2,
   Minimize2,
   MessageSquare,
+  MessageSquarePlus,
   Library,
   ChevronDown,
   ChevronLeft,
@@ -68,6 +69,8 @@ export type ReplayPanelProps = {
   onToggleExpanded?: () => void
   onViewChange?: (state: ReplayViewState) => void
   onAskStep: (context: SessionDiscussionCapture) => void
+  onChooseConversation?: (context: SessionDiscussionCapture) => void
+  discussionPending?: boolean
   onOpenEvidence: (resource: ReplayResource | undefined, step: ReplayStep) => void
   readResource?: ReplayResourceReader
   readNotebookRun?: ReplayNotebookRunReader
@@ -123,6 +126,8 @@ const ReplayPanelContent = ({
   onToggleExpanded,
   onViewChange,
   onAskStep,
+  onChooseConversation,
+  discussionPending = false,
   onOpenEvidence,
   readResource,
   readNotebookRun = defaultNotebookReader
@@ -479,7 +484,7 @@ const ReplayPanelContent = ({
     return unsubscribe
   }, [replayDocument, seek])
 
-  // Keep an accessor to the visible frame; capture evidence only when a message is sent.
+  // The live frame is available to replay consumers; explicit Ask actions capture their own snapshot.
   const captureCurrent = useRef(() =>
     captureDiscussionStep(replayDocument, scene, runDetails, resources)
   )
@@ -644,17 +649,48 @@ const ReplayPanelContent = ({
                 variant="ghost"
                 size="icon"
                 onClick={askSession}
-                disabled={!replayDocument.branches.some((item) => item.steps.length)}
-                aria-label={t('Ask about this research')}
+                disabled={
+                  discussionPending || !replayDocument.branches.some((item) => item.steps.length)
+                }
+                aria-label={t('Discuss the entire research')}
               >
                 <MessageSquare size={16} aria-hidden="true" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="end" collisionBoundary={tooltipBoundary}>
-              {t('Ask about this research')}
+              {t('Discuss the entire research')}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        {onChooseConversation ? (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={discussionPending || !scene.step}
+                  aria-label={t('Add to another conversation…')}
+                  onClick={() => {
+                    pause()
+                    if (scene.step)
+                      onChooseConversation(
+                        captureDiscussionStep(replayDocument, scene, runDetails, resources)
+                      )
+                  }}
+                >
+                  <MessageSquarePlus size={16} aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Add to another conversation…')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
         {replayDocument.branches.length > 1 ? (
           <Select
             value={scene.branchId}
@@ -987,6 +1023,7 @@ const ReplayPanelContent = ({
         onSeek={seek}
         onSpeed={setSpeed}
         onAsk={ask}
+        discussionPending={discussionPending}
       />
     </div>
   )

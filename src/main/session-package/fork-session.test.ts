@@ -43,6 +43,12 @@ it('records the copied active branch head independently of original usage attrib
     createdAt: 1,
     updatedAt: 2,
     messages: [],
+    researchMembership: {
+      sourceProjectId: 'p',
+      sourceSessionId: 'research',
+      sourceImportId: 'import',
+      sourceTitle: 'Research'
+    },
     packageOrigin: {
       importId: 'copy',
       sourceProjectId: 'project',
@@ -75,6 +81,7 @@ it('records the copied active branch head independently of original usage attrib
     forkHeadMessageId: 'previous-copy-head'
   }
   const fork = createForkSession(copied, source, 'ask', 'Copy(2)')
+  expect(fork.researchMembership).toBeUndefined()
   expect(fork.forkHeadMessageId).toBe('local-head')
   expect(fork.conversationGraph?.messages[0].usageOrigin).toEqual({
     sessionId: 'ancestor',
