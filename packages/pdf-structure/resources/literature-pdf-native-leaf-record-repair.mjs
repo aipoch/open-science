@@ -3946,6 +3946,7 @@ function recoverCommonFencedLeafGutter(table, items, captions, rules, runs) {
         spaces.push([record[n - 1].rect[2], record[n].rect[0]])
     for (const item of record) {
       const run = runs.find((r) => r.text === item.text && sameRect(r.rect, item.rect))
+      if (!run) return
       const glyphs = [...item.text.replace(/\s/gu, '')]
       if (
         !Array.isArray(run.gaps) ||
@@ -4001,8 +4002,9 @@ function recoverCommonFencedLeafGutter(table, items, captions, rules, runs) {
   for (const record of records) {
     if (!record.some((i) => i.rect[0] < x) || !record.some((i) => i.rect[2] > x)) return
     for (const item of record.filter((i) => i.rect[0] < x && i.rect[2] > x)) {
-      const run = runs.find((r) => r.text === item.text && sameRect(r.rect, item.rect)),
-        gaps = run.gaps.filter((g) => g.left < x && g.right > x)
+      const run = runs.find((r) => r.text === item.text && sameRect(r.rect, item.rect))
+      if (!run) return
+      const gaps = run.gaps.filter((g) => g.left < x && g.right > x)
       if (gaps.length !== 1 || !splitObserved(item, runs, [[gaps[0].left, gaps[0].right]], h))
         return
     }

@@ -16803,6 +16803,7 @@ it.each([
   'changed glyph',
   'operator boundary',
   'missing record',
+  'missing observed run',
   'nonfinite gap'
 ])('declines the common measured leaf gutter with %s', (change) => {
   const f = commonLeafGutter()
@@ -16818,6 +16819,10 @@ it.each([
   if (change === 'operator boundary') last.glyphRuns = [1, 1, 1, 1, 2, 2]
   if (change === 'missing record')
     f.items = f.items.filter((i: { baseline: number }) => i.baseline !== 135)
+  if (change === 'missing observed run')
+    f.runs = f.runs.filter(
+      (r: { text: string; baseline: number }) => !(r.text === 'aa bb cc' && r.baseline === 135)
+    )
   if (change === 'nonfinite gap') last.gaps[1].right = Infinity
   const before = structuredClone(f)
   expect(
