@@ -1,6 +1,6 @@
 import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type { PackageMirror } from '../../../shared/mirror'
-import type { NotebookNetworkSettings } from '../../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,

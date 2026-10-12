@@ -20,10 +20,8 @@ import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
 } from '../../../shared/network-proxy'
-import {
-  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-  type NotebookNetworkSettings
-} from '../../../shared/notebook-network'
+import { type NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
+import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../../shared/notebook-network'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import {
   DEFAULT_PERMISSION_PROFILE,

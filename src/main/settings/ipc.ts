@@ -1,7 +1,7 @@
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
-import type { PrivateDestinationRequest } from '../../shared/notebook-network'
+import type { PrivateDestinationRequest } from '../../shared/notebook-network-settings'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {

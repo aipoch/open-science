@@ -1,5 +1,5 @@
 import type { ImagePointAnnotation } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 

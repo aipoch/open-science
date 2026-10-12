@@ -1,5 +1,5 @@
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'

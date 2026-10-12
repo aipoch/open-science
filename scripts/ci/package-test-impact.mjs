@@ -14,6 +14,16 @@ const packageGlobalInput =
 // the independently published package contracts, so changing them must not run every package.
 const packageExemptInput = /^(?:test\/fixtures\/|scripts\/)/
 
+// These packages run through module/host contracts and dedicated platform or CLI lanes.
+// They are downstream of independent libraries, never inputs to those libraries' suites.
+export const dedicatedPackageTestRoots = [
+  'packages/notebook-network-sandbox',
+  'packages/open-science',
+  'packages/credential-identity-probe-native',
+  'packages/process-tree-native',
+  'packages/safe-file-publisher-native'
+]
+
 // These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
 export const verificationFamilies = [
   { script: 'check:resilient-download-package', packages: ['resilient-download'] },
@@ -165,6 +175,8 @@ export function createPackageTestPlan(paths, registry, { verification = false } 
         excluded: [],
         reasons: [`${path} -> package compilation, discovery or policy input -> all package tests`]
       }
+    } else if (dedicatedPackageTestRoots.some((root) => path.startsWith(root + '/'))) {
+      reasons.push(`${path} -> dedicated module/host lane -> independent package suites excluded`)
     } else if (!verification && packageExemptInput.test(path)) {
       reasons.push(`${path} -> non-package test or script input -> package unit tests excluded`)
     } else if (!/^(?:src\/|docs\/|[^/]+\.md$)/.test(path)) {

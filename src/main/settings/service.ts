@@ -2,7 +2,7 @@ import { attachSkillDiagnostics } from '../skills/diagnostics'
 import type {
   PrivateDestinationRequest,
   PrivateDestinationReview
-} from '../../shared/notebook-network'
+} from '../../shared/notebook-network-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { ClassificationSettingsOwner } from './classification-settings'
@@ -117,7 +117,8 @@ import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
-import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
+import type { NotebookNetworkStatus } from '../../shared/notebook-network'
 import type {
   InstallMissingWslDependenciesRequest,
   InstallWslDistroRequest,

@@ -5,7 +5,11 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
-import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
+import {
+  createPackageTestPlan,
+  dedicatedPackageTestRoots,
+  validatePackageTestRegistry
+} from './package-test-impact.mjs'
 
 const registry = validatePackageTestRegistry(
   JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
@@ -503,5 +507,52 @@ it('routes download package changes downstream and host adapters without unchang
     })
     expect(invocations.flat()).toContain(test)
     expect(invocations.flat().some((value) => value.startsWith(packageRoot + '/'))).toBe(false)
+  }
+})
+
+// Dedicated roots are safe exclusions only while no independent library consumes them.
+it('independent packages do not depend on dedicated host packages', () => {
+  const names = dedicatedPackageTestRoots.map(
+    (root) => JSON.parse(readFileSync(`${root}/package.json`, 'utf8')).name
+  )
+  for (const { manifest } of manifests) {
+    const dependencies = {
+      ...manifest.dependencies,
+      ...manifest.devDependencies,
+      ...manifest.peerDependencies,
+      ...manifest.optionalDependencies
+    }
+    for (const name of names)
+      expect(Object.hasOwn(dependencies, name), `${manifest.name} -> ${name}`).toBe(false)
+  }
+})
+
+it('dedicated package edits retain module evidence and platform overlays', async () => {
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const manifest = loadModuleImpactManifest()
+  for (const root of dedicatedPackageTestRoots) {
+    const owner = Object.values(manifest.modules).find((module) =>
+      module.ownerPaths.some((path) => path.startsWith(root + '/'))
+    )!
+    const path = owner.ownerPaths.find(
+      (path) =>
+        path.startsWith(root + '/') &&
+        /\.(?:[cm]?[jt]s|cc|rs|swift)$/.test(path) &&
+        !/\.(test|spec)\./.test(path)
+    )!
+    const plan = createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      { status: 'not-requested', testFiles: [] },
+      manifest
+    )
+    expect(plan.mode, root).toBe('selective')
+    expect(plan.testFiles.length, root).toBeGreaterThan(0)
+    expect(plan.testFiles, root).toEqual(expect.arrayContaining(owner.testFiles.owner))
+    expect(
+      plan.testFiles.filter((test) => manifests.some(({ root }) => test.startsWith(root + '/'))),
+      root
+    ).toEqual([])
+    expect(plan.capabilityOverlays, root).toEqual(expect.arrayContaining(owner.capabilityOverlays))
   }
 })

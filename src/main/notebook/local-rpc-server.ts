@@ -33,7 +33,7 @@ import type {
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
-} from '../../shared/artifact-provenance'
+} from '../../shared/artifact-version-locator'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 import {
   sanitizeAgentUserChoiceRequest,

@@ -9,7 +9,7 @@ import {
 } from '../../shared/pdf-annotations'
 import { tagViewSchema } from '../../shared/tags'
 import { createUploadVersionReference } from '../../shared/uploads'
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { readAnnotations } from '../pdf-annotations/repository'
 import type { PackageRecords } from './native-snapshot'
 

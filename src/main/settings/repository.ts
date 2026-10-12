@@ -27,10 +27,8 @@ import {
 } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
-import {
-  normalizeNotebookNetworkSettings,
-  type NotebookNetworkSettings
-} from '../../shared/notebook-network'
+import { type NotebookNetworkSettings } from '../../shared/notebook-network-settings'
+import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import {
   networkProxyValidationMessage,
   normalizeNetworkProxySettings,

@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
-import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'

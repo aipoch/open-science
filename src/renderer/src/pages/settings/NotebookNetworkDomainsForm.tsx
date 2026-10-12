@@ -6,12 +6,14 @@ import { useEffect, useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
+  type NotebookNetworkSettings,
+  type OpenScienceDomainGroupId
+} from '../../../../shared/notebook-network-settings'
+import {
   OPEN_SCIENCE_DOMAIN_GROUPS,
   validateCustomAllowedDomain,
-  type NotebookNetworkSettings,
   type NotebookNetworkStatus,
-  type NotebookNetworkStatusReason,
-  type OpenScienceDomainGroupId
+  type NotebookNetworkStatusReason
 } from '../../../../shared/notebook-network'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ErrorNotice } from '@/components/error-notice'

@@ -7,7 +7,7 @@ import { sessionReplayKey, useSessionReplayStore } from '@/stores/session-replay
 import { loadReplayDocument } from '@/lib/replay'
 import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
 import type { ReplayViewState } from '../../../../shared/session-replay'
-import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
 import { createUploadVersionReference } from '../../../../shared/uploads'
 import { ReplayPanel } from './replay/ReplayPanel'
 import type { SessionDiscussionCapture } from './replay/replay-context'

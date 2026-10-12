@@ -15,6 +15,7 @@ import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
 import {
   createPackageTestPlan,
+  dedicatedPackageTestRoots,
   verificationFamilies,
   packageTestExcludePatterns,
   notebookPackageVerificationPlan,
@@ -89,6 +90,35 @@ describe('independent package test direction', () => {
       ])
     }
   )
+  it.each(dedicatedPackageTestRoots)('keeps %s in its dedicated lane', (root) => {
+    for (const verification of [false, true]) {
+      expect(
+        createPackageTestPlan([`${root}/src/change.ts`], registry, { verification })
+      ).toMatchObject({ selected: [], excluded: [core, providers, mcp] })
+      expect(
+        createPackageTestPlan([`${root}/package.json`, `${providers}/src/provider.ts`], registry, {
+          verification
+        }).selected
+      ).toEqual([providers])
+      for (const unknown of [
+        `${root}-new/src/change.ts`,
+        'packages/new-package/index.ts',
+        'package-lock.json'
+      ])
+        expect(
+          createPackageTestPlan([`${root}/src/change.ts`, unknown], registry, { verification })
+            .excluded
+        ).toEqual([])
+      // Registration takes precedence if a dedicated package gains an independent suite later.
+      expect(
+        createPackageTestPlan(
+          [`${root}/src/change.ts`],
+          { ...registry, packages: [...registry.packages, { root, dependencies: [core] }] },
+          { verification }
+        ).selected
+      ).toEqual([root])
+    }
+  })
   it('rejects invalid roots, missing dependencies, duplicates and dependency cycles', () => {
     for (const packages of [
       [{ root: 'src', dependencies: [] }],

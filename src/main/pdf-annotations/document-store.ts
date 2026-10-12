@@ -1,4 +1,4 @@
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { randomUUID } from 'node:crypto'
 import { findVerifiedPdfDocument } from '../pdf-documents/identity'

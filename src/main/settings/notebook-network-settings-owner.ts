@@ -1,11 +1,13 @@
 import { isDeepStrictEqual } from 'node:util'
 import { reviewPrivateDestination } from '@aipoch/notebook-network-sandbox'
 import {
-  normalizeNotebookNetworkSettings,
-  normalizeTrustedPrivateDestinations,
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
   type NotebookNetworkSettings
+} from '../../shared/notebook-network-settings'
+import {
+  normalizeNotebookNetworkSettings,
+  normalizeTrustedPrivateDestinations
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'

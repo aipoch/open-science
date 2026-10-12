@@ -26,7 +26,7 @@ import {
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { renderConnectorInstructions } from '../connectors/skill-doc'
+import { renderConnectorInstructions } from '../connectors/skill-document-renderer'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { buildProviderEnv } from './provider-env'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
