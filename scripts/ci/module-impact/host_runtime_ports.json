@@ -67,9 +67,10 @@
     "src/main/window-close-confirm.ts",
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
-    "test/runtime-metadata.ts"
+    "test/runtime-metadata.ts",
+    "src/main/websocket-frame-sender.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": ["src/main/renderer-broadcast.test.ts"],
     "contract": [
@@ -961,7 +962,6 @@
       "src/main/desktop-backend-exit.test.ts",
       "src/main/desktop-connection.integration.test.ts",
       "src/main/desktop-event-delivery.test.ts",
-      "src/main/desktop-frame-sender.test.ts",
       "src/main/desktop-runtime-client-diagnostics.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
@@ -988,7 +988,8 @@
       "src/main/windows-executable-trust.test.ts",
       "src/main/windows-powershell.test.ts",
       "src/main/wsl/wsl-setup-terminal.test.ts",
-      "src/renderer/src/components/CloseConfirmModal.render.test.tsx"
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/main/websocket-frame-sender.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
