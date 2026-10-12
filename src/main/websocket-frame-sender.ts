@@ -21,7 +21,13 @@ type OutboundFailure =
       byteBudget: number
       frameBudget: number
     }
-  | { reason: 'socket-write-failure' | 'socket-write-timeout' | 'shared-queue-budget' }
+  | {
+      reason:
+        | 'socket-write-failure'
+        | 'socket-write-timeout'
+        | 'shared-queue-budget'
+        | 'socket-buffer-budget'
+    }
 
 type PendingFrame = { frame: string; bytes: number; onSent?: () => void }
 
@@ -100,6 +106,10 @@ export function createWebSocketFrameSender(
     }
     active = queue.shift()
     if (!active) return
+    if (socket.bufferedAmount + active.bytes > maxFrameBytes) {
+      fail({ reason: 'socket-buffer-budget' })
+      return
+    }
     if (options.writeTimeoutMs !== undefined) {
       writeTimer = setTimeout(
         () => fail({ reason: 'socket-write-timeout' }),

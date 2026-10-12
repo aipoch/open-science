@@ -215,3 +215,20 @@ it('bounds aggregate small frames across clients independently of the byte budge
   })
   for (let index = 0; index < 4096; index++) expect(replacement.send('x')).toBe(true)
 })
+
+it('checks socket buffer headroom when draining, without rejecting frames waiting behind an active write', () => {
+  const socket = new Socket()
+  const failure = vi.fn()
+  const sender = createWebSocketFrameSender(socket as unknown as WebSocket, failure)
+  const frame = 'x'.repeat(12 * 1024 * 1024)
+  sender.send(frame)
+  socket.bufferedAmount = 12 * 1024 * 1024
+  expect(sender.send(frame)).toBe(true)
+  expect(socket.send).toHaveBeenCalledOnce()
+  // Bytes outside this sender remain buffered after completion of its own active frame.
+  socket.bufferedAmount = 5 * 1024 * 1024
+  socket.callbacks[0]()
+  expect(socket.send).toHaveBeenCalledOnce()
+  expect(failure).toHaveBeenCalledExactlyOnceWith({ reason: 'socket-buffer-budget' })
+  expect(socket.terminate).toHaveBeenCalledOnce()
+})
