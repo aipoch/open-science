@@ -358,6 +358,33 @@ describe('RuntimesPanel', () => {
     expect(container.textContent).toContain('R access verified')
   })
 
+  it('does not offer protected R authorization in standard mode', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    Object.assign(window.api.settings, {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'standard' })
+    })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    const managed = {
+      ...rEnvs[0],
+      provenance: 'app-managed' as const,
+      condaEnv: 'default-r',
+      runnable: true
+    }
+    listEnvironments.mockResolvedValue({ python: [], r: [managed] })
+    await render()
+
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )
+    expect(button?.disabled).toBe(true)
+    expect(container.textContent).toContain(
+      'Notebook continues using standard execution. No protected mode is active.'
+    )
+  })
+
   it('offers the existing sandbox authorization and removal controls for managed Windows R', async () => {
     Object.assign(window.api, { platform: 'win32' })
     const managed = {

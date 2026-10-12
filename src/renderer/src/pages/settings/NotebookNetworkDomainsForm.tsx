@@ -180,6 +180,9 @@ const NotebookNetworkDomainsForm = ({
     }
   }
 
+  const standardModeSelected =
+    status.kind === 'standard' || status.windowsProtectionEnabled === false
+
   const installWindowsSandbox = async (): Promise<void> => {
     if (busy) return
     setIsInstalling(true)
@@ -436,9 +439,9 @@ const NotebookNetworkDomainsForm = ({
                   type="button"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => void selectProtection(status.kind === 'standard')}
+                  onClick={() => void selectProtection(standardModeSelected)}
                 >
-                  {status.kind === 'standard' ? t('Use protected mode') : t('Use standard mode')}
+                  {standardModeSelected ? t('Use protected mode') : t('Use standard mode')}
                 </Button>
               ) : null}
               {preparing && window.api.platform === 'win32' ? (

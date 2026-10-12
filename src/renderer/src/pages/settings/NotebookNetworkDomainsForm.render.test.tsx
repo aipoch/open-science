@@ -72,6 +72,24 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(button('Use protected mode')).toBeDefined()
   })
 
+  it('derives the mode toggle from an explicit standard preference on error', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    vi.mocked(window.api.settings.getNotebookNetworkStatus).mockResolvedValue({
+      kind: 'error',
+      reason: 'trustBundleInvalid',
+      windowsProtectionEnabled: false
+    })
+    const save = vi.fn(async (settings, _domains, _private, enabled) => ({
+      ...settings,
+      windowsProtectionEnabled: enabled
+    }))
+    useSettingsStore.setState({ setNotebookNetwork: save })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Use protected mode').click())
+
+    expect(save).toHaveBeenCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS, [], [], true)
+  })
+
   it('does not discard domain edits when a pending save completes', async () => {
     let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
     const save = vi.fn(
