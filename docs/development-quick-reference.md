@@ -84,9 +84,10 @@ and add it to `tsconfig.packages.json`. Use `npm run build:packages` to build pa
 Build scheduling and selected isolation checks are described in
 [Package workflows](package-workflows.md).
 
-Native credential helpers build incrementally in development. On macOS, keep
-`packages/credential-identity-probe-native/build/` between launches: a clean rebuild can change
-the helper's identity and require Keychain authorization again.
+Development reuses the pinned native credential helpers without rebuilding or re-signing them.
+Changing native sources requires publishing updated components; see the
+[native component workflow](native-components.md). On macOS, an explicit source rebuild can
+change the helper's identity and require Keychain authorization again.
 
 Windows standard-mode development does not require a separate Notebook runtime.
 Enabling Notebook protection prepares verified Node and PowerShell components on demand:
