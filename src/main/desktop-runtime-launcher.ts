@@ -79,6 +79,12 @@ export async function discoverDesktopBackend(
     throw new Error(
       'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.'
     )
+  // Desktop supports OS storage only. Check the live authenticated selection, never infer it
+  // from saved secrets or flags that would apply only to a newly spawned process.
+  if (!('credentialStore' in proof) || proof.credentialStore !== 'os')
+    throw new Error(
+      'The running Open-Science server does not confirm OS credential storage. Stop it explicitly and restart with --credential-store=os before opening the desktop. Existing credentials are not migrated.'
+    )
   return owner.desktop
 }
 

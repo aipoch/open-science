@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { createServer } from 'node:http'
 
 const imageBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAACgCAIAAABseyVrAAAACXBIWXMAAAPoAAAD6AG1e1JrAAADPklEQVR4nO3b0QkAIQwE0ZQ+pVuF5CMPLOAYRk7N7kxZCMxZDfa/wEIgG4AECOQPQAIEcgQiAQK5A5AAgVyCSYBAXoFIgECeQUmAQOYAJEAggzASIJBJMAkQSBSCBAgkC0QCBBKGIwECSYOSAIHEoUmAQPoAJEAghRgSIJBGGAkQSCWSBAikE0yCFLKV4knQ7W2w/wUWAtkAJEAgfwASIJAjEAkQyB2ABAjkEkwCBPIKRAIE8gxKAgQyByABAhmEkQCBTIJJgECiECRAIFkgEiCQMBwJEEgalAQIJA5NAgTSByABAinEkACBNMJIgEAqkSRAIJ1gEqSQrRRPgm5vg/0vsBDIBiABAvkDkACBHIFIgEDuACRAIJdgEiCQVyASIJBnUBIgkDkACRDIIIwECGQSTAIEEoUgAQLJApEAgYThSIBA0qAkQCBxaBIgkD4ACRBIIYYECKQRRgIEUokkAQLpBJMghWyleBJ0exvsf4GFQDYACRDIH4AECOQIRAIEcgcgAQK5BJMAgbwCkQCBPIOSAIHMAUiAQAZhJEAgk2ASIJAoBAkQSBaIBAgkDEcCBJIGJQECiUOTAIH0AUiAQAoxJEBAI4wECIxKJAkQGJ1gEoxDkVI8Ceb4Ntj/AguBbAASIJA/AAkQyBGIBAjkDkACBHIJJgECeQUiAQJ5BiUBApkDkACBDMJIgEAmwSRAIFEIEiCQLBAJEEgYjgQIJA1KAgQShyYBAukDkACBFGJIgEAaYSRAIJVIEiCQTjAJUshWiidBt7fB/hdYCGQDkACB/AFIgECOQCRAIHcAEiCQSzAJEMgrEAkQyDMoCRDIHIAECGQQRgIEMgkmAQKJQpAAgWSBSIBAwnAkQCBpUBIgkDg0CRBIH4AECKQQQwIE0ggjAQKpRJIAgXSCSZBCtlI8Cbq9Dfa/wEIgG4AECOQPQAIEcgQiAQK5A5AAgVyCSYBAXoFIgECeQUmAQOYAJEAggzASIJBJMAkQSBSCBAgkC0QCBBKGIwECSYOSAIHEoUmAQPoAJEAghRgSIJBGGAkQSCWSBAikE0yCFLKV4knQ7W2w/wUWAtkAJEAgfwASIJAjEAkQyB2ABAj0fRs8ThEJYWBXp48AAAAASUVORK5CYII=',
@@ -75,4 +76,127 @@ test('approved images retain the native download action', async ({ page }) => {
   const download = page.waitForEvent('download')
   await wrapper.getByRole('button', { name: 'Download image' }).click()
   expect((await download).suggestedFilename()).toBe('image.png')
+})
+
+// Count requests at a real controlled HTTP server: DOM string assertions cannot prove that
+// Mermaid did not fetch while measuring a label before returning its final SVG.
+test('Mermaid HTML labels and diagram configuration cannot fetch images during layout', async ({
+  page
+}) => {
+  const requests: string[] = []
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? '')
+    response.writeHead(200, { 'content-type': 'image/png' })
+    response.end(imageBytes)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  try {
+    const label = `flowchart TD\n A["<b>Start</b><br/><img src='${origin}/html' srcset='${origin}/srcset 2x'>"] --> B["Finish"]`
+    const sources = [
+      label,
+      `flowchart TD\n A["<math><mglyph src='${origin}/math-image'/><mstyle mathbackground='url(${origin}/math-background)'><mi>x</mi></mstyle><annotation-xml encoding='text/html'><img src='${origin}/math-html'></annotation-xml></math>"]`,
+      `flowchart TD\n A["<input type='image' src='${origin}/input'>"]`,
+      `flowchart TD\n A["<INPUT TYPE='image' SRC='${origin}/input-upper'>"]`,
+      `flowchart TD\n A["&lt;input type='image' src='${origin}/input-entity'&gt;"]`,
+      `flowchart TD\n A["<table background='${origin}/table'><tr background='${origin}/tr'><td background='${origin}/td'>Start</td></tr></table>"]`,
+      `flowchart TD\n A["<svg><filter id='f'><feImage href='${origin}/filter'/></filter><rect filter='url(#f)' width='50' height='50'/></svg>"]`,
+      `flowchart TD\n A["<svg><filter id='g'><feImage xlink:href='${origin}/filter-xlink'/></filter><rect filter='url(#g)' width='50' height='50'/></svg>"]`,
+      `---\nconfig:\n  fontFamily: "Arial; background-image:url(${origin}/font)"\n---\n${label}`,
+      `flowchart TD\n A["<IMG SRC='${origin}/uppercase'>"]`,
+      `flowchart TD\n A["&lt;img src='${origin}/encoded'&gt;"]`,
+      `flowchart TD\n A["<svg><image href='${origin}/svg'/><use href='${origin}/use#x'/></svg>"]`,
+      `flowchart TD\n A["<span style='background-image:url(${origin}/style)'>Start</span>"]`,
+      `---\nconfig:\n  dompurifyConfig:\n    FORBID_TAGS: []\n  themeCSS: ".nodeLabel {background-image:url(${origin}/theme)}"\n---\n${label}`,
+      `%%{init: {"dompurifyConfig":{"FORBID_TAGS":[]},"themeCSS":".nodeLabel {background-image:url(${origin}/directive)}"}}%%\n${label}`
+    ]
+    for (const source of sources) {
+      await page.goto(
+        `/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent('```mermaid\n' + source + '\n```')}`
+      )
+      await expect(page.locator('svg[data-mermaid-render-id]')).toBeVisible()
+      await page.waitForTimeout(300)
+      expect(requests, source).toEqual([])
+    }
+    const concurrent =
+      '```mermaid\n' +
+      sources.find((source) => source.includes('themeCSS:')) +
+      '\n```\n\n```mermaid\n---\nconfig:\n  theme: dark\n---\nflowchart TD\n C[Concurrent] --> D[Ordinary]\n```'
+    await page.goto(`/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent(concurrent)}`)
+    await expect(page.locator('svg[data-mermaid-render-id]')).toHaveCount(2)
+    await expect(page.locator('svg[data-mermaid-render-id]').last()).toContainText('Ordinary')
+    await page.waitForTimeout(300)
+    expect(requests).toEqual([])
+    // Ordinary HTML formatting and graph geometry survive the label sanitizer.
+    await page.goto(
+      `/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent('```mermaid\n' + label + '\n```')}`
+    )
+    const svg = page.locator('svg[data-mermaid-render-id]')
+    await expect(svg).toBeVisible()
+    await expect(svg.locator('b')).toHaveText('Start')
+    await expect(svg).toContainText('Finish')
+    expect((await svg.boundingBox())?.width).toBeGreaterThan(50)
+    const formatted = `flowchart TD\n A["<a href='https://example.invalid/guide' title='Guide'><em>Linked</em></a><table><tr><td>Cell</td></tr></table>"] --> B["<code>x</code><sub>1</sub><sup>2</sup>"]`
+    await page.goto(
+      `/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent('```mermaid\n' + formatted + '\n```')}`
+    )
+    await expect(svg).toBeVisible()
+    await expect(svg.locator('a[href="https://example.invalid/guide"]')).toContainText('Linked')
+    await expect(svg.locator('td')).toHaveText('Cell')
+    await expect(svg.locator('code')).toHaveText('x')
+    await expect(svg.locator('sub')).toHaveText('1')
+    await expect(svg.locator('sup')).toHaveText('2')
+    expect(requests).toEqual([])
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
+  }
+})
+
+test('quoted and escaped Mermaid image metadata remains blocked', async ({ page }) => {
+  const requests: string[] = []
+  await page.route('https://privacy-canary.invalid/**', async (route) => {
+    requests.push(route.request().url())
+    await route.fulfill({ contentType: 'image/png', body: imageBytes })
+  })
+  for (const key of ['"img"', '"\\x69mg"']) {
+    const chart =
+      '```mermaid\nflowchart TD\n A@{ ' +
+      key +
+      ': "https://privacy-canary.invalid/image.png", label: "Image", h: 60 }\n```'
+    await page.goto(`/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent(chart)}`)
+    await expect(page.getByText('Images in Mermaid diagrams are blocked')).toBeVisible()
+    expect(requests).toEqual([])
+  }
+})
+
+test('Mermaid MathML preserves mathematical meaning and layout', async ({ page }) => {
+  const formulas = [
+    String.raw`\mathbf{x} + \phantom{AB} + \frac{1}{2}`,
+    String.raw`\scriptstyle x_i^2 + \raisebox{1em}{x} + \boxed{a} + \Bigl( \sum_{i=1}^{n} i \Bigr) + a\,b`
+  ]
+  const chart = 'flowchart TD\n A["$$' + formulas[0] + '$$"] --> B["$$' + formulas[1] + '$$"]'
+  await page.goto(`/media-privacy.html?mermaid=runtime&chart=${encodeURIComponent(chart)}`)
+  const svg = page.locator('svg[data-mermaid-render-id]')
+  await expect(svg).toBeVisible()
+  const math = svg.locator('math')
+  await expect(math).toHaveCount(2)
+  await expect(math.first()).toHaveAttribute('display', 'block')
+  await expect(math.first().locator('mi[mathvariant="bold"]')).toHaveText('x')
+  await expect(math.first().locator('mphantom')).toHaveText('AB')
+  await expect(math.first().locator('mfrac')).toHaveText('12')
+  // mphantom must survive as a semantic wrapper, not expose AB as ordinary visible tokens.
+  expect(
+    await math
+      .first()
+      .locator('mphantom')
+      .evaluate((el) => getComputedStyle(el).visibility)
+  ).toBe('hidden')
+  await expect(math.last().locator('mstyle[scriptlevel="1"]')).toHaveCount(1)
+  await expect(math.last().locator('mpadded[voffset="1em"]')).toHaveCount(1)
+  await expect(math.last().locator('menclose[notation="box"]')).toHaveCount(1)
+  await expect(math.last().locator('mo[minsize][maxsize][stretchy="true"]')).toHaveCount(2)
+  await expect(math.last().locator('msubsup')).toHaveCount(2)
+  await expect(math.last().locator('mspace[width]')).toHaveCount(1)
 })

@@ -1,4 +1,9 @@
-import { createMermaidPlugin, type DiagramPlugin, type MermaidInstance } from '@streamdown/mermaid'
+import {
+  createMermaidPlugin,
+  type DiagramPlugin,
+  type MermaidConfig,
+  type MermaidInstance
+} from '@streamdown/mermaid'
 
 import { MERMAID_RENDER_ID_ATTRIBUTE, rememberMermaidSource } from './mermaid-source-registry'
 
@@ -6,8 +11,174 @@ import { MERMAID_RENDER_ID_ATTRIBUTE, rememberMermaidSource } from './mermaid-so
 const annotateSvg = (svg: string, renderId: string): string =>
   svg.replace('<svg', `<svg ${MERMAID_RENDER_ID_ATTRIBUTE}="${renderId}"`)
 
+// Mermaid inserts HTML labels into the live document while measuring them. Its final SVG
+// sanitizer runs too late to prevent requests. Keep this policy immutable to diagram directives.
+const mediaSafeConfig = (config: MermaidConfig = {}): MermaidConfig => ({
+  ...config,
+  securityLevel: 'strict',
+  secure: [
+    ...(config.secure ?? []),
+    'secure',
+    'securityLevel',
+    'startOnLoad',
+    'maxTextSize',
+    'suppressErrorRendering',
+    'maxEdges',
+    'dompurifyConfig',
+    'themeCSS',
+    'fontFamily'
+  ],
+  dompurifyConfig: {
+    // This sanitizer handles user-supplied labels, not Mermaid's generated SVG. Only text
+    // formatting/navigation belongs here: inputs, SVG filters and legacy table backgrounds
+    // can fetch images too, so enumerating known media elements is not a complete boundary.
+    ALLOWED_TAGS: [
+      'a',
+      'abbr',
+      'b',
+      'blockquote',
+      'br',
+      'caption',
+      'code',
+      'dd',
+      'del',
+      'div',
+      'dl',
+      'dt',
+      'em',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'h6',
+      'hr',
+      'i',
+      'ins',
+      'kbd',
+      'li',
+      'ol',
+      'p',
+      'pre',
+      's',
+      'samp',
+      'small',
+      'span',
+      'strong',
+      'sub',
+      'sup',
+      'table',
+      'tbody',
+      'td',
+      'th',
+      'thead',
+      'tr',
+      'u',
+      'ul',
+      'var',
+      // KaTeX presentation MathML: retain semantic wrappers, but never mglyph (src)
+      // or annotation-xml (embedded foreign content).
+      'math',
+      'menclose',
+      'merror',
+      'mfenced',
+      'mlabeledtr',
+      'mmultiscripts',
+      'mpadded',
+      'mphantom',
+      'mprescripts',
+      'mstyle',
+      'none',
+      'ms',
+      'mrow',
+      'mi',
+      'mn',
+      'mo',
+      'mtext',
+      'mspace',
+      'mfrac',
+      'msqrt',
+      'mroot',
+      'msub',
+      'msup',
+      'msubsup',
+      'munder',
+      'mover',
+      'munderover',
+      'mtable',
+      'mtr',
+      'mtd',
+      'semantics',
+      'annotation'
+    ],
+    ALLOWED_ATTR: [
+      'class',
+      'href',
+      'title',
+      'colspan',
+      'rowspan',
+      'align',
+      'dir',
+      'lang',
+      // Non-fetching MathML semantics/layout used by KaTeX. CSS style and URL-bearing
+      // image attributes remain excluded even when supplied on mathematical elements.
+      'accent',
+      'accentunder',
+      'bevelled',
+      'close',
+      'columnalign',
+      'columnlines',
+      'columnspacing',
+      'columnspan',
+      'denomalign',
+      'depth',
+      'display',
+      'displaystyle',
+      'encoding',
+      'fence',
+      'frame',
+      'height',
+      'largeop',
+      'length',
+      'linebreak',
+      'linethickness',
+      'lquote',
+      'lspace',
+      'mathbackground',
+      'mathcolor',
+      'mathsize',
+      'mathvariant',
+      'maxsize',
+      'minsize',
+      'movablelimits',
+      'notation',
+      'numalign',
+      'open',
+      'rowalign',
+      'rowlines',
+      'rowspacing',
+      'rspace',
+      'rquote',
+      'scriptlevel',
+      'scriptminsize',
+      'scriptsizemultiplier',
+      'separator',
+      'separators',
+      'stretchy',
+      'subscriptshift',
+      'supscriptshift',
+      'symmetric',
+      'valign',
+      'voffset',
+      'width',
+      'xmlns'
+    ],
+    ALLOW_DATA_ATTR: false
+  }
+})
+
 const wrapInstance = (instance: MermaidInstance): MermaidInstance => ({
-  initialize: (config) => instance.initialize(config),
+  initialize: (config) => instance.initialize(mediaSafeConfig(config)),
   render: async (renderId, source) => {
     // Remembered even when rendering fails: the error panel can fall back to the same source.
     rememberMermaidSource(renderId, source)
@@ -28,10 +199,10 @@ const wrapInstance = (instance: MermaidInstance): MermaidInstance => ({
 
 // Same plugin as the upstream default export, with per-render source capture layered on.
 const createSourceTrackingPlugin = (): DiagramPlugin => {
-  const plugin = createMermaidPlugin()
+  const plugin = createMermaidPlugin({ config: mediaSafeConfig() })
   return {
     ...plugin,
-    getMermaid: (config) => wrapInstance(plugin.getMermaid(config))
+    getMermaid: (config) => wrapInstance(plugin.getMermaid(mediaSafeConfig(config)))
   }
 }
 

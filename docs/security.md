@@ -83,8 +83,11 @@ Messages and Markdown previews defer external media until the user activates it.
 the destination hosts and exposes the full URLs on hover. This permission is local to the displayed
 media and its URL set, not a permanent domain grant. After activation, media uses the browser's
 network stack and normal redirect behavior; it is not routed through the Notebook domain policy.
-Mermaid image nodes are blocked before diagram rendering; use a separate Markdown image to load
-them explicitly. Ordinary diagrams remain available. Managed artifact previews retain their existing
+Mermaid image nodes are rejected before rendering. HTML labels allow only text formatting, tables, mathematical markup and navigation links;
+resource-loading elements and attributes (including image inputs, SVG filters and table
+backgrounds) are removed before Mermaid measures labels in the live document;
+diagram directives cannot override this sanitizer or supply custom CSS/font-family values. Use a separate Markdown
+image to load it explicitly. Ordinary diagrams and basic HTML label formatting remain available. Managed artifact previews retain their existing
 authorization. Import previews that disable media continue to suppress it entirely.
 
 Image understanding uses metadata-minimized derivatives. Original attachments remain intact for
@@ -151,7 +154,11 @@ The renderer receives masked or non-secret projections in either mode.
 Existing `enc:` values still require the OS vault. `file:v1:` values are readable only
 in explicit file mode. Legacy `plain:` values remain readable when file mode is selected
 or a secure OS vault is available; new writes never create legacy references. Selecting
-a mode does not migrate or re-encrypt existing credentials.
+a mode does not migrate or re-encrypt existing credentials. Before reusing a running backend,
+Desktop requires its authenticated runtime proof to report OS credential storage. File mode or a
+missing/unknown mode stops desktop startup with an error; the existing server and credentials
+remain untouched. Stop the server explicitly and restart in OS mode to use Desktop; existing file
+credentials still require explicit file mode and are not converted automatically.
 
 Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
 under the configuration root and relies on operating-system account and filesystem

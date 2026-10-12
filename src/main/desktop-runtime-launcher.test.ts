@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -33,7 +33,9 @@ async function fixture() {
   const fetcher = vi
     .fn()
     .mockResolvedValue(
-      new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
+      new Response(
+        JSON.stringify({ generation: owner.generation, pid: owner.pid, credentialStore: 'os' })
+      )
     )
   vi.stubGlobal('fetch', fetcher)
   return { root, owner, fetcher }
@@ -78,10 +80,31 @@ describe('desktop backend discovery', () => {
       JSON.stringify({ ...owner, host: 'electron', desktop: undefined })
     )
     fetcher.mockResolvedValueOnce(
-      new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
+      new Response(
+        JSON.stringify({ generation: owner.generation, pid: owner.pid, credentialStore: 'os' })
+      )
     )
     await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow('older desktop runtime')
   })
+  it.each(['file', undefined, null, 'unknown'])(
+    'rejects an authenticated incompatible or unproven credential mode: %s',
+    async (credentialStore) => {
+      const { root, owner, fetcher } = await fixture()
+      fetcher.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            generation: owner.generation,
+            pid: owner.pid,
+            credentialStore
+          })
+        )
+      )
+      await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow(
+        'does not confirm OS credential storage'
+      )
+      expect(JSON.parse(await readFile(join(root, 'runtime-owner.json'), 'utf8'))).toEqual(owner)
+    }
+  )
   it('locates the bundled ordinary Node without a PATH or Electron fallback', () => {
     const paths = desktopBackendPaths({
       applicationPath: join(tmpdir(), 'app'),

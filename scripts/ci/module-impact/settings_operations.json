@@ -752,7 +752,8 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
-      "src/main/notebook/environment-recovery.contract.test.ts"
+      "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/runtime-control.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

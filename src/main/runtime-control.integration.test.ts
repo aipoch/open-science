@@ -4,10 +4,14 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startRuntimeControl, RUNTIME_OWNER_FILE, type RuntimeOwnerRecord } from './runtime-control'
 import { requestExistingRuntimeWeb } from '../../packages/open-science/runtime-control.mjs'
+import { configureCredentialStore } from './settings/credential-store-mode'
+import { discoverDesktopBackend } from './desktop-runtime-launcher'
+import { randomUUID } from 'node:crypto'
 import type { DesktopEndpoint } from './desktop-connection'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
+  configureCredentialStore([], process.platform, false)
   for (const close of cleanup.splice(0).reverse()) await close()
 })
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -41,10 +45,36 @@ describe('runtime ownership discovery', () => {
         'x-open-science-runtime-generation': record.generation
       }
     })
-    expect(await response.json()).toEqual({ generation: record.generation, pid: record.pid })
+    expect(await response.json()).toEqual({
+      generation: record.generation,
+      pid: record.pid,
+      credentialStore: 'os'
+    })
     await control.close()
     await expect(readFile(join(root, RUNTIME_OWNER_FILE))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it.each(['os', 'file'] as const)(
+    'authenticates the selected %s mode before desktop reuse',
+    async (mode) => {
+      configureCredentialStore([`--credential-store=${mode}`], 'linux', true)
+      const desktop = {
+        path: 'fixture.sock',
+        generation: randomUUID(),
+        secret: 'a'.repeat(64),
+        version: 'test'
+      }
+      const { root, record } = await runtime('node', desktop)
+      // The proof describes the startup selection even if another test reconfigures the singleton.
+      configureCredentialStore([], 'linux', true)
+      if (mode === 'os')
+        await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(desktop)
+      else
+        await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow(
+          'does not confirm OS credential storage'
+        )
+      expect(JSON.parse(await readFile(join(root, RUNTIME_OWNER_FILE), 'utf8'))).toEqual(record)
+    }
+  )
   it.each(['node', 'electron'] as const)(
     'reuses an authenticated %s owner and keeps credential selection read-only',
     async (host) => {
