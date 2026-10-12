@@ -615,6 +615,7 @@ it('permits transfers into an existing host owner without replacing its obligati
     interfacePaths: [other],
     testFiles: { owner: [otherTest], contract: [], consumer: [] }
   }
+  state.manifest.modules.host.consumerModules.push('foundation')
   state.save()
   const base = state.commit()
   state.split()
@@ -779,4 +780,22 @@ it('retains strict consumer retirement when source changes accompany the transfe
   expect(result.retiredConsumers).not.toContain(`host:${consumer}`)
   state.manifest.modules.host.testFiles.consumer.push(consumer)
   expect(state.check(base).ok).toBe(true)
+})
+
+it('rejects high-similarity source renames that name-only diffs hide as additions', () => {
+  const state = fixture()
+  const previous = 'src/main/helper.ts'
+  const renamed = 'src/main/renamed-helper.ts'
+  state.put(previous, 'export const helper = 1')
+  const base = state.commit()
+  state.split()
+  state.put(leaf, 'export const value = 2')
+  state.git('mv', previous, renamed)
+  state.manifest.modules.host.ownerPaths.push(renamed)
+  const result = state.check(base)
+  expect(state.git('diff', '--name-status', '-M', base, 'HEAD')).toContain(
+    `R100\t${previous}\t${renamed}`
+  )
+  expect(result.ok).toBe(false)
+  expect(result.boundedOwnerSplits).toEqual([])
 })

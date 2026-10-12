@@ -188,14 +188,17 @@ export function verifiedHostSourceMoves(
         if (origins.length !== 1 || destinations.length !== 1) return []
         const [targetId, target] = destinations[0]
         if (protectedOwner(target) || !target.ownerPaths.every(hostPath)) return []
-        const move = targets.get(targetId) ?? { target, paths: [] }
+        const move = targets.get(targetId) ?? { targetId, target, paths: [] }
         move.paths.push(path)
         targets.set(targetId, move)
       }
       return [{ id, original, remaining, targets }]
     })
     if (!transfers.length) return empty()
-    const changed = execFileSync('git', ['diff', '--name-only', '-z', base, head], { cwd })
+    // Disable rename folding so the allowlist also sees every deleted original path.
+    const changed = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', base, head], {
+      cwd
+    })
       .toString()
       .split('\0')
       .filter(Boolean)
@@ -240,14 +243,14 @@ export function verifiedHostSourceMoves(
         return previous.complete && previous.reachable && current.complete && !current.reachable
       }
       const remainingEvidence = evidence(remaining)
-      const verified = [...targets.values()].every(({ target, paths }) => {
+      const verified = [...targets.values()].every(({ targetId, target, paths }) => {
         if (
           target.fallbackCapability !== original.fallbackCapability ||
           !original.capabilityOverlays.every((overlay) =>
             target.capabilityOverlays.includes(overlay)
           ) ||
-          !original.consumerModules.every((consumer) =>
-            target.consumerModules.includes(consumer)
+          !original.consumerModules.every(
+            (consumer) => consumer === targetId || target.consumerModules.includes(consumer)
           ) ||
           !original.interfacePaths
             .filter((path) => paths.includes(path))
