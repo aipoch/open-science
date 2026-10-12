@@ -22,6 +22,7 @@ const backend = vi.hoisted(() => ({
   request: undefined as
     | ((request: { host: string; port?: number; purpose?: 'probe' | 'block' }) => Promise<boolean>)
     | undefined,
+  create: vi.fn(),
   initialize: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn().mockResolvedValue({
     processesTerminated: true,
@@ -61,6 +62,10 @@ vi.mock('@aipoch/environment', async (importOriginal) => ({
 
 vi.mock('@aipoch/notebook-network-sandbox', () => ({
   NotebookNetworkSandbox: class {
+    constructor(options: { windowsProtectionEnabled?: boolean }) {
+      backend.create(options)
+    }
+
     status = backend.status
     initialize = backend.initialize
     wrap = backend.wrap
@@ -195,6 +200,108 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('keeps a mode update that races the initial settings read', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const pending = owner.initialize()
+    owner.applySettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      windowsProtectionEnabled: false
+    })
+    await pending
+    expect(backend.create).toHaveBeenCalledWith(
+      expect.objectContaining({ windowsProtectionEnabled: false })
+    )
+    await owner.dispose()
+  })
+
+  it('keeps the initializing sandbox when a domain setting changes concurrently', async () => {
+    let finish!: () => void
+    backend.initialize.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const pending = owner.initialize()
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    owner.applySettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      allowedDomains: ['changed.example.org']
+    })
+    finish()
+    try {
+      await pending
+      expect(backend.updateConfiguration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy: expect.objectContaining({
+            allowedDomains: expect.arrayContaining(['changed.example.org'])
+          })
+        })
+      )
+      owner.applySettings(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+      expect(backend.updatePolicy).toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('rejects a prepared process and warm execution after switching modes', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'os-mode-admission-'))
+    fixtureDirectories.push(fixture)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      temporaryRoot: join(fixture, 'commands'),
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const wrapped = await owner.wrap({
+      executable: process.execPath,
+      args: ['-e', ''],
+      env: {},
+      cwd: fixture,
+      commandText: '',
+      sessionId: 'session',
+      projectId: 'project',
+      runtime: 'repl',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [fixture],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    try {
+      const release = owner.beginProtectionChange()
+      release()
+      expect(() => wrapped.beginSpawn?.()).toThrow('execution mode changed')
+      expect(() => wrapped.beginExecution?.()).toThrow('execution mode changed')
+    } finally {
+      await wrapped.cleanup('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
+      await owner.dispose()
+    }
+  })
+
   it
     .runIf(process.platform === 'win32')
     .each(['directory', 'receipt', 'persistent-directory'] as const)(
@@ -1037,6 +1144,125 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(serialized).toContain('"outcome":"cancelled"')
     expect(serialized).not.toContain('C:\\\\private\\\\notebook-sandbox')
     await owner.dispose()
+  })
+
+  it('allows protection removal when the caller already holds the change admission', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: 'C:\\resources\\notebook-sandbox',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32'
+    })
+    const release = owner.beginProtectionChange()
+    try {
+      await expect(owner.installWindows()).rejects.toThrow('mode is changing')
+      await expect(owner.installWindows({ admissionAlreadyHeld: true })).resolves.toEqual({
+        cancelled: false
+      })
+      await expect(owner.removeWindows()).rejects.toThrow('mode is changing')
+      await expect(owner.removeWindows({ admissionAlreadyHeld: true })).resolves.toEqual({
+        cancelled: false
+      })
+      expect(backend.removeWindows).toHaveBeenCalledOnce()
+    } finally {
+      release()
+      await owner.dispose()
+    }
+  })
+
+  it('allows explicitly selected standard execution even when installed protection is broken', async () => {
+    backend.status.mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['broken']
+    })
+    backend.getWindowsRuntimeAccess.mockRejectedValue(new Error('Protection receipt is damaged'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.windowsProtectionReady()).resolves.toBe(false)
+      await expect(owner.status()).resolves.toMatchObject({ kind: 'standard' })
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: 'Rscript.exe',
+          sessionId: 'standard'
+        })
+      ).resolves.toEqual({ windowsProtectionRequired: false, windowsRuntimeAccessRequired: false })
+      expect(backend.status).not.toHaveBeenCalled()
+      expect(backend.getWindowsRuntimeAccess).not.toHaveBeenCalled()
+      expect(backend.isWindowsProtectionConfigured).not.toHaveBeenCalled()
+      const release = owner.beginProtectionChange()
+      await expect(owner.windowsProtectionReady()).rejects.toThrow('mode is changing')
+      await expect(owner.setWindowsRuntimeAccess('Rscript.exe', true)).rejects.toThrow(
+        'mode is changing'
+      )
+      release()
+      await expect(owner.windowsProtectionReady()).resolves.toBe(false)
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('keeps standard status honest when the configured trust bundle is invalid', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      getCaBundlePath: async () => join(tmpdir(), 'missing-notebook-ca-bundle.pem'),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'error',
+        reason: 'trustBundleInvalid'
+      })
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('keeps protected mode setup-required until protection is actually installed', async () => {
+    backend.status.mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['windowsProfileMissing']
+    })
+    backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'missing-protection-runtime'),
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: true
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'setupRequired',
+        platform: 'win32',
+        windowsProtectionEnabled: true
+      })
+      expect(backend.isWindowsProtectionConfigured).toHaveBeenCalledOnce()
+    } finally {
+      await owner.dispose()
+    }
   })
 
   it('keeps standard execution offline and rejects stale capabilities in either switch direction', async () => {
@@ -3293,11 +3519,16 @@ describe('R startup authorization admission', () => {
     ])
     try {
       await vi.waitFor(() => expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce())
+      expect(() => owner.beginProtectionChange()).toThrow(
+        'Wait for Notebook protection setup or runtime authorization to finish.'
+      )
       settle({ cancelled: true })
       const outcomes = await results
       expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'rejected'])
       expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce()
       expect(backend.wrap).toHaveBeenCalledTimes(2)
+      const release = owner.beginProtectionChange()
+      release()
     } finally {
       settle?.({ cancelled: true })
       await results

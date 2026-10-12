@@ -7172,6 +7172,11 @@
     "Restoring desktop connection…": "正在恢复桌面连接…",
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "本地草稿仍保持打开。已提交的操作可能已经完成，不会自动重试。",
     "The original backend is no longer available. Quit and reopen the app to continue.": "原后台已不可用。请退出并重新打开应用以继续。",
-    "Reconnect": "重新连接"
+    "Reconnect": "重新连接",
+    "Standard mode": "标准模式",
+    "Use standard mode": "使用标准模式",
+    "Use protected mode": "使用保护模式",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "切换模式会停止正在运行的 Notebook 进程。已安装的保护组件会保留。",
+    "Could not switch execution mode. Try again.": "无法切换执行模式。请重试。"
   }
 }

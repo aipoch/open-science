@@ -74,7 +74,7 @@ export async function composeSettingsBootstrap({
     current?: Pick<NotebookRuntimeService, 'shutdownAll'>
   }
   shutdownNotebooksBeforePolicyChange: (
-    trigger: 'ca-bundle' | 'granted-roots'
+    trigger: 'ca-bundle' | 'granted-roots' | 'protection-mode'
   ) => Promise<{ reaped: boolean }>
   notebookNetworkSandbox: NotebookNetworkSandboxOwner
   settingsService: SettingsService
@@ -153,7 +153,7 @@ export async function composeSettingsBootstrap({
   } = {}
   const notebookPolicyLog = createLogger('notebook:policy')
   const shutdownNotebooksBeforePolicyChange = async (
-    trigger: 'ca-bundle' | 'granted-roots'
+    trigger: 'ca-bundle' | 'granted-roots' | 'protection-mode'
   ): Promise<{ reaped: boolean }> => {
     const operation = startDiagnosticOperation(notebookPolicyLog, {
       operation: 'notebook-policy-shutdown',
@@ -294,6 +294,18 @@ export async function composeSettingsBootstrap({
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
+      beforeNotebookProtectionChange: async () => {
+        const release = notebookNetworkSandbox.beginProtectionChange()
+        try {
+          const result = await shutdownNotebooksBeforePolicyChange('protection-mode')
+          if (!result.reaped)
+            throw new Error('Notebook processes could not be stopped. Retry switching modes.')
+          return release
+        } catch (error) {
+          release()
+          throw error
+        }
+      },
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)
       },
@@ -304,9 +316,10 @@ export async function composeSettingsBootstrap({
         await shutdownNotebooksBeforePolicyChange('ca-bundle')
       },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
-      installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
+      isNotebookProtectionConfigured: () => notebookNetworkSandbox.windowsProtectionConfigured(),
+      installNotebookNetwork: (options) => notebookNetworkSandbox.installWindows(options),
       cancelNotebookNetworkSetup: () => notebookNetworkSandbox.cancelWindowsSetup(),
-      removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      removeNotebookNetwork: (options) => notebookNetworkSandbox.removeWindows(options),
       refreshNotebookShellCapabilities: async () => {
         const runtime = getRuntimeRef().current
         if (!runtime) throw new Error('Shell capability lifecycle is not ready.')

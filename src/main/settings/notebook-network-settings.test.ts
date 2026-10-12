@@ -9,6 +9,25 @@ import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import { SettingsRepository } from './repository'
 
 describe('Notebook network settings', () => {
+  it.each([false, true])(
+    'persists explicit Windows protection selection (%s) across restart',
+    async (enabled) => {
+      const dir = await mkdtemp(join(tmpdir(), 'open-science-notebook-mode-'))
+      try {
+        await new SettingsRepository(dir).setNotebookNetwork({
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          windowsProtectionEnabled: enabled
+        })
+        expect(
+          (await new SettingsRepository(dir).getSettings()).notebookNetwork
+            ?.windowsProtectionEnabled
+        ).toBe(enabled)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('resolves historical settings to the default policy without rewriting the document', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'open-science-notebook-network-'))
     const repository = new SettingsRepository(dir)

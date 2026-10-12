@@ -27,6 +27,8 @@ export type PrivateDestinationReview =
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>
 
 export type NotebookNetworkSettings = Readonly<{
+  /** Absent preserves the historical receipt-derived Windows mode. */
+  windowsProtectionEnabled?: boolean
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   disabledOpenScienceDomainGroups: readonly OpenScienceDomainGroupId[]

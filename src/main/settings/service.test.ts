@@ -665,6 +665,24 @@ describe('SettingsService: Local Shell runtime', () => {
       })
     }
   )
+
+  it('does not select the legacy PowerShell binding for an unready protected mode', async () => {
+    const service = createService(undefined, {
+      getNotebookNetworkStatus: async () => ({
+        kind: 'setupRequired',
+        platform: 'win32',
+        reasons: ['windowsProfileMissing'],
+        windowsProtectionEnabled: true
+      })
+    })
+    await expect(service.switchLocalShellToPowerShell()).rejects.toThrow(
+      'Prepare Notebook protection'
+    )
+    await expect(repository.getSettings()).resolves.not.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
+
   it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
     const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
     let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
@@ -8892,6 +8910,179 @@ describe('SettingsService: claude-shared login orchestration', () => {
 })
 
 describe('Notebook protection Shell capability switch', () => {
+  it('holds protection admission through native removal and mode persistence', async () => {
+    const calls: string[] = []
+    await repository.setNotebookNetwork({
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: [],
+      windowsProtectionEnabled: true
+    })
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        calls.push('stop')
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          true
+        )
+        return () => calls.push('release')
+      },
+      applyNotebookNetwork: async (settings) => {
+        calls.push(settings.windowsProtectionEnabled ? 'protected' : 'standard')
+      },
+      removeNotebookNetwork: async () => {
+        calls.push('remove')
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          true
+        )
+        return { cancelled: false }
+      },
+      getNotebookNetworkStatus: async () => ({ kind: 'standard' })
+    })
+
+    await service.removeNotebookNetwork()
+
+    expect(calls).toEqual(['stop', 'remove', 'standard', 'release'])
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      notebookNetwork: { windowsProtectionEnabled: false }
+    })
+  })
+
+  it('does not remove native protection when the shutdown admission fails', async () => {
+    const remove = vi.fn()
+    await repository.setNotebookNetwork({
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: [],
+      windowsProtectionEnabled: true
+    })
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        throw new Error('Notebook processes are still running.')
+      },
+      removeNotebookNetwork: remove,
+      getNotebookNetworkStatus: async () => ({ kind: 'ready', warnings: [] })
+    })
+
+    await expect(service.removeNotebookNetwork()).rejects.toThrow('still running')
+    expect(remove).not.toHaveBeenCalled()
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      notebookNetwork: { windowsProtectionEnabled: true }
+    })
+  })
+
+  it('holds admission when removing legacy receipt-derived protection', async () => {
+    const calls: string[] = []
+    await repository.setNotebookNetwork({
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: []
+    })
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        calls.push('stop')
+        return () => calls.push('release')
+      },
+      isNotebookProtectionConfigured: async () => true,
+      applyNotebookNetwork: async (settings) => {
+        calls.push(settings.windowsProtectionEnabled ? 'protected' : 'standard')
+      },
+      removeNotebookNetwork: async (options) => {
+        expect(options).toEqual({ admissionAlreadyHeld: true })
+        calls.push('remove')
+        return { cancelled: false }
+      },
+      getNotebookNetworkStatus: async () => ({ kind: 'standard' })
+    })
+
+    await service.removeNotebookNetwork()
+
+    expect(calls).toEqual(['stop', 'remove', 'standard', 'release'])
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      notebookNetwork: { windowsProtectionEnabled: false }
+    })
+  })
+
+  it('restores native protection when the post-removal mode commit fails', async () => {
+    await repository.setNotebookNetwork({
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: [],
+      windowsProtectionEnabled: true
+    })
+    const install = vi.fn().mockResolvedValue({ cancelled: false })
+    const apply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('standard policy failed'))
+      .mockResolvedValue(undefined)
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => () => undefined,
+      applyNotebookNetwork: apply,
+      removeNotebookNetwork: async () => ({ cancelled: false }),
+      installNotebookNetwork: install,
+      getNotebookNetworkStatus: async () => ({ kind: 'ready', warnings: [] })
+    })
+
+    await expect(service.removeNotebookNetwork()).rejects.toThrow('standard policy failed')
+    expect(install).toHaveBeenCalledWith({ admissionAlreadyHeld: true })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      notebookNetwork: { windowsProtectionEnabled: true }
+    })
+  })
+
+  it('holds admission through mode persistence and capability refresh without installing or removing protection', async () => {
+    const calls: string[] = []
+    const install = vi.fn()
+    const remove = vi.fn()
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        calls.push('stop')
+        return () => {
+          calls.push('release')
+        }
+      },
+      applyNotebookNetwork: async (settings) => {
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          settings.windowsProtectionEnabled
+        )
+        calls.push(settings.windowsProtectionEnabled ? 'protected' : 'standard')
+      },
+      refreshNotebookShellCapabilities: async () => {
+        calls.push('refresh')
+      },
+      installNotebookNetwork: install,
+      removeNotebookNetwork: remove
+    })
+    const policy = {
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: []
+    }
+    await service.setNotebookNetwork({ ...policy, windowsProtectionEnabled: false })
+    await service.setNotebookNetwork({ ...policy, windowsProtectionEnabled: true })
+    expect(calls).toEqual([
+      'stop',
+      'standard',
+      'refresh',
+      'release',
+      'stop',
+      'protected',
+      'refresh',
+      'release'
+    ])
+    expect(install).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+  })
+
   it('refreshes existing conversations after setup and removal before returning status', async () => {
     const calls: string[] = []
     let protectedMode = false

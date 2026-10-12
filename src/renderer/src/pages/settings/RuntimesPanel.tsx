@@ -639,17 +639,21 @@ const RuntimesPanel = ({
       (isInstallAuthorized(language, env)
         ? t('Turn off Allow package install before changing the personal R library.')
         : undefined)
+    const standardModeSelected =
+      networkStatus.kind === 'standard' || networkStatus.windowsProtectionEnabled === false
     const verifyHint =
       busyHint ??
       (!enabled
         ? t('Enable this R runtime before authorizing access.')
         : !env.runnable
           ? t('This R runtime is not runnable. Resolve its reported issue, then click Recheck.')
-          : networkStatus.kind !== 'ready'
-            ? t(
-                'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
-              )
-            : undefined)
+          : standardModeSelected
+            ? t('Notebook continues using standard execution. No protected mode is active.')
+            : networkStatus.kind !== 'ready'
+              ? t(
+                  'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+                )
+              : undefined)
 
     return (
       <div
@@ -799,7 +803,11 @@ const RuntimesPanel = ({
                 </Button>
               </RuntimeDisabledHint>
             </div>
-            {networkStatus.kind !== 'ready' ? (
+            {standardModeSelected ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('Notebook continues using standard execution. No protected mode is active.')}
+              </p>
+            ) : networkStatus.kind !== 'ready' ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 {t(
                   'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'

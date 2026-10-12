@@ -24,7 +24,7 @@ describe('platform risk execution policy', () => {
     ['global input', 'M', 'package.json'],
     ['CI policy', 'M', '.github/workflows/pr-gate.yml']
   ])(
-    'defers %s full portable validation to acceptance without weakening other checks',
+    'keeps %s full portable validation in the gate without weakening other checks',
     (_, status, path) => {
       const classify = (event: string): ReturnType<typeof runModuleImpactAuthorityCli> =>
         runModuleImpactAuthorityCli(
@@ -36,11 +36,11 @@ describe('platform risk execution policy', () => {
       const { plan: queue } = classify('merge_group')
       expect(report.resolved.mode).toBe('full')
       expect(pr.mode).toBe('full')
-      expect(pr.bundles).not.toContain('unit')
-      expect(pr.lanes).not.toContain('unit_macos')
+      expect(pr.bundles).toContain('unit')
+      expect(pr.lanes).toContain('unit_macos')
       expect(pr.roots).toEqual(report.resolved.roots)
       expect(pr.reasonChains).toEqual(expect.arrayContaining(report.resolved.reasonChains))
-      expect(pr.reasonChains).toContain(
+      expect(pr.reasonChains).not.toContain(
         'pull_request: full portable tests and coverage deferred to scheduled/manual acceptance'
       )
       expect(pr.bundles).toEqual(
@@ -50,17 +50,17 @@ describe('platform risk execution policy', () => {
         expect.arrayContaining(['interface_contracts', 'cli_sdk', 'i18n', 'lint', 'typecheck_node'])
       )
       expect(queue.mode).toBe('full')
-      expect(queue.bundles).not.toContain('unit')
-      expect(queue.lanes).not.toContain('unit_macos')
+      expect(queue.bundles).toContain('unit')
+      expect(queue.lanes).toContain('unit_macos')
       for (const plan of [pr, queue]) {
         const conclusions = Object.fromEntries(
           ['preflight', ...plan.bundles].map((name) => [name, 'success'])
         )
         expect(evaluatePrGate(plan, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
-        for (const unit of ['skipped', 'failure', 'cancelled', undefined]) {
+        for (const unit of ['success', 'skipped', 'failure', 'cancelled', undefined]) {
           expect(
             evaluatePrGate(plan, { ...conclusions, unit }, { executionMode: 'bundles' }).ok
-          ).toBe(unit === 'skipped')
+          ).toBe(unit === 'success')
         }
       }
     }

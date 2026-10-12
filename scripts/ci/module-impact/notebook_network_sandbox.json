@@ -461,8 +461,6 @@
       "src/main/compute/job-recovery-regressions.integration.test.ts",
       "src/main/compute/job-repository.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
-      "src/main/compute/cancellation-no-launch.integration.test.ts",
-      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
       "src/main/compute/job-runtime.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
@@ -623,6 +621,8 @@
       "src/main/notebook/environment-bundle-resources.test.ts",
       "src/main/notebook/environment-resources.test.ts",
       "src/main/notebook/windows-runtime-components.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]

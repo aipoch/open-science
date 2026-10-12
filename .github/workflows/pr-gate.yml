@@ -776,7 +776,7 @@ jobs:
   unit_shard:
     name: Portable ${{ matrix.scope }} tests (Ubuntu, shard ${{ matrix.shard }}/${{ matrix.total }})
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
+    if: ${{ needs.preflight.result == 'success' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).mode == 'full') && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
@@ -803,7 +803,9 @@ jobs:
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:
-          enabled: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+          # Full plans must retain every package suite so aggregate coverage measures the
+          # same source set as the tests. Selective plans use the trusted package policy.
+          enabled: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
           base: ${{ needs.preflight.outputs.base }}
           head: ${{ needs.preflight.outputs.head }}
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
@@ -867,7 +869,7 @@ jobs:
   unit:
     name: Module tests and coverage
     needs: [preflight, unit_shard]
-    if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+    if: ${{ always() && needs.preflight.result == 'success' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
     # PR and queue module coverage is portable. Darwin-only checks run inside the queue core job.
     # Manual plans retain their explicitly selected native runner.
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-15' }}

@@ -307,6 +307,8 @@ describe('Settings backend ownership architecture', () => {
       'type:AgentBackendResolutionContext',
       'type:AgentBackendSelection',
       'type:CustomServerSecurityChangeGuard',
+      'type:NotebookNetworkProtectionOperationOptions',
+      'type:NotebookNetworkRemovalOptions',
       'type:SettingsServiceOptions',
       'type:UninstallResult',
       'value:SettingsService',
