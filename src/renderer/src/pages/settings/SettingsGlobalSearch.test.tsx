@@ -6,6 +6,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { LOCALES } from '../../../../shared/locale'
+import { AppVersionSection } from './AppVersionSection'
 import { SETTINGS_SEARCH_INDEX, SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsPanelId } from './settings-navigation'
 
@@ -124,6 +126,89 @@ describe('SettingsGlobalSearch', () => {
     typeQuery('zzzz-no-such-setting')
     expect(options()).toEqual([])
     expect(document.body.textContent).toContain('No matching settings')
+  })
+
+  it.each(LOCALES)('finds Help Center by English and translated labels in %s', async (locale) => {
+    await act(async () => i18next.changeLanguage(locale))
+    try {
+      renderSearch()
+      const label = `${i18next.t('Help Center')}${i18next.t('General')}`
+
+      for (const query of ['general', i18next.t('General')]) {
+        typeQuery(query)
+        expect(
+          options().map((option) => option.textContent),
+          query
+        ).toContain(label)
+      }
+
+      for (const query of ['help center', i18next.t('Help Center')]) {
+        typeQuery(query)
+        expect(
+          options().map((option) => option.textContent),
+          query
+        ).toEqual([label])
+      }
+
+      typeQuery(i18next.t('Read setup guides and troubleshooting.'))
+      expect(options().map((option) => option.textContent)).toEqual([label])
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
+  it.each([
+    'help',
+    'docs',
+    'documentation',
+    'guide',
+    'manual',
+    'tutorial',
+    'support',
+    'troubleshooting',
+    'faq',
+    '  HELP CENTER  '
+  ])('finds Help Center using the hidden %s search term', (query) => {
+    renderSearch()
+    typeQuery(query)
+    expect(options().map((option) => option.textContent)).toEqual(['Help CenterGeneral'])
+  })
+
+  it('navigates to and focuses the real Help Center link without opening the browser', () => {
+    const onNavigate = vi.fn()
+    const click = vi.fn()
+    act(() => {
+      root.render(
+        <>
+          <SettingsGlobalSearch
+            panels={PANELS}
+            onNavigate={(panel, onNavigated) => {
+              onNavigate(panel)
+              onNavigated()
+            }}
+          />
+          <div data-slot="settings-content-scroll" data-settings-active-panel="general">
+            <AppVersionSection />
+          </div>
+        </>
+      )
+    })
+    const link = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.help-center"]'
+    )!
+    link.addEventListener('click', click)
+
+    typeQuery('help center')
+    pressKey('Enter')
+
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith('general')
+    expect(document.activeElement).toBe(link)
+    expect(link.classList.contains('settings-search-highlight')).toBe(true)
+    expect(link.hasAttribute('tabindex')).toBe(false)
+    expect(scrollIntoViewMock).toHaveBeenCalledOnce()
+    expect(click).not.toHaveBeenCalled()
+    expect(input().value).toBe('')
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
   })
 
   it('wraps ArrowUp/ArrowDown through the results and Enter navigates to the active panel', () => {

@@ -76,6 +76,7 @@
       "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
       "src/renderer/src/pages/settings/ActiveModelSelect.render.test.tsx",
       "src/renderer/src/pages/settings/AppIconSection.recovery.render.test.tsx",
+      "src/renderer/src/pages/settings/AppVersionSection.render.test.tsx",
       "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
       "src/renderer/src/pages/settings/ClaudeIsolatedSignInModal.render.test.tsx",
       "src/renderer/src/pages/settings/ComputeHostDetail.render.test.tsx",
