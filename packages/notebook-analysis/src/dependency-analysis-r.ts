@@ -2827,31 +2827,6 @@ const analyzeRSource = (
     return !expr.names[contract.position] ? contract.position : -1
   }
 
-  const opaqueSolverMethodIndex = (
-    expr: Extract<RExpr, { kind: 'call' }>,
-    sameSourceBfgs = false
-  ): number => {
-    const names = expr.names.filter((name): name is string => Boolean(name))
-    const prefix = ['par', 'fn', 'gr', 'method']
-    if (
-      new Set(names).size !== names.length ||
-      expr.args.some(
-        (arg) => isSymbol(arg) && (arg.name === '...' || (sameSourceBfgs && !arg.name))
-      ) ||
-      (sameSourceBfgs &&
-        names.some((name) => prefix.some((formal) => formal !== name && formal.startsWith(name))))
-    )
-      return -1
-    const named = expr.names.indexOf('method')
-    if (named >= 0) return named
-    if (!sameSourceBfgs || expr.args.length <= 3) return -1
-    // R binds leading unnamed arguments positionally until the first named
-    // argument.  Only certify the method slot when par, fn, gr, and method
-    // are all supplied positionally; partial tags and shifted slots remain
-    // opaque.
-    return expr.names.slice(0, 4).some(Boolean) ? -1 : 3
-  }
-
   const directOpaqueSolver = (
     expr: RExpr | null | undefined
   ): [string, NonNullable<ReturnType<typeof R_OPAQUE_CALLBACK_CAPTURE_CALLS.get>>] | undefined =>
@@ -5523,8 +5498,7 @@ const analyzeRSource = (
       if (!defined.includes(solverName)) priorUsed.push(solverName)
       unknown.push('opaque-call', 'dynamic-namespace')
       const sameSourceBfgs = captureContract.method === 'BFGS'
-      const methodIndex = opaqueSolverMethodIndex(expr, sameSourceBfgs)
-      const method = methodIndex >= 0 ? expr.args[methodIndex] : undefined
+      const method = expr.args[expr.names.indexOf('method')]
       const methodAvailable =
         !captureContract.method || (isCharacter(method) && method.value === captureContract.method)
       const argumentsPreserveCallbacks = opaqueSolverArgumentsPreserveCallbacks(expr)
@@ -6313,8 +6287,7 @@ const analyzeRSource = (
         const contract = solver[1]
         if (!opaqueSolverArgumentsPreserveCallbacks(value)) return false
         const sameSourceBfgs = contract.method === 'BFGS'
-        const methodIndex = opaqueSolverMethodIndex(value, sameSourceBfgs)
-        const method = methodIndex >= 0 ? value.args[methodIndex] : undefined
+        const method = value.args[value.names.indexOf('method')]
         if (contract.method && (!isCharacter(method) || method.value !== contract.method))
           return false
         return contract.callbacks.some((slot) => {
@@ -7318,10 +7291,11 @@ const analyzeRSource = (
       ) &&
       rStaticLoopValues(expr.args[1], staticStrings, staticCollections)?.length === 0
     ) {
-      // R leaves an existing loop binding unchanged when the iterable is empty.
-      // The unreachable body cannot change the target or revoke its context in
-      // subsequent expressions.
+      // Even zero iterations assign NULL to the target. The unreachable body
+      // cannot change other names or revoke their context in subsequent cells.
       walk(expr.args[1], false)
+      prepareAssignment(expr.args[0].name)
+      defined.push(expr.args[0].name)
       return
     }
     if (
@@ -7949,9 +7923,11 @@ const resolveRStaticCallIdentities = (
           !assigned.has(expr.args[1].callee.operator ?? '')
         : !assigned.has(rCalledName(expr.args[1])!))
     ) {
-      // An empty R loop does not rebind its target. Preserve an existing static
-      // call identity for later expressions; the literal body is unreachable.
+      // The constructor observes its entry binding before the target becomes
+      // NULL. Literal empty bodies cannot shadow later static call identities.
       visit(expr.args[1], false)
+      known.delete(expr.args[0].name)
+      assigned.add(expr.args[0].name)
       return
     }
     if (['if', 'for', 'while', 'repeat', 'switch'].includes(name ?? '')) {
@@ -9931,9 +9907,17 @@ const analyzeRFileAccessTree = (
         ? (namedSequence ?? rStaticLoopValues(sequence, bindings, collections))
         : undefined
       if (isSymbol(variable) && values?.length === 0) {
-        // R leaves an existing loop binding unchanged when the sequence is
-        // empty. Preserve its value, handle, and callable authority; the body
-        // remains unreachable and must not contribute any effects.
+        // R assigns NULL even when the body never executes. Clear the target's
+        // old value/handle/callable, while leaving unrelated body names intact.
+        bindings.delete(variable.name)
+        collections.delete(variable.name)
+        namedCollectionKeys.delete(variable.name)
+        fileConnections.delete(variable.name)
+        inMemoryInputs.delete(variable.name)
+        if (activeWrappers.has(variable.name) || shadowedWrapperDependencies.has(variable.name))
+          invalidateWrapper(variable.name)
+        // An unshadowed namespace function still resolves through base after a
+        // NULL data binding; do not revoke its existing dependent wrappers.
         return
       }
       // The sequence observes the old helper; each loop element can then replace

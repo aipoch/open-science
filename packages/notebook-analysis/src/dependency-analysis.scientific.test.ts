@@ -1771,28 +1771,6 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(facts?.state).toBe('available')
   })
 
-  it('preserves an existing binding after an empty R loop', async () => {
-    const { facts, fileAccess } = await analyzeRNotebookSource(
-      'path <- "inputs/observations.csv"\n' +
-        'for (path in c()) path <- "inputs/decoy.csv"\n' +
-        'read.csv(path)'
-    )
-
-    expect(fileAccess?.reads).toEqual(['inputs/observations.csv'])
-    expect(facts.definedNames).toContain('path')
-  })
-
-  it('preserves an attached static helper after an empty R loop', async () => {
-    const { facts, fileAccess } = await analyzeRNotebookSource(
-      'library(glue)\n' +
-        'for (glue in c()) glue <- identity\n' +
-        'path <- glue("inputs/%s", "observations.csv")'
-    )
-
-    expect(facts.safeCallNames ?? []).toContain('glue::glue')
-    expect(fileAccess?.context?.staticStrings ?? []).toEqual([])
-  })
-
   it('classifies a common base R read-clean-aggregate workflow as clear', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-base-analysis-'))
     temporaryRoots.push(storageRoot)
@@ -5893,8 +5871,7 @@ describe('R same-cell BFGS callback captures', () => {
   it.each([
     'stats::optim(par=0, fn=objective, gr=gradient, method="BFGS")',
     'stats::optim(gr=gradient, method="BFGS", fn=objective, par=0)',
-    'optim(0, objective, gradient, method="BFGS")',
-    'optim(0, objective, gradient, "BFGS")'
+    'optim(0, objective, gradient, method="BFGS")'
   ])('retains both callback captures without certifying %s', async (call) => {
     const { facts, fileAccess } = await analyzeRNotebookSource(`${callbacks}\nfit <- ${call}`)
     expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
@@ -6514,6 +6491,7 @@ describe('R same-cell BFGS callback captures', () => {
 
   it.each([
     'stats::optim(method="BFGS", 0, objective, gradient)',
+    'stats::optim(0, objective, gradient, "BFGS")',
     'stats::optim(0, f=objective, g=gradient, method="BFGS")',
     'stats::optim(0, fn=objective, fn=objective, gr=gradient, method="BFGS")',
     'stats::optim(0, objective, gradient, method=selected_method)',
