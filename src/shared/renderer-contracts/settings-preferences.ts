@@ -49,7 +49,7 @@ import type {
 } from '../notebook-network-settings'
 import type { NotebookNetworkStatus } from '../notebook-network'
 
-import { callable, EVENT, ELECTRON_EVENT, LOCAL } from './definition'
+import { callable, EVENT, ELECTRON_EVENT, LOCAL, WEB, RUNTIME_VALIDATED } from './definition'
 
 export const settingsGetPackageMirrorContracts = {
   'settings.getPackageMirror': callable<() => Promise<PackageMirror>>()('settings', [
@@ -59,7 +59,11 @@ export const settingsGetPackageMirrorContracts = {
 
 export const settingsGetSettingsContracts = {
   'settings.getSettings': callable<() => Promise<SettingsSnapshot>>()('settings', [
-    'settings:get-settings'
+    'settings:get-settings',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
   ])
 } as const
 

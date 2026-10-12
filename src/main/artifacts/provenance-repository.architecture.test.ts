@@ -989,7 +989,8 @@ describe('Artifact Provenance repository architecture', () => {
         'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
         'src/main/notebook/environment-capture.contract.test.ts',
         'src/main/desktop-runtime-backpressure.integration.test.ts',
-        'src/main/desktop-runtime-transport-diagnostics.test.ts'
+        'src/main/desktop-runtime-transport-diagnostics.test.ts',
+        'src/main/node-entry.test.ts'
       ])
     )
     expect(module.capabilityOverlays).toEqual(

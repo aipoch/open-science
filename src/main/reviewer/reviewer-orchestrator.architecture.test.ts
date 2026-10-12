@@ -865,7 +865,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/agents/production-completion-handoff.test.ts',
           'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
           'src/main/desktop-runtime-backpressure.integration.test.ts',
-          'src/main/desktop-runtime-transport-diagnostics.test.ts'
+          'src/main/desktop-runtime-transport-diagnostics.test.ts',
+          'src/main/node-entry.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

@@ -335,8 +335,6 @@ const allowedFacadeVariableCounts = new Map<string, number>([
   ['promise', 1],
   ['pending', 1],
   ['clear', 1],
-  ['assertSettingsSnapshot', 1],
-  ['record', 1],
   ['epoch', 1],
   ['phase', 1],
   ['settingsLoadPromise', 1],

@@ -132,7 +132,6 @@ const registerSettingsIpcHandlers = ({
   fileCommands
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
-  ipcMainHandle('settings:get-settings', () => snapshotCommits.readCurrentSnapshot())
   ipcMainHandle('settings:encryption-available', () => service.isEncryptionAvailable())
   ipcMainHandle('settings:npm-available', () => service.isNpmAvailable())
   ipcMainHandle('settings:check-environment', () =>

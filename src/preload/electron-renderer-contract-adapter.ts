@@ -163,11 +163,11 @@ export const createElectronRendererContractAdapter = (
         : (result as Result)
     } catch (error) {
       if (
-        publicPath === 'literature.citationStyles' &&
         error instanceof ApplicationCommandError &&
-        error.code.startsWith('csl-')
+        (publicPath === 'settings.getSettings' ||
+          (publicPath === 'literature.citationStyles' && error.code.startsWith('csl-')))
       ) {
-        // contextBridge strips custom Error properties; plain rejections retain CSL diagnostics.
+        // contextBridge strips custom Error properties; plain rejections retain reviewed domain diagnostics.
         throw toApplicationCommandErrorEnvelope(error)
       }
       throw error

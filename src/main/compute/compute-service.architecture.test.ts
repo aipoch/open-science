@@ -1078,7 +1078,8 @@ describe('Compute service architecture', () => {
         'src/main/agents/production-completion-handoff.test.ts',
         'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
         'src/main/desktop-runtime-backpressure.integration.test.ts',
-        'src/main/desktop-runtime-transport-diagnostics.test.ts'
+        'src/main/desktop-runtime-transport-diagnostics.test.ts',
+        'src/main/node-entry.test.ts'
       ])
     )
   })

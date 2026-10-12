@@ -656,7 +656,8 @@
       "src/shared/pdf-translation.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/ipc-surfaces/settings.test.ts"
     ]
   },
   "capabilityOverlays": [],

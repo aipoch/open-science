@@ -1,3 +1,4 @@
+import { ApplicationCommandError } from './application-command-contract'
 import type {
   AgentHomeSkillRef,
   GitHubRepositorySearchView,
@@ -1754,3 +1755,38 @@ export type RespondConnectorCredentialRequest = { id: string; configured: boolea
 // src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
 // StoredSettings in src/main structurally satisfies this shape.
 export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }
+
+// Validate the required projection containers before any consumer can render them. Optional
+// preferences retain their established defaults; this does not rewrite the stored document.
+export const parseSettingsSnapshot = (snapshot: unknown): SettingsSnapshot => {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (
+    !record(snapshot) ||
+    !Array.isArray(snapshot.providers) ||
+    !Array.isArray(snapshot.agentFrameworks) ||
+    !record(snapshot.claude) ||
+    !record(snapshot.opencode) ||
+    typeof snapshot.agentFrameworkId !== 'string' ||
+    snapshot.providers.some(
+      (provider) =>
+        !record(provider) ||
+        typeof provider.id !== 'string' ||
+        typeof provider.name !== 'string' ||
+        !Array.isArray(provider.models) ||
+        provider.models.some((model) => typeof model !== 'string')
+    ) ||
+    snapshot.agentFrameworks.some(
+      (framework) =>
+        !record(framework) ||
+        typeof framework.id !== 'string' ||
+        typeof framework.displayName !== 'string'
+    ) ||
+    (snapshot.revision !== undefined &&
+      (typeof snapshot.revision !== 'number' ||
+        !Number.isSafeInteger(snapshot.revision) ||
+        snapshot.revision < 0))
+  )
+    throw new ApplicationCommandError('invalid-command-result', 'Invalid settings snapshot.')
+  return snapshot as SettingsSnapshot
+}

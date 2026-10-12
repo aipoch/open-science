@@ -51,7 +51,8 @@ import {
   DEFAULT_REASONING_EFFORT,
   DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   DEFAULT_SHOW_NOTIFICATION_CONTENT,
-  isCodexSubscriptionProvider
+  isCodexSubscriptionProvider,
+  parseSettingsSnapshot
 } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
@@ -411,38 +412,6 @@ const readSettings = <T>(read: () => Promise<T>, epoch: number): Promise<T> => {
   return readWithDeadline(() => promise, 15_000)
 }
 
-// Validate the required projection containers before any consumer can render them. Optional
-// preferences retain their established defaults; this does not rewrite the stored document.
-const assertSettingsSnapshot = (snapshot: SettingsSnapshot): void => {
-  const record = (value: unknown): boolean =>
-    value !== null && typeof value === 'object' && !Array.isArray(value)
-  if (
-    !record(snapshot) ||
-    !Array.isArray(snapshot.providers) ||
-    !Array.isArray(snapshot.agentFrameworks) ||
-    !record(snapshot.claude) ||
-    !record(snapshot.opencode) ||
-    typeof snapshot.agentFrameworkId !== 'string' ||
-    snapshot.providers.some(
-      (provider) =>
-        !record(provider) ||
-        typeof provider.id !== 'string' ||
-        typeof provider.name !== 'string' ||
-        !Array.isArray(provider.models) ||
-        provider.models.some((model) => typeof model !== 'string')
-    ) ||
-    snapshot.agentFrameworks.some(
-      (framework) =>
-        !record(framework) ||
-        typeof framework.id !== 'string' ||
-        typeof framework.displayName !== 'string'
-    ) ||
-    (snapshot.revision !== undefined &&
-      (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0))
-  )
-    throw new ApplicationCommandError('invalid-command-result', 'Invalid settings snapshot.')
-}
-
 let settingsLoadPromise: Promise<boolean> | undefined
 const SAFE_SETTINGS_LOAD_ERROR = 'Open-Science could not load settings. Retry to continue.'
 
@@ -565,7 +534,7 @@ const createSettingsStoreState = (
           : undefined
 
         const snapshot = await settingsPromise
-        assertSettingsSnapshot(snapshot)
+        parseSettingsSnapshot(snapshot)
         if (epoch !== getDesktopRuntimeEpoch())
           throw new ApplicationCommandError('command-unavailable', 'Backend connection changed.')
 
