@@ -378,7 +378,14 @@ it.each([
   "import './missing-local'",
   'const target = process.env.RUNTIME_MODULE; import(target)',
   'require(process.env.RUNTIME_MODULE)',
-  "import '@aipoch/missing-package'"
+  "import '@aipoch/missing-package'",
+  "const load = require; load('./app')",
+  "const load = globalThis.require; load('./app')",
+  "const load = globalThis['require']; load('./app')",
+  "const key = process.env.LOADER; globalThis[key]('./app')",
+  "import { createRequire as factory } from 'node:module'; const load = factory(import.meta.url); load('./app')",
+  'eval("require(\'./app\')")',
+  'new Function("return import(\'./app\')")()'
 ])('retains opaque dependency evidence even with a known source import: %s', (opaque) => {
   const state = fixture()
   state.put(consumer, `import './leaf'; ${opaque}`)
@@ -416,6 +423,18 @@ it('requires declared runtime consumers even when their imports reach a differen
   state.put(app, 'export const value = 2')
   state.put(consumer, "import './app'; window.api.readState()")
   state.put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [leaf]: [consumer] }))
+  const base = state.commit()
+  state.split()
+  state.manifest.modules.foundation.testFiles.consumer = [uncertain]
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.foundation.testFiles.consumer.push(consumer)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it('retains indirect loading when selecting the extracted owner evidence', () => {
+  const state = fixture()
+  state.put(app, 'export const value = 2')
+  state.put(consumer, "import './app'; const load = require; load('./leaf')")
   const base = state.commit()
   state.split()
   state.manifest.modules.foundation.testFiles.consumer = [uncertain]

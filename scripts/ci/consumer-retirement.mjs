@@ -174,6 +174,28 @@ export function createConsumerDependencyReader(
         ].includes(node.text)
       )
         result.complete = false
+      // A loader passed as a value escapes literal-call import discovery.
+      if (ts.isIdentifier(node) && ['require', 'eval', 'Function'].includes(node.text)) {
+        const parent = node.parent
+        const directRequire =
+          node.text === 'require' &&
+          ((ts.isCallExpression(parent) && parent.expression === node) ||
+            (ts.isPropertyAccessExpression(parent) &&
+              parent.expression === node &&
+              parent.name.text === 'resolve' &&
+              ts.isCallExpression(parent.parent) &&
+              parent.parent.expression === parent))
+        if (!directRequire) result.complete = false
+      }
+      if (
+        ts.isElementAccessExpression(node) &&
+        ((ts.isStringLiteral(node.argumentExpression) &&
+          ['require', 'eval', 'Function'].includes(node.argumentExpression.text)) ||
+          (ts.isIdentifier(node.expression) &&
+            ['globalThis', 'window', 'global'].includes(node.expression.text) &&
+            !ts.isStringLiteral(node.argumentExpression)))
+      )
+        result.complete = false
       if (ts.isCallExpression(node)) {
         const expression = node.expression.getText(ast)
         if (
@@ -200,6 +222,8 @@ export function createConsumerDependencyReader(
     }
     visit(ast)
     for (const spec of specs) {
+      // createRequire/register hooks can load repository code outside the import graph.
+      if (spec === 'node:module' || spec === 'module') result.complete = false
       const resolved = ts.resolveModuleName(
         spec,
         posix.join(root, path),
