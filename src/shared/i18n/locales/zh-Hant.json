@@ -49,11 +49,6 @@
     "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境"
   },
   "native": {
-    "Always allow this website": "一律允許此網站",
-    "Choosing Always allow this website remembers this origin until you revoke it.": "選擇「一律允許此網站」後，將記住此來源，直到您撤銷授權。",
-    "Receive package": "接收套件",
-    "Allow {{origin}} to send {{filename}} to Open-Science?": "允許 {{origin}} 將 {{filename}} 傳送至 Open-Science 嗎？",
-    "The file will be received locally. You can review it before importing.": "檔案將接收到本機。你可以在匯入前檢視其內容。",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
     "Credential storage needs recovery": "認證資料儲存空間需要復原",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系統認證資料後端不支援靜默身分檢查。為保留現有加密資料，啟動已停止。",

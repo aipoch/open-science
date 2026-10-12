@@ -648,7 +648,6 @@ for (const launch of ['cold', 'warm'] as const) {
     browser
   }, testInfo) => {
     await app.completeOnboarding()
-    await app.configureBrowserImportConsent(launch === 'warm' ? 'remember' : true)
     const discoveryPort = await findBrowserImportPort()
     const previousDiscoveryPort = process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
     process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = String(discoveryPort)
@@ -687,7 +686,7 @@ for (const launch of ['cold', 'warm'] as const) {
           const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
           return checkBrowserImportAvailability({ port })
         }, discoveryPort)
-      ).toEqual({ status: 'available', authorized: false })
+      ).toEqual({ status: 'available' })
       const url = await website.evaluate(async () => {
         const sdkPath = '/browser-import.mjs'
         const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
@@ -707,12 +706,6 @@ for (const launch of ['cold', 'warm'] as const) {
         return transfer.send()
       })
       expect(result).toEqual({ received: true })
-      const consent = JSON.parse(
-        (await readFile(join(storage, 'e2e-browser-import-prompts.jsonl'), 'utf8')).trim()
-      )
-      expect(consent.message).toContain('https://research.example')
-      expect(consent.message).toContain('study.science')
-      expect(consent.defaultId).toBe(0)
       expect(network.filter((url) => url.endsWith('/study.science'))).toHaveLength(1)
       expect(network.some((url) => /^http:\/\/127\.0\.0\.1:\d+\/v1\/import\/chunk/.test(url))).toBe(
         true
@@ -746,7 +739,6 @@ for (const launch of ['cold', 'warm'] as const) {
       await page.getByRole('button', { name: 'All projects', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Projects', exact: true })).toBeVisible()
       if (launch === 'warm') {
-        await app.configureBrowserImportConsent(false)
         const restarted = await app.restart()
         expect(
           await website.evaluate(async (port) => {
@@ -754,7 +746,7 @@ for (const launch of ['cold', 'warm'] as const) {
             const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
             return checkBrowserImportAvailability({ port })
           }, discoveryPort)
-        ).toEqual({ status: 'available', authorized: true })
+        ).toEqual({ status: 'available' })
         const nextUrl = await website.evaluate(async () => {
           const sdkPath = '/browser-import.mjs'
           const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
@@ -773,26 +765,12 @@ for (const launch of ['cold', 'warm'] as const) {
             ).browserPackageTransfer.send()
           )
         ).toEqual({ received: true })
-        // Receipt completes before choosing a project; persistent consent avoids another native prompt.
-        expect(
-          (await readFile(join(storage, 'e2e-browser-import-prompts.jsonl'), 'utf8'))
-            .trim()
-            .split('\n')
-        ).toHaveLength(1)
+        // A fresh transfer of the same bytes is received again; final import still needs a choice.
         await expect(
           restarted
             .getByRole('dialog', { name: 'Import Session package', exact: true })
             .getByText('again.science', { exact: true })
         ).toBeVisible()
-        expect(
-          await website.evaluate(async (port) => {
-            const sdkPath = '/browser-import.mjs'
-            const { revokeBrowserImportAuthorization, checkBrowserImportAvailability } =
-              await import(/* @vite-ignore */ sdkPath)
-            await revokeBrowserImportAuthorization({ port })
-            return checkBrowserImportAvailability({ port })
-          }, discoveryPort)
-        ).toEqual({ status: 'available', authorized: false })
       }
     } finally {
       if (previousDiscoveryPort === undefined)

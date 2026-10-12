@@ -167,11 +167,11 @@ it('checks one discovery endpoint without downloading a package or exposing cred
   const requests: { url: string; init: RequestInit }[] = []
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     requests.push({ url, init })
-    return Response.json({ service: 'open-science-browser-import', version: 1, authorized: true })
+    return Response.json({ service: 'open-science-browser-import', version: 1 })
   })
   await expect(
     checkBrowserImportAvailability({ origin: 'https://research.example' })
-  ).resolves.toEqual({ status: 'available', authorized: true })
+  ).resolves.toEqual({ status: 'available' })
   expect(requests.map((request) => request.url)).toEqual([
     'http://127.0.0.1:49151/v1/browser-import/capabilities'
   ])
@@ -180,7 +180,7 @@ it('checks one discovery endpoint without downloading a package or exposing cred
 })
 
 it.each([
-  [403, {}, 'permission-denied'],
+  [403, {}, 'incompatible'],
   [200, { service: 'another-app', version: 1 }, 'incompatible'],
   [200, { service: 'open-science-browser-import', version: 2 }, 'incompatible']
 ])('classifies discovery response %s %j', async (status, body, expected) => {

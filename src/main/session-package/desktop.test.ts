@@ -1,7 +1,7 @@
 import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
@@ -1794,3 +1794,44 @@ it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as
 await (
   await import('../../../test/runtime-host')
 ).configureTestElectronHost(await import('electron'))
+
+it.each(['valid', 'invalid'] as const)(
+  'validates a %s browser package before asking for a destination',
+  async (kind) => {
+    const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
+    fixtures.push(fixture)
+    const source = join(fixture.storageRoot, 'browser.science')
+    await writeFile(
+      source,
+      kind === 'valid'
+        ? await readFile(join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'))
+        : Buffer.from('not a package')
+    )
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const inspect = vi.spyOn(service, 'inspect')
+    const desktop = new SessionPackageDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    try {
+      await desktop.enqueueFile(source, undefined, true)
+      await vi.waitFor(() =>
+        expect(desktop.operations.snapshot?.state).toBe(
+          kind === 'valid' ? 'awaiting-selection' : 'failed'
+        )
+      )
+      expect(inspect).toHaveBeenCalledWith(await realpath(source), expect.any(AbortSignal))
+      expect(await fixture.client.session.count()).toBe(0)
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)

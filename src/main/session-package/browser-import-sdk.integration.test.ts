@@ -7,8 +7,7 @@ import { BrowserPackageImport } from './browser-import'
 import type { BrowserImportTransfer } from '../../../packages/open-science/browser-import'
 // @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
 import * as browserSdk from '../../../packages/open-science/browser-import.mjs'
-const { checkBrowserImportAvailability, revokeBrowserImportAuthorization, prepareBrowserImport } =
-  browserSdk
+const { checkBrowserImportAvailability, prepareBrowserImport } = browserSdk
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -19,7 +18,6 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
   let received: string | undefined
   const bridge = new BrowserPackageImport({
     root,
-    confirm: async () => true,
     receive: (path) => {
       received = path
     }
@@ -35,11 +33,7 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
     const discoveryPort = await findBrowserImportPort()
     await bridge.startDiscovery(discoveryPort)
     expect(await checkBrowserImportAvailability({ origin, port: discoveryPort })).toEqual({
-      status: 'available',
-      authorized: false
-    })
-    expect(await revokeBrowserImportAuthorization({ origin, port: discoveryPort })).toEqual({
-      status: 'revoked'
+      status: 'available'
     })
     const bytes = new Uint8Array(4 * 1024 ** 2 + 17).fill(73)
     const transfer: BrowserImportTransfer = prepareBrowserImport(new Blob([bytes]), {

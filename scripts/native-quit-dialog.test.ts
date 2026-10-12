@@ -64,7 +64,7 @@ test('captures the live native translator through the source preload with an arb
         id === 'node:module'
           ? moduleLoader
           : id === 'electron'
-            ? { ...require('electron'), app: { isPackaged: false } }
+            ? { app: { isPackaged: false } }
             : require(id),
       process: { versions: { electron: 'test' }, env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: config } },
       __filename: preload,

@@ -3,8 +3,8 @@
 The `@aipoch/open-science/browser-import` entry point runs in a browser. The website downloads a
 complete `Blob` or `File`, launches the installed desktop app through `open-science://`, and sends
 the bytes to a temporary receiver on `127.0.0.1`. Open-Science never downloads a remote package URL.
-The user can remember approval for the sending website. Destination selection and final package
-review stay in Open-Science after receipt.
+Open-Science receives the file automatically and validates the package before asking for a target.
+The user then chooses the destination and confirms the final import.
 
 ## Website integration
 
@@ -71,9 +71,7 @@ continueButton.onclick = async () => {
       window.open('/open-science/download', '_blank', 'noopener,noreferrer')
       return
     }
-    status.textContent = availability.authorized
-      ? 'Downloading package…'
-      : 'Downloading package… Approve this website in Open-Science when prompted.'
+    status.textContent = 'Downloading package…'
     const response = await fetch('/packages/study.science', { signal: controller.signal })
     if (!response.ok) throw new Error(`Download failed (${response.status})`)
     const file = await response.blob()
@@ -97,9 +95,10 @@ openButton.onclick = () => {
 cancelButton.onclick = () => controller?.abort()
 ```
 
-`send()` returns `{ received: true }` after the entire file reaches the local import queue. Project
-selection and final package review happen separately and do not block this acknowledgment. It does
-not mean package validation succeeded or a session was created. No website receives desktop data
+`send()` returns `{ received: true }` after the entire file reaches the local import queue. The
+desktop automatically validates the archive before presenting destination selection, then requires
+final import confirmation. Those steps do not block the transport acknowledgment: receipt alone
+does not mean package validation succeeded or a session was created. No website receives desktop data
 or general API credentials. The website owns fetching bytes; do not put a remote URL, blob URL or
 file contents in the protocol. Never log, persist, send to analytics, or publish `transfer.url`.
 
@@ -109,15 +108,13 @@ file contents in the protocol. Never log, persist, send to analytics, or publish
 endpoint, `http://127.0.0.1:49151/v1/browser-import/capabilities`, with a default 2,000 ms budget,
 including the response body. It returns:
 
-- `{ status: 'available', authorized: boolean }`: compatible running receiver; `authorized` says
-  whether this exact origin has persistent receipt approval.
+- `{ status: 'available' }`: a compatible running receiver.
 - `unavailable`: no reachable receiver, including opaque network/CORS/local-network denials.
-- `permission-denied`: an explicit denial the platform exposes.
 - `unsupported-browser`, `incompatible`, `timeout`, or `aborted`.
 
 An unreachable receiver is not proof that Open-Science is uninstalled. Browser privacy rules often
 make permission denial indistinguishable from connection refusal. Local-network access may prompt,
-so availability is not guaranteed to be silent. Discovery is advisory and unauthenticated: a local
+so availability is not guaranteed to be silent. Discovery is advisory: a local
 port occupant can forge it. **Only** the secret-bound readiness proof authenticates the receiver;
 the SDK never sends credentials or plaintext file bytes based on discovery alone.
 
@@ -128,28 +125,27 @@ readiness timers. The attempt timeout covers headers and body reads. The overall
 an attempt or a gap. These budgets end at readiness and **do not limit the subsequent file transfer**.
 Failures use `BrowserImportError.code`: `readiness-exhausted`, `timeout`, `incompatible`, or
 `unsupported-browser`; caller cancellation preserves the abort signal's reason. Identity failures
-stop immediately. Browser prompt time may exceed readiness attempts; retry after approving.
+stop immediately. Browser prompt time may exceed readiness attempts; retry after allowing the browser to open the app.
 
-### Persistent website approval and revocation
+### Receipt, validation and repeated imports
 
-The first receipt asks in Open-Science. **Receive package** approves one transfer; **Always allow
-this website** persists the exact origin (scheme, hostname and port), including across restarts.
-Only native consent can create a grant. It permits receipt and queueing, never final import.
-Previously approved websites can use the automatic path without a receipt/destination prompt
-blocking transport. First use still requires native consent and may require a manual retry.
+There is no website permission dialog, persistent origin allowlist, or authorization/revocation API.
+The launch protocol binds a fresh secret, exact Origin, transfer port, filename and size. Host/Origin
+checks, authenticated requests/receipts, encrypted chunks and staging limits apply to every transfer.
+The desktop uses the existing package inspector before destination selection, including archive
+path and content validation. Final import revalidates the staged archive and retains the existing
+`packageOrigin` and `receipt.json` provenance; no separate browser import ledger is created.
 
-The browser SDK's `revokeBrowserImportAuthorization(options?)` removes only the calling website's
-grant and returns `{ status: 'revoked' }` or the availability failure statuses. Put it on the
-website's Disconnect/Forget action. It affects future transfers, not an already authorized one.
-To clear **all** website grants locally, close Open-Science and remove
-`<OPEN_SCIENCE_CONFIG_ROOT>/browser-package-imports/trusted-origins.json` (the app's configuration
-folder when the environment override is unset). Corrupt/missing authorization files fail closed.
-Temporary transfer secrets are never persisted in this file.
+Repeated delivery of the same protocol secret is handled once. The desktop queue also deduplicates
+the same active/queued local path. These are transport/queue protections, **not** a ban on repeated
+imports: sending and importing the same package again with a new transfer creates an independent
+session using the existing import rules. Package content may be shared while session identities
+and import receipts remain independent.
 
 Discovery starts when an authenticated Electron desktop attaches to the Node receiver, and closes
 with that runtime. A surviving background runtime can still answer discovery; the protocol launch
 brings the desktop forward. The headless general API is unchanged. `OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT` can override the single discovery
-port for isolated development; pass the same `port` to discovery/revocation SDK calls. `port` in
+port for isolated development; pass the same `port` to discovery SDK calls. `port` in
 `prepareBrowserImport` remains the separate ephemeral **transfer** port. If another profile owns
 the discovery port, discovery is unavailable for this profile; existing protocol imports still work.
 Do not scan ports or substitute the general desktop API.
@@ -189,7 +185,7 @@ The launch URL carries `version=1`, the exact website `origin`, a random 32-byte
 There is no package URL, filesystem path, Blob URL, or file body in the launch URL. Treat the URL as
 a credential: do not put it in analytics, logs, persistent links, or error reports.
 
-After native consent, the app binds only `127.0.0.1:<port>`. Every request must have the exact
+When the protocol launches a transfer, the app binds only `127.0.0.1:<port>`. Every request must have the exact
 `Host` and website `Origin`. CORS is scoped to that origin, without cookies. This receiver is
 separate from the authenticated general-purpose web service; that service's CORS policy stays
 unchanged. At most 16 transfer records and 2 GiB of advertised unconsumed data are admitted.
@@ -229,6 +225,6 @@ OPEN_SCIENCE_ALLOW_MULTI_INSTANCE=1 npm run dev
 
 The source E2E journey in `e2e/session-package.spec.ts` downloads a fixture into a real Chromium
 Blob, transfers bytes through actual HTTP/CORS, and completes the desktop import. It delivers
-cold argv and warm `open-url` events at Electron's boundary and substitutes the native consent
-answer within the isolated test fixture. Installed OS protocol registration and user permission
+cold argv and warm `open-url` events at Electron's boundary and exercises automatic receipt
+within the isolated test fixture. Installed OS protocol registration and browser permission
 dialogs still require packaged macOS/Windows/Linux manual validation.

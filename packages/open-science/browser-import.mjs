@@ -63,7 +63,7 @@ const bounded = async (signal, timeoutMs, work) => {
     clearTimeout(timer)
   }
 }
-const discoveryRequest = async (options, method, path) => {
+const discoveryRequest = async (options) => {
   validOrigin(options.origin ?? globalThis.location?.origin)
   const port = options.port ?? 49151
   const timeoutMs = options.timeoutMs ?? 2000
@@ -77,8 +77,8 @@ const discoveryRequest = async (options, method, path) => {
   )
     throw new Error('Invalid discovery options.')
   return bounded(options.signal, timeoutMs, async (signal) => {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/browser-import/${path}`, {
-      method,
+    const response = await fetch(`http://127.0.0.1:${port}/v1/browser-import/capabilities`, {
+      method: 'GET',
       signal,
       mode: 'cors',
       credentials: 'omit',
@@ -86,28 +86,25 @@ const discoveryRequest = async (options, method, path) => {
       redirect: 'error',
       targetAddressSpace: 'loopback'
     })
-    if (response.status === 403) return { status: 'permission-denied' }
-    if (method === 'DELETE') return { status: response.status === 204 ? 'revoked' : 'incompatible' }
     const value = await response.json()
     if (
       !response.ok ||
       !value ||
       value.service !== 'open-science-browser-import' ||
-      value.version !== 1 ||
-      typeof value.authorized !== 'boolean'
+      value.version !== 1
     )
       return { status: 'incompatible' }
-    return { status: 'available', authorized: value.authorized }
+    return { status: 'available' }
   })
 }
-const discover = async (options, method, path) => {
+const discover = async (options) => {
   if (!supported()) return { status: 'unsupported-browser' }
   try {
-    return await discoveryRequest(options, method, path)
+    return await discoveryRequest(options)
   } catch (error) {
     if (options.signal?.aborted) return { status: 'aborted' }
     if (error.code === 'timeout' || error.name === 'TimeoutError') return { status: 'timeout' }
-    if (error.name === 'NotAllowedError') return { status: 'permission-denied' }
+    if (error.name === 'NotAllowedError') return { status: 'unavailable' }
     if (error instanceof SyntaxError) return { status: 'incompatible' }
     // Browsers deliberately conflate connection refusal, CORS and local-network denial.
     if (error instanceof TypeError) return { status: 'unavailable' }
@@ -115,12 +112,7 @@ const discover = async (options, method, path) => {
   }
 }
 /** Advisory discovery only; the secret-bound handshake still authenticates every transfer. */
-export const checkBrowserImportAvailability = (options = {}) =>
-  discover(options, 'GET', 'capabilities')
-/** A website may revoke its own stored grant, never create one or revoke another origin. */
-export const revokeBrowserImportAuthorization = (options = {}) =>
-  discover(options, 'DELETE', 'authorization')
-
+export const checkBrowserImportAvailability = (options = {}) => discover(options)
 /** Prepare a transfer from bytes already downloaded by the website. Open url from a user click,
  * then call send(). Its result acknowledges local receipt, not the user's eventual import decision.
  */

@@ -4,7 +4,6 @@ import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, open, readdir, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
 
 // Version 1 deliberately bounds browser staging independently of the research archive format.
 const MAX_BYTES = 2 * 1024 ** 3
@@ -14,7 +13,6 @@ const HEX_SECRET = /^[a-f0-9]{64}$/
 type BrowserImportOptions = {
   root: string
   receive: (path: string, consumed: () => void) => void | boolean | Promise<boolean>
-  confirm: (request: BrowserImportRequest) => Promise<boolean | 'remember'>
   idleMs?: number
 }
 type Transfer = {
@@ -44,7 +42,7 @@ const reply = (response: ServerResponse, status: number, value?: unknown): void 
   response.end(value === undefined ? undefined : JSON.stringify(value))
 }
 
-// This receiver never fetches a URL. Its only input is a consented, bounded byte stream from the
+// This receiver never fetches a URL. Its only input is an authenticated, bounded byte stream from the
 // browser that holds the protocol secret. It has no access to the general web API or its token.
 export class BrowserPackageImport {
   private readonly transfers = new Map<string, Transfer>()
@@ -52,24 +50,6 @@ export class BrowserPackageImport {
   private closed = false
   private discovery?: Server
   private discoveryStarting?: Promise<void>
-  private authorizationWrites: Promise<void> = Promise.resolve()
-
-  private async trustedOrigins(): Promise<string[]> {
-    try {
-      const value = JSON.parse(
-        await readFileWithinLimit(join(this.options.root, 'trusted-origins.json'), 64 * 1024)
-      )
-      return value.version === 1 &&
-        Array.isArray(value.origins) &&
-        value.origins.length <= 100 &&
-        value.origins.every((origin: unknown) => this.validOrigin(origin))
-        ? value.origins
-        : []
-    } catch {
-      return []
-    }
-  }
-
   private validOrigin(origin: unknown): origin is string {
     if (typeof origin !== 'string' || origin.length > 2048) return false
     try {
@@ -83,23 +63,6 @@ export class BrowserPackageImport {
     } catch {
       return false
     }
-  }
-
-  private saveAuthorization(origin: string, allow: boolean): Promise<void> {
-    // Serialize grants/revocations so concurrent native consent cannot overwrite another origin.
-    const write = this.authorizationWrites.then(async () => {
-      const origins = new Set(await this.trustedOrigins())
-      if (allow) origins.add(origin)
-      else if (!origins.delete(origin)) return
-      if (origins.size > 100) throw new Error('Too many approved browser origins.')
-      await mkdir(this.options.root, { recursive: true, mode: 0o700 })
-      await writeDurableJsonFile(
-        join(this.options.root, 'trusted-origins.json'),
-        JSON.stringify({ version: 1, origins: [...origins] })
-      )
-    })
-    this.authorizationWrites = write.catch(() => undefined)
-    return write
   }
 
   startDiscovery(port = 49151): Promise<void> {
@@ -140,27 +103,19 @@ export class BrowserPackageImport {
     }
     response.setHeader('Access-Control-Allow-Origin', origin)
     response.setHeader('Vary', 'Origin')
-    // Discovery can reveal only protocol compatibility and this origin's grant, never user data.
+    // Discovery exposes only protocol compatibility, never desktop data or import authority.
     const path = request.url
-    if (path !== '/v1/browser-import/capabilities' && path !== '/v1/browser-import/authorization') {
+    if (path !== '/v1/browser-import/capabilities') {
       reply(response, 404)
     } else if (request.method === 'OPTIONS') {
-      response.setHeader(
-        'Access-Control-Allow-Methods',
-        path.endsWith('/capabilities') ? 'GET' : 'DELETE'
-      )
+      response.setHeader('Access-Control-Allow-Methods', 'GET')
       response.setHeader('Access-Control-Allow-Private-Network', 'true')
       reply(response, 204)
-    } else if (request.method === 'GET' && path.endsWith('/capabilities')) {
-      await this.authorizationWrites
+    } else if (request.method === 'GET') {
       reply(response, 200, {
         service: 'open-science-browser-import',
-        version: 1,
-        authorized: (await this.trustedOrigins()).includes(origin)
+        version: 1
       })
-    } else if (request.method === 'DELETE' && path.endsWith('/authorization')) {
-      await this.saveAuthorization(origin, false)
-      reply(response, 204)
     } else reply(response, 405)
     request.resume()
   }
@@ -196,15 +151,6 @@ export class BrowserPackageImport {
   }
 
   private async start(transfer: Transfer): Promise<void> {
-    await this.authorizationWrites
-    const trusted = (await this.trustedOrigins()).includes(transfer.request.origin)
-    if (this.closed) return
-    const decision = trusted || (await this.options.confirm(transfer.request))
-    if (!decision || this.closed) {
-      await this.remove(transfer)
-      return
-    }
-    if (decision === 'remember') await this.saveAuthorization(transfer.request.origin, true)
     if (this.closed) return
     transfer.resources = this.acquire(transfer)
     await transfer.resources
@@ -479,8 +425,7 @@ export class BrowserPackageImport {
       this.discovery.closeAllConnections()
       await new Promise<void>((resolve) => this.discovery!.close(() => resolve()))
     }
-    await this.authorizationWrites
-    // Consent dialogs may still be open. start() rechecks closed before opening any resource.
+    // Join all in-flight resource acquisition before removing staged bytes.
     await Promise.all([...this.transfers.values()].map((transfer) => this.remove(transfer)))
   }
 }

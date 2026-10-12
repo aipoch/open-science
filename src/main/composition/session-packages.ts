@@ -1,4 +1,4 @@
-import { desktopInteraction, desktopFileInteraction } from '../desktop-interaction'
+import { desktopInteraction } from '../desktop-interaction'
 import { join } from 'node:path'
 import { BrowserPackageImport } from '../session-package/browser-import'
 import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
@@ -229,31 +229,7 @@ export function composeSessionPackageSurfaces({
   })
   const browserPackageImport = new BrowserPackageImport({
     root: join(resolveConfigRoot(), 'browser-package-imports'),
-    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed),
-    confirm: async ({ origin, name }) => {
-      const result = await desktopFileInteraction().confirm({
-        type: 'question',
-        title: translate('Import Session package'),
-        message: translate('Allow {{origin}} to send {{filename}} to Open-Science?', {
-          origin,
-          filename: name
-        }),
-        detail:
-          translate('The file will be received locally. You can review it before importing.') +
-          '\n\n' +
-          translate(
-            'Choosing Always allow this website remembers this origin until you revoke it.'
-          ),
-        buttons: [
-          translate('Cancel'),
-          translate('Receive package'),
-          translate('Always allow this website')
-        ],
-        defaultId: 0,
-        cancelId: 0
-      })
-      return result.response === 2 ? 'remember' : result.response === 1
-    }
+    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed, true)
   })
   // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
   sessionPackageDesktopLifecycle.isActive = () =>

@@ -21,9 +21,7 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
-async function setup(
-  options: { confirm?: () => Promise<boolean | 'remember'>; idleMs?: number } = {}
-) {
+async function setup(options: { idleMs?: number } = {}) {
   const port = await findBrowserImportPort()
   const root = await mkdtemp(join(tmpdir(), 'browser-package-'))
   disposers.push(() => rm(root, { recursive: true, force: true }))
@@ -35,7 +33,6 @@ async function setup(
       received.push(path)
       releases.push(consumed)
     },
-    confirm: options.confirm ?? (async () => true),
     idleMs: options.idleMs
   })
   disposers.push(() => bridge.close())
@@ -162,29 +159,10 @@ describe('browser-held research package handoff', () => {
     expect(await readdir(f.root)).toEqual([])
   })
 
-  it('does not listen or create package files when the user declines', async () => {
-    const f = await setup({ confirm: async () => false })
-    await f.bridge.begin(launch(f.port))
-    await expect(f.request('/ready')).rejects.toThrow()
-    expect(await readdir(f.root)).toEqual([])
-  })
-
-  it('deduplicates repeated protocol launches while consent is pending', async () => {
-    let confirm!: (value: boolean) => void
-    let prompts = 0
-    const f = await setup({
-      confirm: () => {
-        prompts++
-        return new Promise((resolve) => {
-          confirm = resolve
-        })
-      }
-    })
-    const first = f.bridge.begin(launch(f.port))
-    const duplicate = f.bridge.begin(launch(f.port))
-    await vi.waitFor(() => expect(prompts).toBe(1))
-    confirm(true)
-    await Promise.all([first, duplicate])
+  it('deduplicates repeated protocol launches while resources are acquired', async () => {
+    const f = await setup()
+    await Promise.all([f.bridge.begin(launch(f.port)), f.bridge.begin(launch(f.port))])
+    expect(await readdir(f.root)).toHaveLength(1)
     expect((await f.chunk('hello')).status).toBe(200)
   })
 })
@@ -228,23 +206,6 @@ it('waits for resource acquisition during close and leaves no listener or source
   await expect(f.request('/ready')).rejects.toThrow()
 })
 
-it('can close while consent is unresolved without opening resources later', async () => {
-  let consent!: (accepted: boolean) => void
-  const f = await setup({
-    confirm: () =>
-      new Promise((resolve) => {
-        consent = resolve
-      })
-  })
-  const starting = f.bridge.begin(launch(f.port))
-  await vi.waitFor(() => expect(consent).toBeTypeOf('function'))
-  await f.bridge.close()
-  consent(true)
-  await starting
-  expect(await readdir(f.root)).toEqual([])
-  await expect(f.request('/ready')).rejects.toThrow()
-})
-
 it('releases an expired receipt after import and admits another transfer without restarting', async () => {
   const f = await setup({ idleMs: 40 })
   await f.bridge.begin(launch(f.port))
@@ -271,34 +232,33 @@ it('retains the receipt for retry after the source has already been consumed', a
   expect(f.received).toHaveLength(1)
 })
 
-it('remembers explicit origin approval across restarts and revokes only the requesting origin', async () => {
-  const f = await setup({ confirm: async () => 'remember' as const })
-  await f.bridge.begin(launch(f.port))
-  await f.bridge.close()
-  const confirm = vi.fn(async () => false)
-  const restarted = new BrowserPackageImport({ root: f.root, confirm, receive: () => {} })
-  disposers.push(() => restarted.close())
-  const discoveryPort = await findBrowserImportPort()
-  await restarted.startDiscovery(discoveryPort)
-  const base = `http://127.0.0.1:${discoveryPort}/v1/browser-import`
-  const get = (site = origin) => fetch(base + '/capabilities', { headers: { Origin: site } })
-  expect(await (await get()).json()).toMatchObject({ authorized: true, version: 1 })
-  expect(await (await get('https://other.example')).json()).toMatchObject({ authorized: false })
-  expect((await fetch(base + '/capabilities', { headers: { Origin: 'null' } })).status).toBe(403)
-  await restarted.begin(launch(f.port))
-  expect(confirm).not.toHaveBeenCalled()
-  await fetch(base + '/authorization', {
-    method: 'DELETE',
-    headers: { Origin: 'https://other.example' }
-  })
-  expect(await (await get()).json()).toMatchObject({ authorized: true })
-  expect(
-    (await fetch(base + '/authorization', { method: 'DELETE', headers: { Origin: origin } })).status
-  ).toBe(204)
-  expect(await (await get()).json()).toMatchObject({ authorized: false })
-  await restarted.close()
-  const revoked = new BrowserPackageImport({ root: f.root, confirm, receive: () => {} })
-  disposers.push(() => revoked.close())
-  await revoked.begin(launch(f.port))
-  expect(confirm).toHaveBeenCalledOnce()
+it('automatically receives without a website grant and exposes only capability discovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'browser-auto-'))
+  const receiver = new BrowserPackageImport({ root, receive: () => {} })
+  const port = await findBrowserImportPort()
+  const discovery = await findBrowserImportPort()
+  try {
+    await receiver.startDiscovery(discovery)
+    await receiver.begin(launch(port))
+    const capabilities = await fetch(
+      `http://127.0.0.1:${discovery}/v1/browser-import/capabilities`,
+      { headers: { Origin: origin } }
+    )
+    expect(await capabilities.json()).toEqual({
+      service: 'open-science-browser-import',
+      version: 1
+    })
+    expect(
+      (
+        await fetch(`http://127.0.0.1:${discovery}/v1/browser-import/authorization`, {
+          method: 'DELETE',
+          headers: { Origin: origin }
+        })
+      ).status
+    ).toBe(404)
+    expect((await readdir(root)).every((name) => name.startsWith('transfer-'))).toBe(true)
+  } finally {
+    await receiver.close()
+    await rm(root, { recursive: true, force: true })
+  }
 })

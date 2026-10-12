@@ -15,22 +15,12 @@ export type BrowserImportDiscoveryOptions = {
 }
 export type BrowserImportUnavailable = {
   /** unavailable also covers opaque CORS/local-network denials; it does not mean not installed. */
-  status:
-    | 'unavailable'
-    | 'permission-denied'
-    | 'unsupported-browser'
-    | 'incompatible'
-    | 'timeout'
-    | 'aborted'
+  status: 'unavailable' | 'unsupported-browser' | 'incompatible' | 'timeout' | 'aborted'
 }
 /** Advisory only; the transfer handshake authenticates the actual receiver. No package is fetched. */
 export function checkBrowserImportAvailability(
   options?: BrowserImportDiscoveryOptions
-): Promise<{ status: 'available'; authorized: boolean } | BrowserImportUnavailable>
-/** Revokes only the calling website's grant for future transfers. */
-export function revokeBrowserImportAuthorization(
-  options?: BrowserImportDiscoveryOptions
-): Promise<{ status: 'revoked' } | BrowserImportUnavailable>
+): Promise<{ status: 'available' } | BrowserImportUnavailable>
 export type BrowserImportTransfer = {
   /** Contains a secret; never log or persist it. Browser policy may require a fresh user click. */
   readonly url: string

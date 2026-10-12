@@ -49,11 +49,6 @@
     "Confirm Notebook kernel and environment": "Confirmar el kernel y el entorno de Notebook"
   },
   "native": {
-    "Always allow this website": "Permitir siempre este sitio web",
-    "Choosing Always allow this website remembers this origin until you revoke it.": "Al seleccionar Permitir siempre este sitio web, se recordará este origen hasta que revoque el permiso.",
-    "Receive package": "Recibir paquete",
-    "Allow {{origin}} to send {{filename}} to Open-Science?": "¿Permitir que {{origin}} envíe {{filename}} a Open-Science?",
-    "The file will be received locally. You can review it before importing.": "El archivo se recibirá localmente. Puede revisarlo antes de importarlo.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Las credenciales del sistema Linux requieren el backend Secret Service o KWallet seleccionado originalmente y /usr/bin/busctl. Desbloquee el llavero o la cartera predeterminados originales y reinicie. No cambie el backend password-store ni el perfil para omitir esta comprobación.",
     "Credential storage needs recovery": "Es necesario recuperar el almacén de credenciales",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Este backend de credenciales del sistema no admite comprobaciones silenciosas de identidad. El inicio se ha detenido para preservar los datos cifrados existentes.",

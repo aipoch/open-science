@@ -40,6 +40,7 @@ type NativeImportFile = {
   target?: import('../../shared/session-package').SessionPackageImportRequest
   originClientId?: string
   onReleased?: () => void
+  validateBeforeTarget?: boolean
 }
 class PackageSourceUnavailableError extends Error {}
 
@@ -90,7 +91,11 @@ export class SessionPackageDesktop {
     )
   }
 
-  enqueueFile(path: string, onReleased?: () => void): Promise<boolean> {
+  enqueueFile(
+    path: string,
+    onReleased?: () => void,
+    validateBeforeTarget = false
+  ): Promise<boolean> {
     const releaseSource = onReleased
     let released = false
     onReleased = releaseSource
@@ -134,7 +139,8 @@ export class SessionPackageDesktop {
           id: randomUUID(),
           path: canonical,
           filename: basename(path),
-          onReleased
+          onReleased,
+          validateBeforeTarget
         })
         this.operations.setPendingImports(
           this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
@@ -170,7 +176,13 @@ export class SessionPackageDesktop {
     this.operations.setPendingImports(
       this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
     )
-    void this.import(undefined, file.originClientId, file.target ?? {}, file.path)
+    void this.import(
+      undefined,
+      file.originClientId,
+      file.target ?? {},
+      file.path,
+      file.validateBeforeTarget
+    )
       .then((result) => {
         if (result) file.onReleased?.()
       })
@@ -651,7 +663,8 @@ export class SessionPackageDesktop {
     callerId?: string,
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
-    sourcePath?: string
+    sourcePath?: string,
+    validateBeforeTarget = false
   ): Promise<SessionPackageImportResult> {
     let operationSignal: AbortSignal | undefined
     const rememberSource = (path: string): void => {
@@ -667,7 +680,8 @@ export class SessionPackageDesktop {
         filename: basename(path),
         target: { ...target },
         originClientId,
-        onReleased
+        onReleased,
+        validateBeforeTarget
       }
       this.operations.setImportSource(id, basename(path), target)
     }
@@ -685,6 +699,14 @@ export class SessionPackageDesktop {
           if (sourcePath) rememberSource(sourcePath)
           if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+          if (sourcePath && validateBeforeTarget) {
+            // Browser uploads are untrusted bytes: reuse archive inspection before target selection.
+            // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
+            this.options.assertCanStart?.()
+            this.operations.report({ phase: 'validating' })
+            await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+            signal.throwIfAborted()
+          }
           if (sourcePath && !target.projectId && !target.projectName) {
             const selectedTarget = await this.operations.waitForImport({
               requestId: this.operations.snapshot?.importRequestId,
