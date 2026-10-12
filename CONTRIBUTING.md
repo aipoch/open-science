@@ -651,8 +651,11 @@ explicit runtime-consumer edges. Host globals such as `process` or `window`, Nod
 external libraries do not by themselves make the repository dependency graph incomplete. Unresolved
 local/package imports and computed loading remain uncertain. IPC, event and filesystem relationships
 must be represented by runtime edges or explicit contract tests; historical tests without a provable
-old source dependency remain protected. This exception does not relax ordinary consumer retirement
-or runtime test-pruning proofs, and it cannot accompany source or runtime-edge changes.
+old source dependency remain protected. Removing evidence from the original owner still requires the stronger host-facility proof: an
+import of the moved source cannot rule out an additional IPC/filesystem dependency on the remaining
+owner. Moved owner tests with those uncertain dependencies stay registered on both owners.
+This exception does not relax ordinary consumer retirement or runtime test-pruning proofs, and it
+cannot accompany source or runtime-edge changes.
 The split still receives full PR validation; ordinary selective runs acquire no extra graph scan.
 
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete

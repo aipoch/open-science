@@ -367,10 +367,10 @@ it.each([
   const base = state.commit()
   state.split()
   state.manifest.modules.foundation.testFiles.consumer = [consumer, uncertain]
-  state.manifest.modules.host.testFiles.consumer = []
   const result = state.check(base)
   expect(result.ok).toBe(true)
-  expect(result.retiredConsumers).toContain(`host:${consumer}`)
+  expect(result.retiredConsumers).not.toContain(`host:${consumer}`)
+  expect(state.manifest.modules.host.testFiles.consumer).toContain(consumer)
   expect(state.manifest.modules.host.testFiles.owner).toContain(appTest)
 })
 
@@ -440,5 +440,33 @@ it('retains indirect loading when selecting the extracted owner evidence', () =>
   state.manifest.modules.foundation.testFiles.consumer = [uncertain]
   expect(state.check(base).ok).toBe(false)
   state.manifest.modules.foundation.testFiles.consumer.push(consumer)
+  expect(state.check(base).ok).toBe(true)
+})
+
+it.each([
+  'window.api.readState()',
+  "process.emit('host-event')",
+  "import { readFileSync } from 'node:fs'; readFileSync('runtime-input')",
+  "new Worker('runtime-worker')"
+])('keeps old-owner evidence for unresolved host-facility relationships: %s', (facility) => {
+  const state = fixture()
+  state.put(consumer, `import './leaf'; ${facility}`)
+  state.manifest.modules.host.testFiles.consumer = [consumer]
+  state.save()
+  const base = state.commit()
+  state.split()
+  state.manifest.modules.host.testFiles.consumer = []
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.host.testFiles.consumer = [consumer]
+  expect(state.check(base).ok).toBe(true)
+})
+
+it('keeps a moved owner test on the old owner when it exercises host facilities', () => {
+  const state = fixture()
+  state.put(leafTest, "import './leaf'; window.api.readState()")
+  const base = state.commit()
+  state.split()
+  expect(state.check(base).ok).toBe(false)
+  state.manifest.modules.host.testFiles.consumer.push(leafTest)
   expect(state.check(base).ok).toBe(true)
 })

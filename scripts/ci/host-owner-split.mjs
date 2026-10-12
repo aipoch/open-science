@@ -66,6 +66,9 @@ export function verifiedHostOwnerSplits(
     // Registration moves preserve source bytes. Use import/runtime relationships, including
     // type and mock edges; host globals alone do not make those relationships incomplete.
     const inspect = createConsumerDependencyReader(after, edges)
+    // Removing old evidence needs stronger proof: a known import does not explain
+    // every filesystem/IPC dependency exercised by that test.
+    const inspectRetirement = createConsumerDependencyReader(after, edges, { staticOnly: true })
     const result = empty()
     const verifiedOriginals = new Map()
     for (const { target, originalId, original, remaining } of candidates) {
@@ -122,9 +125,9 @@ export function verifiedHostOwnerSplits(
       if (
         movedTests.some((test) => {
           if (remainingEvidence.has(test)) return false
-          const previous = inspect(test, originalSources)
+          const previous = inspectRetirement(test, originalSources)
           if (!previous.complete || !previous.reachable) return true
-          const dependency = inspect(test, remainingOwners)
+          const dependency = inspectRetirement(test, remainingOwners)
           return dependency.reachable || !dependency.complete
         })
       )
@@ -140,8 +143,8 @@ export function verifiedHostOwnerSplits(
       const remainingOwners = new Set(remaining.ownerPaths)
       for (const test of original.testFiles.consumer) {
         if (remaining.testFiles.consumer.includes(test)) continue
-        const before = inspect(test, oldOwners)
-        const after = inspect(test, remainingOwners)
+        const before = inspectRetirement(test, oldOwners)
+        const after = inspectRetirement(test, remainingOwners)
         if (before.complete && before.reachable && after.complete && !after.reachable)
           result.consumers.add(`${id}:${test}`)
       }
