@@ -376,7 +376,7 @@ describe('independent source regression', () => {
     }
   )
 
-  it('leaves setup, accessibility and upload time beyond all serial suite budgets', () => {
+  it('leaves setup and upload time beyond all serial suite budgets including accessibility', () => {
     const coreBudgets = scheduled.jobs.regression.steps
       .flatMap(({ run }) => [...(run ?? '').matchAll(/--global-timeout=(\d+)/g)])
       .map((match) => Number(match[1]))
@@ -386,12 +386,14 @@ describe('independent source regression', () => {
     const delegation = action.runs.steps.find(
       ({ name }) => name === 'Run supplemental delegation'
     )!.run!
+    const accessibility = readFileSync('e2e/playwright.accessibility.config.ts', 'utf8')
     const budgets = [
       ...coreBudgets,
+      Number(accessibility.match(/globalTimeout:\s*([\d_]+)/)![1].replaceAll('_', '')),
       Number(regressions.match(/true\) regression_timeout=(\d+)/)![1]),
       Number(delegation.match(/--global-timeout=(\d+)/)![1])
     ]
-    expect(budgets).toEqual([900000, 1500000, 900000, 600000, 4500000, 1200000])
+    expect(budgets).toEqual([900000, 1500000, 900000, 600000, 600000, 4500000, 1200000])
     expect(
       scheduled.jobs.regression['timeout-minutes']! * 60000 -
         budgets.reduce((total, budget) => total + budget, 0)
