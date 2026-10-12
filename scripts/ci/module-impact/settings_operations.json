@@ -713,9 +713,15 @@
       "src/main/settings/managed-claude.test.ts",
       "src/main/settings/managed-codex.test.ts",
       "src/main/settings/managed-opencode.test.ts",
-      "src/main/settings/shell-path.test.ts"
+      "src/main/settings/shell-path.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/runtime-network-node.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

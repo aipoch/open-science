@@ -247,7 +247,8 @@
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

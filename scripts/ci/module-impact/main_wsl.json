@@ -248,9 +248,14 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/main/wsl/wsl2-preview-gate.test.ts"
+      "src/main/wsl/wsl2-preview-gate.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

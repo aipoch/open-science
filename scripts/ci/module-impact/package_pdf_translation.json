@@ -655,7 +655,8 @@
       "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/shared/pdf-translation.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

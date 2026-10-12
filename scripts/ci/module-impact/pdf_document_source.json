@@ -1185,7 +1185,8 @@
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

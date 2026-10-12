@@ -432,6 +432,7 @@ describe('preload bridge — public surface inventory', () => {
       'memory.updateEntry',
       'network.checkConnectivity',
       'network.getInfo',
+      'network.onSystemResumed',
       'notebook.abortCodeCell',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',

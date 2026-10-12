@@ -1,3 +1,5 @@
+import { DesktopBackendStartupError } from './backend-startup'
+import { recoverDesktopBackendStartup } from './backend-startup-recovery'
 import { stringifyRpcJson } from './rpc-json'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
 import { DESKTOP_RUNTIME_RECOVERY_CHANNELS } from '../shared/desktop-runtime-recovery'
@@ -547,6 +549,7 @@ async function startDesktop(): Promise<void> {
   }
   startupDiagnostics?.phase('launch-node-runtime')
   const launch = await startOrAttachDesktopBackend({
+    onStatus: (status) => bootstrapLog.info('backend startup status', status),
     configRoot,
     profilePath,
     version: app.getVersion(),
@@ -1143,6 +1146,10 @@ void startDesktop().catch(async (error: unknown) => {
   } catch (cleanupError) {
     bootstrapLog.error('startup backend cleanup failed', diagnosticErrorFields(cleanupError))
     await flushLogs()
+  }
+  if (error instanceof DesktopBackendStartupError) {
+    await recoverDesktopBackendStartup(error)
+    return
   }
   dialog.showErrorBox(APP_NAME, message)
   app.exit(1)

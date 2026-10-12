@@ -8,6 +8,9 @@ export const RENDERER_FAILURE_SOURCES = [
 export type RendererFailureSource = (typeof RENDERER_FAILURE_SOURCES)[number]
 
 export const RENDERER_FAILURE_CONTEXTS = [
+  'settings-load',
+  'settings-capability',
+  'network-check',
   'session-load',
   'session-serialize',
   'session-serialize-create',

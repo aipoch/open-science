@@ -695,9 +695,14 @@
       "src/main/storage/data-path.test.ts",
       "src/main/storage/detect-active.test.ts",
       "src/main/storage/migration-state.test.ts",
-      "src/main/storage/usage.test.ts"
+      "src/main/storage/usage.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

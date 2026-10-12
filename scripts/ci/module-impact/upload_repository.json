@@ -31,7 +31,9 @@
     "src/main/uploads/repository.test-utils.ts",
     "src/main/uploads/storage-helpers.ts"
   ],
-  "consumerModules": ["session_persistence"],
+  "consumerModules": [
+    "session_persistence"
+  ],
   "testFiles": {
     "owner": [
       "src/main/uploads/active-transfer-owner.test.ts",
@@ -521,9 +523,14 @@
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/main/uploads/atomic-no-replace-publisher.test.ts"
+      "src/main/uploads/atomic-no-replace-publisher.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

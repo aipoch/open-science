@@ -290,6 +290,44 @@ for (const borrowed of [false, true])
           window.api.sessions.loadOne(request)
         ])
       }, seeded)
+      // Observe recovery through the real preload/IPC event boundary without external internet.
+      await app.evaluate(({ ipcMain, powerMonitor }) => {
+        const handlers = (
+          ipcMain as typeof ipcMain & {
+            _invokeHandlers: Map<string, (...args: unknown[]) => unknown>
+          }
+        )._invokeHandlers
+        const original = handlers.get('network:check-connectivity')!
+        if (!original) throw new Error('Network handler missing')
+        const probe = { calls: 0 }
+        ;(
+          globalThis as typeof globalThis & { recoveryNetworkProbe: typeof probe }
+        ).recoveryNetworkProbe = probe
+        const check = (): boolean => {
+          probe.calls++
+          return true
+        }
+        handlers.set('network:check-connectivity', check)
+        // Recovery re-registers the relay. Keep observing the new public IPC handler too.
+        const handle = ipcMain.handle.bind(ipcMain)
+        ipcMain.handle = (channel, listener) =>
+          handle(channel, channel === 'network:check-connectivity' ? check : listener)
+        powerMonitor.emit('resume')
+      })
+      await expect
+        .poll(() =>
+          app!.evaluate(
+            () =>
+              (globalThis as typeof globalThis & { recoveryNetworkProbe: { calls: number } })
+                .recoveryNetworkProbe.calls
+          )
+        )
+        .toBeGreaterThan(0)
+      const networkChecksBeforeLoss = await app.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { recoveryNetworkProbe: { calls: number } })
+            .recoveryNetworkProbe.calls
+      )
       const before = owner
       // Pipe sockets in Electron main contain only the private desktop connection; stdio and the
       // inspector are excluded by writable/readable handle identity. Assert before injecting loss.
@@ -335,6 +373,15 @@ for (const borrowed of [false, true])
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
       await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).not.toBeVisible()
+      await expect
+        .poll(() =>
+          app!.evaluate(
+            () =>
+              (globalThis as typeof globalThis & { recoveryNetworkProbe: { calls: number } })
+                .recoveryNetworkProbe.calls
+          )
+        )
+        .toBeGreaterThan(networkChecksBeforeLoss)
       await expect(composer).toContainText('Keep this unsent draft')
       await composer.fill('Keep this unsent draft @recovery-image-0')
       const selected = page.getByRole('option').filter({ hasText: 'recovery-image-0.png' })

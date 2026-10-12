@@ -7,6 +7,7 @@ import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import { i18next } from '@/i18n'
 
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
@@ -1361,7 +1362,7 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
   })
 
-  it('translates the settings failure explanation in the Chinese startup screen', async () => {
+  it('translates the settings startup failure description in Chinese', async () => {
     mocks.settings.loadError = 'Open-Science could not load settings. Retry to continue.'
     mocks.settings.load.mockResolvedValue(false)
     await i18next.changeLanguage('zh-Hans')
@@ -1370,9 +1371,34 @@ describe('App startup routing', () => {
       const notice = container.querySelector('[role="alert"]')
       expect(notice?.textContent).toContain('无法加载设置')
       expect(notice?.textContent).toContain('Open-Science 无法加载设置。请重试以继续。')
+      expect(notice?.textContent).not.toContain('could not load settings')
     } finally {
-      await i18next.changeLanguage('en')
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
     }
+  })
+
+  it('requires review before sharing a settings startup issue and omits the raw error', async () => {
+    mocks.settings.loadError = 'EACCES /Users/private/settings.json token=fixture-secret'
+    mocks.settings.load.mockResolvedValue(false)
+    await render()
+    const report = [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('Report this error')
+    )
+    expect(report).toBeDefined()
+    await act(async () => report!.click())
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('SETTINGS_UNKNOWN')
+    expect(dialog.textContent).not.toContain('fixture-secret')
+    expect(dialog.textContent).not.toContain('/Users/private')
+    const link = [...dialog.querySelectorAll('a')].find((anchor) =>
+      anchor.textContent?.includes('Open GitHub issue')
+    )!
+    expect(link.hasAttribute('href')).toBe(false)
+    await act(async () => dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
+    expect(new URL(link.href).hostname).toBe('github.com')
   })
 
   it('shows a settings load error in the standard error notice and retries initialization', async () => {
@@ -1383,6 +1409,7 @@ describe('App startup routing', () => {
 
     const shell = container.querySelector('[role="alert"]')
     expect(shell?.textContent).toContain('Open-Science could not load settings. Retry to continue.')
+    expect(shell?.textContent).not.toContain('settings IPC unavailable')
     expect(shell?.querySelector('section > svg[aria-hidden="true"]')).not.toBeNull()
     expect(shell?.classList.contains('min-h-svh')).toBe(true)
     expect(shell?.classList.contains('h-screen')).toBe(false)
@@ -1390,7 +1417,9 @@ describe('App startup routing', () => {
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
     expect(mocks.settings.checkEnvironment).not.toHaveBeenCalled()
 
-    const retry = container.querySelector<HTMLButtonElement>('button')
+    const retry = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Retry'
+    )
     expect(retry).not.toBeNull()
     expect(retry?.dataset.slot).toBe('button')
     expect(retry?.className).toContain('focus-visible:keyboard-focus')

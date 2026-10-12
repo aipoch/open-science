@@ -823,9 +823,14 @@
       "src/main/acp/agent-process.test.ts",
       "src/main/acp/claude-executable.test.ts",
       "src/main/acp/permission-profile-controller.test.ts",
-      "src/main/acp/session-agent-target.test.ts"
+      "src/main/acp/session-agent-target.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

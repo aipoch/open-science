@@ -7,7 +7,7 @@ import type { RendererFailureReport } from '../diagnostics'
 
 import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../logs'
 
-import type { NetworkInfo } from '../network'
+import { NETWORK_SYSTEM_RESUMED_CHANNEL, type NetworkInfo } from '../network'
 
 import type { CliLauncherStatus } from '../cli'
 
@@ -123,6 +123,10 @@ export const logsGetStatusContracts = {
 } as const
 
 export const networkCheckConnectivityContracts = {
+  'network.onSystemResumed': callable<(listener: () => void) => RemoveListener>()('network', [
+    NETWORK_SYSTEM_RESUMED_CHANNEL,
+    ELECTRON_EVENT
+  ]),
   'network.checkConnectivity': callable<() => Promise<boolean>>()('network', [
     'network:check-connectivity',
     ELECTRON
