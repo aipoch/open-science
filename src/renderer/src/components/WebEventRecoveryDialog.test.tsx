@@ -18,6 +18,7 @@ let root: Root
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -112,6 +113,28 @@ describe('WebEventRecoveryDialog', () => {
 })
 
 describe('recovery waiting presentation', () => {
+  it('continues the startup particle surface until the first live connection', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('[data-testid="open-science-logo-loader"]')).not.toBeNull()
+    expect(dialog.querySelector('.animate-spin')).toBeNull()
+    expect(dialog.previousElementSibling?.className).toContain('bg-background')
+    expect(dialog.previousElementSibling?.className).not.toContain('bg-background/80')
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="replaying" />))
+    expect(dialog.querySelector('[data-testid="open-science-logo-loader"]')).not.toBeNull()
+  })
+
+  it('keeps later reconnect and replay lightweight instead of restarting the startup logo', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active={false} phase="live" />))
+    for (const phase of ['reconnecting', 'replaying'] as const) {
+      await act(async () => root.render(<WebEventRecoveryDialog active phase={phase} />))
+      const dialog = document.body.querySelector('[role="dialog"]')!
+      expect(dialog.querySelector('[data-testid="open-science-logo-loader"]')).toBeNull()
+      expect(dialog.querySelector('.animate-spin')).not.toBeNull()
+      expect(dialog.previousElementSibling?.className).toContain('bg-background/80')
+    }
+  })
+
   it('does not open a recovery alert during an immediately successful connection', async () => {
     await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()

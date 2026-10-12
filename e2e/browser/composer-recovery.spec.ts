@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 test('reload recovery keeps active text, verifies completed uploads and exposes interrupted uploads', async ({
   page
@@ -152,4 +154,48 @@ test('a continuous slow reconnect escalates once and disappears immediately on r
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   await page.clock.runFor(1000)
   await expect(page.getByText('Reload required', { exact: true })).toHaveCount(0)
+})
+
+test('initial connection shares the startup logo, but later network recovery keeps the page context', async ({
+  page
+}) => {
+  await page.goto('/composer-recovery.html?initial')
+  const loading = page.getByRole('dialog')
+  await expect(loading.getByTestId('open-science-logo-loader')).toBeVisible()
+  await expect(page.locator('[class~="bg-background/80"]')).toHaveCount(0)
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'replaying' }))
+  )
+  await expect(loading.getByTestId('open-science-logo-loader')).toBeVisible()
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'live' }))
+  )
+  const draft = page.getByRole('textbox', { name: 'Draft', exact: true })
+  await draft.fill('Continue this work after reconnecting')
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'reconnecting' }))
+  )
+  await expect(page.getByTestId('open-science-logo-loader')).toHaveCount(0)
+  await expect(page.locator('[class~="bg-background/80"]')).toBeVisible()
+  await expect(loading).toContainText('Reconnecting to Open-Science')
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'live' }))
+  )
+  await expect(draft).toHaveValue('Continue this work after reconnecting')
+})
+
+test('the early Web stylesheet preserves particle geometry alongside renderer styles', async ({
+  page
+}) => {
+  await page.goto('/composer-recovery.html?initial')
+  const canvas = page.getByTestId('open-science-logo-loader')
+  await expect(canvas).toBeVisible()
+  const rendererBounds = await canvas.boundingBox()
+  await canvas.evaluate((element) => {
+    element.parentElement!.parentElement!.id = 'open-science-connection-logo'
+  })
+  const html = readFileSync(resolve('src/renderer/web/index.html'), 'utf8')
+  const styles = html.match(/<style>([\s\S]*?)<\/style>/)![1]
+  await page.addStyleTag({ content: styles })
+  expect(await canvas.boundingBox()).toEqual(rendererBounds)
 })

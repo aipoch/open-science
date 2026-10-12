@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { WebEventConnectionPhase } from '../../../shared/web-event-connection'
 import { Button } from '@/components/ui/button'
+import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import {
   dialogBodyClassName,
@@ -24,10 +25,21 @@ type WebEventRecoveryDialogProps = {
 
 // Mount one timer per uninterrupted recovery episode; phase changes and higher-priority
 // presentations must not restart it. Becoming live unmounts all recovery content immediately.
-const WebEventRecoveryDialog = (props: WebEventRecoveryDialogProps): React.JSX.Element | null =>
-  props.phase === 'live' ? null : <WebEventRecovery {...props} />
+const WebEventRecoveryDialog = (props: WebEventRecoveryDialogProps): React.JSX.Element | null => {
+  // This page has one initial connection; later interruptions must retain the current context.
+  const [hasConnected, setHasConnected] = useState(props.phase === 'live')
+  if (props.phase === 'live') {
+    if (!hasConnected) setHasConnected(true)
+    return null
+  }
+  return <WebEventRecovery {...props} initialConnection={!hasConnected} />
+}
 
-const WebEventRecovery = ({ active, phase }: WebEventRecoveryDialogProps): React.JSX.Element => {
+const WebEventRecovery = ({
+  active,
+  phase,
+  initialConnection
+}: WebEventRecoveryDialogProps & { initialConnection: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
   // Capture before the App Shell makes the background inert in the same commit.
   const previousFocus = useRef(document.activeElement)
@@ -55,6 +67,7 @@ const WebEventRecovery = ({ active, phase }: WebEventRecoveryDialogProps): React
   const authorizationRequired = phase === 'authorization-required'
   const reloadRequired = phase === 'reload-required'
   const showDetails = waitExpired || authorizationRequired || reloadRequired
+  const showStartupLogo = initialConnection && !showDetails
   const reloadAvailable = phase === 'reconnecting' || reloadRequired
   const title = authorizationRequired
     ? t('Pairing required')
@@ -81,7 +94,13 @@ const WebEventRecovery = ({ active, phase }: WebEventRecoveryDialogProps): React
     <AlertDialog.Root open={active}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay
-          className={showDetails ? dialogOverlayClassName : 'fixed inset-0 z-50 bg-background/80'}
+          className={
+            showDetails
+              ? dialogOverlayClassName
+              : showStartupLogo
+                ? 'fixed inset-0 z-50 bg-background'
+                : 'fixed inset-0 z-50 bg-background/80'
+          }
         />
         <AlertDialog.Content
           ref={contentRef}
@@ -103,20 +122,37 @@ const WebEventRecovery = ({ active, phase }: WebEventRecoveryDialogProps): React
               : 'fixed inset-0 z-50 flex items-center justify-center p-6 text-foreground outline-none'
           }
         >
-          <div className={showDetails ? dialogHeaderClassName : undefined}>
+          <div
+            className={
+              showDetails
+                ? dialogHeaderClassName
+                : showStartupLogo
+                  ? 'flex flex-col items-center gap-14'
+                  : undefined
+            }
+          >
+            {showStartupLogo ? <OpenScienceLogoLoader /> : null}
             <AlertDialog.Title
-              className={showDetails ? dialogTitleClassName : 'text-sm font-normal'}
+              className={
+                showDetails
+                  ? dialogTitleClassName
+                  : showStartupLogo
+                    ? 'text-sm font-normal text-muted-foreground'
+                    : 'text-sm font-normal'
+              }
             >
               <span
                 className="inline-flex items-center gap-2"
                 role={showDetails ? undefined : 'status'}
               >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={
-                    reloadRequired || authorizationRequired ? 'size-4' : 'size-4 animate-spin'
-                  }
-                />
+                {!showStartupLogo ? (
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={
+                      reloadRequired || authorizationRequired ? 'size-4' : 'size-4 animate-spin'
+                    }
+                  />
+                ) : null}
                 {title}
               </span>
             </AlertDialog.Title>

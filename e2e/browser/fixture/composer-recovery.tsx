@@ -40,7 +40,9 @@ const uploads = {
 }
 Object.defineProperty(window, 'api', { value: { uploads }, configurable: true })
 export const Harness = (): React.JSX.Element => {
-  const [recovery, setRecovery] = useState<WebEventConnectionPhase>('live')
+  const [recovery, setRecovery] = useState<WebEventConnectionPhase>(
+    new URLSearchParams(window.location.search).has('initial') ? 'connecting' : 'live'
+  )
   useEffect(() => {
     const onRecovery = (event: Event): void =>
       setRecovery((event as CustomEvent<WebEventConnectionPhase>).detail)
