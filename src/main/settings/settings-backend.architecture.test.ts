@@ -1084,6 +1084,7 @@ describe('Settings backend ownership architecture', () => {
       'src/preload/index.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual([
+      'src/main/composition/session-packages.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',
       'src/main/acp/runtime-provider-session-composition.test.ts',
@@ -1124,6 +1125,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/desktop-runtime-transport.integration.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/composition/session-packages.test.ts',
       'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',

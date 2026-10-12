@@ -603,6 +603,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/reproducibility-host.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
+      'src/main/composition/session-packages.test.ts',
       'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
