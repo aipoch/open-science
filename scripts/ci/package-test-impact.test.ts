@@ -577,6 +577,7 @@ describe('installed-consumer input selection', () => {
     'scripts/package-verification-plan.test.ts',
     'scripts/ci/module-test-impact.mjs',
     'test/config/vite.browser-test.config.test.ts',
+    'test/fixtures/pdf-translation/adam-parenthetical-native-body.jsonl',
     'e2e/session-diagnostics.spec.ts',
     'electron.vite.config.ts',
     'vite.web.config.ts'

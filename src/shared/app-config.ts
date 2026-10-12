@@ -2,6 +2,8 @@
 // (GitHub star-count fetch) and the renderer (every entry-point link). Keep this UI-free — no
 // icons, no JSX — so both processes can import it and any screen reuses the same values.
 
+import { DEFAULT_LOCALE, type Locale } from './locale'
+
 const GITHUB_OWNER = 'aipoch'
 const GITHUB_REPO = 'open-science'
 const GITHUB_REPO_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
@@ -30,3 +32,8 @@ export const APP = {
     downloadPage: 'https://www.aipoch.com/open-science'
   }
 } as const
+
+// The documentation site uses the same locale identifiers as the app. English lives at the root;
+// translated homepages use a locale subdirectory. Callers supply the already-resolved app locale.
+export const getDocumentationUrl = (locale: Locale): string =>
+  `${APP.links.docs}${locale === DEFAULT_LOCALE ? '' : `${locale}/`}`
