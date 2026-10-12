@@ -84,8 +84,24 @@ function visitCapability(manifest, capabilityId, path, lanes, reasonChains, visi
 export function classifyChanges(
   changes,
   manifest = defaultManifest,
-  { moduleManifest = defaultModuleManifest, registrationModules = [] } = {}
+  {
+    moduleManifest = defaultModuleManifest,
+    registrationModules = [],
+    registrationOnly = false
+  } = {}
 ) {
+  if (registrationOnly) {
+    return {
+      schemaVersion: manifest.schemaVersion,
+      mode: 'selective',
+      roots: ['module_registration'],
+      lanes: [...manifest.alwaysLanes, 'format', 'lint'],
+      bundles: ['policy', 'static'],
+      reasonChains: [
+        'validated registration-only Git diff -> policy and manifest contracts; application source unchanged'
+      ]
+    }
+  }
   const lanes = new Set(manifest.alwaysLanes)
   const reasonChains = new Set()
   const roots = new Set()
@@ -407,6 +423,7 @@ export function toGitHubOutputPlan(plan) {
     lanes: [...plan.lanes],
     macosGroups: macosGroupsForPlan(plan)
   }
+  if (plan.windowsCoreChecks) output.windowsCoreChecks = [...plan.windowsCoreChecks]
   if (plan.macosProfile) output.macosProfile = plan.macosProfile
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output

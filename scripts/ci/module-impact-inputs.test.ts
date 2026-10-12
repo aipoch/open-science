@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
 import { additiveModuleImpact, resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { type ModuleImpactManifest } from './load-module-impact.mjs'
-import { classifyChanges } from './classify-pr-changes.mjs'
+import { classifyChanges, platformExecutionPlan } from './classify-pr-changes.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 
 const sample = (): ModuleImpactManifest => ({
@@ -248,6 +248,8 @@ describe('trusted additive module registrations', () => {
         'module-test-impact.mjs',
         'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
+        'windows-core-plan.mjs',
+        'windows-core-checks.json',
         'module-impact-shadow.mjs',
         'validate-module-impact.mjs'
       ])
@@ -307,6 +309,81 @@ describe('trusted additive module registrations', () => {
       const explain = run('module-test-impact.mjs', ['affected', ...args, '--explain'])
       expect(explain).toContain('Mode: selective')
       for (const path of shadow.shadow.testFiles) expect(explain).toContain(path)
+    }
+  )
+
+  it.each(['pull_request', 'merge_group'])(
+    'bounds a registration-only split in %s while rejecting mixed, malformed and nonregular inputs',
+    (event) => {
+      const cwd = mkdtempSync(join(tmpdir(), 'registration only '))
+      roots.push(cwd)
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      const put = (path: string, text: string): void => {
+        mkdirSync(dirname(join(cwd, path)), { recursive: true })
+        writeFileSync(join(cwd, path), text)
+      }
+      const commit = (): string => {
+        git('add', '.')
+        git('commit', '-qm', 'ci(test): record data')
+        return git('rev-parse', 'HEAD')
+      }
+      git('init', '-q')
+      git('config', 'user.name', 'Fixture')
+      git('config', 'user.email', 'fixture@example.test')
+      const manifest = sample()
+      put('scripts/ci/module-impact.json', '{"schemaVersion":1}')
+      const record = 'scripts/ci/module-impact/sample.json'
+      put(record, JSON.stringify(manifest.modules.sample))
+      for (const path of paths(manifest)) put(path, '// unchanged source')
+      const base = commit()
+      const split = structuredClone(manifest.modules.sample)
+      split.ownerPaths = ['src/main/sample.test.ts']
+      split.interfacePaths = ['src/main/sample.test.ts']
+      put('scripts/ci/module-impact/child.json', JSON.stringify(split))
+      const parent = structuredClone(manifest.modules.sample)
+      parent.ownerPaths = ['resources/sample/worker.mjs']
+      put(record, JSON.stringify(parent))
+      let head = commit()
+      const changes = [
+        { path: record, status: 'modified' },
+        { path: 'scripts/ci/module-impact/child.json', status: 'added' }
+      ]
+      const resolve = (): ReturnType<typeof resolveModuleImpactInputs> =>
+        resolveModuleImpactInputs(changes, { base, head, cwd, manifest })
+      const input = resolve()
+      expect(input.registrationOnly).toBe(true)
+      expect(input.manifest).toEqual(manifest)
+      const plan = classifyChanges(changes, undefined, { moduleManifest: input.manifest, ...input })
+      expect(platformExecutionPlan(plan, changes, event).bundles).toEqual(['policy', 'static'])
+      expect(plan.roots).toEqual(['module_registration'])
+      expect(
+        createAffectedTestPlan(
+          changes,
+          graph,
+          input.manifest,
+          input.registrationModules,
+          input.registrationOnly
+        ).testFiles
+      ).toEqual([])
+      // Omitted caller paths cannot disguise a source edit in the actual Git diff.
+      put('src/main/sample.test.ts', '// changed test')
+      head = commit()
+      expect(resolve().registrationOnly).not.toBe(true)
+      git('reset', '--hard', base)
+      put(record, '{invalid JSON')
+      head = commit()
+      expect(resolve().registrationOnly).not.toBe(true)
+      git('reset', '--hard', base)
+      put(record, JSON.stringify({ ...parent, capabilityOverlays: ['unknown-overlay'] }))
+      head = commit()
+      expect(resolve().registrationOnly).not.toBe(true)
+      git('reset', '--hard', base)
+      const link = git('hash-object', '-w', '--stdin')
+      git('update-index', '--cacheinfo', `120000,${link},${record}`)
+      git('commit', '-qm', 'ci(test): nonregular record')
+      head = git('rev-parse', 'HEAD')
+      expect(resolve().registrationOnly).not.toBe(true)
     }
   )
 

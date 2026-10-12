@@ -11,6 +11,7 @@ import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveAuthoritativePlan } from './module-impact-shadow.mjs'
 
 type Step = {
+  'continue-on-error'?: boolean
   id?: string
   name: string
   run?: string
@@ -68,7 +69,11 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(step.if).toContain("'windows_runtime'")
   expect(step.if).toContain("inputs.dry_run != 'windows-process'")
-  expect(step).not.toHaveProperty('continue-on-error')
+  expect(step['continue-on-error']).toBe(true)
+  const enforce = pr.jobs.windows_core.steps.find(
+    ({ name }) => name === 'Enforce selected Windows core checks'
+  )!
+  expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
     'src/main/session-diagnostics/collector.test.ts',
     'src/main/literature/smart-collections.test.ts',
