@@ -3,8 +3,8 @@ import { AlertTriangle } from 'lucide-react'
 import { useEffect } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 import { SpecialistAvatar } from '../settings/specialist-avatar'
 
 // The redacted delete approval payload carried by the ACP request. Only the public name travels in

@@ -1,4 +1,5 @@
-import { toAcpTurnTokenUsage, type AcpTurnTokenUsage } from '../../shared/acp'
+import { toAcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 
 // Codex's raw Responses counter includes cached input, but pinned codex-acp 1.1.4 subtracts that
 // cache before publishing PromptResponse.usage. Preserve the adapter's mutually exclusive categories;

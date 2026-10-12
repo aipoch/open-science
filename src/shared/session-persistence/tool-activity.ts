@@ -1,19 +1,19 @@
-import type {
-  PersistedToolActivityStatus,
-  PersistedToolActivityDisposition,
-  PersistedToolCallLocation,
-  PersistedToolActivity,
-  PersistedActivityGroup
-} from './message'
-import { asString, isRecord, asNumber, asStringArray } from './primitives'
-import {
-  sanitizeToolDetailText,
-  sanitizeToolContent,
-  sanitizeRawToolPayload,
-  sanitizeNotebookCodeReviewPayload
-} from '../tool-detail-sanitizer'
-import { sanitizeElicitationProjection } from '../elicitation'
 import { sanitizeActivityGroupTitle } from '../activity-groups'
+import { sanitizeElicitationProjection } from '../elicitation'
+import {
+  sanitizeNotebookCodeReviewPayload,
+  sanitizeRawToolPayload,
+  sanitizeToolContent,
+  sanitizeToolDetailText
+} from '../tool-detail-sanitizer'
+import type {
+  PersistedActivityGroup,
+  PersistedToolActivity,
+  PersistedToolActivityDisposition,
+  PersistedToolActivityStatus,
+  PersistedToolCallLocation
+} from '../session-message-contract'
+import { asNumber, asString, asStringArray, isRecord } from './primitives'
 
 const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'pending',

@@ -1,4 +1,4 @@
-import type { Annotation } from './annotations'
+import type { Annotation } from './annotation-contract'
 
 export type ReplayReferenceTarget = {
   projectId: string

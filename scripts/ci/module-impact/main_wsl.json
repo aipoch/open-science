@@ -14,9 +14,7 @@
     "src/main/wsl/wsl-setup-terminal.test.ts",
     "src/main/wsl/wsl-setup-terminal.ts",
     "src/main/wsl/wsl2-packaged-restart-certification.test.ts",
-    "src/main/wsl/wsl2-packaged-restart-certification.ts",
-    "src/main/wsl/wsl2-preview-gate.test.ts",
-    "src/main/wsl/wsl2-preview-gate.ts"
+    "src/main/wsl/wsl2-packaged-restart-certification.ts"
   ],
   "interfacePaths": [
     "src/main/wsl/windows-volume-probe.ts",
@@ -37,8 +35,7 @@
       "src/main/wsl/wsl-setup-owner.test.ts",
       "src/main/wsl/wsl-setup-session-owner.test.ts",
       "src/main/wsl/wsl-setup-terminal.test.ts",
-      "src/main/wsl/wsl2-packaged-restart-certification.test.ts",
-      "src/main/wsl/wsl2-preview-gate.test.ts"
+      "src/main/wsl/wsl2-packaged-restart-certification.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -250,9 +247,14 @@
       "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/wsl/wsl2-preview-gate.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

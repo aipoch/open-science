@@ -252,7 +252,10 @@
     "packages/notebook-analysis/src/stdlib-replay.fixture.ts",
     "packages/notebook-analysis/src/write-scope.ts"
   ],
-  "consumerModules": ["notebook_application", "notebook_execution"],
+  "consumerModules": [
+    "notebook_application",
+    "notebook_execution"
+  ],
   "testFiles": {
     "owner": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
@@ -381,7 +384,9 @@
       "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
     ],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",

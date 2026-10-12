@@ -1,5 +1,5 @@
-import { createWindowsExecutableVerifier } from '../windows-executable-trust'
 import { basename, dirname } from 'node:path'
+import { createWindowsExecutableVerifier } from '../windows-executable-trust'
 
 import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
@@ -19,8 +19,8 @@ import {
 } from '@aipoch/environment'
 import type { RuntimeBundleSource } from '@aipoch/environment/contracts'
 
-import type { NotebookLanguage } from '../../shared/notebook'
 import type { EnvironmentRequestContext } from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { createFetchBundleAdapter } from './environment-download'
 import { defaultSpawn, runMicromamba, verifyExecutable } from './environment-process'
 import { resolveBundleDir, resolveRuntimeCdnBase } from './environment-resources'

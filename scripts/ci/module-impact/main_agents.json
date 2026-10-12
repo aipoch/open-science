@@ -46,7 +46,10 @@
     "src/main/agents/specialist-privileged-ops.test.ts",
     "src/main/agents/specialist-privileged-ops.ts",
     "src/main/agents/switch-operation.test.ts",
-    "src/main/agents/switch-operation.ts"
+    "src/main/agents/switch-operation.ts",
+    "src/main/agents/catalog-contract.ts",
+    "src/main/agents/completion-gate-contract.ts",
+    "src/main/agents/completion-handoff-contract.ts"
   ],
   "interfacePaths": [
     "src/main/agents/agents-error.ts",
@@ -360,6 +363,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

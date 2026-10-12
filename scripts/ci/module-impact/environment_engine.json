@@ -86,7 +86,9 @@
     "packages/environment/src/environment-lock.ts",
     "packages/environment/src/external-environment-lock.test.ts"
   ],
-  "interfacePaths": ["packages/environment/src/index.ts"],
+  "interfacePaths": [
+    "packages/environment/src/index.ts"
+  ],
   "consumerModules": [
     "notebook_application",
     "notebook_execution",
@@ -691,6 +693,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

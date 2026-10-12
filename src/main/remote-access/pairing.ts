@@ -10,7 +10,7 @@ import type {
   ExternalWebAccess,
   ExternalWebAccessAuthorization,
   ExternalWebAccessDecision
-} from '../web-service/http-server'
+} from '../web-service/external-access-contract'
 import { REMOTE_PAIR_STATUS_PATH, renderPairingPage } from './pairing-page'
 import {
   defaultRemoteAccessState,

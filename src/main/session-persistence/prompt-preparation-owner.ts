@@ -1,19 +1,17 @@
 import { isDeepStrictEqual } from 'node:util'
+import type { SessionConversationCommand } from '../../shared/conversation-command-contract'
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   type PersistedMessageBranch
 } from '../../shared/conversation-graph'
+import { applySessionConversationCommands } from '../../shared/session-conversation-command'
 import {
-  applySessionConversationCommands,
-  type SessionConversationCommand
-} from '../../shared/session-conversation-command'
-import {
-  materializeSessionConversationGraph,
   isPreparedSessionRun,
-  sanitizeSession,
   latestOutcomePrompt,
+  materializeSessionConversationGraph,
+  sanitizeSession,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 

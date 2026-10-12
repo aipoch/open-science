@@ -1,12 +1,22 @@
 import { matchesWriteScope } from '@aipoch/notebook-analysis'
-import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import {
+  analyzeNotebookSourceFileAccess,
+  verifiedSerializedValues
+} from '@aipoch/notebook-analysis'
+import type {
+  NotebookSourceFileAccessContext,
+  NotebookSourceFileWriteScope
+} from '@aipoch/notebook-analysis/contracts'
+import type { ComputeJob } from '../../shared/compute'
 import {
   parseOwnedExecutionFileEvidenceSummary,
   type ExecutionActivityKind,
@@ -15,28 +25,20 @@ import {
   type ExecutionFileEvidenceSummary,
   type ScientificOutputEvidence
 } from '../../shared/execution-file-evidence'
-import type { ComputeJob } from '../../shared/compute'
 import type {
-  NotebookLanguage,
   NotebookRunInputFile,
   NotebookRunRecord,
   NotebookWorkingFile
 } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { assertDiskReserve, digestFileWithinBudget } from '../bounded-file-io'
-import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
-import { analyzeScientificOutputs } from './scientific-output-analysis'
-import { createRootNotebookLane } from './lane-identity'
-import { getNotebookFileEvidenceLocation } from './repository'
-import { notebookPromptInputPath } from './prompt-input-materialization'
-import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
-import { verifiedSerializedValues } from '@aipoch/notebook-analysis'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
-import type {
-  NotebookSourceFileAccessContext,
-  NotebookSourceFileWriteScope
-} from '@aipoch/notebook-analysis/contracts'
+import { createRootNotebookLane } from './lane-identity'
+import { notebookPromptInputPath } from './prompt-input-materialization'
+import { getNotebookFileEvidenceLocation } from './repository'
+import { analyzeScientificOutputs } from './scientific-output-analysis'
 
 const log = createLogger('notebook:file-evidence')
 
@@ -2500,13 +2502,19 @@ export {
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
   ensureWorkingFileEvidenceProject,
+  publishComputeJobFileEvidence,
   reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
-  publishComputeJobFileEvidence,
   recoverPublishedComputeJobFileEvidence,
   settleComputeJobFileEvidence,
   startWorkingFileObservation,
   toPortableNotebookRelativePath
 }
-export type { WorkingFileEvidenceLocation, WorkingFileObservation, WorkingFileObservationResult }
-export type { ComputeTransferInput, ComputeTransferOutput, FrozenComputeTransferInput }
+export type {
+  ComputeTransferInput,
+  ComputeTransferOutput,
+  FrozenComputeTransferInput,
+  WorkingFileEvidenceLocation,
+  WorkingFileObservation,
+  WorkingFileObservationResult
+}

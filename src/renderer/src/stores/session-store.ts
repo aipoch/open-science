@@ -1,30 +1,30 @@
 import { create, type StateCreator } from 'zustand'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
-import type { AcpContextUsage } from '../../../shared/acp'
+import type { AcpContextUsage } from '../../../shared/acp-usage-contract'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
-import type { SessionAgentConfiguration } from '../../../shared/settings'
 import type {
   PersistedChatSession,
   UpdateSessionArchiveRequest
 } from '../../../shared/session-persistence'
-import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
+import type { SessionAgentConfiguration } from '../../../shared/settings'
+import type { ChatSession } from './session-store-contract'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
-import {
-  createSessionRunProjectionOwner,
-  type SessionRunProjectionActions
-} from './session-store-run-projection-owner'
-import { projectInterruptedRun } from './session-store-run-terminal-helpers'
+import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import {
   createInitialSessionState,
   createSessionPersistenceOwner,
   hydrateSession,
   materializeStreamingMessageContent,
   removeStreamingMessageContentForSession,
-  type ChatSession,
   type SessionPersistenceActions,
   type SessionStoreData
 } from './session-store-persistence-owner'
+import {
+  createSessionRunProjectionOwner,
+  type SessionRunProjectionActions
+} from './session-store-run-projection-owner'
+import { projectInterruptedRun } from './session-store-run-terminal-helpers'
 
 export {
   createInitialSessionState,
@@ -33,12 +33,12 @@ export {
   hydrateSession,
   isExternallyHydratedSession,
   toPersistedSession,
-  type ElicitationEditDraft,
   type ActiveRun,
   type ChatMessage,
   type ChatMessageRole,
   type ChatMessageStatus,
   type ChatSession,
+  type ElicitationEditDraft,
   type SessionHydrationSelection,
   type SessionStatus,
   type StreamingMessageContent,

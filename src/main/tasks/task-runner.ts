@@ -3,41 +3,48 @@ import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
-import { ComputeHostPreferenceValidationError } from '../../shared/compute'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   normalizeClaudeCodeRefusalText
 } from '../../shared/acp'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE
+} from '../../shared/acp-image-contract'
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   ArtifactFile,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import { artifactCreatedAtMs } from '../../shared/artifacts'
-import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import {
   ensureConversationRuntimeSegment,
   getActiveConversationContext
 } from '../../shared/conversation-graph'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
-import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import {
+  resolveSelectableConfiguration,
+  resolveSessionAgentConfiguration
+} from '../../shared/session-agent-configuration'
 import {
   projectSessionDefaultsSchema,
-  sessionAgentConfigurationSchema,
   sessionAgentConfigurationPatchSchema,
+  sessionAgentConfigurationSchema,
   updateProjectSessionDefaultsRequestSchema,
   updateSessionConfigurationRequestSchema,
   type ProjectSessionDefaults,
@@ -48,17 +55,10 @@ import {
   type UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import {
-  resolveSelectableConfiguration,
-  resolveSessionAgentConfiguration
-} from '../../shared/session-agent-configuration'
-import type {
-  AgentFrameworkId,
-  SessionAgentConfiguration,
-  SettingsSnapshot
-} from '../../shared/settings'
-import {
   isSessionConfigurationBusyError,
   materializeSessionConversationGraph,
+  type AdmitTaskSessionTurnRequest,
+  type BindTaskSessionRequest,
   type DelegationPolicy,
   type FailTaskSessionRunRequest,
   type PersistedArtifact,
@@ -67,10 +67,13 @@ import {
   type PersistedMessageImage,
   type PersistedToolActivity,
   type SettleTaskSessionCompletionRequest,
-  type BindTaskSessionRequest,
-  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest
 } from '../../shared/session-persistence'
+import type {
+  AgentFrameworkId,
+  SessionAgentConfiguration,
+  SettingsSnapshot
+} from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
@@ -79,18 +82,17 @@ import type {
   TaskProject,
   TaskProjectSessionDefaults,
   TaskRun,
-  TaskRunStatus,
   TaskRunIdentity,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
   TaskRunReview,
-  TaskSessionSummary,
+  TaskRunStatus,
   TaskSessionConfiguration,
+  TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
-import { createLogger } from '@aipoch/diagnostics/node'
 import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
 
 const log = createLogger('task-runner')
@@ -2913,7 +2915,7 @@ class TaskRunner {
   }
 }
 
-export { TaskRunner, TaskRunnerError, summarizeSession }
+export { summarizeSession, TaskRunner, TaskRunnerError }
 export type {
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
@@ -2923,8 +2925,8 @@ export type {
   TaskAgentSession,
   TaskArtifactPort,
   TaskComputePreferencePort,
-  TaskProjectPort,
   TaskPreviewResourcePort,
+  TaskProjectPort,
   TaskRunnerDependencies,
   TaskRuntimeEventPort,
   TaskSessionPort

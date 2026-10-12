@@ -30,7 +30,9 @@
     "src/renderer/src/assets/provider-icons.packaging.test.ts",
     "src/renderer/src/assets/wavy-lines.svg"
   ],
-  "interfacePaths": ["src/renderer/src/assets/agent-markdown.css"],
+  "interfacePaths": [
+    "src/renderer/src/assets/agent-markdown.css"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [

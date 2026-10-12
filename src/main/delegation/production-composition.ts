@@ -3,17 +3,19 @@ import { DelegatedProcessOwnership } from './process-ownership'
 
 import type {
   AcpAgentRuntimeUpdate,
-  AcpPermissionRequest,
   AcpPermissionResponse,
   DelegatedWorkUnavailableReason
 } from '../../shared/acp'
-import type { PersistedChatSession } from '../../shared/session-persistence'
-import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import type { SpecialistView } from '../../shared/specialist'
-import type { AgentFrameworkId } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { DelegatedQuestionAnswer } from '../../shared/session-persistence'
+import type {
+  DelegatedQuestionAnswer,
+  PersistedChatSession
+} from '../../shared/session-persistence'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import type { AgentFrameworkId } from '../../shared/settings'
+import type { SpecialistView } from '../../shared/specialist'
 import { getAgentFramework } from '../agent-framework'
 import {
   createDelegatedArtifactEvidence,
@@ -23,12 +25,6 @@ import {
   createDelegatedReviewEvidence,
   type DelegatedReviewEvidenceOptions
 } from './delegated-review-evidence'
-import type { DelegatedWorkRecordCommands, SessionKey } from './session-records'
-import type {
-  DelegateExecution,
-  DelegateMessageAcceptanceEvidence,
-  DelegatedExecutionModelAdmission
-} from './execution-port'
 import {
   createDurableDelegatedWork,
   DurableDelegatedWorkError,
@@ -37,15 +33,21 @@ import {
   type RootDelegatePermissionEvent,
   type RootDelegatePermissionRequest
 } from './durable-delegated-work'
+import type {
+  DelegatedExecutionModelAdmission,
+  DelegateExecution,
+  DelegateMessageAcceptanceEvidence
+} from './execution-port'
 import { DelegateExecutionCleanupError } from './execution-port'
+import type { DelegatedWorkRecordCommands, SessionKey } from './session-records'
 
-import { createProductionFrameWorkspace, type ResolvedImmutableInput } from './frame-workspace'
-import { createSessionDelegatedWorkRecords } from './session-record-adapter'
 import {
   DelegationSettlementWakeOwner,
   type DelegationSettlementDispatch,
   type DelegationSettlementSnapshot
 } from './delegation-settlement-wake-owner'
+import { createProductionFrameWorkspace, type ResolvedImmutableInput } from './frame-workspace'
+import { createSessionDelegatedWorkRecords } from './session-record-adapter'
 
 type CertifiedSessionFramework = Readonly<{
   frameworkId: AgentFrameworkId

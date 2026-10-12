@@ -5,6 +5,7 @@ import {
   useDesktopRuntimeRecoveryStore
 } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
+import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -15,14 +16,9 @@ import {
   type RefObject
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 
-import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
-import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import { useSessionStore } from '@/stores/session-store'
 import { ErrorNotice } from '@/components/error-notice'
-import { cn } from '@/lib/utils'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import {
   Select,
   SelectContent,
@@ -30,13 +26,18 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
+import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
+import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
+import { hasActiveRuntimeTarget, notebookGated } from '@/lib/notebook-provisioning'
+import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import type {
   NotebookEnvironmentStatus,
   NotebookKernelKind,
-  NotebookLanguage,
   NotebookNamespaceSnapshot,
   NotebookNamespaceVariable,
   NotebookRunRecord,
@@ -44,37 +45,36 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
-import { getToolExecutionPhase } from './tool-execution-phase'
-import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
+import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
-import { shouldProvisionR } from './lazy-r'
-import { hasActiveRuntimeTarget, notebookGated } from '@/lib/notebook-provisioning'
-import { NotebookCodeBlock } from './notebook-code'
-import { NotebookRunEvidence } from './NotebookRunEvidence'
-import { NotebookRunOutputs } from './NotebookRunOutputs'
-import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
-import { useFollowScrollBottom } from './use-follow-scroll-bottom'
-import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
+import { shouldProvisionR } from './lazy-r'
 import {
-  resolveRunErrorLine,
   environmentLabel,
   isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
   notebookRunStatusLabel,
   resolveRunEnvironment,
+  resolveRunErrorLine,
   resolveRunKernelKind
 } from './notebook-cell-utils'
+import { NotebookCodeBlock } from './notebook-code'
+import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { NotebookRunEvidence } from './NotebookRunEvidence'
+import { NotebookRunOutputs } from './NotebookRunOutputs'
 import {
   createNotebookFrameFilterOptions,
-  notebookFrameLabels,
   normalizeNotebookRootFrameRuns,
-  projectNotebookRunsForFrame,
+  notebookFrameLabels,
   pendingNotebookCode,
+  projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
+import { getToolExecutionPhase } from './tool-execution-phase'
+import { useFollowScrollBottom } from './use-follow-scroll-bottom'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 // Fixed tab order for the per-kernel switcher.
 const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']

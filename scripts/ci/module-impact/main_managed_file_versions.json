@@ -7,8 +7,7 @@
     "src/main/managed-file-versions/ipc.ts",
     "src/main/managed-file-versions/service.integration.test.ts",
     "src/main/managed-file-versions/service.ts",
-    "src/main/managed-file-versions/version-file-operator.test.ts",
-    "src/main/managed-file-versions/version-file-operator.ts"
+    "src/main/managed-file-versions/read-port.ts"
   ],
   "interfacePaths": [
     "src/main/managed-file-versions/diff-task.ts",
@@ -22,8 +21,7 @@
     "owner": [
       "src/main/managed-file-versions/diff-task.test.ts",
       "src/main/managed-file-versions/ipc.test.ts",
-      "src/main/managed-file-versions/service.integration.test.ts",
-      "src/main/managed-file-versions/version-file-operator.test.ts"
+      "src/main/managed-file-versions/service.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -349,9 +347,14 @@
       "src/main/agents/production-completion-handoff.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/managed-file-versions/version-file-operator.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

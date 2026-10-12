@@ -14,7 +14,8 @@
     "src/main/remote-access/repository.ts",
     "src/main/remote-access/service.test.ts",
     "src/main/remote-access/service.ts",
-    "src/main/remote-access/open-science-logo.svg"
+    "src/main/remote-access/open-science-logo.svg",
+    "src/main/remote-access/command-port.ts"
   ],
   "interfacePaths": [
     "src/main/remote-access/index.ts",
@@ -61,6 +62,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

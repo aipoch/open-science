@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/shared/i18n/core.ts"],
-  "interfacePaths": ["src/shared/i18n/core.ts"],
+  "ownerPaths": [
+    "src/shared/i18n/core.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/i18n/core.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

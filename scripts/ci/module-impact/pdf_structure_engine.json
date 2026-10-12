@@ -2534,6 +2534,8 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive"],
+  "capabilityOverlays": [
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

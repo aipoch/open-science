@@ -3,9 +3,6 @@
     "src/main/settings/service.ts",
     "src/main/settings/network-proxy-settings-owner.ts",
     "src/main/settings/settings-snapshot-commit-owner.ts",
-    "src/main/settings/reviewer-model-owner.ts",
-    "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts",
     "src/main/settings/application-commands.test.ts",
     "src/main/settings/application-commands.ts",
     "src/main/settings/integration-application-commands.test.ts",
@@ -37,7 +34,9 @@
     "src/main/settings/vision-model-owner.ts",
     "src/main/settings/file-commands.ts"
   ],
-  "consumerModules": ["workspace_runtime"],
+  "consumerModules": [
+    "workspace_runtime"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",

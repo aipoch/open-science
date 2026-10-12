@@ -1,13 +1,13 @@
 import { create } from 'zustand'
 
-import type { NotebookLanguage } from '../../../shared/notebook'
+import { deriveProvisionUi, type ProvisionUiState } from '@/lib/notebook-provisioning'
 import {
   isTerminalProvisionPhase,
   type ProvisionProgress,
   type ProvisionScope,
   type ProvisionStatus
 } from '@aipoch/environment/contracts'
-import { deriveProvisionUi, type ProvisionUiState } from '@/lib/notebook-provisioning'
+import type { NotebookLanguage } from '../../../shared/notebook-language-contract'
 
 // Per-language provisioning state, tracked ALONGSIDE the single-slot fields below. The provisioner
 // serializes python and R, but each has its own progress/preparing/error here so the Settings Runtimes

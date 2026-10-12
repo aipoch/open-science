@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/renderer/src/lib/upload-transfer.ts"],
-  "interfacePaths": ["src/renderer/src/lib/upload-transfer.ts"],
+  "ownerPaths": [
+    "src/renderer/src/lib/upload-transfer.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/lib/upload-transfer.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

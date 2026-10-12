@@ -10,7 +10,10 @@
     "packages/environment/vitest.config.ts",
     "packages/environment/src/contracts.test.ts"
   ],
-  "interfacePaths": ["packages/environment/package.json", "packages/environment/src/contracts.ts"],
+  "interfacePaths": [
+    "packages/environment/package.json",
+    "packages/environment/src/contracts.ts"
+  ],
   "consumerModules": [
     "environment_engine",
     "notebook_application",
@@ -26,8 +29,12 @@
     "reproducibility_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/environment/src/contracts.test.ts"],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "owner": [
+      "packages/environment/src/contracts.test.ts"
+    ],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/notebook/environment-lifecycle-diagnostics.test.ts",
       "packages/environment/src/environment-lock.test.ts",
@@ -1074,6 +1081,8 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive"],
+  "capabilityOverlays": [
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

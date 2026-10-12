@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
 import type { NotebookRunDocument } from '../../shared/notebook'
-import type { PackageRecords } from './native-snapshot'
-import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
+import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
+import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
+import type { PackageRecords } from './records-contract'
 
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const executionEvidenceSchema = z

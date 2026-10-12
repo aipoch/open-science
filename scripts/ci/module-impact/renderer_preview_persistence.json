@@ -3,10 +3,14 @@
     "src/renderer/src/lib/preview-persistence/preview-persistence.test.tsx",
     "src/renderer/src/lib/preview-persistence/preview-persistence.ts"
   ],
-  "interfacePaths": ["src/renderer/src/lib/preview-persistence/preview-persistence.ts"],
+  "interfacePaths": [
+    "src/renderer/src/lib/preview-persistence/preview-persistence.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/renderer/src/lib/preview-persistence/preview-persistence.test.tsx"],
+    "owner": [
+      "src/renderer/src/lib/preview-persistence/preview-persistence.test.tsx"
+    ],
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",

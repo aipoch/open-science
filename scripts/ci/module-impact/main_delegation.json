@@ -21,7 +21,6 @@
     "src/main/delegation/delegated-review-evidence.ts",
     "src/main/delegation/delegated-turn-lifecycle.ts",
     "src/main/delegation/delegated-user-question-owner.ts",
-    "src/main/delegation/delegated-work-admission.ts",
     "src/main/delegation/delegated-work-permissions.ts",
     "src/main/delegation/delegated-work-projection.ts",
     "src/main/delegation/delegated-work-read-model.ts",
@@ -31,7 +30,6 @@
     "src/main/delegation/delegation-settlement-wake-owner.ts",
     "src/main/delegation/deterministic-execution.ts",
     "src/main/delegation/durable-delegated-work-contract.ts",
-    "src/main/delegation/durable-delegated-work-error.ts",
     "src/main/delegation/durable-delegated-work-test-fixture.ts",
     "src/main/delegation/durable-delegated-work.architecture.test.ts",
     "src/main/delegation/durable-delegated-work.test.ts",
@@ -40,7 +38,6 @@
     "src/main/delegation/execution-backend-lease.test.ts",
     "src/main/delegation/execution-backend-lease.ts",
     "src/main/delegation/execution-contract.test.ts",
-    "src/main/delegation/execution-port.ts",
     "src/main/delegation/frame-workspace.test.ts",
     "src/main/delegation/frame-workspace.ts",
     "src/main/delegation/in-memory-delegated-work-records.ts",
@@ -56,7 +53,6 @@
     "src/main/delegation/production-framework-runtime.ts",
     "src/main/delegation/production-frameworks.test.ts",
     "src/main/delegation/production-frameworks.ts",
-    "src/main/delegation/production-readiness.ts",
     "src/main/delegation/session-record-adapter.test.ts",
     "src/main/delegation/session-record-adapter.ts",
     "src/main/delegation/session-records.ts",
@@ -65,10 +61,10 @@
     "src/main/delegation/specialist-runtime-consumption.test.ts",
     "src/main/delegation/structured-output-owner.test.ts",
     "src/main/delegation/structured-output-submission.ts",
-    "src/main/delegation/structured-output.test.ts",
-    "src/main/delegation/structured-output.ts",
     "src/main/delegation/process-ownership.ts",
-    "src/main/delegation/process-ownership.test.ts"
+    "src/main/delegation/process-ownership.test.ts",
+    "src/main/delegation/artifact-evidence-contract.ts",
+    "src/main/delegation/delegate-request-contract.ts"
   ],
   "interfacePaths": [
     "src/main/delegation/delegated-artifact-publication.ts",
@@ -118,7 +114,6 @@
       "src/main/delegation/settlement-continuation-dispatch.test.ts",
       "src/main/delegation/specialist-runtime-consumption.test.ts",
       "src/main/delegation/structured-output-owner.test.ts",
-      "src/main/delegation/structured-output.test.ts",
       "src/main/delegation/process-ownership.test.ts"
     ],
     "contract": [
@@ -573,9 +568,14 @@
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/delegation/structured-output.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

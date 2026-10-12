@@ -1,21 +1,18 @@
-import type { PersistedChatSession, MaterializedPersistedChatSession } from './session'
+import type { RuntimeCodec } from '../application-command-contract'
+import { materializeSessionConversationGraph } from '../session-conversation-graph-materialization'
 import {
   type PersistedSessionFile,
   SESSION_FILE_VERSION,
-  type SessionFileReadOptions,
   type SessionFileDecodeResult,
+  type SessionFileReadOptions,
   decodeSessionEnvelope
 } from '../session-persistence-envelope'
-import { materializeSessionConversationGraph } from '../session-conversation-graph-materialization'
-import {
-  type PersistedChatMessage,
-  retainRecentSessionEventIds,
-  type PersistedToolActivity
-} from './message'
+import { retainRecentSessionEventIds } from './message'
 import { sanitizeSessionMessageImages } from './message-content'
+import type { PersistedChatMessage, PersistedToolActivity } from '../session-message-contract'
 import { asString, isRecord } from './primitives'
+import type { MaterializedPersistedChatSession, PersistedChatSession } from './session'
 import { sanitizeSession } from './session-codec'
-import type { RuntimeCodec } from '../application-command-contract'
 
 // ---------------------------------------------------------------------------
 // Per-session file storage (sessions/<projectId>/<sessionId>.json) + manifest.

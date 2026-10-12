@@ -1,12 +1,7 @@
 {
   "ownerPaths": [
     "src/main/session-diagnostics/export-evidence.integration.test.ts",
-    "src/renderer/src/lib/session-diagnostics.ts",
-    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
-    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.tsx",
-    "src/shared/session-diagnostics-contracts.ts",
     "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-    "src/shared/session-diagnostics-contracts.test.ts",
     "src/main/session-diagnostics/collector.test.ts",
     "src/main/session-diagnostics/collector.ts",
     "src/main/session-diagnostics/database.test.ts",
@@ -21,8 +16,7 @@
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.test.ts",
     "src/main/session-diagnostics/projection.ts",
-    "src/main/session-diagnostics/worker-entry.ts",
-    "src/shared/session-diagnostics.ts"
+    "src/main/session-diagnostics/worker-entry.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/session-diagnostics.ts",
@@ -122,6 +116,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

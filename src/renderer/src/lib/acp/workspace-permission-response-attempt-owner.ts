@@ -3,9 +3,9 @@ import {
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
-  type AcpPermissionRequest,
   type AcpRuntimeEvent
 } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 import type { ChatSession } from '../../stores/session-store'
 
 type PermissionResponseAttempt = {

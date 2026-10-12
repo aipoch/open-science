@@ -14,8 +14,6 @@
     "src/main/settings/mirror-settings.test.ts",
     "src/main/settings/record-codec.test.ts",
     "src/main/settings/repository.test.ts",
-    "src/main/settings/document-read-error.ts",
-    "src/main/settings/document-shape.ts",
     "src/main/settings/classification-config.ts"
   ],
   "interfacePaths": [
@@ -24,7 +22,11 @@
     "src/main/settings/compute-grant-port.ts",
     "src/main/settings/document-store.ts"
   ],
-  "consumerModules": ["settings_provider_accounts", "settings_service_facade", "compute_service"],
+  "consumerModules": [
+    "settings_provider_accounts",
+    "settings_service_facade",
+    "compute_service"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -258,6 +260,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

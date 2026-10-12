@@ -1,41 +1,12 @@
+import { randomUUID } from 'node:crypto'
+import type { ServerResponse } from 'node:http'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
 } from './provider-failure-observation'
-import { randomUUID } from 'node:crypto'
-import type { ServerResponse } from 'node:http'
 
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
-import type {
-  ResponsesBridgeConnection,
-  ResponsesBridgeModelTarget,
-  ResponsesBridgeNamespacedTool,
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput
-} from './responses-bridge'
-import {
-  boundedSkillSelectorCatalog,
-  renderSkillSelectorCatalog,
-  resolveSelectedSkills,
-  selectExplicitConnectorSkills
-} from './skill-selector-routing'
-import {
-  ProviderLoopbackHttpHost,
-  ProviderLoopbackRequestError,
-  writeProviderLoopbackJson as json,
-  type ProviderLoopbackHttpRequest
-} from './provider-loopback-http-host'
-import {
-  DeterministicProviderErrorReplay,
-  isDeterministicProviderErrorStatus,
-  providerErrorClientStatus,
-  providerRequestHeadersFingerprint,
-  providerRequestFingerprint,
-  readBoundedProviderErrorBody
-} from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
 import {
   consumeBoundedResponseBody,
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
@@ -45,6 +16,35 @@ import {
   readBoundedResponseText,
   ResponseBodyLimitError
 } from './bounded-response'
+import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import {
+  DeterministicProviderErrorReplay,
+  isDeterministicProviderErrorStatus,
+  providerErrorClientStatus,
+  providerRequestFingerprint,
+  providerRequestHeadersFingerprint,
+  readBoundedProviderErrorBody
+} from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
+import {
+  writeProviderLoopbackJson as json,
+  ProviderLoopbackHttpHost,
+  ProviderLoopbackRequestError,
+  type ProviderLoopbackHttpRequest
+} from './provider-loopback-http-host'
+import type { ResponsesBridgeNamespacedTool } from './responses-bridge'
+import type {
+  ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
+  ResponsesBridgeSkillCandidate,
+  ResponsesBridgeSkillInput
+} from './responses-bridge-contract'
+import {
+  boundedSkillSelectorCatalog,
+  renderSkillSelectorCatalog,
+  resolveSelectedSkills,
+  selectExplicitConnectorSkills
+} from './skill-selector-routing'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.

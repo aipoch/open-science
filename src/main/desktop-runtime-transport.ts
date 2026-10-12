@@ -1,38 +1,38 @@
-import type { DatabaseStartupOwner } from './database/database-startup-owner'
-import {
-  desktopLifecycleRequestSchema,
-  type DesktopLifecycleRequest
-} from './desktop-runtime-lifecycle'
-import type { OfficePreviewRuntimeState } from '../shared/office-preview'
-import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
-import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
-import type { UploadTransferProgress } from '../shared/uploads'
-import {
-  desktopNativeResponseSchema,
-  desktopNotificationActionSchema,
-  desktopNotificationViewSchema,
-  desktopUploadProgressSchema,
-  withDesktopCaller,
-  parseDesktopNativeResult,
-  type DesktopNativeOperation
-} from './desktop-native-contract'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
+import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
+import type { OfficePreviewRuntimeState } from '../shared/office-preview'
+import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
+import type { UploadTransferProgress } from '../shared/uploads'
 import {
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema,
   type WebRpcResponse
 } from '../shared/web-rpc-contract'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
 import { createApplicationCommandClient } from './application-command-client'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
 import type { ApplicationEventSource } from './application-events'
 import { createCallerContext, type CallerContext } from './caller-context'
+import type { DatabaseStartupOwner } from './database/database-startup-owner'
 import { listenForDesktop } from './desktop-connection'
+import {
+  desktopNativeResponseSchema,
+  desktopNotificationActionSchema,
+  desktopNotificationViewSchema,
+  desktopUploadProgressSchema,
+  parseDesktopNativeResult,
+  withDesktopCaller,
+  type DesktopNativeOperation
+} from './desktop-native-contract'
+import {
+  desktopLifecycleRequestSchema,
+  type DesktopLifecycleRequest
+} from './desktop-runtime-lifecycle'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { InternalWebEventStream } from './web-service/internal-web-event-stream'
-import { createLogger } from '@aipoch/diagnostics/node'
 import { createWebSocketFrameSender } from './websocket-frame-sender'
 
 const logger = createLogger('desktop-runtime-transport')

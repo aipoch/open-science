@@ -1,35 +1,35 @@
-import { isDeepStrictEqual } from 'node:util'
-import type { EnvironmentLease } from '@aipoch/environment'
-import type { NotebookLanguage } from '../../shared/notebook'
-import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
-import {
-  isEnvEnabled,
-  type NotebookRuntimeBinding,
-  type RuntimeBindingOperationResult,
-  type NotebookRuntimeBindings,
-  type NotebookRuntimeListing,
-  type RuntimeBindingUnavailableReason,
-  type RuntimeTargetReceipt,
-  type RuntimeEnablement
-} from '../../shared/notebook-runtime'
-import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import type { EnvironmentLease, NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
   defaultDiscoveryDeps,
   discoverInterpreters,
   rscriptFor,
   windowsCondaPrefixForR
 } from '@aipoch/environment'
+import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import { isDeepStrictEqual } from 'node:util'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import {
+  isEnvEnabled,
+  type NotebookRuntimeBinding,
+  type NotebookRuntimeBindings,
+  type NotebookRuntimeListing,
+  type RuntimeBindingOperationResult,
+  type RuntimeBindingUnavailableReason,
+  type RuntimeEnablement,
+  type RuntimeTargetReceipt
+} from '../../shared/notebook-runtime'
+import type { NotebookRuntimeSettings } from '../settings/capabilities'
+import { historicalPosixManagedEnvironment } from './posix-runtime-binding'
 import { getRuntimeRoot, type NotebookRunRepository } from './repository'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from '@aipoch/environment'
 import { runtimeTargetReceipt } from './runtime-target'
-import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
-import { historicalPosixManagedEnvironment } from './posix-runtime-binding'
 import {
   historicalWindowsManagedEnvironment,
   managedRuntimeEnvironmentNamesMatch,

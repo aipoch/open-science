@@ -11,11 +11,6 @@
     "src/renderer/src/pages/workspace/composer/SkillMentionPopup.tsx",
     "src/renderer/src/pages/workspace/composer/artifact-file-icon.tsx",
     "src/renderer/src/pages/workspace/composer/artifact-thumbnail-reader.ts",
-    "src/renderer/src/pages/workspace/composer/composer-doc.test.ts",
-    "src/renderer/src/pages/workspace/composer/composer-doc.ts",
-    "src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts",
-    "src/renderer/src/pages/workspace/composer/fuzzy-match.ts",
-    "src/renderer/src/pages/workspace/composer/load-project-files.ts",
     "src/renderer/src/pages/workspace/composer/message-clipboard.test.ts",
     "src/renderer/src/pages/workspace/composer/message-clipboard.ts",
     "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts",
@@ -36,8 +31,6 @@
       "src/renderer/src/pages/workspace/composer/ComposerEditor.interaction.test.tsx",
       "src/renderer/src/pages/workspace/composer/SessionMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
-      "src/renderer/src/pages/workspace/composer/composer-doc.test.ts",
-      "src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts",
       "src/renderer/src/pages/workspace/composer/message-clipboard.test.ts",
       "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts"
     ],
@@ -203,7 +196,8 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/composer/composer-doc.test.ts"
     ]
   },
   "capabilityOverlays": [],

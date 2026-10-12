@@ -10,7 +10,6 @@
     "src/main/projects/deletion-coordinator.test.ts",
     "src/main/projects/ipc.test.ts",
     "src/main/projects/preview-repository.test.ts",
-    "src/main/projects/prisma-client.ts",
     "src/main/projects/project-owned-data.catalog.architecture.test.ts",
     "src/main/projects/project-runtime-quiescence-owner.test.ts",
     "src/main/projects/repository.test.ts"
@@ -269,6 +268,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

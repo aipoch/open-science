@@ -1,19 +1,28 @@
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from '@aipoch/environment'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyAnalyzer,
+  type NotebookDependencyProjection
+} from '@aipoch/notebook-analysis'
 import type {
   NotebookCell,
   NotebookEnvironmentStatus,
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
-  NotebookLanguage,
-  NotebookRunRecord,
-  NotebookRunDocument,
   NotebookRunCursor,
+  NotebookRunDocument,
+  NotebookRunRecord,
   NotebookRunStaleness,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
   NotebookSessionState
 } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shared/notebook-runtime'
+import { resolveProjectId } from '../../shared/project-scope'
+import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
+import type { NotebookLaneIdentity } from './lane-identity'
 import {
   getNotebookDataRoot,
   getNotebookRunJsonPath,
@@ -22,15 +31,6 @@ import {
   NotebookRunRepository
 } from './repository'
 import type { NotebookSessionSnapshot } from './session-aggregate'
-import type { NotebookLaneIdentity } from './lane-identity'
-import { resolveProjectId } from '../../shared/project-scope'
-import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from '@aipoch/environment'
-import {
-  unavailableNotebookDependencyProjection,
-  type NotebookDependencyAnalyzer,
-  type NotebookDependencyProjection
-} from '@aipoch/notebook-analysis'
 
 const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
 

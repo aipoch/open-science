@@ -3,9 +3,7 @@
     "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
     "src/renderer/src/pages/settings/RemoteControlPanel.tsx",
     "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx",
-    "src/renderer/src/pages/settings/RepairFrameworkDialog.tsx",
-    "src/renderer/src/pages/settings/file-browser-remote-error.test.ts",
-    "src/renderer/src/pages/settings/file-browser-remote-error.ts"
+    "src/renderer/src/pages/settings/RepairFrameworkDialog.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/RemoteControlPanel.tsx",
@@ -16,8 +14,7 @@
   "testFiles": {
     "owner": [
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
-      "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx",
-      "src/renderer/src/pages/settings/file-browser-remote-error.test.ts"
+      "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -113,7 +110,8 @@
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/settings/file-browser-remote-error.test.ts"
     ]
   },
   "capabilityOverlays": [],

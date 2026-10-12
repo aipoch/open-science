@@ -23,7 +23,10 @@
     "src/main/skill-marketplace/service.ts",
     "src/main/skill-marketplace/source.ts"
   ],
-  "consumerModules": ["user_skills_repository", "settings_operations"],
+  "consumerModules": [
+    "user_skills_repository",
+    "settings_operations"
+  ],
   "testFiles": {
     "owner": [
       "src/main/skill-marketplace/install-queue.test.ts",
@@ -193,6 +196,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

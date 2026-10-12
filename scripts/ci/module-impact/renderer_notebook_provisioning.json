@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/renderer/src/lib/notebook-provisioning.ts"],
-  "interfacePaths": ["src/renderer/src/lib/notebook-provisioning.ts"],
+  "ownerPaths": [
+    "src/renderer/src/lib/notebook-provisioning.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/lib/notebook-provisioning.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

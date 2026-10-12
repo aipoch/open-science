@@ -20,7 +20,9 @@
     "src/renderer/src/components/global-search/use-search-summary-counts.ts",
     "src/renderer/src/components/global-search/search-loading.test.tsx"
   ],
-  "interfacePaths": ["src/renderer/src/components/global-search/GlobalSearchDialog.tsx"],
+  "interfacePaths": [
+    "src/renderer/src/components/global-search/GlobalSearchDialog.tsx"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [

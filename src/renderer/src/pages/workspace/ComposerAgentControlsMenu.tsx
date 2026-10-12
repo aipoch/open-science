@@ -10,12 +10,7 @@
 // auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
 // the SSH host list and "Manage compute…" together. Both read from global stores.
 
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId,
-  type SessionPermissionProfileState
-} from '../../../../shared/permission-profiles'
-import type { AcpPermissionGrant } from '../../../../shared/acp'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   AlertTriangle,
   ArrowRight,
@@ -34,11 +29,16 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
+import type { AcpPermissionGrant } from '../../../../shared/acp-permission-contract'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId,
+  type SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 
-import { SpecialistSubmenu } from './SpecialistSubmenu'
 import { AgentControlMenuContent, AgentControlMenuItemTooltip } from './AgentControlMenuItemTooltip'
+import { SpecialistSubmenu } from './SpecialistSubmenu'
 
 import { Button } from '@/components/ui/button'
 import {

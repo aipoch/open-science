@@ -1,9 +1,6 @@
-import type { SecureStorageCipher } from '../secure-storage'
-import {
-  CredentialIdentityError,
-  type CredentialIdentity,
-  type IdentityProbeResult
-} from './selection'
+import type { SecureStorageCipher } from './cipher-contract'
+import type { IdentityProbeResult } from './probe-contract'
+import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 export interface CredentialAccess extends SecureStorageCipher {
   assertAccessAllowed(): void

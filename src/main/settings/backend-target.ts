@@ -1,5 +1,6 @@
-import type { AgentFrameworkId, ReasoningEffort } from '../../shared/settings'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { AgentFrameworkId } from '../../shared/settings'
 
 export type ExplicitAgentBackendTarget = Readonly<{
   frameworkId: AgentFrameworkId

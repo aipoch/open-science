@@ -1,56 +1,55 @@
 import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
-import { PdfTranslationExport } from './PdfTranslationExport'
-import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
-import { restorePdfTranslationJob } from './use-pdf-translation-job'
 import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
-import {
-  usePdfTranslationDocument,
-  type PdfTranslationArtifact
-} from './use-pdf-translation-document'
-import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
-import { PdfSearchTextCache } from './pdf-search-text-cache'
-import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
-import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
-import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import type {
   PdfAnnotationSource,
   PdfNativeAnnotationImportProgress
 } from '../../../../../../shared/pdf-annotations'
+import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
+import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
+import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
+import { PdfTranslationExport } from './PdfTranslationExport'
+import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
+import { PdfSearchTextCache } from './pdf-search-text-cache'
+import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
+import {
+  usePdfTranslationDocument,
+  type PdfTranslationArtifact
+} from './use-pdf-translation-document'
+import { restorePdfTranslationJob } from './use-pdf-translation-job'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
-  FileText,
-  SlidersHorizontal,
-  Images,
-  NotebookPen,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Columns2,
+  FileText,
   Hand,
-  LoaderCircle,
-  RefreshCw,
+  Highlighter,
+  Images,
   Languages,
   ListOrdered,
-  Columns2,
-  Check,
+  LoaderCircle,
   MousePointer2,
+  NotebookPen,
   PanelLeft,
   PanelRight,
-  Highlighter,
-  Underline,
-  Waves,
-  Strikethrough,
+  RefreshCw,
   Scan,
-  SquareDashedMousePointer,
   Search,
   Shrink,
+  SlidersHorizontal,
+  SquareDashedMousePointer,
+  Strikethrough,
+  Underline,
+  Waves,
   X,
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { Tabs, Collapsible } from 'radix-ui'
-import { PdfTranslationEditions } from './PdfTranslationEditions'
 import type { TextLayerBuilder as PdfTextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs'
+import { Collapsible, Tabs } from 'radix-ui'
 import {
   memo,
   useCallback,
@@ -62,16 +61,17 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PdfTranslationEditions } from './PdfTranslationEditions'
 
-import { TagSelection } from '../../../settings/ResourceTagControls'
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuItem
+  DropdownMenuItem,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverAnchor,
@@ -79,7 +79,6 @@ import {
   PopoverContent,
   PopoverTrigger
 } from '@/components/ui/popover'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -88,22 +87,35 @@ import {
   usePreviewWorkbenchStore,
   type PreviewFileSource
 } from '@/stores/preview-workbench-store'
-import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 import { useSessionStore } from '@/stores/session-store'
-import {
-  ANNOTATION_LIMITS,
-  pdfAnnotationSourceIsFixed,
-  type Annotation,
-  type PdfAnnotation
-} from '../../../../../../shared/annotations'
+import type { Annotation, PdfAnnotation } from '../../../../../../shared/annotation-contract'
+import { ANNOTATION_LIMITS, pdfAnnotationSourceIsFixed } from '../../../../../../shared/annotations'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature-attachment-reference'
 import {
   sanitizePdfDocumentSource,
   type PdfDocumentSource
 } from '../../../../../../shared/pdf-document-source'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
+import { TagSelection } from '../../../settings/ResourceTagControls'
+import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 
-import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import {
+  pdfBookmarkSelectorMatchesPage,
+  type PdfBookmarkSelector,
+  type PdfMarkColor,
+  type PdfMarkKind
+} from '../../../../../../shared/pdf-bookmarks'
+import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  type WebEventConnectionState
+} from '../../../../../../shared/web-event-connection'
+import {
+  PdfMarkColorControls,
+  PdfTextMarkControls,
+  type PdfTextMarkStyle
+} from '../../annotations/TextAnnotationEditors'
+import { createAnnotationId } from '../../annotations/annotation-id'
 import {
   annotationRevealScrollBehavior,
   retryPendingAnnotationReveal,
@@ -113,47 +125,31 @@ import {
   subscribeBookmarkRevealPreparation,
   type BookmarkRevealTarget
 } from '../../annotations/annotation-reveal'
-import {
-  PdfTextMarkControls,
-  PdfMarkColorControls,
-  type PdfTextMarkStyle
-} from '../../annotations/TextAnnotationEditors'
-import { createAnnotationId } from '../../annotations/annotation-id'
-import { createManagedPdfLoadingTask } from '../managed-pdf-document'
-import { pdfjsLib } from '../pdfjs'
-import { isUnavailableFileError } from '../preview-errors'
-import { createPreviewResourceKey } from '../preview-resource-key'
-import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
-import {
-  WEB_EVENT_CONNECTION_STATE_EVENT,
-  type WebEventConnectionState
-} from '../../../../../../shared/web-event-connection'
-import { createManagedPreviewRequest } from '../preview-file-reader'
-import type { PreviewFileRendererProps } from '../preview-types'
-import {
-  pdfBookmarkSelectorMatchesPage,
-  type PdfMarkColor,
-  type PdfBookmarkSelector,
-  type PdfMarkKind
-} from '../../../../../../shared/pdf-bookmarks'
 import { PdfAnnotationHistoryControls } from '../../pdf-annotations/PdfAnnotationHistoryControls'
-import { handlePdfAnnotationHistoryKey } from '../../pdf-annotations/pdf-annotation-history-keyboard'
 import { PdfAnnotationMarker } from '../../pdf-annotations/PdfAnnotationMarker'
+import { handlePdfAnnotationHistoryKey } from '../../pdf-annotations/pdf-annotation-history-keyboard'
 import { usePdfAnnotations } from '../../pdf-annotations/pdf-annotations-context'
-import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
-import { useNearViewport } from '../useNearViewport'
-import { resolvePdfContextTarget } from '../../use-pdf-context-action'
 import { subscribePdfReadingReveal } from '../../pdf-reading-reveal'
+import { resolvePdfContextTarget } from '../../use-pdf-context-action'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
+import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import {
   cropPdfCanvasRegion,
   normalizedPdfRect,
   pointInPage,
   textInPdfRect
 } from '../pdf-region-evidence'
-import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
+import { pdfjsLib } from '../pdfjs'
+import { isUnavailableFileError } from '../preview-errors'
+import { createManagedPreviewRequest } from '../preview-file-reader'
+import { createPreviewResourceKey } from '../preview-resource-key'
+import type { PreviewFileRendererProps } from '../preview-types'
+import { useNearViewport } from '../useNearViewport'
+import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
 import { PdfFiguresView } from './PdfFiguresView'
-import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
 import { PdfNotebookView } from './PdfNotebookView'
+import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
 import {
   countPdfSearchOccurrences,
   resolvePdfSearchMatch,
@@ -179,9 +175,9 @@ import {
   PdfTranslationMarkers,
   PdfTranslationSidebar
 } from './PdfTranslationView'
+import { usePdfTranslationAgent } from './use-pdf-translation-agent'
 import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
-import { usePdfTranslationAgent } from './use-pdf-translation-agent'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
 export type PdfTranslationDocumentContext = Readonly<{

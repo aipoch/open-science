@@ -38,7 +38,9 @@
       "packages/notebook-syntax/src/index.test.ts",
       "packages/notebook-syntax/src/unavailable.test.ts"
     ],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
@@ -667,6 +669,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

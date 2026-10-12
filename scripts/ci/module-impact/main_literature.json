@@ -60,7 +60,8 @@
     "src/main/literature/citation-errors.ts",
     "src/main/literature/discovery-adapters.ts",
     "src/main/literature/screening-adapter.ts",
-    "src/main/literature/screening-store.ts"
+    "src/main/literature/screening-store.ts",
+    "src/main/literature/discovery-contract.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -426,6 +427,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

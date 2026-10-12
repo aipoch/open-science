@@ -1,64 +1,77 @@
-import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
 import { createHash } from 'node:crypto'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
+import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
+import type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebSocketAccess
+} from './external-access-contract'
+export type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebAccessDecision,
+  ExternalWebSocketAccess
+} from './external-access-contract'
 
 import { WebSocket, WebSocketServer } from 'ws'
 
-import {
-  ApplicationCommandError,
-  toApplicationCommandErrorEnvelope
-} from '../../shared/application-command-contract'
-import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
-import {
-  createTaskCallerContext,
-  createWebCallerContext,
-  type CallerContext
-} from '../caller-context'
-import { createApplicationCommandClient } from '../application-command-client'
-import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
-import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { ApplicationEventSource } from '../application-events'
-import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   createLogger,
   diagnosticErrorFields,
   runWithDiagnosticCorrelation
 } from '@aipoch/diagnostics/node'
 import {
-  WEB_RPC_CAPABILITIES,
-  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../../shared/application-command-contract'
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
+import type {
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest
+} from '../../shared/session-configuration'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+import type {
+  CreateTaskProjectRequest,
+  StartTaskRunRequest,
+  TaskPlanResponseRequest,
+  UpdateTaskAgentRoutingRequest,
+  UpdateTaskProjectRequest
+} from '../../shared/task-api'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
+import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
+import {
   isWebRpcChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITIES,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
 } from '../../shared/web-rpc-contract'
-import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
+import type { ApplicationEventSource } from '../application-events'
+import {
+  createTaskCallerContext,
+  createWebCallerContext,
+  type CallerContext
+} from '../caller-context'
+import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
+import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   projectPublicTaskEvents,
   projectPublicTaskProgressEvent,
   projectWebRendererEvent
 } from './application-event-projections'
-import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type {
-  CreateTaskProjectRequest,
-  StartTaskRunRequest,
-  TaskPlanResponseRequest,
-  UpdateProjectSessionDefaultsRequest,
-  UpdateSessionConfigurationRequest,
-  UpdateTaskAgentRoutingRequest,
-  UpdateTaskProjectRequest
-} from '../../shared/task-api'
-import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
-import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -446,33 +459,9 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
   return 500
 }
 
-export type ExternalWebAccessAuthorization = {
-  kind: 'authorized' | 'authorized-pairing-manager'
-  principalId: string
-  isCurrent: () => boolean
-}
-
-export type ExternalWebAccessDecision = ExternalWebAccessAuthorization | 'handled' | 'denied'
-
-export type ExternalWebSocketAccess = {
-  principalId: string
-  isCurrent: () => boolean
-}
-
 // Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
 // remains unchanged; an isolated remote-access adapter can authenticate its own origin/cookies or
 // render a pairing page without coupling the web server to a tunnel provider.
-export type ExternalWebAccess = {
-  authorizeHttp: (
-    request: IncomingMessage,
-    response: ServerResponse,
-    url: URL
-  ) => Promise<ExternalWebAccessDecision>
-  authorizeWebSocket: (
-    request: IncomingMessage,
-    url: URL
-  ) => Promise<ExternalWebSocketAccess | undefined>
-}
 
 export type RunningWebServer = {
   port: number

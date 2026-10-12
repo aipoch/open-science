@@ -1,7 +1,7 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import type { IdentityProbeResult } from './selection'
-import { createLogger } from '@aipoch/diagnostics/node'
+import type { IdentityProbeResult } from './probe-contract'
 
 const log = createLogger('credential-identity')
 

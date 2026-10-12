@@ -1,15 +1,15 @@
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { PrismaClient, Prisma } from '@prisma/client'
 import {
-  sessionPackageReceiptSchema,
-  sessionPackageManifestSchema
+  sessionPackageManifestSchema,
+  sessionPackageReceiptSchema
 } from '../../shared/session-package'
 import type { ResolvedLiteratureAttachmentVersion } from '../literature/attachment-authority'
-import type { ContentReadLease } from '../storage/content-repository'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
-import { assertPackageSourcePath, readPackageJson, fileChecksum } from './archive'
-import { packageLiteratureSchema } from './literature'
+import type { ContentReadLease } from '../storage/content-repository'
+import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
+import { packageLiteratureSchema } from './literature-contract'
 
 // Receipt membership grants access only to an imported snapshot, never an arbitrary Upload ID.
 export class PackageLiteratureReader {

@@ -1,39 +1,24 @@
 {
   "ownerPaths": [
-    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
-    "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
-    "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
-    "src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx",
     "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
     "src/renderer/src/pages/workspace/ArtifactSourcesPanel.tsx",
     "src/renderer/src/pages/workspace/DownloadProjectArtifactsDialog.render.test.tsx",
     "src/renderer/src/pages/workspace/DownloadProjectArtifactsDialog.tsx",
     "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
     "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx",
-    "src/renderer/src/pages/workspace/PreviewProvenanceSplit.tsx",
     "src/renderer/src/pages/workspace/ProvenanceLoadNotice.tsx",
     "src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
     "src/renderer/src/pages/workspace/artifact-environment-lock-store.test.ts",
     "src/renderer/src/pages/workspace/artifact-environment-lock-store.ts",
     "src/renderer/src/pages/workspace/artifact-image-recovery.test.tsx",
     "src/renderer/src/pages/workspace/artifact-preview-tiff.test.tsx",
-    "src/renderer/src/pages/workspace/artifact-preview-utils.ts",
     "src/renderer/src/pages/workspace/artifact-preview.interaction.test.tsx",
     "src/renderer/src/pages/workspace/artifact-preview.test.tsx",
     "src/renderer/src/pages/workspace/artifact-preview.tsx",
     "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
-    "src/renderer/src/pages/workspace/artifact-reproducibility-graph.ts",
-    "src/renderer/src/pages/workspace/artifact-reproducibility-start.test.tsx",
-    "src/renderer/src/pages/workspace/artifact-reproducibility-start.ts",
-    "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
-    "src/renderer/src/pages/workspace/literature-pdf-options.ts",
     "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
-    "src/renderer/src/pages/workspace/literature-tool-presentation.ts",
     "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-    "src/renderer/src/pages/workspace/project-artifact-download-data.ts",
-    "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts",
-    "src/renderer/src/pages/workspace/session-artifact-download-data.ts"
+    "src/renderer/src/pages/workspace/project-artifact-download-data.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
@@ -55,8 +40,6 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
-      "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
       "src/renderer/src/pages/workspace/DownloadProjectArtifactsDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
@@ -66,11 +49,8 @@
       "src/renderer/src/pages/workspace/artifact-preview.interaction.test.tsx",
       "src/renderer/src/pages/workspace/artifact-preview.test.tsx",
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
-      "src/renderer/src/pages/workspace/artifact-reproducibility-start.test.tsx",
-      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
-      "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-      "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts"
+      "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -242,7 +222,11 @@
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
+      "src/renderer/src/pages/workspace/artifact-reproducibility-start.test.tsx",
+      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts"
     ]
   },
   "capabilityOverlays": [],

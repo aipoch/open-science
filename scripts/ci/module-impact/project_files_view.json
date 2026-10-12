@@ -1,17 +1,10 @@
 {
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
-    "src/renderer/src/pages/workspace/project-file-mention-transfer.test.ts",
-    "src/renderer/src/pages/workspace/project-file-mention-transfer.ts",
-    "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
-    "src/renderer/src/pages/workspace/project-file-mention.ts",
     "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
     "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
     "src/renderer/src/pages/workspace/project-files-query-model.ts",
-    "src/renderer/src/pages/workspace/use-project-file-mention-action.ts",
-    "src/renderer/src/pages/workspace/use-project-file-mention-availability.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts",
-    "src/renderer/src/pages/workspace/use-project-file-mention-drop.ts",
     "src/renderer/src/pages/workspace/use-project-files-index.ts",
     "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
     "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
@@ -24,16 +17,20 @@
     "src/renderer/src/pages/workspace/use-project-file-mention-availability.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drop.ts"
   ],
-  "consumerModules": ["workspace_page", "workspace_conversation", "workspace_file_presentation"],
+  "consumerModules": [
+    "workspace_page",
+    "workspace_conversation",
+    "workspace_file_presentation"
+  ],
   "testFiles": {
     "owner": [
-      "src/renderer/src/pages/workspace/project-file-mention-transfer.test.ts",
-      "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
     ],
-    "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
+    "contract": [
+      "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"
+    ],
     "consumer": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
@@ -67,9 +64,12 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan-progress-refresh.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx"
     ]
   },
-  "capabilityOverlays": ["renderer_state"],
+  "capabilityOverlays": [
+    "renderer_state"
+  ],
   "fallbackCapability": "renderer_view"
 }

@@ -1,14 +1,14 @@
-import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
+import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import type {
-  ChatApiEndpoint,
   CodexSubscriptionAuthMode,
   CodexSubscriptionTransport,
   ProviderType
 } from '../../shared/settings'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import { normalizeAnthropicBaseUrl } from './base-url'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude

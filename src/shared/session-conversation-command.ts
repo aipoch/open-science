@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import type { SessionConversationCommand } from './conversation-command-contract'
 import {
   activateConversationBranch,
   ensureConversationRuntimeSegment,
@@ -6,16 +8,11 @@ import {
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
-  synchronizeActiveConversationMessages,
-  type PersistedRuntimeSegment
+  synchronizeActiveConversationMessages
 } from './conversation-graph'
-import {
-  materializeSessionConversationGraph,
-  type PersistedActiveRun,
-  type PersistedChatMessage,
-  type PersistedChatSession
-} from './session-persistence'
-import { z } from 'zod'
+import { materializeSessionConversationGraph } from './session-persistence'
+import type { PersistedChatSession } from './session-persistence'
+export { type SessionConversationCommand } from './conversation-command-contract'
 
 const identity = z.string().min(1).max(256)
 const commandBase = {
@@ -106,34 +103,6 @@ export const sanitizeSessionConversationCommands = (
     }
   })
 }
-
-// User actions carry intent, never a replacement copy of the runtime-owned graph. Stable Message,
-// Branch and Segment identities make replay independent of a lost renderer acknowledgement.
-export type SessionConversationCommand = {
-  id: string
-  timestamp: number
-  preparationId?: string
-} & (
-  | { kind: 'prepare-prompt'; promptMessageId: string; mode: 'new' | 'resume' | 'rearm' }
-  | { kind: 'rollback-prompt'; preparationId: string }
-  | {
-      kind: 'append-user'
-      branchId: string
-      parentMessageId?: string
-      message: PersistedChatMessage
-    }
-  | { kind: 'fork-message'; branchId: string; parentBranchId: string; messageId: string }
-  | {
-      kind: 'fork-activity'
-      branchId: string
-      parentBranchId: string
-      messageId: string
-      activityId: string
-    }
-  | { kind: 'select-branch'; branchId: string; previousBranchId: string }
-  | { kind: 'open-segment'; segment: Omit<PersistedRuntimeSegment, 'agentFrameId' | 'endedAt'> }
-  | { kind: 'start-run' | 'resume-run'; run: PersistedActiveRun }
-)
 
 const sameValue = (left: unknown, right: unknown): boolean => {
   if (Object.is(left, right)) return true

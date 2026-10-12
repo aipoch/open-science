@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/renderer/src/lib/compute/queue-blocked-label.ts"],
-  "interfacePaths": ["src/renderer/src/lib/compute/queue-blocked-label.ts"],
+  "ownerPaths": [
+    "src/renderer/src/lib/compute/queue-blocked-label.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/lib/compute/queue-blocked-label.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

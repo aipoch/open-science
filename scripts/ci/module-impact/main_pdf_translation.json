@@ -107,7 +107,11 @@
     "src/main/literature/pdf-translation/ipc.ts",
     "src/main/literature/pdf-translation/usage.ts"
   ],
-  "consumerModules": ["desktop_composition", "shared_application_contracts", "workspace_previews"],
+  "consumerModules": [
+    "desktop_composition",
+    "shared_application_contracts",
+    "workspace_previews"
+  ],
   "testFiles": {
     "owner": [
       "src/main/literature/pdf-translation/index.test.ts",
@@ -491,6 +495,8 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions"],
+  "capabilityOverlays": [
+    "e2e_regressions"
+  ],
   "fallbackCapability": "main_runtime"
 }

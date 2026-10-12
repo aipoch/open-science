@@ -1,6 +1,32 @@
 /* Hallmark · component: translation controls · theme: existing Open-Science tokens */
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Collapsible } from 'radix-ui'
+import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
+import * as Dialog from '@/components/ui/dialog'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import {
+  formatPdfTranslationGlossary,
+  pdfTranslationGlossarySchema
+} from '@aipoch/pdf-translation/contracts'
+import { glossaryError } from '@aipoch/pdf-translation/reader'
+import {
+  PDF_TRANSLATION_LANGUAGES,
+  isPdfTranslationLanguageSupported
+} from '@aipoch/pdf-translation/text'
 import {
   Check,
   ChevronDown,
@@ -11,50 +37,21 @@ import {
   Play,
   TriangleAlert
 } from 'lucide-react'
+import { Collapsible } from 'radix-ui'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem
-} from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { Input } from '@/components/ui/input'
-import { PdfTranslationGlossaryEditor } from './PdfTranslationGlossaryEditor'
-import { glossaryError } from '@aipoch/pdf-translation/reader'
-import {
-  formatPdfTranslationGlossary,
-  pdfTranslationGlossarySchema
-} from '@aipoch/pdf-translation/contracts'
-import * as Dialog from '@/components/ui/dialog'
-import {
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
-import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import { configuredModelKey } from '../../../../../../shared/configured-model-catalog'
+import type { ChatApiEndpoint } from '../../../../../../shared/model-preference-contract'
 import {
   pdfTranslationAgentModels,
   pdfTranslationApiModels
 } from '../../../../../../shared/pdf-translation-models'
-import { configuredModelKey } from '../../../../../../shared/configured-model-catalog'
-import type {
-  AgentFrameworkId,
-  ChatApiEndpoint,
-  ProviderView
-} from '../../../../../../shared/settings'
-import { modelUnavailableReason } from '../../composer-model-picker-utils'
 import { resolveProviderEffectiveModel } from '../../../../../../shared/provider-reasoning-effort'
-import { ErrorNotice } from '@/components/error-notice'
-import {
-  PDF_TRANSLATION_LANGUAGES,
-  isPdfTranslationLanguageSupported
-} from '@aipoch/pdf-translation/text'
-import { PdfTranslationActionHint } from './PdfTranslationActionHint'
+import type { AgentFrameworkId, ProviderView } from '../../../../../../shared/settings'
+import { modelUnavailableReason } from '../../composer-model-picker-utils'
 import { LocalPdfTranslationModel } from './LocalPdfTranslationModel'
+import { PdfTranslationActionHint } from './PdfTranslationActionHint'
+import { PdfTranslationGlossaryEditor } from './PdfTranslationGlossaryEditor'
 import { useLocalPdfTranslationModel } from './use-pdf-translation-agent'
 import type {
   PdfTranslationExecutor,

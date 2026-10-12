@@ -2,6 +2,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: context-window dialog · turns: composition (full-width ratio strip) + pinned run history; calls: 3-metric summary + stacked per-call chart with gray turn lanes and pinned call details · genre: modern-minimal · theme: product tokens (chart-1..5) · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
 import { Button } from '@/components/ui/button'
+import * as Dialog from '@/components/ui/dialog'
 import {
   dialogBodyClassName,
   dialogCloseButtonClassName,
@@ -12,10 +13,11 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn } from '@/lib/utils'
 import { SettingsSegmentedControl } from '@/pages/settings/SettingsSegmentedControl'
-import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatSession } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   Activity,
   AlertCircle,
@@ -27,10 +29,8 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { formatDisplayNumber } from '@/lib/locale-format'
 
 import type {
   AcpContextUsage,
@@ -38,7 +38,7 @@ import type {
   AcpContextUsageCategoryKey,
   AcpModelCallUsage,
   AcpPromptStopReason
-} from '../../../../shared/acp'
+} from '../../../../shared/acp-usage-contract'
 import {
   groupContextWindowCallsByTurn,
   selectContextWindowCallPoints,

@@ -22,7 +22,6 @@
     "src/renderer/src/stores/notebook-env-store.ts",
     "src/renderer/src/stores/notification-inbox-store.test.ts",
     "src/renderer/src/stores/notification-inbox-store.ts",
-    "src/renderer/src/stores/package-operation-store.ts",
     "src/renderer/src/stores/permission-grants-store.test.ts",
     "src/renderer/src/stores/permission-grants-store.ts",
     "src/renderer/src/stores/preview-close-guard.test.ts",
@@ -41,7 +40,6 @@
     "src/renderer/src/stores/search-message-focus-store.ts",
     "src/renderer/src/stores/session-details-claim.test.ts",
     "src/renderer/src/stores/session-details-fallback.test.ts",
-    "src/renderer/src/stores/session-store-session-details.ts",
     "src/renderer/src/stores/skill-import-store.ts",
     "src/renderer/src/stores/specialist-store.test.ts",
     "src/renderer/src/stores/specialist-store.ts",
@@ -54,7 +52,11 @@
     "src/renderer/src/stores/theme-store.ts",
     "src/renderer/src/stores/update-store.test.ts",
     "src/renderer/src/stores/update-store.ts",
-    "src/renderer/src/stores/desktop-runtime-recovery-store.ts"
+    "src/renderer/src/lib/active-session-display.ts",
+    "src/renderer/src/lib/deep-link.ts",
+    "src/renderer/src/lib/locale-format.ts",
+    "src/renderer/src/lib/session-package-import.ts",
+    "src/renderer/src/lib/wsl-support-handoff.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/interface-scale-store.ts",
@@ -82,7 +84,12 @@
     "src/renderer/src/stores/storage-info-store.ts",
     "src/renderer/src/stores/tag-store.ts",
     "src/renderer/src/stores/theme-store.ts",
-    "src/renderer/src/stores/update-store.ts"
+    "src/renderer/src/stores/update-store.ts",
+    "src/renderer/src/lib/active-session-display.ts",
+    "src/renderer/src/lib/deep-link.ts",
+    "src/renderer/src/lib/locale-format.ts",
+    "src/renderer/src/lib/session-package-import.ts",
+    "src/renderer/src/lib/wsl-support-handoff.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -485,7 +492,18 @@
       "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
       "src/renderer/src/lib/acp/useAcpRuntime.test.ts",
       "src/renderer/src/stores/session-job-store.test.ts",
-      "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx"
+      "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx",
+      "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureMetadataEditor.test.tsx",
+      "src/renderer/src/pages/literature/imports/LiteraturePdfBatchImportDialog.test.tsx",
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfFiguresView.render.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationView.test.tsx",
+      "src/renderer/src/reviewer-paged-preview/main.test.ts"
     ]
   },
   "capabilityOverlays": [],

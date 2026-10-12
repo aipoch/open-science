@@ -14,8 +14,6 @@
     "src/renderer/src/lib/acp/useAcpRuntime.ts",
     "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx",
     "src/renderer/src/lib/acp/useWorkspaceElicitation.test.ts",
-    "src/renderer/src/lib/acp/useWorkspaceElicitation.ts",
-    "src/renderer/src/lib/acp/workspace-elicitation-runtime.ts",
     "src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts",
     "src/renderer/src/lib/acp/workspace-prompt-preparation-lock.ts",
     "src/renderer/src/lib/acp/workspace-runtime-presentation-buffer.ts"

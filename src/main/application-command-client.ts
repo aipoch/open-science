@@ -1,9 +1,9 @@
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
+import type { CallerContext, CallerSurface } from './caller-context'
 import {
   ApplicationCallerLeaseRegistry,
   callerLeaseOwnershipKeyForContext
 } from './caller-lifecycle'
-import type { CallerContext, CallerSurface } from './caller-context'
 
 type ActiveCaller = Readonly<{
   clientId: string

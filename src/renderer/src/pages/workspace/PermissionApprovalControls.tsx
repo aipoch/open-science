@@ -6,23 +6,28 @@ import { ChevronDown, ChevronRight, Info, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest } from '../../../../shared/acp'
-import type { NotebookSessionRequest } from '../../../../shared/notebook'
-import { resolveProjectId } from '../../../../shared/project-scope'
-import { isEnvEnabled } from '../../../../shared/notebook-runtime'
 import { Badge } from '@/components/ui/badge'
-import {
-  buildNotebookToolSummary,
-  notebookInput,
-  type ToolSummary
-} from './notebook-tool-presentation'
-import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
 import { Button } from '@/components/ui/button'
 import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
+import type { NotebookSessionRequest } from '../../../../shared/notebook'
+import { isEnvEnabled } from '../../../../shared/notebook-runtime'
+import { resolveProjectId } from '../../../../shared/project-scope'
+import {
+  buildLiteratureLibraryToolSummary,
+  buildLiteratureToolSummary
+} from './literature-tool-presentation'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
+import {
+  buildNotebookToolSummary,
+  notebookInput,
+  readNotebookCodeReview,
+  type NotebookCodeReview,
+  type ToolSummary
+} from './notebook-tool-presentation'
 import {
   describePermissionRequest,
   getLiteratureLibraryRequestAction,
@@ -33,8 +38,8 @@ import {
   isNotebookNetworkApprovalRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest,
-  type PermissionPresentation,
-  type NotebookRuntime
+  type NotebookRuntime,
+  type PermissionPresentation
 } from './permission-request-presentation'
 import {
   PermissionScopeConfirmationDialog,
@@ -43,16 +48,12 @@ import {
 } from './PermissionScopeConfirmationDialog'
 import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
-import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
-import { readNotebookCodeReview, type NotebookCodeReview } from './notebook-tool-presentation'
+import { useSkillDocument } from './use-skill-document'
+import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
-import {
-  buildLiteratureLibraryToolSummary,
-  buildLiteratureToolSummary
-} from './literature-tool-presentation'
-import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
-import { useSkillDocument } from './use-skill-document'
+import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
+import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]

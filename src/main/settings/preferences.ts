@@ -1,20 +1,20 @@
 import { mkdir } from 'node:fs/promises'
-import { resolveDataRoot, samePath } from '../storage-root'
-import {
-  DEFAULT_APP_ICON_VARIANT,
-  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
-  DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_SHOW_NOTIFICATION_CONTENT,
-  DEFAULT_REASONING_EFFORT,
-  type AppIconVariant,
-  type ProjectFilesFilterPreference,
-  type ReasoningEffort
-} from '../../shared/settings'
-import type { CloseActionPreference } from '../../shared/window-controls'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   getDefaultPermissionProfile,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
+import {
+  DEFAULT_APP_ICON_VARIANT,
+  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+  DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_SHOW_NOTIFICATION_CONTENT,
+  type AppIconVariant,
+  type ProjectFilesFilterPreference
+} from '../../shared/settings'
+import type { CloseActionPreference } from '../../shared/window-controls'
+import { resolveDataRoot, samePath } from '../storage-root'
 import type {
   SetDataRootOptions,
   SettingsPreferences,
@@ -142,5 +142,5 @@ class SettingsPreferencesModule implements SettingsPreferences {
   }
 }
 
-export { SettingsPreferencesModule, toSettingsPreferencesSnapshot }
 export type { SetDataRootOptions } from './capabilities'
+export { SettingsPreferencesModule, toSettingsPreferencesSnapshot }

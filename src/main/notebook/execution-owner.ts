@@ -1,37 +1,48 @@
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createHash } from 'node:crypto'
-import { isDeepStrictEqual } from 'node:util'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 
+import type { Logger } from '@aipoch/diagnostics/node'
+import {
+  EnvironmentManifestPublicationError,
+  EnvironmentStateTracker,
+  prepareNotebookWorkloadCache,
+  type EnvironmentCaptureTarget
+} from '@aipoch/environment'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyInterpreter,
+  type NotebookDependencyProjection
+} from '@aipoch/notebook-analysis'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
   NotebookCell,
-  NotebookLanguage,
   NotebookOutput,
   NotebookRunInputFile,
-  NotebookRunRecord,
   NotebookRunProvenanceContext,
+  NotebookRunRecord,
   NotebookRunSource,
   NotebookRunStatus,
-  ShellRuntimeBinding,
   NotebookWorkingFile,
-  RunNotebookCellRequest
+  RunNotebookCellRequest,
+  ShellRuntimeBinding
 } from '../../shared/notebook'
-import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import type { Logger } from '@aipoch/diagnostics/node'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
-import {
-  EnvironmentManifestPublicationError,
-  EnvironmentStateTracker,
-  type EnvironmentCaptureTarget
-} from '@aipoch/environment'
-import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
+import type { TransientViewImage } from './host-view-image-service'
+import { getNotebookInputRoot } from './input-staging'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
-import { NotebookRunSubmissionConflictError } from './repository'
+import { detectManagedRuntimeMutation } from './managed-runtime-guard'
+import { NotebookRunSubmissionConflictError, getNotebookFileEvidenceLocation } from './repository'
+import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
@@ -43,27 +54,15 @@ import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
   buildShellEnv,
-  type NotebookShellProcess,
-  type NotebookShellResult
+  type NotebookShellProcess
 } from './shell-process'
-import { prepareNotebookWorkloadCache } from '@aipoch/environment'
-import { startWorkingFileObservation } from './working-file-observer'
-import type { TransientViewImage } from './host-view-image-service'
-import {
-  unavailableNotebookDependencyProjection,
-  type NotebookDependencyInterpreter,
-  type NotebookDependencyProjection
-} from '@aipoch/notebook-analysis'
-import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
-import { getNotebookFileEvidenceLocation } from './repository'
-import { getNotebookInputRoot } from './input-staging'
+import type { NotebookShellResult } from './shell-process-contract'
 import {
   captureShellRuntimeBinding,
   defaultShellRuntimeBinding,
   shellRuntimePlatform
 } from './shell-runtime'
-import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { startWorkingFileObservation } from './working-file-observer'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,

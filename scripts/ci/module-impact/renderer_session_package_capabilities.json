@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/renderer/src/lib/session-package-capabilities.ts"],
-  "interfacePaths": ["src/renderer/src/lib/session-package-capabilities.ts"],
+  "ownerPaths": [
+    "src/renderer/src/lib/session-package-capabilities.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/lib/session-package-capabilities.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

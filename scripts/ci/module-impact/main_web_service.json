@@ -18,7 +18,8 @@
     "src/main/web-service/state-file.test.ts",
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.test.ts",
-    "src/main/web-service/task-api.ts"
+    "src/main/web-service/task-api.ts",
+    "src/main/web-service/external-access-contract.ts"
   ],
   "interfacePaths": [
     "src/main/web-service/application-event-projections.ts",
@@ -77,6 +78,10 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

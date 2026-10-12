@@ -9,8 +9,6 @@
     "src/renderer/src/pages/workspace/session-plan/plan-confidence-label.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-document-sniff.test.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-document-sniff.ts",
-    "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts",
-    "src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
     "src/renderer/src/pages/workspace/session-plan/plan-progress.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-test-fixtures.ts",
@@ -36,7 +34,6 @@
       "src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/active-branch-plan.test.ts",
       "src/renderer/src/pages/workspace/session-plan/plan-document-sniff.test.ts",
-      "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts",
       "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.test.ts",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
@@ -273,7 +270,8 @@
       "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts"
     ]
   },
   "capabilityOverlays": [],

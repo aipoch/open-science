@@ -7,11 +7,15 @@
     "packages/process-tree-native/src/process_tree_native.cc",
     "packages/process-tree-native/src/windows_owned_process.cc"
   ],
-  "interfacePaths": ["packages/process-tree-native/index.cjs"],
+  "interfacePaths": [
+    "packages/process-tree-native/index.cjs"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": ["scripts/native-components.test.ts"],
+    "contract": [
+      "scripts/native-components.test.ts"
+    ],
     "consumer": [
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
@@ -585,6 +589,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

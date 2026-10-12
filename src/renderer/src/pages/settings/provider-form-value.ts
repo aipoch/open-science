@@ -1,14 +1,9 @@
+import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
 import {
-  claudeIsolatedProviderIdentity,
-  codexSubscriptionProviderIdentity,
-  xaiSubscriptionProviderIdentity,
-  preferredEndpoint,
-  type AgentFrameworkId,
-  type ChatApiEndpoint,
-  type CodexSubscriptionTransport,
-  type ProviderDraft,
-  type ProviderType
-} from '../../../../shared/settings'
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError,
+  type CustomProviderBaseUrlError
+} from '../../../../shared/provider-base-url'
 import {
   OFFICIAL_VENDORS,
   defaultVendorModel,
@@ -17,15 +12,20 @@ import {
   resolveVendorModelApiEndpoints,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
-import {
-  customProviderRequiresKey,
-  getCustomProviderBaseUrlError,
-  type CustomProviderBaseUrlError
-} from '../../../../shared/provider-base-url'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
 } from '../../../../shared/reasoning-effort'
+import {
+  claudeIsolatedProviderIdentity,
+  codexSubscriptionProviderIdentity,
+  preferredEndpoint,
+  xaiSubscriptionProviderIdentity,
+  type AgentFrameworkId,
+  type CodexSubscriptionTransport,
+  type ProviderDraft,
+  type ProviderType
+} from '../../../../shared/settings'
 
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.

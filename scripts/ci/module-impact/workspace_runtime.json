@@ -25,22 +25,27 @@
     "src/renderer/src/lib/acp/runtime-observer.test.ts",
     "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
     "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
-    "src/renderer/src/lib/acp/workspace-operation-error.ts",
     "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
     "src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts",
     "src/renderer/src/lib/acp/workspace-prompt-preparation.ts",
     "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
     "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
-    "src/renderer/src/lib/handled-failure-diagnostics.ts"
+    "src/renderer/src/lib/handled-failure-diagnostics.ts",
+    "src/renderer/src/lib/acp/useWorkspaceElicitation.ts",
+    "src/renderer/src/lib/acp/workspace-elicitation-runtime.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts",
     "src/renderer/src/lib/acp/workspace-events.ts",
     "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
     "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
-    "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
+    "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts",
+    "src/renderer/src/lib/acp/useWorkspaceElicitation.ts",
+    "src/renderer/src/lib/acp/workspace-elicitation-runtime.ts"
   ],
-  "consumerModules": ["workspace_page"],
+  "consumerModules": [
+    "workspace_page"
+  ],
   "testFiles": {
     "owner": [
       "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts",
@@ -61,7 +66,9 @@
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
     ],
-    "contract": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"],
+    "contract": [
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"
+    ],
     "consumer": [
       "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
@@ -174,6 +181,8 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
-  "capabilityOverlays": ["renderer_state"],
+  "capabilityOverlays": [
+    "renderer_state"
+  ],
   "fallbackCapability": "renderer_view"
 }

@@ -1,44 +1,53 @@
 import { create, type StoreApi } from 'zustand'
 
 import {
-  DEFAULT_APP_ICON_VARIANT,
-  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
-  DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_SHOW_NOTIFICATION_CONTENT,
-  DEFAULT_REASONING_EFFORT,
-  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
-  isCodexSubscriptionProvider
-} from '../../../shared/settings'
-import {
   buildConfiguredModelCatalog,
   buildConfiguredModelInventory,
   configuredModelKey
 } from '../../../shared/configured-model-catalog'
-import type { OfficialVendorId } from '../../../shared/provider-registry'
 import type { PackageMirror } from '../../../shared/mirror'
+import type { ChatApiEndpoint, ReasoningEffort } from '../../../shared/model-preference-contract'
 import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
 } from '../../../shared/network-proxy'
-import { type NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../../shared/notebook-network'
-import type { CloseActionPreference } from '../../../shared/window-controls'
+import { type NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
 import {
   DEFAULT_PERMISSION_PROFILE,
   getDefaultPermissionProfile,
   type PermissionProfileId
 } from '../../../shared/permission-profiles'
+import type { OfficialVendorId } from '../../../shared/provider-registry'
+import type {
+  AgentFrameworkId,
+  AgentFrameworkView,
+  AppIconVariant,
+  ClaudeInfo,
+  ClaudeSubscriptionProviderId,
+  CodeBuddyInfo,
+  CodexInfo,
+  OpencodeInfo,
+  ProjectFilesFilterPreference,
+  ProviderType,
+  ProviderView,
+  ReviewerModelConfiguration,
+  SessionDetailsModelConfiguration,
+  SettingsSnapshot,
+  SubagentModelConfiguration,
+  VisionModelConfiguration
+} from '../../../shared/settings'
+import {
+  DEFAULT_APP_ICON_VARIANT,
+  DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+  DEFAULT_NOTIFICATIONS_ENABLED,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
+  DEFAULT_SHOW_NOTIFICATION_CONTENT,
+  isCodexSubscriptionProvider
+} from '../../../shared/settings'
+import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
-import {
-  createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator
-} from './settings-write-coordinator'
-import {
-  createInitialSettingsNavigationState,
-  createSettingsNavigationSlice,
-  type SettingsNavigationActions,
-  type SettingsNavigationState
-} from './settings-navigation-slice'
 import {
   createInitialSettingsConnectorsState,
   createSettingsConnectorsSlice,
@@ -46,16 +55,16 @@ import {
   type SettingsConnectorsState
 } from './settings-connectors-slice'
 import {
+  createInitialSettingsNavigationState,
+  createSettingsNavigationSlice,
+  type SettingsNavigationActions,
+  type SettingsNavigationState
+} from './settings-navigation-slice'
+import {
   createSettingsPreferencesSlice,
   omitInFlightOptimisticPreferences,
   type SettingsPreferencesActions
 } from './settings-preferences-slice'
-import {
-  createInitialSettingsSkillsState,
-  createSettingsSkillsSlice,
-  type SettingsSkillsActions,
-  type SettingsSkillsState
-} from './settings-skills-slice'
 import {
   createProviderAuthSlice,
   type ProviderAuthActions,
@@ -69,27 +78,17 @@ import {
   type RuntimeSetupActions,
   type RuntimeSetupState
 } from './settings-runtime-slice'
+import {
+  createInitialSettingsSkillsState,
+  createSettingsSkillsSlice,
+  type SettingsSkillsActions,
+  type SettingsSkillsState
+} from './settings-skills-slice'
+import {
+  createSettingsWriteCoordinator,
+  type SettingsWriteCoordinator
+} from './settings-write-coordinator'
 export { selectAnyInstalling } from './settings-runtime-slice'
-import type {
-  ClaudeInfo,
-  ClaudeSubscriptionProviderId,
-  CodexInfo,
-  CodeBuddyInfo,
-  AgentFrameworkId,
-  AgentFrameworkView,
-  ChatApiEndpoint,
-  OpencodeInfo,
-  ProjectFilesFilterPreference,
-  ProviderType,
-  ProviderView,
-  ReasoningEffort,
-  ReviewerModelConfiguration,
-  SessionDetailsModelConfiguration,
-  SettingsSnapshot,
-  AppIconVariant,
-  SubagentModelConfiguration,
-  VisionModelConfiguration
-} from '../../../shared/settings'
 
 type SettingsStoreData = RuntimeSetupState &
   SettingsNavigationState &

@@ -17,7 +17,6 @@
     "src/renderer/src/pages/workspace/SessionReplayEvidence.tsx",
     "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
     "src/renderer/src/pages/workspace/SessionReplayPreview.tsx",
-    "src/renderer/src/pages/workspace/replay-reference-text.ts",
     "src/renderer/src/pages/workspace/replay/ReplayControls.tsx",
     "src/renderer/src/pages/workspace/replay/ReplayFileRow.tsx",
     "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
@@ -35,23 +34,18 @@
     "src/renderer/src/pages/workspace/replay/replay-resources.test.ts",
     "src/renderer/src/pages/workspace/replay/replay-resources.ts",
     "src/renderer/src/pages/workspace/replay/replay-svg.ts",
-    "src/renderer/src/pages/workspace/session-discussion-annotation.test.ts",
-    "src/renderer/src/pages/workspace/session-discussion-annotation.ts",
     "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
     "src/renderer/src/pages/workspace/session-replay-progress-writer.ts",
     "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
     "src/renderer/src/pages/workspace/workspace-session-discussion.ts",
     "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
     "src/renderer/src/pages/workspace/workspace-session-actions.ts",
-    "src/renderer/src/stores/session-replay-store.test.ts",
-    "src/renderer/src/stores/session-replay-store.ts",
     "src/renderer/src/pages/workspace/replay/ReplayReviewRecord.tsx",
     "src/renderer/src/pages/workspace/replay/replay-navigation.ts",
     "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
     "src/renderer/src/pages/workspace/SessionDiscussionButton.tsx",
-    "src/renderer/src/pages/workspace/discussion-send-context.ts",
-    "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
-    "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx"
+    "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx",
+    "src/renderer/src/lib/replay/source-contract.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/replay/index.ts",
@@ -98,13 +92,10 @@
       "src/renderer/src/pages/workspace/replay/replay-context.test.ts",
       "src/renderer/src/pages/workspace/replay/replay-readiness.test.ts",
       "src/renderer/src/pages/workspace/replay/replay-resources.test.ts",
-      "src/renderer/src/pages/workspace/session-discussion-annotation.test.ts",
       "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
-      "src/renderer/src/stores/session-replay-store.test.ts",
-      "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
-      "src/renderer/src/pages/workspace/discussion-send-context.test.ts"
+      "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -274,9 +265,15 @@
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
+      "src/renderer/src/pages/workspace/session-discussion-annotation.test.ts",
+      "src/renderer/src/stores/session-replay-store.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "renderer_view"
 }

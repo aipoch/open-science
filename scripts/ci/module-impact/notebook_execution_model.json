@@ -519,6 +519,9 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }
