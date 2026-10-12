@@ -2,6 +2,7 @@
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
 import { createRoot, type Root } from 'react-dom/client'
+import { i18next } from './i18n'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1360,6 +1361,20 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
   })
 
+  it('translates the settings failure explanation in the Chinese startup screen', async () => {
+    mocks.settings.loadError = 'Open-Science could not load settings. Retry to continue.'
+    mocks.settings.load.mockResolvedValue(false)
+    await i18next.changeLanguage('zh-Hans')
+    try {
+      await render()
+      const notice = container.querySelector('[role="alert"]')
+      expect(notice?.textContent).toContain('无法加载设置')
+      expect(notice?.textContent).toContain('Open-Science 无法加载设置。请重试以继续。')
+    } finally {
+      await i18next.changeLanguage('en')
+    }
+  })
+
   it('shows a settings load error in the standard error notice and retries initialization', async () => {
     mocks.settings.loadError = 'settings IPC unavailable'
     mocks.settings.load.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
@@ -1367,7 +1382,7 @@ describe('App startup routing', () => {
     await render()
 
     const shell = container.querySelector('[role="alert"]')
-    expect(shell?.textContent).toContain('settings IPC unavailable')
+    expect(shell?.textContent).toContain('Open-Science could not load settings. Retry to continue.')
     expect(shell?.querySelector('section > svg[aria-hidden="true"]')).not.toBeNull()
     expect(shell?.classList.contains('min-h-svh')).toBe(true)
     expect(shell?.classList.contains('h-screen')).toBe(false)

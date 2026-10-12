@@ -2429,6 +2429,7 @@
     "Settings": "Einstellungen",
     "Settings navigation": "Einstellungsnavigation",
     "Settings panel couldn't be loaded.": "Das Einstellungsfeld konnte nicht geladen werden.",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science konnte die Einstellungen nicht laden. Versuchen Sie es erneut, um fortzufahren.",
     "Settings could not be loaded": "Einstellungen konnten nicht geladen werden",
     "Settings → Permissions": "Einstellungen → Berechtigungen",
     "Setup could not be completed": "Die Einrichtung konnte nicht abgeschlossen werden",

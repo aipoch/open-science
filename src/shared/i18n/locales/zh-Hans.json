@@ -2723,6 +2723,7 @@
     "Settings": "设置",
     "Settings navigation": "设置导航",
     "Settings panel couldn't be loaded.": "无法加载设置面板。",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science 无法加载设置。请重试以继续。",
     "Settings could not be loaded": "无法加载设置",
     "Settings → Permissions": "设置 → 权限",
     "Setup could not be completed": "设置未能完成",

@@ -2636,6 +2636,7 @@
     "Settings": "設定",
     "Settings navigation": "設定ナビゲーション",
     "Settings panel couldn't be loaded.": "設定パネルを読み込めませんでした。",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science は設定を読み込めませんでした。続行するには再試行してください。",
     "Settings could not be loaded": "設定を読み込めませんでした",
     "Settings → Permissions": "設定→権限",
     "Setup could not be completed": "セットアップを完了できませんでした",

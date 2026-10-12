@@ -2752,6 +2752,7 @@
     "Settings": "Настройки",
     "Settings navigation": "Навигация по настройкам",
     "Settings panel couldn't be loaded.": "Не удалось загрузить раздел настроек.",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science не удалось загрузить настройки. Повторите попытку, чтобы продолжить.",
     "Settings could not be loaded": "Не удалось загрузить настройки",
     "Settings → Permissions": "Настройки → Разрешения",
     "Setup could not be completed": "Не удалось завершить настройку",

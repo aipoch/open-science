@@ -832,29 +832,40 @@ async function startDesktop(): Promise<void> {
       if (waiting.pending.size === 0) waiting.resolve()
     }
   )
-  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, async (event) => {
+  let disconnectedQuit: Promise<void> | undefined
+  const quitDisconnected = (): Promise<void> =>
+    (disconnectedQuit ??= Promise.resolve()
+      .then(async () => {
+        recovery.setClosing(true)
+        const result = await dialog.showMessageBox({
+          type: 'warning',
+          buttons: [translate('Cancel'), translate('Quit app')],
+          defaultId: 0,
+          cancelId: 0,
+          message: translate('Quit while disconnected?'),
+          detail: translate(
+            'Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.'
+          )
+        })
+        if (result.response !== 1) return
+        client?.close()
+        app.exit(0)
+      })
+      .finally(() => {
+        disconnectedQuit = undefined
+        recovery.setClosing(false)
+      }))
+  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, (event) => {
     requireRecoveryFrame(event)
-    if (recovery!.state().phase === 'connected' && !staleWindows.has(event.sender.id)) {
+    if (
+      !disconnectedQuit &&
+      recovery.state().phase === 'connected' &&
+      !staleWindows.has(event.sender.id)
+    ) {
       app.quit()
       return
     }
-    recovery!.setClosing(true)
-    const result = await dialog.showMessageBox({
-      type: 'warning',
-      buttons: [translate('Cancel'), translate('Quit app')],
-      defaultId: 0,
-      cancelId: 0,
-      message: translate('Quit while disconnected?'),
-      detail: translate(
-        'Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.'
-      )
-    })
-    if (result.response !== 1) {
-      recovery!.setClosing(false)
-      return
-    }
-    client?.close()
-    app.exit(0)
+    return quitDisconnected().catch(reportError)
   })
   cleanupStartupClient = () => client!.quit()
   if (startupQuitRequested) {
@@ -945,6 +956,14 @@ async function startDesktop(): Promise<void> {
   let work: DesktopShutdownWork | undefined
   let admission: Promise<unknown> = Promise.resolve()
   app.removeListener('before-quit', holdStartupQuit)
+  app.on('before-quit', (event) => {
+    // Preserve committed teardown; an idle disconnected shell must also be quittable without a window.
+    if (updateCommitted || plannedRelaunch) return
+    const state = recovery.state()
+    if (!disconnectedQuit && (state.phase === 'connected' || state.closing)) return
+    event.preventDefault()
+    void quitDisconnected().catch(reportError)
+  })
   const lifecycle = installAppLifecycle({
     app,
     createInitialWindow: !headless,

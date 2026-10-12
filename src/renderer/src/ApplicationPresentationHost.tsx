@@ -136,7 +136,7 @@ const ApplicationPresentationContent = ({
           <ErrorNotice
             fullPage
             title={t('Settings could not be loaded')}
-            description={startup.settings.loadError}
+            description={t('Open-Science could not load settings. Retry to continue.')}
             primaryButton={{
               label: startup.settings.isLoading ? t('Retrying…') : t('Retry'),
               onClick: () => void startup.settings.retry(),

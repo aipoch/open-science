@@ -633,3 +633,122 @@ test('exits from the recovery notice when the original backend has really stoppe
     await cleanupRecoveryFixture({ app, owner, env, root, storageRoot: roots.storageRoot })
   }
 })
+
+for (const scenario of [
+  'native quit',
+  'native quit without window',
+  'repeated notice quit'
+] as const)
+  test(`disconnected desktop handles ${scenario}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-disconnected-quit-'))
+    const roots = {
+      storageRoot: join(root, 'storage'),
+      userDataRoot: join(root, 'profile'),
+      fakeAgentBinRoot: join(root, 'bin'),
+      fakeRemoteItRoot: join(root, 'remote'),
+      fakeRemoteItState: join(root, 'remote.json')
+    }
+    await mkdir(roots.storageRoot)
+    const env = {
+      ...launchEnvironment(roots.storageRoot),
+      OPEN_SCIENCE_USER_DATA: roots.userDataRoot
+    }
+    let app: ElectronApplication | undefined
+    let owner: RuntimeOwner | undefined
+    try {
+      app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
+      const page = await app.firstWindow()
+      await expect
+        .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), {
+          timeout: 60_000
+        })
+        .toMatchObject({ phase: 'ready' })
+      owner = JSON.parse(
+        await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
+      ) as RuntimeOwner
+      await app.evaluate(({ dialog }) => {
+        type QuitProbe = { dialogs: string[]; errors: string[]; respond?: () => void }
+        const probe: QuitProbe = { dialogs: [], errors: [] }
+        ;(globalThis as typeof globalThis & { quitProbe: QuitProbe }).quitProbe = probe
+        dialog.showErrorBox = (_title, content) => {
+          probe.errors.push(content)
+        }
+        dialog.showMessageBox = (options) => {
+          if (!('message' in options)) throw new Error('Expected an unparented quit confirmation')
+          probe.dialogs.push(options.message)
+          return new Promise((resolve) => {
+            probe.respond = () => resolve({ response: 0, checkboxChecked: false })
+          })
+        }
+        const pipe = (
+          process as NodeJS.Process & {
+            _getActiveHandles(): {
+              readable?: boolean
+              writable?: boolean
+              _handle?: { constructor: { name: string } }
+              destroy(): void
+            }[]
+          }
+        )
+          ._getActiveHandles()
+          .find(
+            (handle) =>
+              handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
+          )
+        if (!pipe) throw new Error('Desktop pipe missing')
+        pipe.destroy()
+      })
+      await expect
+        .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+        .toMatchObject({ phase: 'disconnected' })
+      if (scenario === 'repeated notice quit') {
+        await page.evaluate(() => {
+          void window.api.desktopRuntime!.quit()
+          void window.api.desktopRuntime!.quit()
+        })
+      } else {
+        await app.evaluate(({ app, BrowserWindow }, noWindow) => {
+          if (noWindow) for (const window of BrowserWindow.getAllWindows()) window.destroy()
+          app.quit()
+        }, scenario === 'native quit without window')
+      }
+      await expect
+        .poll(() =>
+          app!.evaluate(() => {
+            const probe = (
+              globalThis as typeof globalThis & {
+                quitProbe: { dialogs: string[]; errors: string[] }
+              }
+            ).quitProbe
+            return { dialogs: probe.dialogs, errors: probe.errors }
+          })
+        )
+        .toEqual({ dialogs: ['Quit while disconnected?'], errors: [] })
+      await app.evaluate(() => {
+        ;(globalThis as typeof globalThis & { quitProbe: { respond(): void } }).quitProbe.respond()
+      })
+      expect(app.process().exitCode).toBeNull()
+      expect(processHasExited(owner.pid)).toBe(false)
+      if (scenario !== 'native quit without window')
+        await expect
+          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+          .toMatchObject({ phase: 'disconnected', closing: false })
+      await app.evaluate(({ dialog }) => {
+        dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
+      })
+      const desktopProcess = app.process()
+      if (scenario === 'repeated notice quit')
+        await page.evaluate(() => {
+          void window.api.desktopRuntime!.quit()
+        })
+      else
+        await app.evaluate(({ app }) => {
+          app.quit()
+        })
+      await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
+      app = undefined
+      expect(processHasExited(owner.pid)).toBe(false)
+    } finally {
+      await cleanupRecoveryFixture({ app, owner, env, root, storageRoot: roots.storageRoot })
+    }
+  })

@@ -2733,6 +2733,7 @@
     "Settings": "Configuración",
     "Settings navigation": "Navegación de configuración",
     "Settings panel couldn't be loaded.": "No se pudo cargar el panel de configuración.",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science no pudo cargar la configuración. Vuelva a intentarlo para continuar.",
     "Settings could not be loaded": "No se pudo cargar la configuración",
     "Settings → Permissions": "Configuración → Permisos",
     "Setup could not be completed": "No se pudo completar la configuración",

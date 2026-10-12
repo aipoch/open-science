@@ -2721,6 +2721,7 @@
     "Settings": "設定",
     "Settings navigation": "設定導覽",
     "Settings panel couldn't be loaded.": "無法載入設定面板。",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science 無法載入設定。請重試以繼續。",
     "Settings could not be loaded": "無法載入設定",
     "Settings → Permissions": "設定 → 權限",
     "Setup could not be completed": "設定未能完成",
