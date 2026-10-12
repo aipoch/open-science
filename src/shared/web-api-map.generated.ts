@@ -220,6 +220,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessionReplay.getSelectionSnapshot': 'session-replay:get-selection-snapshot',
   'sessionReplay.list': 'session-replay:list',
   'sessionReplay.listSelectionSnapshots': 'session-replay:list-selection-snapshots',
+  'sessionReplay.readObservationBindings': 'session-replay:read-observation-bindings',
   'sessionReplay.saveSelectionSnapshot': 'session-replay:save-selection-snapshot',
   'sessionReplay.saveView': 'session-replay:save-view',
   'sessionReplay.setResearchMembership': 'session-replay:set-research-membership',

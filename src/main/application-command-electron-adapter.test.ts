@@ -80,6 +80,7 @@ const validatedChannels = [
   'session-replay:get-selection-snapshot',
   'session-replay:list',
   'session-replay:list-selection-snapshots',
+  'session-replay:read-observation-bindings',
   'session-replay:save-selection-snapshot',
   'session-replay:save-view',
   'session-replay:set-research-membership',

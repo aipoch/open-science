@@ -59,6 +59,7 @@ const useLifecycleSync = ({
   const isHydratedRef = useRef(isHydrated)
   const lifecycleClientIdRef = useRef<string | null | undefined>(undefined)
   const pendingActionsRef = useRef(new Map<string, PendingLifecycleAction>())
+  const noticeRequestRef = useRef(0)
 
   const flushPendingActions = useCallback((): void => {
     if (!isHydratedRef.current || lifecycleClientIdRef.current === undefined) return
@@ -105,6 +106,44 @@ const useLifecycleSync = ({
       const lifecycleClientId = lifecycleClientIdRef.current
       if (lifecycleClientId === null || lifecycleClientId === undefined) return
       if (originClientId === lifecycleClientId) return
+      const request = ++noticeRequestRef.current
+      if (
+        originClientId === 'main:replay-demo' &&
+        typeof window.api.researchDemos?.carriers === 'function'
+      ) {
+        // Main persists ownership before publishing this creation. Query that authority afresh:
+        // the sidebar's cached index may predate the carrier. Still apply the Session event.
+        void (async () => {
+          let owned = false
+          try {
+            const carriers = await window.api.researchDemos.carriers({
+              projectId: session.projectId
+            })
+            owned = carriers.some(
+              (carrier) =>
+                carrier.sessionId === session.id && carrier.source.projectId === session.projectId
+            )
+          } catch {
+            // An unavailable owner index must not hide an ordinary external Session.
+          }
+          if (!isSubscribed || request !== noticeRequestRef.current || owned) return
+          const current = useSessionStore
+            .getState()
+            .sessions.find((candidate) => candidate.id === session.id)
+          const project = useProjectStore
+            .getState()
+            .projects.find((candidate) => candidate.id === session.projectId)
+          if (
+            !current ||
+            current.projectId !== session.projectId ||
+            current.archivedAt !== undefined ||
+            project?.archivedAt !== undefined
+          )
+            return
+          setNotice({ projectId: session.projectId, sessionId: session.id, title: current.title })
+        })()
+        return
+      }
       setNotice({
         projectId: session.projectId,
         sessionId: session.id,
@@ -325,7 +364,10 @@ const useLifecycleSync = ({
     }
   }, [flushPendingActions])
 
-  const dismissNotice = useCallback(() => setNotice(undefined), [])
+  const dismissNotice = useCallback(() => {
+    noticeRequestRef.current += 1
+    setNotice(undefined)
+  }, [])
   const viewNotice = useCallback(() => {
     if (!notice) return
     useNavigationStore

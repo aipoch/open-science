@@ -251,6 +251,7 @@
       "src/main/notebook/local-rpc-server.managed-execution.test.ts",
       "src/main/notebook/managed-nested-generation.integration.test.ts",
       "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts"
     ]

@@ -616,7 +616,8 @@
         "src/main/notebook/managed-research-environment.ts",
         "src/main/notebook/managed-research-node-runtime.ts",
         "src/main/notebook/research-materials.ts",
-        "src/shared/research-execution-profile.ts"
+        "src/shared/research-execution-profile.ts",
+        "src/shared/research-run-launcher.ts"
       ],
       "capabilities": ["windows_sensitive"]
     }

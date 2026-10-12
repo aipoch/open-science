@@ -211,6 +211,7 @@ type WorkspaceComposerController = {
     cancelQueuedEdit?: () => void
     discardWslSetupDraft: () => boolean
     appendLiterature: (draftKey: string, references: readonly LiteratureReference[]) => boolean
+    appendText: (draftKey: string, text: string) => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -1673,6 +1674,13 @@ const useWorkspaceComposerController = ({
         return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
+      appendText: (draftKey, text): boolean => {
+        if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
+        // A navigation layout effect can restore this draft before callers re-render. Read
+        // its current owner snapshot instead of appending to the previous render's document.
+        changeDoc({ nodes: [...docRef.current.nodes, { type: 'text', text }] })
+        return true
+      },
       appendLiterature: (draftKey, references): boolean => {
         if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
         const next = appendLiteratureMentions(docRef.current, references)

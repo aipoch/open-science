@@ -30,12 +30,26 @@ describe('self-awareness bundled Skill', () => {
       'repl_execute',
       'await host.capabilities()',
       '21 known boolean keys',
+      '`managedExecution`',
+      'caps.managedExecution === true',
+      "await host.help('managedExecution')",
+      'host.managedExecution.inspectMaterials',
+      'host.managedExecution.execute',
+      'host.managedExecution.requestConfiguration',
+      'host.managedExecution.getConfiguration',
+      'pendingCollection.collectionId',
+      'host.managedExecution.collectOutputs',
+      'host.managedExecution.discardOutputs',
+      'without rerunning',
+      '`releaseEnvironment` preserves',
+      'finish or recover that turn',
+      'ordinary Artifact catalog remains published-only',
+      'cleanup completes automatically',
       '`mcp`',
       '`compute`',
       '`agents`',
       '`skills`',
       '`artifacts`',
-      '`managedExecution`',
       '`lineage`',
       '`frames`',
       '`sessions`',
@@ -62,13 +76,6 @@ describe('self-awareness bundled Skill', () => {
       '`host.viewImage(source, options?)`',
       'caps.compute === true',
       'caps.artifacts === true',
-      'caps.managedExecution === true',
-      "await host.help('managedExecution')",
-      'host.managedExecution.inspectMaterials',
-      'host.managedExecution.execute',
-      'host.managedExecution.collectOutputs',
-      'host.managedExecution.requestConfiguration',
-      'host.managedExecution.getConfiguration',
       'caps.frames === true',
       'caps.sessions === true',
       'await host.artifacts(options)',
@@ -128,5 +135,20 @@ describe('self-awareness bundled Skill', () => {
     )
     expect(body).not.toMatch(/Optional camelCase fields are[^.]*`sessionId`/)
     expect(body).not.toMatch(/host\.(query|artifact_read)/)
+  })
+  it('distinguishes read-only Replay from explicitly requested offline execution in the current Session', async () => {
+    const body = (await new SkillRegistry(skillsRoot).body('self-awareness')).replace(/\s+/g, ' ')
+    for (const phrase of [
+      'Read-only Replay never starts an environment or program.',
+      'Offline plans may run in an ordinary Session as a separate execution',
+      'host.managedExecution.inspectOfflinePlans({ sourceSessionId })',
+      'host.managedExecution.executeOfflinePlan',
+      'prepares the fixed materials and executes in this current writable Session/turn; no hidden Session is created.',
+      'Do not pass commands, profiles, credentials or network overrides.',
+      'new run under declared substitutions, never historical playback or an implicit fallback for real research.',
+      'Historical Replay only reads saved records.'
+    ]) {
+      expect(body).toContain(phrase)
+    }
   })
 })

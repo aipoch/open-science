@@ -25,6 +25,12 @@ runs:
       run: npx playwright install chromium --only-shell
     # Separate output directories retain the first suite's traces/screenshots when a scheduled
     # runner executes the second suite in the same workspace.
+    - name: Test recorded resource context menus
+      if: inputs.group == 'regressions'
+      shell: bash
+      env:
+        RUN_RECORDED_RESOURCE_CONTEXT_MENU: '1'
+      run: npx vitest run src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts
     - name: Run supplemental regressions
       if: inputs.group == 'regressions'
       shell: bash

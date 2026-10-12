@@ -11,10 +11,12 @@ import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export const SessionDiscussionButton = ({
   projectId,
-  sessionId
+  sessionId,
+  chooseOnly = false
 }: {
   projectId: string
   sessionId: string
+  chooseOnly?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [context, setContext] = useState<SessionDiscussionCapture>()
@@ -51,17 +53,19 @@ export const SessionDiscussionButton = ({
   }
   return (
     <>
-      <Button variant="outline" size="sm" disabled={pending} onClick={() => void open()}>
-        {pending ? (
-          <LoaderCircle
-            className="size-4 animate-spin motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-        ) : (
-          <MessageSquare className="size-4" aria-hidden="true" />
-        )}
-        {t('Discuss this research')}
-      </Button>
+      {!chooseOnly ? (
+        <Button variant="outline" size="sm" disabled={pending} onClick={() => void open()}>
+          {pending ? (
+            <LoaderCircle
+              className="size-4 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          ) : (
+            <MessageSquare className="size-4" aria-hidden="true" />
+          )}
+          {t('Discuss this research')}
+        </Button>
+      ) : null}
       <Button variant="ghost" size="sm" disabled={pending} onClick={() => void open(true)}>
         {t('Add to another conversation…')}
       </Button>
@@ -73,7 +77,11 @@ export const SessionDiscussionButton = ({
           inline
           tone="amber"
           description={error}
-          primaryButton={{ label: t('Retry'), onClick: () => void open(), disabled: pending }}
+          primaryButton={{
+            label: t('Retry'),
+            onClick: () => void open(chooseOnly),
+            disabled: pending
+          }}
         />
       ) : null}
     </>

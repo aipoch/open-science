@@ -19,8 +19,7 @@ import type {
   PersistedChatSession,
   PersistedToolActivity
 } from '../../../../shared/session-persistence'
-import { hydrateSession } from '../../stores/session-store'
-import { createWorkspaceConversationTimeline } from '../../pages/workspace/workspace-conversation-timeline'
+import { createReplayTranscript } from './transcript'
 import type { ReplaySourceData } from './source'
 import { indexReplayRun } from './run-index'
 
@@ -370,7 +369,7 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
         issues: runs.flatMap(runIssues)
       })
     }
-    const timeline = createWorkspaceConversationTimeline(hydrateSession(projected))
+    const timeline = createReplayTranscript(projected)
     branch.steps = timeline.flatMap((item): ReplayStep[] => {
       if (item.type === 'message') {
         const message = item.message

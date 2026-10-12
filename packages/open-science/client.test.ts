@@ -1272,6 +1272,8 @@ describe('managed execution SDK', () => {
       'runtimes',
       'createSession',
       'inspectMaterials',
+      'inspectOfflinePlans',
+      'executeOfflinePlan',
       'preflight',
       'requestConfiguration',
       'getConfiguration',

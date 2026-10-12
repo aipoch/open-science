@@ -42,6 +42,7 @@ import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron
 import { createDesktopNativeHandler } from './desktop-native-electron'
 import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 import { parseWebModeOptions } from './web-service/options'
+import { createDesktopObservationNativeHandler } from './observation-desktop/electron'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
@@ -430,6 +431,9 @@ async function startDesktop(): Promise<void> {
     onAction: (token, action) => client?.notificationAction(token, action)
   })
   const native = createDesktopNativeHandler((id) => relay?.documentFor(id), isApplicationWindow)
+  const observationNative = createDesktopObservationNativeHandler({
+    documentFor: (id) => relay?.documentFor(id)
+  })
   let state: DatabaseStartupState = { phase: 'checking' }
   let ready = false
   let acceptStartupEvents = false
@@ -524,6 +528,11 @@ async function startDesktop(): Promise<void> {
       if (acceptStartupEvents) publishStartup(next)
     },
     onNativeRequest: async (request, signal) => {
+      if (request.request.operation === 'observation')
+        return observationNative.handle(
+          { clientId: request.clientId, request: request.request.request },
+          signal
+        )
       if (request.request.operation === 'runtime-relaunch') {
         plannedRelaunch = true
         return client!.ownsRuntime()
@@ -565,6 +574,7 @@ async function startDesktop(): Promise<void> {
         refreshAppTrayNavigation(tray)
     },
     onDisconnect: (error) => {
+      void observationNative.close()
       preview?.dispose()
       notifications.dispose()
       if (plannedRelaunch) {
@@ -778,6 +788,7 @@ async function startDesktop(): Promise<void> {
     onQuitError: reportError,
     shutdownBackends: async () => {
       await client!.quit()
+      await observationNative.close()
       preview?.dispose()
       notifications.dispose()
       visibility.dispose()

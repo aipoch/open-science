@@ -17,7 +17,10 @@
     "packages/durable-files/tsconfig.test.json",
     "packages/durable-files/vitest.config.ts"
   ],
-  "interfacePaths": ["packages/durable-files/package.json", "packages/durable-files/src/index.ts"],
+  "interfacePaths": [
+    "packages/durable-files/package.json",
+    "packages/durable-files/src/index.ts"
+  ],
   "consumerModules": [
     "artifact_provenance",
     "artifact_storage",
@@ -726,9 +729,32 @@
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/replay-viewer/http-host.integration.test.ts",
       "src/main/browser-recordings/external-port.test.ts",
-      "src/main/run-observation-external-port.test.ts"
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/research-demos/owner.test.ts",
+      "src/main/notebook/offline-plan-admission.test.ts",
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/main/research-demos/inspection.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/research-replay/http-host.integration.test.ts",
+      "src/main/research-replay/observation-association.test.ts",
+      "src/main/research-replay/observation-selection.test.ts",
+      "src/main/research-replay/service-timing.test.ts",
+      "src/main/research-replay/service.test.ts",
+      "src/main/research-runs/inspection.test.ts",
+      "src/main/research-runs/ipc.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

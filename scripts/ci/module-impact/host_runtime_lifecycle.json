@@ -901,9 +901,17 @@
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/run-observation-external-port.test.ts",
       "src/main/observation-desktop/bridge.test.ts",
-      "src/main/browser-recordings/external-port.test.ts"
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/research-demos/owner.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

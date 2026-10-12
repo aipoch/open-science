@@ -182,7 +182,8 @@
     "src/main/notebook/screened-auxiliary-output.ts",
     "src/main/notebook/session-operation-owner.integration.test.ts",
     "src/main/notebook/session-operation-owner.ts",
-    "src/main/notebook/session-operation.test-support.ts"
+    "src/main/notebook/session-operation.test-support.ts",
+    "src/main/notebook/managed-execution-service.macos.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/application-commands.ts",
@@ -345,7 +346,8 @@
       "src/main/notebook/managed-output-recovery.test.ts",
       "src/main/notebook/nested-working-file-owner.test.ts",
       "src/main/notebook/screened-auxiliary-output.test.ts",
-      "src/main/notebook/session-operation-owner.integration.test.ts"
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -786,9 +788,30 @@
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation-external-port.test.ts",
       "src/main/managed-runtime-views.integration.test.ts",
-      "src/main/observation-desktop/bridge.test.ts"
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/offline-plan-admission.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/research-demos/owner.test.ts",
+      "src/main/research-demos/inspection.test.ts",
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/main/research-runs/inspection.test.ts",
+      "src/main/research-runs/ipc.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/research-replay/http-host.integration.test.ts",
+      "src/main/research-replay/observation-association.test.ts",
+      "src/main/research-replay/observation-selection.test.ts",
+      "src/main/research-replay/service-timing.test.ts",
+      "src/main/research-replay/service.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

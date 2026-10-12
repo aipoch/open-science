@@ -467,7 +467,9 @@ test('exports a Session package and opens its research workspace and read-only s
   ).toBeVisible()
   const replay = page.getByTestId('replay-panel')
   await expect(page.getByTestId('research-workspace-header')).toContainText(prompt)
-  await expect(page.getByTestId('research-workspace-header')).toContainText('Discussion')
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
   await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
   await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEmpty()
   await expect(page.getByTestId('session-discussion-draft')).toContainText(prompt)
@@ -488,24 +490,24 @@ test('exports a Session package and opens its research workspace and read-only s
     name: `Open actions for ${prompt}`,
     exact: true
   })
-  // The parent opens an editable research discussion. Historical messages remain available
-  // through an explicit read-only destination, rather than making the whole research look locked.
+  // The research root shows immutable original messages and a separate question composer.
+  // Opening the original record again must preserve the source and its pending question.
   await expect(
     sessionRow.getByRole('img', { name: 'Read-only', exact: true, includeHidden: true })
   ).toHaveCount(0)
   await sessionMenu.click()
   await page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
-  const imported = page.getByRole('region', { name: 'Imported research history', exact: true })
+  const imported = page.getByTestId('research-question-context')
   await expect(imported).toBeVisible()
   await expect(page.getByTestId('research-workspace-header')).toContainText(
     'Original record · Read-only'
   )
-  await expect(imported.getByText(/^Imported on /)).toBeVisible()
   await imported.getByText('Package source', { exact: true }).click()
+  await expect(imported.getByText(/^Imported on /)).toBeVisible()
   await expect(imported.getByText(origins[0]!.sourceProjectId, { exact: true })).toBeVisible()
   await expect(imported.getByText(origins[0]!.sourceSessionId, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-source.png') })
-  await imported.getByText('Not included in this package', { exact: true }).click()
+  await expect(imported.getByText('Not included in this package', { exact: true })).toBeVisible()
   await expect(imported.getByText('raw-results.csv', { exact: true })).toBeVisible()
   await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
   await page.keyboard.press('End')
@@ -514,7 +516,14 @@ test('exports a Session package and opens its research workspace and read-only s
       .getByRole('region', { name: 'Conversation', exact: true })
       .getByText(`Deterministic reply: ${prompt}`, { exact: true })
   ).toBeVisible()
-  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeEditable()
+  expect(
+    await page.evaluate(
+      async (sessionId) =>
+        (await window.api.sessions.loadAll()).sessions.find((session) => session.id === sessionId),
+      source.id
+    )
+  ).toEqual(source)
   await imported.hover()
   await page
     .getByRole('navigation', { name: 'Sessions' })
@@ -571,12 +580,10 @@ test('exports a Session package and opens its research workspace and read-only s
     .getByRole('button', { name: `Open actions for ${prompt}`, exact: true })
     .click()
   await app.page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
-  await expect(
-    app.page.getByRole('region', { name: 'Imported research history', exact: true })
-  ).toBeVisible()
-  await expect(app.page.getByRole('textbox', { name: 'Ask anything', exact: true })).toHaveCount(0)
+  await expect(app.page.getByTestId('research-question-context')).toBeVisible()
+  await expect(app.page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
   await app.page
-    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByTestId('research-workspace-header')
     .getByRole('button', { name: 'View replay', exact: true })
     .click()
   await expect(app.page.getByTestId('replay-panel')).toBeVisible()

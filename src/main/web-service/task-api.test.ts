@@ -1802,6 +1802,41 @@ it('preserves the safe saved-but-refresh-failed outcome for credential updates',
 })
 
 describe('managed execution Task API adapter', () => {
+  it('routes observation to its own capability and checks caller revocation across a reply', async () => {
+    let current = true
+    const call = vi.fn()
+    const observe = vi.fn(async () => ({ phase: 'running' }))
+    const agent = createAgent()
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(vi.fn()),
+      agent,
+      managedExecution: { call, observation: { call: observe } }
+    })
+    const caller = createTaskCallerContext({
+      clientId: 'codex',
+      isAuthorizationCurrent: () => current
+    })
+    const payload = { viewerId: 'viewer' }
+    await api.runWithCallerContext(caller, () => api.callRunObservation('snapshot', payload))
+    expect(observe).toHaveBeenCalledWith('snapshot', payload, caller)
+    expect(call).not.toHaveBeenCalled()
+    expect(agent.createSession).not.toHaveBeenCalled()
+    expect(agent.prompt).not.toHaveBeenCalled()
+    await expect(
+      api.runWithCallerContext(createTaskCallerContext({ location: 'remote' }), () =>
+        api.callRunObservation('open', {})
+      )
+    ).rejects.toMatchObject({ code: 'unsupported_location' })
+    observe.mockImplementationOnce(async () => {
+      current = false
+      return { phase: 'running' }
+    })
+    await expect(
+      api.runWithCallerContext(caller, () => api.callRunObservation('snapshot', payload))
+    ).rejects.toMatchObject({ code: 'unauthorized' })
+    await api.dispose()
+  })
+
   it('passes the actual local automation caller without using Agent commands', async () => {
     const call = vi.fn().mockResolvedValue({ state: 'ready' })
     const commands = vi.fn()

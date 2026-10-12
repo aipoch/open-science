@@ -575,6 +575,7 @@ it.each(['waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as c
   }
 )
 
+await configureTestElectronHost(await import('electron'))
 describe('Main-owned stable research membership', () => {
   const membership = {
     sourceProjectId: 'p',
@@ -704,5 +705,3 @@ describe('Main-owned stable research membership', () => {
     expect(writes).not.toHaveBeenCalled()
   })
 })
-
-await configureTestElectronHost(await import('electron'))

@@ -296,6 +296,30 @@ describe('local research workspace ownership', () => {
     }
   )
 
+  it('round-trips inspected run output captured after its original step without changing snapshot rules', async () => {
+    const context = {
+      ...discussionSnapshot(),
+      stepOffsetMs: 50000,
+      recordedAt: 55000,
+      phase: 'result' as const,
+      evidence: [{ ...discussionSnapshot().evidence[0], part: 'record' as const }],
+      records: [
+        {
+          id: 'notebook-run:run-1',
+          scope: 'step' as const,
+          title: 'Saved run',
+          text: 'EXACT SAVED OUTPUT',
+          status: 'recorded' as const,
+          truncated: false
+        }
+      ]
+    }
+    await service.saveSelectionSnapshot({ ...identity, context })
+    expect(
+      await service.getSelectionSnapshot({ projectId: identity.projectId, id: context.id })
+    ).toEqual(context)
+  })
+
   it('admits local replay writes before reading or writing any data-root-owned state', async () => {
     const gated = new SessionReplayService(
       repository,

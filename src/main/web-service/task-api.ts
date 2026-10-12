@@ -50,6 +50,7 @@ import type {
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { RunObservationExternalMethod } from '../run-observation-external-port'
 import {
   ManagedExecutionExternalError,
   type ManagedExecutionExternalMethod,
@@ -276,6 +277,53 @@ class HeadlessTaskApi {
       throw new ManagedExecutionExternalError('unavailable', 'Managed execution is unavailable.')
     }
     const result = await this.ports.managedExecution.call(method, payload, context)
+    assertCaller()
+    return result
+  }
+
+  async callResearchReplay(
+    method: import('../../shared/research-replay').ResearchReplayMethod,
+    payload: unknown
+  ): Promise<unknown> {
+    const port = this.ports.managedExecution?.replays
+    if (!port)
+      throw new ManagedExecutionExternalError('unavailable', 'Research replay is unavailable.')
+    return port.call(method, payload, this.currentCallerContext())
+  }
+
+  async callProjectRecordings(
+    method: import('../browser-recordings/external-port').BrowserRecordingExternalMethod,
+    payload: unknown
+  ): Promise<unknown> {
+    const caller = this.currentCallerContext()
+    const port = this.ports.managedExecution?.projectRecordings
+    if (!port)
+      throw new ManagedExecutionExternalError('unavailable', 'Project recording is unavailable.')
+    return port.call(method, payload, caller)
+  }
+
+  async callRunObservation(
+    method: RunObservationExternalMethod,
+    payload: unknown
+  ): Promise<unknown> {
+    const context = this.currentCallerContext()
+    const assertCaller = (): void => {
+      if (!context.isAuthorizationCurrent())
+        throw new ManagedExecutionExternalError(
+          'unauthorized',
+          'Caller authorization is no longer current.'
+        )
+      if (context.location !== 'local')
+        throw new ManagedExecutionExternalError(
+          'unsupported_location',
+          'Run observation is local to this device.'
+        )
+    }
+    assertCaller()
+    const observation = this.ports.managedExecution?.observation
+    if (!observation)
+      throw new ManagedExecutionExternalError('unavailable', 'Run observation is unavailable.')
+    const result = await observation.call(method, payload, context)
     assertCaller()
     return result
   }

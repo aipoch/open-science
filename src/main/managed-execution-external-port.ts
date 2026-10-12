@@ -17,6 +17,8 @@ export const MANAGED_EXECUTION_EXTERNAL_METHODS = [
   'runtimes',
   'createSession',
   'inspectMaterials',
+  'inspectOfflinePlans',
+  'executeOfflinePlan',
   'preflight',
   'requestConfiguration',
   'getConfiguration',
@@ -35,6 +37,10 @@ export type ManagedExecutionExternalMethod = (typeof MANAGED_EXECUTION_EXTERNAL_
 
 /** Main-owned adapter. Requests and replies contain public identifiers, never capabilities. */
 export type ManagedExecutionExternalPort = {
+  /** Optional additive viewing capability; execution dispatch stays on its existing path. */
+  observation?: import('./run-observation-external-port').RunObservationExternalPort
+  replays?: import('./research-replay/external-port').ResearchReplayExternalPort
+  projectRecordings?: import('./browser-recordings/external-port').BrowserRecordingExternalPort
   call(
     method: ManagedExecutionExternalMethod,
     payload: unknown,

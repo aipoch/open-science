@@ -1,3 +1,8 @@
+import {
+  readObservationBindingsRequestSchema,
+  type ReadObservationBindingsRequest,
+  type ReadObservationBindingsResult
+} from '../../shared/research-replay-observations'
 import { SessionReadingOwner } from './session-reading'
 import {
   unlinkSessionReadingRequestSchema,
@@ -46,8 +51,24 @@ export class SessionReplayService {
     private readonly repository: SessionReplayRepository,
     private readonly sessions: SessionReplaySessions,
     private readonly withDataRootWrite: DataRootAdmission = (operation) => operation(),
-    private readonly reading?: SessionReadingOwner
+    private readonly reading?: SessionReadingOwner,
+    private readonly observationBindingsReader?: (
+      request: ReadObservationBindingsRequest
+    ) => Promise<ReadObservationBindingsResult>
   ) {}
+
+  async readObservationBindings(
+    input: ReadObservationBindingsRequest
+  ): Promise<ReadObservationBindingsResult> {
+    const request = readObservationBindingsRequestSchema.parse(input)
+    if (!this.observationBindingsReader)
+      return {
+        sourceFingerprint: request.sourceFingerprint,
+        bindings: [],
+        unavailableTargets: request.targets
+      }
+    return this.observationBindingsReader(request)
+  }
 
   async setResearchMembership(input: SetResearchMembershipRequest): Promise<PersistedChatSession> {
     const request = setResearchMembershipRequestSchema.parse(input)

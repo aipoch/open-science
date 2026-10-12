@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import {
+  inspectOfflinePlansRequestSchema,
+  executeOfflinePlanRequestSchema,
+  type ExecuteOfflinePlanRequest
+} from '../../shared/offline-execution'
+import {
   researchExecutionPreflightRequestSchema,
   requestResearchExecutionConfigurationSchema,
   getResearchExecutionConfigurationSchema,
@@ -45,6 +50,8 @@ export const managedExecutionCallSchema = z
     method: z.enum([
       'runtimes',
       'inspectMaterials',
+      'inspectOfflinePlans',
+      'executeOfflinePlan',
       'preflight',
       'requestConfiguration',
       'getConfiguration',
@@ -98,6 +105,12 @@ type Service = {
   getConfiguration?(request: unknown, signal?: AbortSignal): Promise<unknown>
   preflight?(request: ResearchExecutionPreflightRequest, signal?: AbortSignal): Promise<unknown>
   inspectMaterials(request: InspectManagedMaterialsRequest, signal?: AbortSignal): Promise<unknown>
+  inspectOfflinePlans?(request: unknown, signal?: AbortSignal): Promise<unknown>
+  executeOfflinePlanInTurn?(
+    request: ExecuteOfflinePlanRequest,
+    context: ManagedExecutionContext,
+    signal: AbortSignal
+  ): Promise<unknown>
   prepare(request: PrepareManagedEnvironmentRequest, signal?: AbortSignal): Promise<unknown>
   getEnvironment(request: ManagedEnvironmentReference): Promise<unknown>
   releaseEnvironment(request: ManagedEnvironmentReference): Promise<unknown>
@@ -134,6 +147,13 @@ export function createManagedExecutionTurnPort(dependencies: {
       // to the same strict application schemas as the external entry point.
       const request = { ...input, projectId: turn.projectId, sessionId: turn.sessionId }
       switch (method) {
+        case 'inspectOfflinePlans':
+          if (!dependencies.service.inspectOfflinePlans)
+            throw new Error('Offline execution is unavailable.')
+          return dependencies.service.inspectOfflinePlans(
+            inspectOfflinePlansRequestSchema.parse(request),
+            turn.signal
+          )
         case 'runtimes':
           z.object({}).strict().parse(input)
           return dependencies.service.runtimes()
@@ -183,9 +203,12 @@ export function createManagedExecutionTurnPort(dependencies: {
       }
       const collection =
         method === 'collectOutputs' ? collectManagedOutputsRequestSchema.parse(request) : undefined
-      const execution = collection
-        ? undefined
-        : executeManagedEnvironmentRequestSchema.parse(request)
+      const offline =
+        method === 'executeOfflinePlan' ? executeOfflinePlanRequestSchema.parse(request) : undefined
+      if (offline && !dependencies.service.executeOfflinePlanInTurn)
+        throw new Error('Offline execution is unavailable.')
+      const execution =
+        collection || offline ? undefined : executeManagedEnvironmentRequestSchema.parse(request)
       const scope = {
         projectId: turn.projectId,
         sessionId: turn.sessionId,
@@ -193,7 +216,7 @@ export function createManagedExecutionTurnPort(dependencies: {
         workspaceCwd: turn.workspaceCwd,
         artifactRunId: turn.artifactRunId,
         artifactStorageSessionId: turn.artifactStorageSessionId,
-        writeNamespace: (collection ?? execution)!.requestId,
+        writeNamespace: (collection ?? offline ?? execution)!.requestId,
         provenanceContext: turn.provenanceContext,
         messageAncestry: [turn.provenanceContext.promptMessageId]
       }
@@ -296,7 +319,9 @@ export function createManagedExecutionTurnPort(dependencies: {
       try {
         result = collection
           ? await dependencies.service.collectOutputsInTurn(collection, context, turn.signal)
-          : await dependencies.service.executeInTurn(execution!, context, turn.signal)
+          : offline
+            ? await dependencies.service.executeOfflinePlanInTurn!(offline, context, turn.signal)
+            : await dependencies.service.executeInTurn(execution!, context, turn.signal)
       } catch (error) {
         executionFailed = true
         executionError = error

@@ -67,7 +67,8 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan-progress-refresh.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

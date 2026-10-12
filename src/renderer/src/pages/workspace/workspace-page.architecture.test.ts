@@ -203,7 +203,8 @@ describe('workspace page architecture', () => {
     ])
     expect(importersOf(ownerPaths.conversation)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/WorkspacePage.tsx'
+      'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/use-research-run-launcher.tsx'
     ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'ApplicationPresentationHost.tsx',

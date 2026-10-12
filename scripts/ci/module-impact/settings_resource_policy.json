@@ -573,9 +573,14 @@
       "src/main/notebook/local-rpc-server.managed-execution.test.ts",
       "src/main/notebook/managed-nested-generation.integration.test.ts",
       "src/main/notebook/managed-output-publication.integration.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

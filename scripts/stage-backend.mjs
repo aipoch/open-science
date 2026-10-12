@@ -21,6 +21,7 @@ await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
 await cp(join(root, 'out/backend'), join(stage, 'out/backend'), { recursive: true })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
+await cp(join(root, 'out/replay-viewer'), join(stage, 'out/replay-viewer'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')

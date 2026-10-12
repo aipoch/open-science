@@ -252,7 +252,10 @@
     "packages/notebook-analysis/src/stdlib-replay.fixture.ts",
     "packages/notebook-analysis/src/write-scope.ts"
   ],
-  "consumerModules": ["notebook_application", "notebook_execution"],
+  "consumerModules": [
+    "notebook_application",
+    "notebook_execution"
+  ],
   "testFiles": {
     "owner": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
@@ -381,7 +384,9 @@
       "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
     ],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
@@ -826,7 +831,26 @@
       "src/main/run-observation/managed-port.test.ts",
       "src/main/browser-recordings/owner.test.ts",
       "src/main/run-observation/media-collector.test.ts",
-      "src/main/project-recordings/recorder.test.ts"
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/main/notebook/offline-plan-admission.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/research-demos/owner.test.ts",
+      "src/main/research-demos/inspection.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/research-replay/http-host.integration.test.ts",
+      "src/main/research-replay/observation-association.test.ts",
+      "src/main/research-replay/observation-selection.test.ts",
+      "src/main/research-replay/service-timing.test.ts",
+      "src/main/research-replay/service.test.ts",
+      "src/main/research-runs/inspection.test.ts",
+      "src/main/research-runs/ipc.test.ts"
     ]
   },
   "capabilityOverlays": [

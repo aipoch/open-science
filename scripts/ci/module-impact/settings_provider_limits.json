@@ -1,7 +1,14 @@
 {
-  "ownerPaths": ["src/main/settings/provider-resource-limits.ts"],
-  "interfacePaths": ["src/main/settings/provider-resource-limits.ts"],
-  "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+  "ownerPaths": [
+    "src/main/settings/provider-resource-limits.ts"
+  ],
+  "interfacePaths": [
+    "src/main/settings/provider-resource-limits.ts"
+  ],
+  "consumerModules": [
+    "settings_backend_resolution",
+    "settings_service_facade"
+  ],
   "testFiles": {
     "owner": [],
     "contract": [
@@ -849,9 +856,14 @@
       "src/main/composition/handoff.test.ts",
       "src/main/notebook/local-rpc-server.managed-execution.test.ts",
       "src/main/notebook/managed-nested-generation.integration.test.ts",
-      "src/main/notebook/managed-output-publication.integration.test.ts"
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

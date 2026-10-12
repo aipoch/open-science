@@ -4,6 +4,7 @@ import { openResearchDiscussion, openResearchWorkspace } from './workspace-discu
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
 import { useSessionStore } from '@/stores/session-store'
 import { sameResearch } from './research-draft-identity'
+import { requestComposerFocus } from './composer-focus-events'
 import {
   buildResearchNavigation,
   importedResearchSource,
@@ -140,6 +141,8 @@ type WorkspaceSidebarProps = {
   mobileMode?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
+  projectEntryFailed?: boolean
+  onDismissProjectEntryError?: () => void
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
@@ -508,7 +511,7 @@ type SessionRowProps = {
   actions: SessionRowCallbacks
   researchToggle?: {
     expanded: boolean
-    onToggle: () => void
+    onToggle?: () => void
     activityStatus?: SessionStatus
   }
   onOpenResearch?: () => void
@@ -611,9 +614,12 @@ const SessionRow = memo(function SessionRow({
     <button
       type="button"
       data-slot="session-open-button"
-      title={researchToggle ? t('Imported research') : imported ? t('Read-only') : undefined}
+      title={
+        researchToggle ? t('Original record · Read-only') : imported ? t('Read-only') : undefined
+      }
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left after:absolute after:inset-0 after:rounded-[inherit]"
       aria-current={isActive ? 'page' : undefined}
+      aria-label={onOpenResearch ? session.title : undefined}
       aria-keyshortcuts={
         [
           shortcutNumber ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}` : undefined,
@@ -704,7 +710,7 @@ const SessionRow = memo(function SessionRow({
         title={mobileMode ? session.title : undefined}
       >
         <div className="flex w-full min-w-0 items-center">
-          {researchToggle ? (
+          {researchToggle?.onToggle ? (
             <button
               type="button"
               className="relative z-[2] -ml-1 mr-1 grid size-5 shrink-0 place-items-center rounded hover:bg-bg-400"
@@ -849,8 +855,8 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
       sections.flatMap((section) => section.items),
       collapsedResearch
     )
-  const shortcutNumberBySessionId = new Map(
-    visibleRows.slice(0, 9).map((row, index) => [row.session.id, index + 1])
+  const shortcutNumberByRow = new Map(
+    visibleRows.slice(0, 9).map((row, index) => [`${row.kind}:${row.session.id}`, index + 1])
   )
   const isMac = window.api?.platform === 'darwin'
   const projectMatches = providedProjectMatches ?? matchProjects(otherProjects, projectQuery)
@@ -874,7 +880,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
       discussionStatuses?.find((status) => status === 'error') ??
       'idle'
     const sourceActive = Boolean(
-      group && !activeSessionId && sameResearch(props.activeDraftResearch, group.source)
+      group &&
+      (activeSessionId === group.session.id ||
+        (!activeSessionId && sameResearch(props.activeDraftResearch, group.source)))
     )
     return (
       <SessionRow
@@ -882,9 +890,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
         t={t}
         session={session}
         sectionLabel={sectionLabel}
-        isActive={session.id === activeSessionId || sourceActive}
+        isActive={group ? sourceActive : session.id === activeSessionId}
         imported={Boolean(importedResearchSource(session))}
-        shortcutNumber={shortcutNumberBySessionId.get(session.id)}
+        shortcutNumber={shortcutNumberByRow.get(`${group ? 'research' : 'session'}:${session.id}`)}
         presentedStatus={presentedStatus}
         archiveAvailable={canArchiveSession?.(session) ?? false}
         mobileMode={mobileMode}
@@ -1360,6 +1368,17 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
           <div className="mx-2 my-1 h-px bg-border-300/15" />
 
+          {props.projectEntryFailed ? (
+            <ErrorNotice
+              className="mx-2 mb-2"
+              title={t('Could not open this project. Please retry.')}
+              secondaryButton={{
+                label: t('Dismiss'),
+                onClick: () => props.onDismissProjectEntryError?.()
+              }}
+            />
+          ) : null}
+
           {props.researchNavigationFailed ? (
             <ErrorNotice
               className="mx-2 mb-2"
@@ -1643,7 +1662,11 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       navigationAbort.current = controller
       setResearchNavigationFailed(false)
       const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
-      void openResearchWorkspace(source, { newDiscussion, signal: controller.signal })
+      void openResearchWorkspace(source, {
+        newDiscussion,
+        signal: controller.signal,
+        afterNavigate: newDiscussion ? requestComposerFocus : undefined
+      })
         .then((opened) => {
           if (
             !opened &&

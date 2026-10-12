@@ -1,3 +1,4 @@
+import { openProjectWorkspace } from '../workspace/project-workspace-entry'
 import { SettingsFormFooter } from './SettingsLayout'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
@@ -416,6 +417,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 ): React.JSX.Element {
   const { t } = useTranslation()
   const [tagAnnotationError, setTagAnnotationError] = useState<string>()
+  const [projectEntryFailed, setProjectEntryFailed] = useState(false)
   const [openingTagAnnotation, setOpeningTagAnnotation] = useState(false)
   const [tagAnnotationPreview, setTagAnnotationPreview] = useState<{
     annotation: PdfAnnotation
@@ -1911,13 +1913,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         />
                       </>
                     ) : activePanel === 'memory' ? (
-                      <MemoryPanel
-                        view={memoryView}
-                        onNavigate={navigateMemory}
-                        onOpenProject={(projectId) => {
-                          useNavigationStore.getState().openProject(projectId, 'user', onClose)
-                        }}
-                      />
+                      <>
+                        {projectEntryFailed ? (
+                          <ErrorNotice
+                            tone="amber"
+                            description={t('Could not open this project. Please retry.')}
+                          />
+                        ) : null}
+                        <MemoryPanel
+                          view={memoryView}
+                          onNavigate={navigateMemory}
+                          onOpenProject={(projectId) => {
+                            setProjectEntryFailed(false)
+                            void openProjectWorkspace(projectId, onClose).catch(() =>
+                              setProjectEntryFailed(true)
+                            )
+                          }}
+                        />
+                      </>
                     ) : activePanel === 'connectors' ? (
                       connectorsView.kind === 'detail' ? (
                         <div>

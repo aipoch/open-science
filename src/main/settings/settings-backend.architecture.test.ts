@@ -1177,7 +1177,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/composition/artifact-surfaces.test.ts',
       'src/main/composition/managed-execution.integration.test.ts',
       'src/main/composition/session-packages.test.ts',
-      'src/main/composition/handoff.test.ts'
+      'src/main/composition/handoff.test.ts',
+      'src/main/research-demos/owner.macos.integration.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1679,7 +1680,25 @@ describe('Settings backend ownership architecture', () => {
       'src/main/project-recordings/recorder.test.ts',
       'src/main/run-observation/managed-status.test.ts',
       'src/main/managed-runtime-views.integration.test.ts',
-      'src/main/observation-desktop/bridge.test.ts'
+      'src/main/observation-desktop/bridge.test.ts',
+      'src/main/research-demos/owner.macos.integration.test.ts',
+      'src/renderer/replay-viewer/research-browser.integration.test.ts',
+      'src/main/research-replay/http-host.integration.test.ts',
+      'src/main/research-replay/observation-association.test.ts',
+      'src/main/research-replay/observation-selection.test.ts',
+      'src/main/research-replay/service-timing.test.ts',
+      'src/main/research-replay/service.test.ts',
+      'src/main/research-demos/owner.test.ts',
+      'src/main/research-runs/inspection.test.ts',
+      'src/main/research-runs/ipc.test.ts',
+      'src/main/research-demos/ipc.test.ts',
+      'src/main/notebook/offline-plan-admission.test.ts',
+      'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+      'src/renderer/replay-viewer/browser.integration.test.ts',
+      'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+      'src/main/research-demos/inspection.test.ts',
+      'src/main/replay-viewer/desktop-embed.integration.test.ts',
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
     expect(
       [

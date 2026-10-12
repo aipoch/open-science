@@ -2902,7 +2902,9 @@ describe('LiteratureLibraryPage', () => {
     expect(openProjectButton.querySelector('.lucide-external-link')).not.toBeNull()
     expect(projectHeading.nextElementSibling).toBe(openProjectButton)
     fireEvent.click(openProjectButton)
-    expect(openProject).toHaveBeenCalledWith('project-1', 'user')
+    await waitFor(() => {
+      expect(openProject).toHaveBeenCalledWith('project-1', 'user', undefined, expect.any(Function))
+    })
 
     const reviewButton = screen.getByRole('button', { name: 'Review with agent' })
     expect(reviewButton.getAttribute('data-variant')).toBe('default')

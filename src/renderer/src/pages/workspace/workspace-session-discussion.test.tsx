@@ -16,7 +16,10 @@ import { createInitialSessionState, useSessionStore } from '@/stores/session-sto
 import { useProjectStore } from '@/stores/project-store'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type { ComposerDoc } from './composer/composer-doc'
-import type { SessionDiscussionSnapshot } from '../../../../shared/session-replay'
+import {
+  saveSessionDiscussionSnapshotRequestSchema,
+  type SessionDiscussionSnapshot
+} from '../../../../shared/session-replay'
 
 const context: SessionDiscussionCapture = {
   projectId: 'p',
@@ -143,34 +146,49 @@ describe('durable step-scoped Ask snapshots', () => {
     expect(saveSelectionSnapshot).toHaveBeenCalledOnce()
   })
 
-  it('reentering an unsent research draft preserves the chosen step instead of replacing it with whole-source scope', () => {
+  it('reentering a linked research draft restores typing focus and preserves its chosen step without another snapshot', () => {
     useSessionStore.getState().clearSelection()
     const saveSelectionSnapshot = vi.fn()
     vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
     const existing = createSessionDiscussionAnnotation(context, 'frozen-step')!
     const draftKey = 'new-research:source'
-    renderHook(() =>
-      useWorkspaceSessionDiscussion({
-        draftKey,
-        editable: true,
-        composer: {
-          view: { doc: doc('Explain this exact step'), annotations: [existing] },
-          actions
-        }
-      })
-    )
-    act(() =>
-      useSessionReplayStore
-        .getState()
-        .ask(
-          { ...context, scope: 'session' },
-          { projectId: 'target-project', draftKey, onlyIfUnlinked: true, navigationRevision: 1 }
-        )
-    )
-    expect(saveSelectionSnapshot).not.toHaveBeenCalled()
-    expect(actions.addAnnotation).not.toHaveBeenCalled()
-    expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
+    const draft = doc('Explain this exact step')
+    const editor = document.createElement('input')
+    const sidebar = document.createElement('button')
+    document.body.append(editor, sidebar)
+    const focus = vi.fn(() => editor.focus())
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focus)
+    try {
+      renderHook(() =>
+        useWorkspaceSessionDiscussion({
+          draftKey,
+          editable: true,
+          composer: { view: { doc: draft, annotations: [existing] }, actions }
+        })
+      )
+      sidebar.focus()
+      act(() =>
+        useSessionReplayStore
+          .getState()
+          .ask(
+            { ...context, scope: 'session' },
+            { projectId: 'target-project', draftKey, onlyIfUnlinked: true, navigationRevision: 1 }
+          )
+      )
+      expect(document.activeElement).toBe(editor)
+      expect(focus).toHaveBeenCalledOnce()
+      expect(saveSelectionSnapshot).not.toHaveBeenCalled()
+      expect(actions.addAnnotation).not.toHaveBeenCalled()
+      expect(actions.changeDoc).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+      expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual(['target'])
+      expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
+    } finally {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focus)
+      editor.remove()
+      sidebar.remove()
+    }
   })
 
   it('does not append a delayed research reference after switching between two unsent research drafts', async () => {
@@ -443,4 +461,54 @@ describe('durable step-scoped Ask snapshots', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
+})
+
+it('saves inspected evidence through the unchanged strict native snapshot contract', async () => {
+  const saveSelectionSnapshot = vi.fn(async (request: unknown) => {
+    saveSessionDiscussionSnapshotRequestSchema.parse(request)
+  })
+  vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+  const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+  renderHook(() =>
+    useWorkspaceSessionDiscussion({
+      draftKey: 'target',
+      editable: true,
+      composer: { view: { doc: doc('Explain this run'), annotations: [] }, actions }
+    })
+  )
+  const inspected: SessionDiscussionCapture = {
+    ...context,
+    stepOffsetMs: 50000,
+    recordedAt: 55000,
+    phase: 'result',
+    notebookInspection: { runId: 'saved-run', timeMs: 50000 },
+    records: [
+      {
+        id: 'notebook-run:saved-run',
+        scope: 'step',
+        title: 'Saved run',
+        text: 'EXACT SAVED OUTPUT',
+        status: 'recorded',
+        truncated: false
+      }
+    ],
+    evidence: [
+      { kind: 'notebook-run', id: 'saved-run', projectId: 'p', sessionId: 'source', part: 'record' }
+    ]
+  }
+  act(() => useSessionReplayStore.getState().ask(inspected, destination))
+  await waitFor(() => expect(actions.addAnnotation).toHaveBeenCalledOnce())
+  expect(saveSelectionSnapshot.mock.calls[0][0]).toMatchObject({
+    context: {
+      stepOffsetMs: 50000,
+      recordedAt: 55000,
+      phase: 'result',
+      records: inspected.records,
+      evidence: inspected.evidence
+    }
+  })
+  expect(
+    (saveSelectionSnapshot.mock.calls[0][0] as { context: unknown }).context
+  ).not.toHaveProperty('notebookInspection')
+  expect(actions.setError).toHaveBeenLastCalledWith(null)
 })

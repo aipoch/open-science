@@ -54,8 +54,13 @@
     "packages/specialists/tsconfig.test.json",
     "packages/specialists/vitest.config.ts"
   ],
-  "interfacePaths": ["packages/specialists/src/index.ts", "packages/specialists/src/node.ts"],
-  "consumerModules": ["main_specialist"],
+  "interfacePaths": [
+    "packages/specialists/src/index.ts",
+    "packages/specialists/src/node.ts"
+  ],
+  "consumerModules": [
+    "main_specialist"
+  ],
   "testFiles": {
     "owner": [
       "packages/specialists/src/builtin-registry.test.ts",
@@ -676,9 +681,31 @@
       "src/main/notebook/managed-execution-collection.integration.test.ts",
       "src/main/run-observation/capture-package.integration.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
-      "src/main/run-observation/managed-coordinator.test.ts"
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx",
+      "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
+      "src/renderer/replay-viewer/ViewerApp.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-viewer.test.tsx",
+      "src/renderer/replay-viewer/recorded-viewer.test.tsx",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
+      "src/renderer/replay-viewer/research-client.test.ts",
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
+      "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

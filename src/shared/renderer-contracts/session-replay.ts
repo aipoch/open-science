@@ -1,3 +1,7 @@
+import type {
+  ReadObservationBindingsRequest,
+  ReadObservationBindingsResult
+} from '../research-replay-observations'
 import type { PersistedChatSession } from '../session-persistence'
 import type {
   SetResearchMembershipRequest,
@@ -15,6 +19,15 @@ import type {
 import { callable, WEB, RUNTIME_VALIDATED } from './definition'
 
 export const contracts = {
+  'sessionReplay.readObservationBindings': callable<
+    (request: ReadObservationBindingsRequest) => Promise<ReadObservationBindingsResult>
+  >()('session-replay', [
+    'session-replay:read-observation-bindings',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'sessionReplay.setResearchMembership': callable<
     (request: SetResearchMembershipRequest) => Promise<PersistedChatSession>
   >()('session-replay', [

@@ -1,7 +1,14 @@
 {
-  "ownerPaths": ["src/main/settings/bounded-response.ts"],
-  "interfacePaths": ["src/main/settings/bounded-response.ts"],
-  "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+  "ownerPaths": [
+    "src/main/settings/bounded-response.ts"
+  ],
+  "interfacePaths": [
+    "src/main/settings/bounded-response.ts"
+  ],
+  "consumerModules": [
+    "settings_backend_resolution",
+    "settings_service_facade"
+  ],
   "testFiles": {
     "owner": [],
     "contract": [
@@ -855,9 +862,14 @@
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/run-observation/capture-package.integration.test.ts",
-      "src/main/run-observation/recorded-reader.test.ts"
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

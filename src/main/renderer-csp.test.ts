@@ -33,10 +33,24 @@ describe('renderer content security policy', () => {
     expect(directives.get('connect-src')).not.toContain('https:')
   })
 
-  it('declares insecure request upgrades without allowing HTTP frames', () => {
+  it('keeps remote resources HTTPS-only without rewriting local HTTP bootstrap redirects', () => {
     const directives = readRendererCspDirectives()
 
-    expect(directives.has('upgrade-insecure-requests')).toBe(true)
+    expect(directives.has('upgrade-insecure-requests')).toBe(false)
     expect(directives.get('frame-src')).not.toContain('http:')
+    expect(directives.get('img-src')).toContain('https:')
+    expect(directives.get('img-src')).not.toContain('http:')
+    expect(directives.get('media-src')).toContain('https:')
+    expect(directives.get('media-src')).not.toContain('http:')
+  })
+
+  it('admits only the loopback namespace used by Main-bound observation frames', () => {
+    const directives = readRendererCspDirectives()
+    expect(directives.get('frame-src')).toContain('http://*.localhost:*')
+    expect(directives.get('frame-src')).not.toContain('http:')
+    expect(directives.get('frame-src')).not.toContain('*')
+    expect(directives.get('connect-src')).not.toContain('http://*.localhost:*')
+    expect(directives.get('script-src')).not.toContain('http://*.localhost:*')
+    expect(directives.get('default-src')).toEqual(["'self'"])
   })
 })

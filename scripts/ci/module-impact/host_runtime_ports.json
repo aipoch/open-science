@@ -14,7 +14,9 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/renderer-broadcast.test.ts"],
+    "owner": [
+      "src/main/renderer-broadcast.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -923,9 +925,23 @@
       "src/main/observation-desktop/bridge.test.ts",
       "src/main/run-observation-external-port.test.ts",
       "src/main/browser-recordings/owner.test.ts",
-      "src/main/run-observation/media-collector.test.ts"
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/notebook/offline-plan-admission.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/research-demos/owner.test.ts",
+      "src/main/research-demos/inspection.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -565,3 +565,26 @@ it('documents every managed request boundary without accepting Session or turn a
     availability: { status: 'unavailable' }
   })
 })
+
+it('documents offline plan discovery/execution separately without expanding the bounded root catalog', () => {
+  const help = hostSdkHelp.query('offlineExecution', {
+    ...mainContext,
+    capabilities: { ...mainContext.capabilities, managedExecution: true }
+  })
+  if (help.kind !== 'operation') throw new Error('expected operation')
+  expect(help.callForms.map((form) => form.signature).join(' ')).toContain('inspectOfflinePlans')
+  expect(help.callForms.map((form) => form.signature).join(' ')).toContain('executeOfflinePlan')
+  expect(help.constraints.join(' ')).toContain('project process')
+  expect(help.constraints.join(' ')).toContain('Agent may use a model')
+  expect(help.constraints.join(' ')).toContain('no hidden Session')
+  expect(fields(help.request).map((field) => field.name)).toEqual([
+    'sourceSessionId',
+    'sourceIdentity',
+    'planVersionId',
+    'requestId'
+  ])
+  expect(hostSdkHelp.query('host.managedExecution.inspectOfflinePlans', mainContext)).toMatchObject(
+    { id: help.id }
+  )
+  expect(JSON.stringify(help).length).toBeLessThanOrEqual(3600)
+})

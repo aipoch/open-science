@@ -376,7 +376,7 @@ describe('conversation message scroller integration', () => {
       "import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'"
     )
     expect(conversationPanelSource).toContain('<WorkspaceMessageScroller')
-    expect(conversationPanelSource).toContain('activeSession={activeSession}')
+    expect(conversationPanelSource).toContain('activeSession={displayedSession}')
     expect(conversationPanelSource).not.toContain('@/components/ui/scroll-area')
     expect(conversationPanelSource).not.toContain('<ScrollArea')
   })
