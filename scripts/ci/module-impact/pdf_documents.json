@@ -1,14 +1,7 @@
 {
-  "ownerPaths": [
-    "src/main/pdf-documents/identity.ts"
-  ],
-  "interfacePaths": [
-    "src/main/pdf-documents/identity.ts"
-  ],
-  "consumerModules": [
-    "pdf_annotations",
-    "main_storage"
-  ],
+  "ownerPaths": ["src/main/pdf-documents/identity.ts"],
+  "interfacePaths": ["src/main/pdf-documents/identity.ts"],
+  "consumerModules": ["pdf_annotations", "main_storage"],
   "testFiles": {
     "owner": [],
     "contract": [],
@@ -350,8 +343,6 @@
       "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions"
-  ],
+  "capabilityOverlays": ["e2e_regressions"],
   "fallbackCapability": "main_runtime"
 }

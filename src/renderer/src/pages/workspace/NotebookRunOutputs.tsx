@@ -415,7 +415,8 @@ const NotebookRunOutputs = ({
                   )
                 : undefined
 
-  if (!run.contentRead && !hasText && !hasFigures && !run.truncated && !notice && !networkRecovery) return null
+  if (!run.contentRead && !hasText && !hasFigures && !run.truncated && !notice && !networkRecovery)
+    return null
 
   return (
     <div data-testid="notebook-run-outputs">

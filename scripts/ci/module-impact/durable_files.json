@@ -17,10 +17,7 @@
     "packages/durable-files/tsconfig.test.json",
     "packages/durable-files/vitest.config.ts"
   ],
-  "interfacePaths": [
-    "packages/durable-files/package.json",
-    "packages/durable-files/src/index.ts"
-  ],
+  "interfacePaths": ["packages/durable-files/package.json", "packages/durable-files/src/index.ts"],
   "consumerModules": [
     "artifact_provenance",
     "artifact_storage",
@@ -687,10 +684,6 @@
       "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

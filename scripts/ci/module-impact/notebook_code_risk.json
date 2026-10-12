@@ -23,19 +23,14 @@
     "packages/notebook-code-risk/vitest.config.ts",
     "packages/notebook-code-risk/package.json"
   ],
-  "consumerModules": [
-    "notebook_application",
-    "notebook_execution"
-  ],
+  "consumerModules": ["notebook_application", "notebook_execution"],
   "testFiles": {
     "owner": [
       "packages/notebook-code-risk/src/code-risk-analysis.object-budget.test.ts",
       "packages/notebook-code-risk/src/code-risk-analysis.test.ts",
       "packages/notebook-code-risk/src/code-risk-analysis.native-python.test.ts"
     ],
-    "contract": [
-      "src/main/notebook/package-boundaries.architecture.test.ts"
-    ],
+    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-builder-config.test.ts",
@@ -532,9 +527,6 @@
       "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

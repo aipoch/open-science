@@ -150,7 +150,7 @@ describe('static original evidence reader', () => {
         workspaceCwd: ''
       })
       expect(notebook.state).toHaveBeenCalledWith({
-      readMode: 'bounded',
+        readMode: 'bounded',
         projectId: 'project',
         sessionId: 'source',
         workspaceCwd: '',

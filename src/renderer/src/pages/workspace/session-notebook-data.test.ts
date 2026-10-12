@@ -84,7 +84,11 @@ describe('loadSessionNotebookRuns', () => {
     ])
     expect(first).toEqual(second)
     expect(state).toHaveBeenCalledTimes(1)
-    expect(state).toHaveBeenCalledWith({ ...pagedRequest, readMode: 'bounded', historyBefore: cursor })
+    expect(state).toHaveBeenCalledWith({
+      ...pagedRequest,
+      readMode: 'bounded',
+      historyBefore: cursor
+    })
 
     await loadSessionNotebookData(api, pagedRequest, cursor)
     expect(state).toHaveBeenCalledTimes(1)

@@ -867,7 +867,8 @@
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "test/config/electron.vite.config.test.ts"
+      "test/config/electron.vite.config.test.ts",
+      "src/main/notebook/bounded-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
