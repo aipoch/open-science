@@ -8923,9 +8923,9 @@ describe('Notebook protection Shell capability switch', () => {
       repository,
       beforeNotebookProtectionChange: async () => {
         calls.push('stop')
-        expect(
-          (await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled
-        ).toBe(true)
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          true
+        )
         return () => calls.push('release')
       },
       applyNotebookNetwork: async (settings) => {
@@ -8933,9 +8933,9 @@ describe('Notebook protection Shell capability switch', () => {
       },
       removeNotebookNetwork: async () => {
         calls.push('remove')
-        expect(
-          (await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled
-        ).toBe(true)
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          true
+        )
         return { cancelled: false }
       },
       getNotebookNetworkStatus: async () => ({ kind: 'standard' })
@@ -8989,7 +8989,7 @@ describe('Notebook protection Shell capability switch', () => {
     const service = new SettingsService({
       configRoot: storageRoot,
       repository,
-      beforeNotebookProtectionChange: async () => vi.fn(),
+      beforeNotebookProtectionChange: async () => () => undefined,
       applyNotebookNetwork: apply,
       removeNotebookNetwork: async () => ({ cancelled: false }),
       installNotebookNetwork: install,

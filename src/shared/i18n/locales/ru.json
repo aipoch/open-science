@@ -7644,7 +7644,6 @@
     "Use standard mode": "Использовать стандартный режим",
     "Use protected mode": "Использовать защищённый режим",
     "Switching modes stops running Notebook processes. Installed protection components are kept.": "При смене режима работающие процессы Notebook останавливаются. Установленные компоненты защиты сохраняются.",
-    "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку.",
-    "This selects an environment. It does not approve future destructive code.": "Это выбор окружения. Он не разрешает последующее выполнение разрушительного кода."
+    "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку."
   }
 }

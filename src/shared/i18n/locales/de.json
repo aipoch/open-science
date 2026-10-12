@@ -7337,7 +7337,6 @@
     "Use standard mode": "Standardmodus verwenden",
     "Use protected mode": "Geschützten Modus verwenden",
     "Switching modes stops running Notebook processes. Installed protection components are kept.": "Beim Moduswechsel werden laufende Notebook-Prozesse beendet. Installierte Schutzkomponenten bleiben erhalten.",
-    "Could not switch execution mode. Try again.": "Der Ausführungsmodus konnte nicht gewechselt werden. Versuchen Sie es erneut.",
-    "This selects an environment. It does not approve future destructive code.": "Damit wird eine Umgebung ausgewählt. Künftiger destruktiver Code wird dadurch nicht freigegeben."
+    "Could not switch execution mode. Try again.": "Der Ausführungsmodus konnte nicht gewechselt werden. Versuchen Sie es erneut."
   }
 }

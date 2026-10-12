@@ -7177,7 +7177,6 @@
     "Use standard mode": "標準モードを使用",
     "Use protected mode": "保護モードを使用",
     "Switching modes stops running Notebook processes. Installed protection components are kept.": "モードを切り替えると、実行中の Notebook プロセスが停止します。インストール済みの保護コンポーネントは保持されます。",
-    "Could not switch execution mode. Try again.": "実行モードを切り替えられませんでした。もう一度お試しください。",
-    "This selects an environment. It does not approve future destructive code.": "環境を選択します。今後の破壊的なコードの実行は承認されません。"
+    "Could not switch execution mode. Try again.": "実行モードを切り替えられませんでした。もう一度お試しください。"
   }
 }

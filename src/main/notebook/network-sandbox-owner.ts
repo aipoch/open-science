@@ -416,8 +416,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         diagnosticErrorFields(error)
       )
     }
-    if (settings?.windowsProtectionEnabled === false)
-      return this.recordStatus({ kind: 'standard' })
+    if (settings?.windowsProtectionEnabled === false) return this.recordStatus({ kind: 'standard' })
     try {
       assertProcessTreeSupport(this.platform)
       const status = presentStatus(await this.getOrCreateSandbox().status(this.platform))

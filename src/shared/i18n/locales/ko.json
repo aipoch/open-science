@@ -7175,7 +7175,6 @@
     "Use standard mode": "표준 모드 사용",
     "Use protected mode": "보호 모드 사용",
     "Switching modes stops running Notebook processes. Installed protection components are kept.": "모드를 전환하면 실행 중인 Notebook 프로세스가 중지됩니다. 설치된 보호 구성 요소는 유지됩니다.",
-    "Could not switch execution mode. Try again.": "실행 모드를 전환하지 못했습니다. 다시 시도하세요.",
-    "This selects an environment. It does not approve future destructive code.": "환경을 선택합니다. 이후의 파괴적인 코드는 승인하지 않습니다."
+    "Could not switch execution mode. Try again.": "실행 모드를 전환하지 못했습니다. 다시 시도하세요."
   }
 }

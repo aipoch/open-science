@@ -7177,7 +7177,6 @@
     "Use standard mode": "使用標準模式",
     "Use protected mode": "使用保護模式",
     "Switching modes stops running Notebook processes. Installed protection components are kept.": "切換模式會停止正在執行的 Notebook 程序。已安裝的保護元件會保留。",
-    "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。",
-    "This selects an environment. It does not approve future destructive code.": "這會選擇一個環境，不會授權後續具有破壞性的程式碼。"
+    "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。"
   }
 }

@@ -650,9 +650,9 @@ const RuntimesPanel = ({
           : standardModeSelected
             ? t('Notebook continues using standard execution. No protected mode is active.')
             : networkStatus.kind !== 'ready'
-            ? t(
-                'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
-              )
+              ? t(
+                  'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+                )
             : undefined)
 
     return (
