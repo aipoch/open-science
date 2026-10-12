@@ -2259,7 +2259,7 @@ it('keeps the platform policy explicit and keeps automated portable tests off ma
   }
 })
 
-it('derives Ubuntu package exclusions from trusted policy before either test mode', () => {
+it('uses trusted Ubuntu package exclusions only for selective plans', () => {
   const steps = workflow.jobs.unit_shard.steps!
   const policy = steps.find(
     (step) => step.name === 'Select independent package tests from trusted policy'
@@ -2267,7 +2267,8 @@ it('derives Ubuntu package exclusions from trusted policy before either test mod
   expect(policy.uses).toBe('./.github/actions/select-package-tests')
   expect(policy.with).toMatchObject({
     'trusted-base': '${{ needs.preflight.outputs.trusted_base }}',
-    enabled: "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}"
+    enabled:
+      "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}"
   })
   expect(policy['continue-on-error']).toBeUndefined()
   expect(steps.indexOf(policy)).toBeLessThan(

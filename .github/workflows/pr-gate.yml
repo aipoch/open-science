@@ -803,7 +803,9 @@ jobs:
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:
-          enabled: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+          # Full plans must retain every package suite so aggregate coverage measures the
+          # same source set as the tests. Selective plans use the trusted package policy.
+          enabled: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
           base: ${{ needs.preflight.outputs.base }}
           head: ${{ needs.preflight.outputs.head }}
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
