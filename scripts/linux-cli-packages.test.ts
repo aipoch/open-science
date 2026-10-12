@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, describe, expect, it } from 'vitest'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -108,6 +108,9 @@ describe('Linux CLI packages', () => {
       'backend/.hidden'
     ]
     for (const path of files) await writeFile(join(source, path), `original ${path}\n`)
+    // Windows runners need elevated symlink privileges; POSIX additionally verifies literal links.
+    if (process.platform !== 'win32')
+      await symlink('.hidden', join(source, 'backend/relative-link'))
     const archive = join(root, `${stem}.tar.gz`)
     await c({ file: archive, cwd: root, gzip: true }, [stem])
     const sha = await digest(archive)
@@ -116,6 +119,12 @@ describe('Linux CLI packages', () => {
     expect(result.sourceArchiveSha256).toBe(sha)
     for (const path of files)
       expect(await digest(join(output, 'payload', path))).toBe(await digest(join(source, path)))
+    if (process.platform !== 'win32') {
+      expect(await readlink(join(output, 'payload/backend/relative-link'))).toBe('.hidden')
+      expect(await readFile(join(output, 'payload/backend/relative-link'), 'utf8')).toBe(
+        'original backend/.hidden\n'
+      )
+    }
     await expect(
       preparePackage(
         archive,

@@ -110,6 +110,7 @@ export async function preparePackage(archive, expectedDigest, expectedSha, targe
       assert.ok((await stat(join(source, path))).isFile(), `Missing payload: ${path}`)
     await cp(source, join(destination, 'payload'), {
       recursive: true,
+      verbatimSymlinks: true,
       errorOnExist: true,
       force: false
     })
@@ -274,14 +275,19 @@ export async function buildPackage(format, prepared, output) {
   await mkdir(work, { recursive: false })
   const tree = join(work, 'tree')
   try {
-    await cp(join(prepared, 'payload'), join(tree, packageRoot), { recursive: true })
+    await cp(join(prepared, 'payload'), join(tree, packageRoot), {
+      recursive: true,
+      verbatimSymlinks: true
+    })
     await mkdir(join(tree, 'usr/bin'), { recursive: true })
     const { symlink } = await import('node:fs/promises')
     await symlink(`${packageRoot}/open-science`, join(tree, 'usr/bin/open-science-cli'))
     const docs = join(tree, 'usr/share/doc/open-science-cli')
     await mkdir(docs, { recursive: true })
     await cp(join(prepared, 'source.json'), join(docs, 'source.json'))
-    await cp(join(tree, packageRoot, 'backend/LICENSE'), join(docs, 'copyright'))
+    await cp(join(tree, packageRoot, 'backend/LICENSE'), join(docs, 'copyright'), {
+      dereference: true
+    })
     await writeFile(
       join(docs, 'README'),
       'Stop all open-science-cli profiles before upgrading or removing.\nRemoval and purge preserve research data and credentials.\nUse an unlocked OS vault; Python/R and user namespaces need separate setup.\nhttps://github.com/aipoch/open-science/blob/v' +
@@ -342,7 +348,7 @@ export async function buildPackage(format, prepared, output) {
       const top = join(work, 'rpm')
       for (const folder of ['BUILD', 'BUILDROOT', 'RPMS', 'SOURCES', 'SPECS', 'SRPMS'])
         await mkdir(join(top, folder), { recursive: true })
-      await cp(tree, join(top, 'SOURCES/tree'), { recursive: true })
+      await cp(tree, join(top, 'SOURCES/tree'), { recursive: true, verbatimSymlinks: true })
       const spec = join(top, 'SPECS/open-science-cli.spec')
       await writeFile(spec, rpmSpec(identity, [...sonames].sort()))
       run('rpmbuild', ['-bb', '--define', `_topdir ${top}`, spec], { stdio: 'inherit' })
