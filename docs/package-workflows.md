@@ -12,6 +12,23 @@ commands prepare their own dependencies. Package-local build/prepack scripts rem
 Native credential helpers, runtime staging/signing, CLI distribution and Notebook sandbox checks
 retain their dedicated paths. TypeScript compilation does not certify those resources.
 
+## Package versions
+
+Repository-local packages have versions independent of the application release. The private
+`@aipoch/compute`, `@aipoch/skills` and `@aipoch/specialists` packages stay at `0.1.0`; do not bump
+them when releasing the app. The root manifest uses `file:packages/...` dependencies, and release
+builds compile and stage the current checkout. These package versions do not identify stored data,
+Skill content or Specialist archives.
+
+Keep package manifests, their package-local lockfiles (when present), and the corresponding
+`packages/<name>` entries in the root lockfile consistent. Application releases update the root
+`package.json` and its lockfile version metadata. Standalone CLI/runtime release manifests derive
+the application version during staging; their generated release versions still match the app.
+
+If a local package is published independently in the future, give it its own release/versioning
+policy before publishing changed contents under the same package name and version. See the
+[npm package metadata guidance](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#version).
+
 ## Independent verification
 
 ```sh
