@@ -105,13 +105,14 @@ it('allows unrelated session deletion after another owner fails remote cleanup',
   const findByOwner = vi.fn(async (owner: { projectId: string; sessionId?: string }) =>
     owner.projectId === 'project-a' ? [job] : []
   )
+  const get = vi.fn(async (jobId: string) => (jobId === job.job_id ? job : null))
   const begin = vi.fn(async () => undefined)
   const deleteRows = vi.fn(async () => undefined)
   const owner = createComputeExecution().createDeletionOwner({
     jobRepository: {
       findByOwner,
       listOwners: async () => [],
-      get: async () => null,
+      get,
       settleRemoteCleanup: vi.fn(),
       beginOwnerDeletion: begin,
       deleteByOwner: deleteRows,
@@ -131,6 +132,7 @@ it('allows unrelated session deletion after another owner fails remote cleanup',
   await expect(owner.commitSessionJobDeletion('project-a', 'session-a')).rejects.toThrow(
     'host-a offline'
   )
+  expect(get).toHaveBeenCalledExactlyOnceWith(job.job_id)
   await expect(owner.prepareSessionJobDeletion('project-b', 'session-b')).resolves.toBeUndefined()
   expect(begin).toHaveBeenCalledTimes(2)
   expect(findByOwner).toHaveBeenCalledWith({ projectId: 'project-b', sessionId: 'session-b' })

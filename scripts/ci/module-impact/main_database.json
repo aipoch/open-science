@@ -193,6 +193,8 @@
       "src/main/compute/application-commands.test.ts",
       "src/main/compute/compute-host-profile-concurrency.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/compute-job-lifecycle.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-jobs.integration.test.ts",

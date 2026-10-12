@@ -416,6 +416,8 @@
       "src/main/compute/job-repository.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
       "src/main/compute/job-runtime.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",

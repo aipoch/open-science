@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { ComputeJobLifecycle, dispatchMayHaveStarted } from './compute-job-lifecycle'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
@@ -286,11 +286,15 @@ export class JobPoller {
     }
 
     // Poll each provider's jobs in parallel (different SSH connections, no ordering dependency).
-    await Promise.all(
+    const results = await Promise.allSettled(
       Array.from(byProvider.entries()).map(([providerId, providerJobs]) =>
         this._pollProvider(providerId, providerJobs, signal)
       )
     )
+    // Keep the tick tracked until every started host operation has settled, even when
+    // error persistence fails on another host. Preserve rejection for the caller.
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
   }
 
   // Polls all jobs for one provider in a single SSH round-trip (where possible).
@@ -529,6 +533,20 @@ export class JobPoller {
     const workdir = parseRemoteJobWorkdir(job.job_id, job.remote_workdir, fallbackWorkdir)
     if (!workdir) {
       await this._recordPollError([job], 'dispatch_recovery_required', signal)
+      return undefined
+    }
+
+    // A historical row may already carry an uncertain-launch witness without a durable path.
+    // Resolve its historical directory, but never use the legacy receipt cleanup protocol:
+    // missing job.pid does not prove that a detached workload stopped or never launched.
+    if (dispatchMayHaveStarted(job)) {
+      // Repair the existing witness, not a new launch: persist its resolved directory before
+      // any recovery branch can clear the marker or publish a handle/terminal harvest record.
+      const repaired = await this.lifecycle.beginRemoteDispatch(job.job_id, workdir)
+      if (repaired.kind === 'ignored') return undefined
+      this._applySubmittedRecoveryResult(
+        await this.submittedJobRecovery.recover(repaired.job, connection)
+      )
       return undefined
     }
 

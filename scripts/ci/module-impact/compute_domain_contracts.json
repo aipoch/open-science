@@ -23,6 +23,8 @@
     "owner": ["packages/compute/src/host-connection-profile.test.ts"],
     "contract": [],
     "consumer": [
+      "packages/compute/src/cleanup-stop-evidence.test.ts",
+      "packages/compute/src/ssh-runner.real-process.test.ts",
       "packages/compute/src/concurrency-manager.test.ts",
       "packages/compute/src/execution.test.ts",
       "packages/compute/src/job-deletion-owner.test.ts",
@@ -200,6 +202,8 @@
       "src/main/compute/application-commands.test.ts",
       "src/main/compute/authentication-runtime.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
       "src/main/compute/compute-approval-broker.test.ts",

@@ -473,6 +473,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/compute/compute-job-operation-repository.test.ts",
       "test/config/electron.vite.config.test.ts",
       "scripts/electron-vite-config.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
@@ -643,6 +644,8 @@
       "src/main/compute/compute-host-profile-concurrency.test.ts",
       "src/main/compute/compute-host-profile-owner.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
+      "src/main/compute/cancellation-no-launch.integration.test.ts",
+      "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/compute/compute-job-lifecycle.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-jobs.integration.test.ts",

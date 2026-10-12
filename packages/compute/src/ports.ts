@@ -57,7 +57,11 @@ export interface ComputeJobRepository {
     expectedStatuses: readonly ComputeJobStatus[],
     updates: UpdateJobRequest
   ): Promise<ComputeJob | null>
+  // Preserve authoritative no-launch evidence for the exact submitted dispatch snapshot,
+  // including while owner deletion fences status transitions. Never changes status or claims.
+  recordDispatchNoLaunch(expectedJob: ComputeJob): Promise<void>
   recordCancellationHandle(jobId: string, remoteHandle: string): Promise<void>
+  recordRemoteCleanupStopped(job: ComputeJob, workdir: string): Promise<void>
   findSessionConcurrencyJobs(
     sessionId: string
   ): Promise<Pick<ComputeJob, 'status' | 'provider_id'>[]>

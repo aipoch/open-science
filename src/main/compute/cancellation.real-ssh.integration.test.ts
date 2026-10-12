@@ -1,7 +1,8 @@
 import {
   createComputeExecution,
   createJobCancellation,
-  createSshRunner
+  createSshRunner,
+  resolveSshTarget
 } from '@aipoch/compute/node'
 // RUN_COMPUTE_CANCELLATION=1 COMPUTE_TEST_SSH_ALIAS=hpc-dev npx vitest run src/main/compute/cancellation.real-ssh.integration.test.ts
 import {
@@ -49,6 +50,7 @@ it.skipIf(!enabled).each(['running', 'orphaned'] as const)(
   'cancels a %s real session and its TERM-resistant workload before confirming',
   async (state) => {
     const db = await createMigratedComputeTestDatabase('compute-cancel-real-')
+    const execution = createComputeExecution()
     const jobId = randomUUID()
     const workdir = `/tmp/open-science-cancel-${jobId}/.open-science/jobs/${jobId}`
     const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: `ssh:${alias}` }
@@ -57,7 +59,8 @@ it.skipIf(!enabled).each(['running', 'orphaned'] as const)(
     const broker: ComputeConnectionBrokerAcquirer = remoteEnabled
       ? new SshConfigComputeConnectionBroker({
           getHost: (id) => hosts.get(id),
-          runner: createSshRunner()
+          runner: createSshRunner(),
+          resolveTarget: (alias, overrides) => resolveSshTarget(alias, overrides)
         })
       : { acquire: async () => ({ run: localRun }) as ComputeConnectionLease }
     const connection = await broker.acquire(scope.providerId, { intent: 'job_cleanup' })
@@ -91,6 +94,7 @@ print(json.dumps(found))`
         allowUnencryptedPersistence: true
       })
       await dispatchJob(jobId, {
+        execution,
         connectionBroker: broker,
         hostRepository: hosts,
         jobRepository: db.repositories.jobs
@@ -115,7 +119,7 @@ print(json.dumps(found))`
         expect((await run(`kill -KILL -- -${handle.pid}`)).exitCode).toBe(0)
       }
       expect(await probeRemoteLaunch(connection, workdir)).toMatchObject({ kind: 'running' })
-      const poller = createComputeExecution().createPoller({
+      const poller = execution.createPoller({
         connectionBroker: broker,
         hostRepository: hosts,
         jobRepository: db.repositories.jobs
@@ -127,7 +131,7 @@ print(json.dumps(found))`
         jobId,
         scope
       )
-      const reaper = createComputeExecution().createCancellationReaper(
+      const reaper = execution.createCancellationReaper(
         db.repositories.operations,
         db.repositories.jobs,
         broker

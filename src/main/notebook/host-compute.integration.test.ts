@@ -208,6 +208,7 @@ gate('repl kernel host.compute', () => {
                 ? `try { ${call} } catch (error) { console.log(JSON.stringify({ message: error.message, retry: error.retry_after_user_action })) }`
                 : call,
             mcpRpcEndpoint: stub.endpoint,
+            mcpRpcSocketPath: stub.socketPath,
             mcpRpcToken: 'tok'
           })
         )
@@ -269,6 +270,7 @@ gate('repl kernel host.compute', () => {
       baseRequest({
         code: "const r = await host.compute.create('ssh:x').callCommand('id', 'probe', { loginShell: false, timeoutSeconds: 30 }); console.log(JSON.stringify(r))",
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok'
       })
     )
@@ -292,6 +294,7 @@ gate('repl kernel host.compute', () => {
       baseRequest({
         code: "await host.compute.create('ssh:x').callCommand('id','probe'); console.log('done')",
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
         projectId: 'proj-x'
@@ -322,6 +325,7 @@ gate('repl kernel host.compute', () => {
           'await c.attachJob(job.job_id).status(); await c.attachJob(job.job_id).result(); ' +
           'await c.setConcurrencyLimit(2); console.log(JSON.stringify(job))',
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
         projectId: 'proj-x',
@@ -381,6 +385,7 @@ gate('repl kernel host.compute', () => {
     const request = baseRequest({
       code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
       mcpRpcEndpoint: stub.endpoint,
+      mcpRpcSocketPath: stub.socketPath,
       mcpRpcToken: 'tok',
       sessionId: 'session-7',
       projectId: 'proj-x'
@@ -402,6 +407,7 @@ gate('repl kernel host.compute', () => {
           "const job = await host.compute.create('ssh:x').submitJob('analyze', 'run'); " +
           'console.log(JSON.stringify(job))',
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
         projectId: 'proj-x'
@@ -431,6 +437,7 @@ gate('repl kernel host.compute', () => {
           "const job = await host.compute.create('ssh:x').submitJob('analyze', 'run'); " +
           'console.log(JSON.stringify(job))',
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
         projectId: 'proj-x'
@@ -465,6 +472,7 @@ gate('repl kernel host.compute', () => {
           baseRequest({
             code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
             mcpRpcEndpoint: stub.endpoint,
+            mcpRpcSocketPath: stub.socketPath,
             mcpRpcToken: 'tok',
             sessionId: 'session-7',
             projectId: 'proj-x'
@@ -500,6 +508,7 @@ gate('repl kernel host.compute', () => {
             console.log(JSON.stringify({ message: error.message, code: error.error_code, retry: error.retry_after_user_action }))
           }`,
           mcpRpcEndpoint: stub.endpoint,
+          mcpRpcSocketPath: stub.socketPath,
           mcpRpcToken: 'tok',
           sessionId: 'session-caught',
           projectId: 'proj-x'
@@ -528,6 +537,7 @@ gate('repl kernel host.compute', () => {
       baseRequest({
         code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
         projectId: 'proj-x'
@@ -559,6 +569,7 @@ gate('repl kernel host.compute', () => {
           '{ try { await call() } catch (error) { errors.push(error.message) } } ' +
           'console.log(JSON.stringify(errors))',
         mcpRpcEndpoint: stub.endpoint,
+        mcpRpcSocketPath: stub.socketPath,
         mcpRpcToken: 'tok'
       })
     )

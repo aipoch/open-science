@@ -1,4 +1,4 @@
-import type { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { dispatchMayHaveStarted, type ComputeJobLifecycle } from './compute-job-lifecycle'
 import { ComputeConnectionError, type ComputeConnectionLease } from './connection'
 import type { ComputeJob } from './model'
 import { classifyComputeJobExit, probeRemoteLaunch } from './remote-launch-recovery'
@@ -104,6 +104,20 @@ export class SubmittedJobRecovery {
         : { kind: 'none' }
     }
 
+    if (
+      dispatchMayHaveStarted(job) &&
+      (observation.kind === 'not_started' || observation.kind === 'pending')
+    ) {
+      this.pendingTicks.delete(job.job_id)
+      await this.lifecycle.recordPollError(
+        job.job_id,
+        observedStatus,
+        'dispatch_recovery_pending',
+        false
+      )
+      return { kind: 'none' }
+    }
+
     if (observation.kind === 'not_started') {
       this.pendingTicks.delete(job.job_id)
       return this.interrupt(job)
@@ -148,6 +162,15 @@ export class SubmittedJobRecovery {
   }
 
   async interrupt(job: ComputeJob): Promise<SubmittedJobRecoveryResult> {
+    if (dispatchMayHaveStarted(job)) {
+      await this.lifecycle.recordPollError(
+        job.job_id,
+        'submitted',
+        'dispatch_recovery_pending',
+        false
+      )
+      return { kind: 'none' }
+    }
     if (job.status === 'running') {
       const transition = await this.lifecycle.finishPolled(job.job_id, {
         status: 'failed',

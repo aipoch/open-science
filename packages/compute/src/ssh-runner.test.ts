@@ -23,7 +23,7 @@ import {
 // Hoisted doubles (must exist before vi.mock factories run)
 // ---------------------------------------------------------------------------
 
-// execFile double — drives SystemSshRunner's child event lifecycle and the
+// Shared child-process double — drives SystemSshRunner's child event lifecycle and the
 // default readEffectiveConfig path (ssh -G) without spawning a real process.
 //
 // Node's real execFile exposes a custom promisified wrapper via
@@ -61,7 +61,7 @@ vi.mock('node:fs', async (importOriginal) => ({
 
 // Mock execFile so SystemSshRunner and the default readEffectiveConfig path
 // (when no fake readConfig is injected) can be driven by tests.
-vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+vi.mock('node:child_process', () => ({ execFile: execFileMock, spawn: execFileMock }))
 
 // Mock platform() while keeping the rest of node:os real (homedir etc.).
 vi.mock('node:os', async (importOriginal) => ({
@@ -495,7 +495,7 @@ describe('resolveSshTarget', () => {
 
 // ---------------------------------------------------------------------------
 // SystemSshRunner — real ssh spawner. Drives the child lifecycle via a fake
-// execFile so we can assert the close/error/timeout branches without a real ssh.
+// spawn so we can assert the close/error/timeout branches without a real ssh.
 // ---------------------------------------------------------------------------
 
 describe('SystemSshRunner', () => {
@@ -536,6 +536,33 @@ describe('SystemSshRunner', () => {
     expect(result).toMatchObject({ exitCode: 0, stderr: '' })
     expect(execFileMock.mock.calls[0]?.[1]).not.toContain(command)
     expect(child.stdin.end).toHaveBeenCalledWith(command)
+  })
+
+  it('observes a streamed command stdin failure and preserves the child exit status', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const promise = runner.run(target(), '# ' + 'x'.repeat(24000), { timeoutMs: 5000 })
+    child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    child.stderr.emit('data', Buffer.from('remote shell rejected command'))
+    child.emit('close', 23)
+    await expect(promise).resolves.toMatchObject({
+      exitCode: 23,
+      stderr: 'remote shell rejected command',
+      timedOut: false
+    })
+  })
+
+  it('retains the hard boundary when signal delivery emits an error', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const promise = runner.run(target(), 'stuck', { timeoutMs: 1000 })
+    await vi.advanceTimersByTimeAsync(1000)
+    child.emit('error', new Error('kill EPERM'))
+    await vi.advanceTimersByTimeAsync(3000)
+    await expect(promise).resolves.toMatchObject({ exitCode: null, timedOut: true })
+    expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']])
+    expect(child.unref).toHaveBeenCalledOnce()
   })
 
   it('captures stdout/stderr and reports exitCode on a clean child close', async () => {
@@ -899,7 +926,7 @@ describe('SystemSshRunner', () => {
       // Strongest check: hand the quoted argument to a REAL shell with `bash -lc` swapped for `printf`.
       // What printf receives is exactly what bash -lc would have received, so if the payload survives
       // byte-for-byte with no expansion, the quoting held.
-      // node:child_process is mocked module-wide (execFile only), so pull the real execFileSync.
+      // node:child_process is mocked module-wide (spawn and execFile), so pull the real execFileSync.
       const { execFileSync } =
         await vi.importActual<typeof import('node:child_process')>('node:child_process')
       const asPrintf = lastArg.replace(/^bash -lc /, 'printf %s ')

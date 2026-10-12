@@ -94,6 +94,7 @@ it('keeps lifecycle state ownership behind the narrow intent interface', () => {
     [
       'abortOwnerDeletion',
       'beginOwnerDeletion',
+      'beginRemoteDispatch',
       'deleteOwnerRows',
       'dispatchError',
       'dispatchRunning',
@@ -112,7 +113,9 @@ it('keeps lifecycle state ownership behind the narrow intent interface', () => {
       'abortOwnerDeletion',
       'beginOwnerDeletion',
       'deleteByOwner',
+      'get',
       'recordCancellationHandle',
+      'recordDispatchNoLaunch',
       'updateIfStatus'
     ].sort()
   )
@@ -126,6 +129,7 @@ it('keeps lifecycle state ownership behind the narrow intent interface', () => {
       : []
   )
   expect(importers).toEqual([
+    'src/compute-job-cancellation-owner.ts',
     'src/concurrency-manager.ts',
     'src/controllers.ts',
     'src/job-deletion-owner.ts',
