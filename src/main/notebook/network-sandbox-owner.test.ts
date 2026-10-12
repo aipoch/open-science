@@ -1121,6 +1121,27 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it('allows protection removal when the caller already holds the change admission', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: 'C:\\resources\\notebook-sandbox',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('deny'),
+      platform: 'win32'
+    })
+    const release = owner.beginProtectionChange()
+    try {
+      await expect(owner.removeWindows()).rejects.toThrow('mode is changing')
+      await expect(owner.removeWindows({ admissionAlreadyHeld: true })).resolves.toEqual({
+        cancelled: false
+      })
+      expect(backend.removeWindows).toHaveBeenCalledOnce()
+    } finally {
+      release()
+      await owner.dispose()
+    }
+  })
+
   it('allows explicitly selected standard execution even when installed protection is broken', async () => {
     backend.status.mockResolvedValue({
       kind: 'setupRequired',

@@ -318,7 +318,7 @@ export async function composeSettingsBootstrap({
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       cancelNotebookNetworkSetup: () => notebookNetworkSandbox.cancelWindowsSetup(),
-      removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      removeNotebookNetwork: (options) => notebookNetworkSandbox.removeWindows(options),
       refreshNotebookShellCapabilities: async () => {
         const runtime = getRuntimeRef().current
         if (!runtime) throw new Error('Shell capability lifecycle is not ready.')

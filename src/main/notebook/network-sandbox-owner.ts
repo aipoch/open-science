@@ -1114,8 +1114,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  async removeWindows(): Promise<{ cancelled: boolean }> {
-    if (this.protectionChangeInProgress)
+  async removeWindows(
+    options: { admissionAlreadyHeld?: boolean } = {}
+  ): Promise<{ cancelled: boolean }> {
+    if (this.protectionChangeInProgress && options.admissionAlreadyHeld !== true)
       throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (this.windowsSetupController)
       throw new Error('Wait for Notebook protection setup to finish cancelling.')

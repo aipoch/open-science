@@ -209,6 +209,10 @@ export type UninstallResult = {
   activeBackendAffected: boolean
 }
 
+export type NotebookNetworkRemovalOptions = Readonly<{
+  admissionAlreadyHeld?: boolean
+}>
+
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   configRoot?: string
@@ -269,7 +273,9 @@ export type SettingsServiceOptions = {
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   cancelNotebookNetworkSetup?: () => boolean
-  removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  removeNotebookNetwork?: (
+    options?: NotebookNetworkRemovalOptions
+  ) => Promise<{ cancelled: boolean }>
   refreshNotebookShellCapabilities?: () => Promise<void>
   wslSetup?: {
     getStatus?(): WslSetupStatus
@@ -462,7 +468,9 @@ class SettingsService {
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly cancelNotebookNetworkSetupImpl: () => boolean
-  private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly removeNotebookNetworkImpl: (
+    options?: NotebookNetworkRemovalOptions
+  ) => Promise<{ cancelled: boolean }>
   private readonly refreshNotebookShellCapabilities: () => Promise<void>
   private readonly beforeNotebookProtectionChange?: SettingsServiceOptions['beforeNotebookProtectionChange']
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
@@ -765,7 +773,9 @@ class SettingsService {
         ? await this.beforeNotebookProtectionChange?.()
         : undefined
     try {
-      const result = await this.removeNotebookNetworkImpl()
+      const result = await this.removeNotebookNetworkImpl(
+        settings.windowsProtectionEnabled === true ? { admissionAlreadyHeld: true } : undefined
+      )
       if (!result.cancelled) {
         if (settings.windowsProtectionEnabled === true) {
           try {
