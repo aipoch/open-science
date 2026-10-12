@@ -430,7 +430,7 @@ const hasDetachedFigurePanelLabelGap = (
       (!sameLine && !sawLineBreak) ||
       (sameLine && box[0] - lineRight <= items[index].height! * 1.5)
     ) {
-      return labels.length >= (panelPrefix ? 2 : 3) ? labels.length <= 8 : false
+      return sawLineBreak && labels.length >= (panelPrefix ? 2 : 3) && labels.length <= 8
     }
     labels.push(item)
     if (!sameLine) {

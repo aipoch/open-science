@@ -67,6 +67,17 @@ it('separates a detached figure label band from the final author affiliation lin
   expect(joinPdfTextItems(items)).not.toContain('Example CityMove')
 })
 
+it('keeps an open same-line panel label band attached to following prose', () => {
+  const items: PdfTextItem[] = [
+    { str: 'coordinate system.', width: 69, height: 9, transform: [9, 0, 0, 9, 51, 101] },
+    { str: 'Reference', width: 33, height: 7.5, transform: [7.5, 0, 0, 7.5, 412, 677] },
+    { str: 'Goal', width: 15, height: 7.5, transform: [7.5, 0, 0, 7.5, 460, 677] },
+    { str: 'Latent', width: 21, height: 7.5, transform: [7.5, 0, 0, 7.5, 500, 677] },
+    { str: 'prose', width: 30, height: 7.5, transform: [7.5, 0, 0, 7.5, 550, 677] }
+  ]
+  expect(joinPdfTextItems(items)).not.toContain('system.\nReference')
+})
+
 it.each([
   [
     'panel prefix',
