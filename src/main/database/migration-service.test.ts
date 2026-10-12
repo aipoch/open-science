@@ -1,20 +1,18 @@
-import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { access, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setTimeout as delay } from 'node:timers/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { migrationSqlExecutor } from './migration-sql-executor'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 
-import { literatureCandidateInputSchema } from '../../shared/literature'
+import { literatureCandidateInputSchema } from '@aipoch/literature-library/contracts'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
-import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
-import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
@@ -26,6 +24,8 @@ import {
   verifyCurrentApplicationSchema,
   type MigrationManifestEntry
 } from './migration-service'
+import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
+import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 
 const futureTestMigration = (): MigrationManifestEntry => {
   const id = '9997_test_suffix'

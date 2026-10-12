@@ -17,24 +17,24 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { ArrowLeft, Download, MoreHorizontal, Pencil, Quote, Search, X } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { useSyncExternalStore } from 'react'
-import { useTranslation } from 'react-i18next'
 import type {
   LiteratureCitationStyleView,
   LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
+import { type LiteratureDetailSnapshot } from '@aipoch/literature-library/client'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { ArrowLeft, Download, MoreHorizontal, Pencil, Quote, Search, X } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useSyncExternalStore } from 'react'
+import { useTranslation } from 'react-i18next'
+import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
+import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
 import { LiteratureCitationPanel } from './LiteratureCitationPanel'
-import type { LiteratureDetailController } from './LiteratureDetailController'
-import { type LiteratureDetailSnapshot } from './LiteratureDetailController'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 import { LiteratureMetadataCompletion } from './LiteratureMetadataCompletion'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
-import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
-import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
 const LiteratureDetailBoundary = ({
   children,
   controller

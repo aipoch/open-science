@@ -1,36 +1,36 @@
-import { createPdfTranslationLocalRuntime } from '../literature/pdf-translation/local'
-import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
-import { PdfTranslationCheckpoints } from '../literature/pdf-translation/checkpoints'
-import { PdfTranslationOwner } from '../literature/pdf-translation/index'
-import { capturePdfTranslationApiTarget } from '../literature/pdf-translation/api-target'
-import { capturePdfTranslationAgentTarget } from '../literature/pdf-translation/agent-target'
-import { ProviderTextGenerationService } from '../settings/provider-text-generation'
-import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
-import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
-import type { SettingsService } from '../settings/service'
-import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
-import { runtimeMetadata } from '../runtime-metadata'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { isPathInsideWorkspace } from '../acp/workspace-path'
 import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { BookmarkService } from '../bookmarks/service'
+import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { LiteratureDocumentReader } from '../literature/document-reader'
-import { LiteratureFullTextIndex } from '../literature/full-text-index'
+import { literatureIndex } from '../literature/full-text-index'
 import { PdfElementAgentReader } from '../literature/pdf-structure/agent-reader'
 import { createPdfStructureEngine } from '../literature/pdf-structure/engine'
 import { createPdfStructureOwner } from '../literature/pdf-structure/owner'
 import { PdfStructureReader } from '../literature/pdf-structure/reader'
 import { PdfStructureSourceAuthority } from '../literature/pdf-structure/source'
+import { capturePdfTranslationAgentTarget } from '../literature/pdf-translation/agent-target'
+import { capturePdfTranslationApiTarget } from '../literature/pdf-translation/api-target'
+import { PdfTranslationCheckpoints } from '../literature/pdf-translation/checkpoints'
+import { PdfTranslationOwner } from '../literature/pdf-translation/index'
+import { createPdfTranslationLocalRuntime } from '../literature/pdf-translation/local'
+import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
+import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
 import { createLocalModelApi } from '../local-models/owner'
+import { runtimeMetadata } from '../runtime-metadata'
+import { ProviderTextGenerationService } from '../settings/provider-text-generation'
+import type { SettingsService } from '../settings/service'
 
-import { createLocalModelOwner } from '../local-models/owner'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { createLocalModelOwner } from '../local-models/owner'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { PdfAnnotationService } from '../pdf-annotations/service'
 import { getProjectDbClient } from '../projects/prisma-client'
@@ -159,8 +159,7 @@ export async function composeDocumentReading({
     name: 'literature-index-retention',
     capability: undefined,
     start: () => {
-      stopLiteratureIndexRetention = LiteratureFullTextIndex.startRetentionSweep(
-        resolveDataRoot(),
+      stopLiteratureIndexRetention = literatureIndex(resolveDataRoot()).startRetentionSweep(
         (error) => {
           literatureContextLog.error('Literature index maintenance failed', errorLogFields(error))
         }

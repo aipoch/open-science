@@ -12,7 +12,7 @@ import type {
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchRequest,
   LiteratureItemView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
 
 import type { LiteratureSelectionStore } from './literature-selection'
 type RestorePreview = { itemIds: string[]; skipped: number }

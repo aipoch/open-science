@@ -80,6 +80,19 @@
     {
       "root": "packages/resilient-download",
       "dependencies": []
+    },
+    {
+      "root": "packages/literature-reading",
+      "dependencies": []
+    },
+    {
+      "root": "packages/literature-library",
+      "dependencies": [
+        "packages/literature-citations",
+        "packages/literature-discovery",
+        "packages/literature-screening",
+        "packages/journal-catalog"
+      ]
     }
   ]
 }

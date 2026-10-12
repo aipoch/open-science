@@ -1,3 +1,4 @@
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
   artifactLiteratureManifestSchema,
   artifactLiteratureRequestSchema,
@@ -6,7 +7,6 @@ import {
   type ArtifactLiteratureRetrievalCriteria
 } from '../../shared/artifact-literature'
 import type { CreateArtifactVersionRequest } from '../../shared/artifact-provenance'
-import type { LiteratureItemView } from '../../shared/literature'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 // Only bibliographic identity and metadata cross this seam; the host owns catalog access.

@@ -1,8 +1,11 @@
+import { Button } from '@/components/ui/button'
+import type {
+  LiteratureDuplicateGroup,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import type { LiteratureDuplicateGroup, LiteratureItemView } from '../../../../../shared/literature'
 
 const PAGE_SIZE = 50
 

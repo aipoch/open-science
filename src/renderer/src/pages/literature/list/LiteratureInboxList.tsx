@@ -1,16 +1,16 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureInboxCandidateView } from '@aipoch/literature-library/contracts'
 import { Check, RotateCcw, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureInboxCandidateView } from '../../../../../shared/literature'
+import { creatorLabel, inboxProviderLabel } from '../literature-item-display'
+import type { LiteratureSelectionStore } from './literature-selection'
 import {
   LiteratureSelectionBoundary,
   LiteratureSelectionCheckbox,
   LiteratureSelectPageCheckbox
 } from './LiteratureSelection'
-import { creatorLabel, inboxProviderLabel } from '../literature-item-display'
-import type { LiteratureSelectionStore } from './literature-selection'
 
 export function LiteratureInboxList({
   selectionStore,

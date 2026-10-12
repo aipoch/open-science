@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 
 export function LiteratureRatingControl({
   value,

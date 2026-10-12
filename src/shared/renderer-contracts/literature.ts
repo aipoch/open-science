@@ -1,21 +1,21 @@
+import type {
+  PdfTranslationBeginResult,
+  PdfTranslationEdition,
+  PdfTranslationOperationRequest,
+  PdfTranslationPdfResult,
+  PdfTranslationRunRequest,
+  PdfTranslationRunResult
+} from '@aipoch/pdf-translation/contracts'
 import type { PdfAddToLiteratureRequest } from '../pdf-annotations'
 import type {
-  PdfTranslationEdition,
-  PdfTranslationPdfResult,
-  PdfTranslationBeginResult,
-  PdfTranslationRunRequest,
-  PdfTranslationRunResult,
-  PdfTranslationOperationRequest
-} from '@aipoch/pdf-translation/contracts'
-import type {
+  PdfTranslationBeginRequest,
   PdfTranslationCheckpoint,
   PdfTranslationCheckpointRequest,
-  PdfTranslationSelectEditionRequest,
   PdfTranslationPdfRequest,
+  PdfTranslationRecordLayoutRequest,
   PdfTranslationSaveSnapshotRequest,
-  PdfTranslationRecordLayoutRequest
+  PdfTranslationSelectEditionRequest
 } from '../pdf-translation'
-import type { PdfTranslationBeginRequest } from '../pdf-translation'
 
 import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
 
@@ -24,17 +24,17 @@ import type {
   LiteratureExportRecordResult
 } from '../literature-export'
 
-import type { LiteratureChangedEvent } from '../literature'
+import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 
 import type { LiteratureJobRequest, LiteratureJobsResult } from '@aipoch/literature-discovery/jobs'
 
-import type { LiteratureFullTextResult } from '../literature'
 import type { LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
+import type { LiteratureFullTextResult } from '@aipoch/literature-library/contracts'
 
+import type { LiteratureMetadataCompletionRequest } from '@aipoch/literature-discovery/contracts'
 import type {
   LiteratureCatalogCommand,
   LiteratureCatalogReceipt,
-  LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
   LiteratureCitationStylesRequest,
   LiteratureCitationStylesResult,
@@ -43,25 +43,24 @@ import type {
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
   LiteratureItemView,
-  LiteratureSourceRecordView,
-  LiteratureItemInput,
   LiteratureMetadataCompletionResult,
   LiteraturePdfCancelImportRequest,
   LiteraturePdfImportReceipt,
-  LiteraturePdfImportRequest,
   LiteratureRecordImportRequest,
-  LiteratureRecordImportResult
-} from '../literature'
-import type { LiteratureMetadataCompletionRequest } from '@aipoch/literature-discovery/contracts'
+  LiteratureRecordImportResult,
+  LiteratureSourceRecordView
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { LiteratureCatalogSearchPage, LiteraturePdfImportRequest } from '../literature'
 
 import {
   callable,
   ELECTRON,
-  WEB,
+  EVENT,
   RUNTIME_VALIDATED,
+  WEB,
   type AcpListener,
-  type RemoveListener,
-  EVENT
+  type RemoveListener
 } from './definition'
 
 export const contracts = {

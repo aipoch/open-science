@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
+import type {
+  LiteratureJob,
+  LiteratureJobRequest,
+  LiteratureJobView
+} from '@aipoch/literature-discovery/jobs'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
-import type {
-  LiteratureJob,
-  LiteratureJobView,
-  LiteratureJobRequest
-} from '@aipoch/literature-discovery/jobs'
 import { LiteratureBatchLookupDialog } from './LiteratureBatchLookupDialog'
 
 const item: LiteratureItemView = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { literatureItemInputSchema } from './literature-item'
+import { literatureItemInputSchema } from '../src/item.js'
 
 describe('literature item snapshot contract', () => {
   const item = { itemType: 'journalArticle', title: 'A cited paper' }

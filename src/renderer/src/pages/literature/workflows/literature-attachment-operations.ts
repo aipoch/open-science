@@ -1,5 +1,8 @@
+import type {
+  LiteratureCatalogReceipt,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import { create } from 'zustand'
-import type { LiteratureCatalogReceipt, LiteratureItemView } from '../../../../../shared/literature'
 
 export type AttachmentAction = 'verify' | 'remove'
 export type AttachmentOperation = {

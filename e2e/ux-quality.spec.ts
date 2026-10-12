@@ -1,9 +1,9 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import { cpus, platform, release, totalmem } from 'node:os'
 import { writeFile } from 'node:fs/promises'
-import { test } from './fixtures/electron-app'
+import { cpus, platform, release, totalmem } from 'node:os'
 import { openProjectSession } from './certification/helpers'
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { test } from './fixtures/electron-app'
 
 test('measures representative local workloads and verifies 200 percent project controls', async ({
   app

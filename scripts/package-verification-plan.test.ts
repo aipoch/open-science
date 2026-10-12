@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import {
   packageVerificationPlan,
   packageRegistry,
@@ -14,6 +15,21 @@ const upstream = 'packages/pdf-structure'
 const downstream = 'packages/pdf-translation'
 
 describe('independent package verification', () => {
+  it('includes every registered Literature package in the targeted build and verification commands', () => {
+    const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+    const literatureRoots = roots.filter((root: string) =>
+      /^packages\/(?:literature-|journal-catalog$)/.test(root)
+    )
+    for (const command of ['build:literature-packages', 'check:literature-packages']) {
+      const selection = scripts[command]
+        .split(' ')
+        .find((argument: string) => argument.startsWith('--packages='))
+      expect(selection, command).toBeDefined()
+      expect(verificationPlanFromArguments([selection], {}).tests.sort(), command).toEqual(
+        [...literatureRoots].sort()
+      )
+    }
+  })
   it('builds unchanged prerequisites without selecting their tests', () => {
     const plan = packageVerificationPlan(
       registry,

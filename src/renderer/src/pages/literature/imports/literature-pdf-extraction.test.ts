@@ -1,6 +1,6 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { literatureItemInputSchema } from '../../../../../shared/literature'
-import { extractLiteraturePdfDraft, completeLiteraturePdfDraft } from './literature-pdf-metadata'
+import { completeLiteraturePdfDraft, extractLiteraturePdfDraft } from './literature-pdf-metadata'
 
 const pdf = vi.hoisted(() => ({ getDocument: vi.fn() }))
 vi.mock('../../workspace/previews/pdfjs', () => ({ pdfjsLib: pdf }))

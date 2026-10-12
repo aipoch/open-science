@@ -15,8 +15,6 @@
     "src/renderer/src/pages/literature/detail/LiteratureCitationPanel.tsx",
     "src/renderer/src/pages/literature/list/LiteratureColumnCustomizer.tsx",
     "src/renderer/src/pages/literature/LiteratureDeletionNotice.tsx",
-    "src/renderer/src/pages/literature/detail/LiteratureDetailController.test.ts",
-    "src/renderer/src/pages/literature/detail/LiteratureDetailController.ts",
     "src/renderer/src/pages/literature/detail/LiteratureDetailLinkList.tsx",
     "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
     "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.tsx",
@@ -80,8 +78,6 @@
     "src/renderer/src/pages/literature/collections/SmartCollectionCells.test.tsx",
     "src/renderer/src/pages/literature/collections/SmartCollectionDraftPreview.test.tsx",
     "src/renderer/src/pages/literature/collections/SmartRuleSummary.tsx",
-    "src/renderer/src/pages/literature/list/reconcile-literature-page.test.ts",
-    "src/renderer/src/pages/literature/list/reconcile-literature-page.ts",
     "src/renderer/src/pages/literature/collections/smart-collection-preferences.ts",
     "src/renderer/src/pages/literature/collections/smart-collection-state.test.ts",
     "src/renderer/src/pages/literature/collections/smart-collection-state.ts",
@@ -114,8 +110,6 @@
     "src/renderer/src/pages/literature/list/LiteratureLibrarySidebar.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureMetadataCompletion.tsx",
     "src/renderer/src/pages/literature/list/LiteratureSidebarGroups.tsx",
-    "src/renderer/src/pages/literature/literature-inbox-reconciliation.test.ts",
-    "src/renderer/src/pages/literature/literature-inbox-reconciliation.ts",
     "src/renderer/src/pages/literature/literature-item-display.ts",
     "src/renderer/src/pages/literature/list/literature-selection.ts",
     "src/renderer/src/pages/literature/list/literature-table-preferences.ts",
@@ -170,8 +164,7 @@
     "src/renderer/src/pages/literature/literature-read-pages.ts",
     "src/renderer/src/pages/literature/workflows/literature-reading.ts",
     "src/renderer/src/pages/literature/useLiteratureChanges.ts",
-    "src/renderer/src/pages/literature/JournalAttributes.tsx",
-    "src/renderer/src/pages/literature/literature-inbox-reconciliation.ts"
+    "src/renderer/src/pages/literature/JournalAttributes.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -181,7 +174,6 @@
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBackgroundTasks.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.test.tsx",
-      "src/renderer/src/pages/literature/detail/LiteratureDetailController.test.ts",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
@@ -206,7 +198,6 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionDecision.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionCells.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionDraftPreview.test.tsx",
-      "src/renderer/src/pages/literature/list/reconcile-literature-page.test.ts",
       "src/renderer/src/pages/literature/collections/smart-collection-state.test.ts",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
@@ -215,8 +206,7 @@
       "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalColumnHeader.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
-      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
-      "src/renderer/src/pages/literature/literature-inbox-reconciliation.test.ts"
+      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx"
     ],
     "contract": [],
     "consumer": [

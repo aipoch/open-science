@@ -1,22 +1,22 @@
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
-import { vi } from 'vitest'
 import { i18next } from '@/i18n'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import {
   createInitialSessionState,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
-import {
-  createInitialPreviewWorkbenchState,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
-import { useNavigationStore } from '@/stores/navigation-store'
-import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
-import { previewLeaveGuards } from '@/stores/preview-leave-guard'
-import type { LiteratureItemView } from '../../../../shared/literature'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { fireEvent } from '@testing-library/react'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { vi } from 'vitest'
 import { GlobalSearchDialog } from './GlobalSearchDialog'
 
 export const artifact = {

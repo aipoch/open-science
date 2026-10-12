@@ -1,9 +1,12 @@
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
-import { buildLiteratureMergeItem } from './literature-merge'
 import type { LiteratureSelectionStore } from '../list/literature-selection'
 import { isLiteratureItemSelected } from '../list/literature-selection'
+import { buildLiteratureMergeItem } from './literature-merge'
 
 /** Own reviewed merge choices and commit recovery behind the shared batch gate. */
 export function useLiteratureMerge({

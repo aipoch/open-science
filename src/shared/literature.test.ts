@@ -1,23 +1,20 @@
+import { literatureItemInputSchema as contractItemSchema } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema as itemSchema } from '@aipoch/literature-library/item'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createLiteratureAttachmentVersionReference,
-  literatureApplicationCommandContracts,
-  literatureItemInputSchema,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
-  literatureCollectionViewSchema,
   literatureCitationStylesRequestSchema,
+  literatureCollectionViewSchema,
   literatureFormatDocumentRequestSchema,
-  literatureFormatReferencesRequestSchema,
+  literatureFormatReferencesRequestSchema
+} from '@aipoch/literature-library/contracts'
+import {
+  createLiteratureAttachmentVersionReference,
   parseLiteratureAttachmentVersionReference
-} from './literature'
-
-import { literatureItemInputSchema as itemSchema } from './literature-item'
-
-it('keeps the public literature item schema identical to the snapshot contract', () => {
-  expect(literatureItemInputSchema).toBe(itemSchema)
-})
+} from './literature-attachment-reference'
+import { literatureApplicationCommandContracts } from './literature'
 
 describe('Literature identifier draft lookup contract', () => {
   it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
@@ -248,4 +245,8 @@ it('scopes progress reads to a run and rejects mutation or unbounded paging fiel
     { ...request, limit: 100000 }
   ])
     expect(literatureCatalogCommandSchema.safeParse(invalid).success).toBe(false)
+})
+
+it('keeps the public literature item schema identical to the snapshot contract', () => {
+  expect(contractItemSchema).toBe(itemSchema)
 })

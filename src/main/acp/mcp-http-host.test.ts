@@ -1,15 +1,15 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentMcpHttpHost } from './mcp-http-host'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { ArtifactRepository } from '../artifacts/repository'
+import { AgentMcpHttpHost } from './mcp-http-host'
 
 describe('AgentMcpHttpHost', () => {
   let saveFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined

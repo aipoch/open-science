@@ -1,22 +1,8 @@
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { useRef, useState } from 'react'
 import { FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { LiteratureItemView } from '../../../../../shared/literature'
-import { Button } from '@/components/ui/button'
-import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import * as Dialog from '@/components/ui/dialog'
-import {
-  dialogBodyClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName,
-  dialogDescriptionClassName
-} from '@/components/ui/dialog-chrome'
-import { formatBytes } from '../../../../../shared/update'
 import {
   ActionMenuProvider,
   ActionMenuTarget,
@@ -24,13 +10,27 @@ import {
   type ActionMenuDefinition,
   type ActionMenuRecipeEntry
 } from '@/components/action-menu'
-
-type Version = LiteratureItemView['attachments'][number]['versions'][number]
+import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import * as Dialog from '@/components/ui/dialog'
+import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { formatBytes } from '../../../../../shared/update'
 import {
   useAttachmentOperations,
   type AttachmentAction
 } from '../workflows/literature-attachment-operations'
 import { AttachmentOperationStatus } from '../workflows/LiteratureAttachmentOperations'
+
+type Version = LiteratureItemView['attachments'][number]['versions'][number]
 type Attachment = LiteratureItemView['attachments'][number]
 type AttachmentMenuAction = AttachmentAction | 'history'
 const attachmentActionCatalog: Record<AttachmentMenuAction, ActionMenuDefinition> = {

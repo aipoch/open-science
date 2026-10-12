@@ -5,63 +5,63 @@ import {
   createBookmarkPreviewItem,
   requestPdfAnnotationReveal
 } from '../workspace/annotations/annotation-reveal'
-import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
-import { LiteratureCandidateDialog } from './list/LiteratureCandidateDialog'
 import { LiteratureCollectionDeleteDialog } from './collections/LiteratureCollectionDeleteDialog'
-import { LiteratureCreateItemDialog } from './imports/LiteratureCreateItemDialog'
-import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
-import { LiteratureDetailDialog } from './detail/LiteratureDetailDialog'
-import { LiteratureDetailOverview } from './detail/LiteratureDetailOverview'
-import { LiteratureInboxList } from './list/LiteratureInboxList'
-import { LiteratureLibraryHeader } from './list/LiteratureLibraryHeader'
-import { LiteratureLibrarySidebar, type LibrarySection } from './list/LiteratureLibrarySidebar'
-import { LiteratureMergeDialog } from './duplicates/LiteratureMergeDialog'
-import { LiteratureOversizedNotice } from './list/LiteratureOversizedNotice'
-import { LiteraturePagination } from './list/LiteraturePagination'
-import {
-  LiteraturePdfBatchImportDialog,
-  type PdfImportDestination
-} from './imports/LiteraturePdfBatchImportDialog'
-import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
-import { LiteratureResultsTable } from './list/LiteratureResultsTable'
-import { LiteratureSelectionToolbar } from './list/LiteratureSelectionToolbar'
-import { LiteratureViewControls } from './list/LiteratureViewControls'
-import { type SmartCollectionCellActions } from './collections/SmartCollectionDecision'
-import { SmartCollectionPanel } from './collections/SmartCollectionPanel'
-import { SmartCollectionProcess } from './collections/SmartCollectionProcess'
-import {
-  useDisplayedJournalDatasets,
-  useJournalDatasets,
-  useJournalSourceYears
-} from './journals/journal-attribute-store'
-import { useAttachmentOperations } from './workflows/literature-attachment-operations'
 import { setSmartReevaluationConfirmation } from './collections/smart-collection-preferences'
 import {
   createSmartCollectionState,
   SmartDecisionPendingContext
 } from './collections/smart-collection-state'
-import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
-import { useLiteratureCandidates } from './list/useLiteratureCandidates'
-import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
+import { type SmartCollectionCellActions } from './collections/SmartCollectionDecision'
+import { SmartCollectionPanel } from './collections/SmartCollectionPanel'
+import { SmartCollectionProcess } from './collections/SmartCollectionProcess'
 import { useLiteratureCollectionDeletion } from './collections/useLiteratureCollectionDeletion'
-import { useLiteratureExport } from './workflows/useLiteratureExport'
+import { useLiteratureMembership } from './collections/useLiteratureMembership'
+import { useLiteratureSmartDecisions } from './collections/useLiteratureSmartDecisions'
+import { useLiteratureSmartReevaluation } from './collections/useLiteratureSmartReevaluation'
+import { useSmartDecisionBatch } from './collections/useSmartDecisionBatch'
+import { LiteratureDetailDialog } from './detail/LiteratureDetailDialog'
+import { LiteratureDetailOverview } from './detail/LiteratureDetailOverview'
+import { LiteratureMergeDialog } from './duplicates/LiteratureMergeDialog'
+import { useLiteratureMerge } from './duplicates/useLiteratureMerge'
+import { LiteratureCreateItemDialog } from './imports/LiteratureCreateItemDialog'
+import {
+  LiteraturePdfBatchImportDialog,
+  type PdfImportDestination
+} from './imports/LiteraturePdfBatchImportDialog'
 import {
   emptyLiteratureItem,
   titleFromPdfFilename,
   useLiteratureImport
 } from './imports/useLiteratureImport'
-import { useLiteratureItemEdits } from './workflows/useLiteratureItemEdits'
-import { useLiteratureLifecycle } from './list/useLiteratureLifecycle'
-import { useLiteratureMembership } from './collections/useLiteratureMembership'
-import { useLiteratureMerge } from './duplicates/useLiteratureMerge'
 import { useLiteraturePdfStaging } from './imports/useLiteraturePdfStaging'
+import {
+  useDisplayedJournalDatasets,
+  useJournalDatasets,
+  useJournalSourceYears
+} from './journals/journal-attribute-store'
+import { LiteratureCandidateDialog } from './list/LiteratureCandidateDialog'
+import { LiteratureInboxList } from './list/LiteratureInboxList'
+import { LiteratureLibraryHeader } from './list/LiteratureLibraryHeader'
+import { LiteratureLibrarySidebar, type LibrarySection } from './list/LiteratureLibrarySidebar'
+import { LiteratureOversizedNotice } from './list/LiteratureOversizedNotice'
+import { LiteraturePagination } from './list/LiteraturePagination'
+import { LiteratureResultsTable } from './list/LiteratureResultsTable'
+import { LiteratureSelectionToolbar } from './list/LiteratureSelectionToolbar'
+import { LiteratureViewControls } from './list/LiteratureViewControls'
+import { useLiteratureCandidates } from './list/useLiteratureCandidates'
+import { useLiteratureLifecycle } from './list/useLiteratureLifecycle'
 import type { LiteratureSort } from './list/useLiteratureQuery'
 import { useLiteratureQuery } from './list/useLiteratureQuery'
-import { useLiteratureReading } from './workflows/useLiteratureReading'
-import { useLiteratureSmartDecisions } from './collections/useLiteratureSmartDecisions'
-import { useLiteratureSmartReevaluation } from './collections/useLiteratureSmartReevaluation'
 import { useLiteratureTable } from './list/useLiteratureTable'
-import { useSmartDecisionBatch } from './collections/useSmartDecisionBatch'
+import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
+import { useAttachmentOperations } from './workflows/literature-attachment-operations'
+import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
+import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
+import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
+import { useLiteratureExport } from './workflows/useLiteratureExport'
+import { useLiteratureItemEdits } from './workflows/useLiteratureItemEdits'
+import { useLiteratureReading } from './workflows/useLiteratureReading'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import * as Dialog from '@/components/ui/dialog'
@@ -107,12 +107,13 @@ import type {
   LiteratureCitationStyleView,
   LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
+import { createLiteratureDetailController } from '@aipoch/literature-library/client'
 import type {
   LiteratureCollectionView,
   LiteratureInboxCandidateView,
   LiteratureItemView
-} from '../../../../shared/literature'
-import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
+} from '@aipoch/literature-library/contracts'
 import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { FilePreviewDialog } from '../workspace/FilePreviewDialog'
@@ -122,29 +123,28 @@ import {
   CollectionEditorDialog,
   type CollectionEditorDialogHandle
 } from './collections/CollectionEditorDialog'
+import { mergeScalarFields } from './duplicates/literature-merge'
+import {
+  LiteratureDuplicatesView,
+  type LiteratureDuplicateCountHandle
+} from './duplicates/LiteratureDuplicatesView'
+import { LiteratureRecordImportDialog } from './imports/LiteratureRecordImportDialog'
+import {
+  createLiteratureSelectionStore,
+  isLiteratureItemSelected
+} from './list/literature-selection'
+import { LiteratureSearchInput } from './list/LiteratureSearchInput'
+import { LiteratureSelectionBoundary } from './list/LiteratureSelection'
+import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { LiteratureBackgroundTasks } from './workflows/LiteratureBackgroundTasks'
 import {
   LiteratureBatchLookupDialog,
   type BatchLookupMode
 } from './workflows/LiteratureBatchLookupDialog'
-import { createLiteratureDetailController } from './detail/LiteratureDetailController'
-import {
-  LiteratureDuplicatesView,
-  type LiteratureDuplicateCountHandle
-} from './duplicates/LiteratureDuplicatesView'
-import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { LiteratureReadingDialog } from './workflows/LiteratureReadingDialog'
-import { LiteratureRecordImportDialog } from './imports/LiteratureRecordImportDialog'
-import { LiteratureSearchInput } from './list/LiteratureSearchInput'
-import { LiteratureSelectionBoundary } from './list/LiteratureSelection'
-import { mergeScalarFields } from './duplicates/literature-merge'
-import {
-  createLiteratureSelectionStore,
-  isLiteratureItemSelected
-} from './list/literature-selection'
 
-import { useLiteratureMetadata } from './workflows/useLiteratureMetadata'
 import { useLiteratureYearFilter } from './list/useLiteratureYearFilter'
+import { useLiteratureMetadata } from './workflows/useLiteratureMetadata'
 
 import { LiteratureAddMenu } from './list/LiteratureLibraryMenus'
 
@@ -289,7 +289,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const [selectedCandidate, setSelectedCandidate] = useState<LiteratureInboxCandidateView>()
   const attachmentOperations = useAttachmentOperations((state) => state.operations)
-  const [detailController] = useState(createLiteratureDetailController)
+  const [detailController] = useState(() =>
+    createLiteratureDetailController((id) => window.api.literature.get(id))
+  )
   const selectedItem = detailController.getSnapshot().item
 
   const [error, setError] = useState<string>()

@@ -1,61 +1,65 @@
-import { PdfAnnotationRepository } from '../pdf-annotations/repository'
-import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
-import { initDataRoot } from '../storage-root'
+import type { PrismaClient } from '@prisma/client'
 import { createHash } from 'node:crypto'
-import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
-import { transactLiterature } from './transact'
 import {
-  mkdtemp,
-  rm,
-  writeFile,
-  truncate,
   access,
+  chmod,
+  mkdtemp,
   readFile,
   readdir,
   rename,
-  chmod
+  rm,
+  truncate,
+  writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import { initDataRoot } from '../storage-root'
+import { transactLiterature } from './transact'
 
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import {
-  createLiteratureAttachmentVersionReference,
-  parseLiteratureAttachmentVersionReference,
   literatureCatalogCommandSchema,
-  literatureCatalogReceiptSchema,
-  literatureItemInputSchema,
-  literaturePdfImportRequestSchema,
-  type LiteraturePdfImportRequest
-} from '../../shared/literature'
+  literatureCatalogReceiptSchema
+} from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createTestPdf as pdf } from '../../../test/fixtures/literature-pdf'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
+import {
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference
+} from '../../shared/literature-attachment-reference'
+import {
+  literaturePdfImportRequestSchema,
+  type LiteraturePdfImportRequest
+} from '../../shared/literature'
 import type { PersistedChatMessage } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ContentRepository } from '../storage/content-repository'
-import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
-import { inspectPdfPageCount } from '../uploads/attachment-media'
-import { LiteratureAttachmentAuthority } from './attachment-authority'
-import { LiteratureCatalog } from './catalog'
-import { AgentPdfAcquisition } from './agent-pdf-acquisition'
-import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
-import { SessionRepository } from '../session-persistence/repository'
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex
 } from '../session-persistence/coordinator'
-import { LiteraturePdfImporter } from './pdf-importer'
-import { LiteratureFullTextIndex } from './full-text-index'
-import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import { SessionRepository } from '../session-persistence/repository'
+import { ContentRepository } from '../storage/content-repository'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
+import { inspectPdfPageCount } from '../uploads/attachment-media'
+import { AgentPdfAcquisition } from './agent-pdf-acquisition'
+import { LiteratureAttachmentAuthority } from './attachment-authority'
+import { LiteratureCatalog } from './catalog'
 import { LiteratureDocumentReader } from './document-reader'
+import { literatureIndex } from './full-text-index'
+import { LiteraturePdfImporter } from './pdf-importer'
 import { SessionPdfSourceResolver } from './session-pdf-source-resolver'
-import { ManagedPreviewResources } from '../managed-preview-resources'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -660,7 +664,7 @@ describe('Literature PDF attachment reliability', () => {
     const extractionId = createHash('sha256')
       .update(`${version.checksum}:${fingerprint}`)
       .digest('hex')
-    const index = await LiteratureFullTextIndex.open(root)
+    const index = await literatureIndex(root).open()
     try {
       await index.replace({
         extractionId,

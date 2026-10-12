@@ -1,21 +1,21 @@
-import { randomUUID } from 'node:crypto'
-import { ClassificationUsageRecorder } from '../settings/classification-usage'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '@aipoch/literature-screening/contracts'
 import { formatSmartRule } from '@aipoch/literature-screening/rules'
-import {
-  AutomaticClassificationPausedError,
-  ClassificationEvaluationError
-} from '../../shared/classification'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { randomUUID } from 'node:crypto'
 import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { createProjectDbClient } from '../projects/prisma-client'
-import { migrateApplicationDatabase } from '../database/migration-service'
-import { createLiteratureScreening, type LiteratureScreening } from './screening-adapter'
-import { LiteratureCatalog } from './catalog'
 import type { ClassifyLiterature } from '../../shared/classification'
-import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '@aipoch/literature-screening/contracts'
+import {
+  AutomaticClassificationPausedError,
+  ClassificationEvaluationError
+} from '../../shared/classification'
+import { migrateApplicationDatabase } from '../database/migration-service'
+import { createProjectDbClient } from '../projects/prisma-client'
+import { ClassificationUsageRecorder } from '../settings/classification-usage'
+import { LiteratureCatalog } from './catalog'
+import { createLiteratureScreening, type LiteratureScreening } from './screening-adapter'
 
 let root: string
 let db: ReturnType<typeof createProjectDbClient>

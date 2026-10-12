@@ -15,9 +15,9 @@ import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { cn } from '@/lib/utils'
 import type { PdfReadingDocument } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { FolderPlus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 
 export function LiteratureReadingProjectDialog({
   pendingLiteratureReading,

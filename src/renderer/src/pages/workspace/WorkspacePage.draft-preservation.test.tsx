@@ -1,23 +1,22 @@
 // @vitest-environment jsdom
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import type * as React from 'react'
 import { act, useContext, useState } from 'react'
-import { literatureItemInputSchema } from '../../../../shared/literature'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LibraryPreviewNavigationContext,
   useLibraryReferenceActions
 } from './previews/library-reference-actions'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type * as React from 'react'
 
 import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards, workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 import {
   createInitialPreviewWorkbenchState,
   PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { previewLeaveGuards, workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 import { useProjectStore } from '@/stores/project-store'
-import { useSettingsStore } from '@/stores/settings-store'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -25,13 +24,14 @@ import {
   type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
-import type { UploadedAttachment } from '../../../../shared/uploads'
 import type {
   LiteratureReference,
   PersistedChatSession
 } from '../../../../shared/session-persistence'
+import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import {

@@ -1,37 +1,31 @@
-import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
-import {
-  literatureCatalogSearchRequestSchema,
-  literatureCatalogCommandSchema,
-  type LiteratureCollectionView,
-  literatureCandidateInputSchema,
-  literatureItemInputSchema,
-  LITERATURE_IMPORT_IDENTITY_CONFLICT,
-  type LiteratureCandidateInput
-} from '../../shared/literature'
 import { toCslItem } from '@aipoch/literature-citations/csl'
+import {
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
+  literatureCandidateInputSchema,
+  literatureCatalogCommandSchema,
+  literatureCatalogSearchRequestSchema,
+  type LiteratureCandidateInput,
+  type LiteratureCollectionView
+} from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { buildLiteratureMergeItem } from '../../renderer/src/pages/literature/duplicates/literature-merge'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
-import { LiteratureCatalog, normalizeIdentifier } from './catalog'
-import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { ProjectRepository } from '../projects/repository'
 import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
-
-describe('Literature identifier normalization', () => {
-  it('removes text joined to the end of a DOI before provider lookup', () => {
-    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/example')
-  })
-})
+import { LiteratureCatalog } from './catalog'
 
 const candidate = (
   overrides: {
@@ -1580,30 +1574,6 @@ describe('LiteratureCatalog', () => {
     expect(await client!.literatureItem.count()).toBe(2)
     expect(await client!.literatureCollectionItem.count()).toBe(0)
     expect((await client!.literatureItem.findUnique({ where: { id } }))!.deletedAt).not.toBeNull()
-  })
-
-  it('does not let a conflicting row create aliases for later import rows', async () => {
-    const catalog = await setup()
-    const existing = candidate({ doi: '10.1234/one' }).item
-    const incoming = candidate({ doi: '10.1234/two' }).item
-    const {
-      itemIds: [id]
-    } = await catalog.importItems([existing])
-    const independent = await catalog.inspectImportItems([incoming, existing], [])
-    const entries = await catalog.inspectImportItems(
-      [
-        { ...existing, identifiers: [...existing.identifiers, ...incoming.identifiers] },
-        incoming,
-        existing
-      ],
-      []
-    )
-    expect(entries[0].status).toBe('conflict')
-    expect(
-      entries.slice(1).map(({ status, existingItemId }) => ({ status, existingItemId }))
-    ).toEqual(independent.map(({ status, existingItemId }) => ({ status, existingItemId })))
-    expect(entries[2].existingItemId).toBe(id)
-    expect(await client!.literatureItem.count()).toBe(1)
   })
 
   it('keeps preview and commit aligned when later rows use an earlier matching row alias', async () => {
@@ -3171,15 +3141,6 @@ describe('LiteratureCatalog', () => {
     expect(await client!.literatureItem.count()).toBe(0)
     expect(await client!.literatureCreator.count()).toBe(0)
     expect(await client!.literatureIdentifier.count()).toBe(0)
-  })
-
-  it('marks repeated identifiers in the preview without inventing persisted item IDs', async () => {
-    const catalog = await setup()
-    const entries = await catalog.inspectImportItems([candidate().item, candidate().item], [])
-    expect(entries[0].status).not.toBe('existing')
-    expect(entries[1].status).toBe('existing')
-    expect(entries[1].existingItemId).toBeUndefined()
-    expect(await client!.literatureItem.count()).toBe(0)
   })
 
   it('filters the library by collection and settles dismissed Inbox candidates', async () => {

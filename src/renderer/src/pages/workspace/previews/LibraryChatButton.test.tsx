@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { LibraryChatButton } from './LibraryChatButton'
-import { literatureItemInputSchema } from '../../../../../shared/literature'
 
 const sessions = Array.from({ length: 40 }, (_, index) => ({
   id: `session-${index}`,

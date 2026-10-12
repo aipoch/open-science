@@ -1,14 +1,15 @@
 /* Hallmark · component: merge review · theme: Open-Science · P5 H5 E4 S5 R5 V4 */
-import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Check, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemInput, LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { Check, Paperclip } from 'lucide-react'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
-  literatureMergeRows,
   buildLiteratureMergeItem,
+  literatureMergeRows,
   mergeFieldSource,
   mergeValueKey,
   type LiteratureMergeField,

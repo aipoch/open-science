@@ -1,6 +1,6 @@
 import { LoaderCircle, Search } from 'lucide-react'
-import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -12,8 +12,8 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 
 const DOI_EXAMPLE = '10.1000/example'
 const PMID_EXAMPLE = '12345678'

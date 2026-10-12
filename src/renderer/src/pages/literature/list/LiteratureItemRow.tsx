@@ -9,12 +9,12 @@ import {
 } from 'lucide-react'
 import { memo, useContext } from 'react'
 import { useTranslation } from 'react-i18next'
-import { JournalAttributes } from '../JournalAttributes'
-import { LiteratureRowNumbers } from './literature-row-numbers'
 import {
   SmartCollectionCells,
   type SmartCollectionCellActions
 } from '../collections/SmartCollectionDecision'
+import { JournalAttributes } from '../JournalAttributes'
+import { LiteratureRowNumbers } from './literature-row-numbers'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
@@ -27,11 +27,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemInput, LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { ResourceTagBadges, ResourceTagMenu } from '../../settings/ResourceTagControls'
+import { LiteratureTextTooltip } from '../LiteratureTable'
 import { LiteratureSelectionStore } from './literature-selection'
 import { LiteratureSelectionCheckbox } from './LiteratureSelection'
-import { LiteratureTextTooltip } from '../LiteratureTable'
 
 import { LiteratureTableColumn } from './literature-table-preferences'
 

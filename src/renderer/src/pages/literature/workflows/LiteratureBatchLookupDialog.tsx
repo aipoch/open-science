@@ -1,14 +1,14 @@
-import { literatureMetadataProviderLabel } from '../../../../../shared/literature'
-import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
-import { LiteratureOversizedNotice } from '../list/LiteratureOversizedNotice'
-import { readLiteratureJobPages } from '../literature-read-pages'
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { LoaderCircle, X } from 'lucide-react'
-import * as Dialog from '@/components/ui/dialog'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { Button } from '@/components/ui/button'
+import * as Dialog from '@/components/ui/dialog'
+import {
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import {
   Select,
   SelectContent,
@@ -16,18 +16,18 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import {
-  dialogPanelClassName,
-  dialogOverlayClassName,
-  dialogHeaderClassName,
-  dialogTitleClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName
-} from '@/components/ui/dialog-chrome'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
-import { formatBytes } from '../../../../../shared/update'
 import { literatureJobProgress, type LiteratureJobRequest } from '@aipoch/literature-discovery/jobs'
+import { oversizedLiteratureReference } from '@aipoch/literature-library/client'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureMetadataProviderLabel } from '@aipoch/literature-library/contracts'
+import { LoaderCircle, X } from 'lucide-react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { formatBytes } from '../../../../../shared/update'
+import { LiteratureOversizedNotice } from '../list/LiteratureOversizedNotice'
+import { readLiteratureJobPages } from '../literature-read-pages'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =

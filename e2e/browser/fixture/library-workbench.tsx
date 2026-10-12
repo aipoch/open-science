@@ -1,28 +1,28 @@
 import '@/assets/main.css'
-import { WorkspaceToolSummaryCard } from '@/pages/workspace/WorkspaceToolSummaryCard'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceLiteratureToolCard } from '@/pages/workspace/WorkspaceLiteratureToolCard'
+import { WorkspaceToolSummaryCard } from '@/pages/workspace/WorkspaceToolSummaryCard'
 import { buildLiteratureLibraryToolSummary } from '@/pages/workspace/literature-tool-presentation'
-import {
-  usePreviewWorkbenchStore,
-  createProjectLibraryPreviewItem
-} from '@/stores/preview-workbench-store'
-import { useProjectStore } from '@/stores/project-store'
+import LibraryPreview from '@/pages/workspace/previews/LibraryPreview'
 import {
   LibraryPreviewNavigationContext,
   LibraryReferenceActionsContext
 } from '@/pages/workspace/previews/library-reference-actions'
+import {
+  createProjectLibraryPreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import type {
+  LiteratureCatalogCommand,
+  LiteratureCatalogSearchRequest,
+  LiteratureInboxCandidateView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { initI18n, prepareI18nLocale } from '@/i18n'
-import LibraryPreview from '@/pages/workspace/previews/LibraryPreview'
-import { literatureItemInputSchema } from '../../../src/shared/literature'
-import type {
-  LiteratureCatalogSearchRequest,
-  LiteratureItemView,
-  LiteratureInboxCandidateView,
-  LiteratureCatalogCommand
-} from '../../../src/shared/literature'
 
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') ?? 'populated'

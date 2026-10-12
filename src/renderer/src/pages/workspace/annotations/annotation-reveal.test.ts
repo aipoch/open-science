@@ -18,7 +18,7 @@ import {
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
 import { validateAnnotations, type PdfAnnotation } from '../../../../../shared/annotations'
-import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import type { Annotation } from '../../../../../shared/annotations'
 import { createUploadVersionReference } from '../../../../../shared/uploads'
 import { replayAnnotationId } from '../../../../../shared/replay-reference'

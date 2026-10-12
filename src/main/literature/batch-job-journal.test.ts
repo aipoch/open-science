@@ -1,7 +1,7 @@
-import { discoveryCheckpoints } from './discovery-adapters'
 import { randomUUID } from 'node:crypto'
+import { discoveryCheckpoints } from './discovery-adapters'
 
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 
 import { tmpdir } from 'node:os'
 
@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { literatureItemInputSchema } from '../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 
 import type { LiteratureJob } from '@aipoch/literature-discovery/jobs'
 

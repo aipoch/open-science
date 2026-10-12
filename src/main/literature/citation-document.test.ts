@@ -1,8 +1,8 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { strToU8, zipSync } from 'fflate'
 import { expect, it } from 'vitest'
-import { LiteratureCitationDocument } from './citation-document'
-import { literatureItemInputSchema } from '../../shared/literature'
 import { artifactLiteratureManifestSchema } from '../../shared/artifact-literature'
+import { LiteratureCitationDocument } from './citation-document'
 
 it('preserves Library-only fields and frozen corpus evidence while the package reformats citations', async () => {
   const item = literatureItemInputSchema.parse({

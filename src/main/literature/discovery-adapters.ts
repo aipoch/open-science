@@ -1,12 +1,12 @@
-import type { CheckpointStorage } from '@aipoch/literature-discovery'
-import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { LITERATURE_OVERSIZED_REFERENCE } from '../../shared/literature-export'
 import {
+  DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
-  writeDurableJsonFile,
   recoverDurableJsonDirectory,
-  DurableJsonRecoveryBarrierError
+  writeDurableJsonFile
 } from '@aipoch/durable-files'
+import type { CheckpointStorage } from '@aipoch/literature-discovery'
+import { LITERATURE_OVERSIZED_REFERENCE } from '@aipoch/literature-library'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   acquireDataRootWriter,
   isMigrationPending,

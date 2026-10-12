@@ -1,6 +1,6 @@
-import { expect, it } from 'vitest'
+import { literatureCatalogCommandSchema } from '@aipoch/literature-library/contracts'
 import { formatSmartRule } from '@aipoch/literature-screening/rules'
-import { literatureCatalogCommandSchema } from './literature'
+import { expect, it } from 'vitest'
 
 it('uses the same content limit and required inclusion across create, preview and edit', () => {
   const commands = [

@@ -1,16 +1,16 @@
+import { FullTextRateLimitError } from '@aipoch/literature-discovery/download'
+import { literatureCandidateInputSchema } from '@aipoch/literature-library/contracts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { createLiteratureLibraryMcpServer } from './library-mcp-server'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expect, it, vi, type Mock } from 'vitest'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ContentRepository } from '../storage/content-repository'
-import { LiteratureCatalog } from './catalog'
-import { expect, it, vi, type Mock } from 'vitest'
-import { literatureCandidateInputSchema } from '../../shared/literature'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
-import { FullTextRateLimitError } from '@aipoch/literature-discovery/download'
+import { LiteratureCatalog } from './catalog'
+import { createLiteratureLibraryMcpServer } from './library-mcp-server'
 
 const candidate = literatureCandidateInputSchema.parse({
   item: {

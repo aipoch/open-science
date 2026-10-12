@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
+import { useSettingsStore } from '@/stores/settings-store'
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
+import { type LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
-import { type LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
-import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
-import { useSettingsStore } from '@/stores/settings-store'
 
 const fullText = vi.fn()
 const transfer = vi.fn()

@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import {
   journalIdentityFromItem,
   journalSourceYearsSchema,
   selectJournalDatasets,
-  type JournalSourceYears,
-  type JournalRequest,
   type JournalAttribute,
   type JournalDataset,
-  type JournalIdentity
+  type JournalIdentity,
+  type JournalRequest,
+  type JournalSourceYears
 } from '@aipoch/journal-catalog/contracts'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 
-import type { LiteratureItemInput } from '../../../../../shared/literature-item'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 
 type ResolutionIdentity = Extract<JournalRequest, { action: 'resolve' }>['identities'][number]
 

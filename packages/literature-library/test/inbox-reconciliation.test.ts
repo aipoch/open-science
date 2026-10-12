@@ -1,6 +1,6 @@
-// @vitest-environment jsdom
+import { createLiteratureClient, type LibraryClientApi } from '../src/client/index.js'
 import { afterEach, expect, it, vi } from 'vitest'
-import { readMatchingCandidateIds } from './literature-inbox-reconciliation'
+let readMatchingCandidateIds: ReturnType<typeof createLiteratureClient>['readMatchingCandidateIds']
 
 afterEach(() => vi.restoreAllMocks())
 const candidate = (id: string): { id: string; candidate: object; state: string } => ({
@@ -10,7 +10,9 @@ const candidate = (id: string): { id: string; candidate: object; state: string }
 })
 function searchMock(): ReturnType<typeof vi.fn> {
   const search = vi.fn()
-  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { search } } })
+  readMatchingCandidateIds = createLiteratureClient({
+    search
+  } as unknown as LibraryClientApi).readMatchingCandidateIds
   return search
 }
 

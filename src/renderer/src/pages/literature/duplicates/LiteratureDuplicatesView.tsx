@@ -1,15 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Copy, LoaderCircle, RotateCcw } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import { LiteratureDuplicateMembers } from './LiteratureDuplicateMembers'
-import { LiteratureDuplicateBatch } from './LiteratureDuplicateBatch'
 import type {
   LiteratureCatalogReceipt,
   LiteratureDuplicateGroup,
   LiteratureItemView
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { Copy, LoaderCircle, RotateCcw } from 'lucide-react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
+import { LiteratureDuplicateBatch } from './LiteratureDuplicateBatch'
+import { LiteratureDuplicateMembers } from './LiteratureDuplicateMembers'
 
 export type LiteratureDuplicateCountHandle = { setCount: (count: number | undefined) => void }
 

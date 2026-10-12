@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 export default defineConfig({
   testDir: './e2e',
   // npm package artifacts are already compiled ESM, including linked local packages.
-  build: { external: ['**/packages/pdf-*/dist/**', '**/packages/pdf-*/resources/**'] },
+  build: { external: ['**/packages/*/dist/**', '**/packages/pdf-*/resources/**'] },
   forbidOnly: Boolean(process.env.CI),
   tag: process.env.CI ? `@${process.platform}` : undefined,
   testIgnore: ['**/browser/**'],

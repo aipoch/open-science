@@ -1,17 +1,17 @@
 import '@/assets/main.css'
-import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
+import { LiteratureMetadataEditor } from '@/pages/literature/detail/LiteratureMetadataEditor'
 import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
 import { LiteratureBatchLookupDialog } from '@/pages/literature/workflows/LiteratureBatchLookupDialog'
-import { LiteratureMetadataEditor } from '@/pages/literature/detail/LiteratureMetadataEditor'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
+import type { LiteratureJobRequest, LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand
-} from '../../../src/shared/literature'
-import type { LiteratureJobView, LiteratureJobRequest } from '@aipoch/literature-discovery/jobs'
+} from '@aipoch/literature-library/contracts'
+import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const parent = {

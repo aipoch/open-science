@@ -4,11 +4,11 @@ import { LiteratureSources } from '../LiteratureSources'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemView } from '../../../../../shared/literature'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue
 } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 
 import {
   fullCreatorLabel,

@@ -1,7 +1,7 @@
+import { Button } from '@/components/ui/button'
+import type { LiteratureCatalogReceipt } from '@aipoch/literature-library/contracts'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCatalogReceipt } from '../../../../../shared/literature'
-import { Button } from '@/components/ui/button'
 import { SmartRuleSummary } from './SmartRuleSummary'
 
 type History = NonNullable<LiteratureCatalogReceipt['smartHistory']>

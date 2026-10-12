@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { literatureItemInputSchema } from '../../shared/literature'
 import {
   conflictFreeLiteratureMerge,
   planLiteratureMerge,
   supplementLiteratureMetadata
-} from './duplicate-metadata'
+} from '../src/index.js'
+import { literatureItemInputSchema } from '../src/contracts.js'
+import { describe, expect, it } from 'vitest'
 
 const item = literatureItemInputSchema.parse({
   itemType: 'journalArticle',

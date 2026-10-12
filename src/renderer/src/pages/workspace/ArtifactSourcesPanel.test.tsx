@@ -4,9 +4,9 @@ import { useLocaleStore } from '@/stores/locale-store'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ArtifactLiteratureManifest } from '../../../../shared/artifact-literature'
-import { literatureFormatDocumentRequestSchema } from '../../../../shared/literature'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { literatureFormatDocumentRequestSchema } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureManifest } from '../../../../shared/artifact-literature'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
 
 const literature: ArtifactLiteratureManifest = {

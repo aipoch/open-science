@@ -1,19 +1,19 @@
-import { createServer, type Server } from 'node:http'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
-import { createHash } from 'node:crypto'
-import type { ElectronApplication, Page } from 'playwright'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
+import { createHash } from 'node:crypto'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
+import { join } from 'node:path'
 import {
-  PDFDocument,
   PDFDict,
+  PDFDocument,
   PDFName,
   StandardFonts,
   concatTransformationMatrix,
   degrees,
   rgb
 } from 'pdf-lib'
-import { literatureItemInputSchema } from '../src/shared/literature'
+import type { ElectronApplication, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const openReadingView = async (page: Page): Promise<void> => {

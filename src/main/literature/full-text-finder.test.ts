@@ -1,5 +1,5 @@
-import { inspectPdfPageCount } from '../uploads/attachment-media'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { inspectPdfPageCount } from '../uploads/attachment-media'
 
 import { tmpdir } from 'node:os'
 
@@ -13,7 +13,8 @@ import { LiteratureCatalog } from './catalog'
 
 import { expect, it, vi } from 'vitest'
 
-import { literatureItemInputSchema, type LiteratureItemView } from '../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 
 import {
   LiteratureFullTextFinder,

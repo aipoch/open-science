@@ -1,14 +1,14 @@
-import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createProjectDbClient } from '../projects/prisma-client'
+import { literatureCandidateInputSchema } from '@aipoch/literature-library/contracts'
 import { LiteratureCatalog } from '../literature/catalog'
-import { literatureCandidateInputSchema } from '../../shared/literature'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 describe('Literature inbox integrity migration', () => {

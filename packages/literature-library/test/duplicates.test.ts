@@ -1,5 +1,5 @@
+import { findLiteratureDuplicateGroups } from '../src/index.js'
 import { describe, expect, it } from 'vitest'
-import { findLiteratureDuplicateGroups } from './duplicates'
 
 type Candidate = Parameters<typeof findLiteratureDuplicateGroups>[0][number]
 const item = (id: string, overrides: Partial<Candidate> = {}): Candidate => ({

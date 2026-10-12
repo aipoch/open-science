@@ -1,15 +1,15 @@
-import * as nativeImport from '../pdf-annotations/native-import'
-import * as attachmentMedia from '../uploads/attachment-media'
-import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createTestPdf } from '../../../test/fixtures/literature-pdf'
+import * as nativeImport from '../pdf-annotations/native-import'
+import * as attachmentMedia from '../uploads/attachment-media'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
-import type { LiteratureItemView } from '../../shared/literature'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
+import { PENDING_UPLOAD_SESSION_ID, type UploadedAttachment } from '../../shared/uploads'
 import { LiteraturePdfImporter, type LiteraturePdfImporterOptions } from './pdf-importer'
 
 const attachment = (path: string): UploadedAttachment => ({

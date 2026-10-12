@@ -1,6 +1,6 @@
+import { createLiteratureDetailController } from '../src/client/index.js'
+import type { LiteratureItemView } from '../src/contracts.js'
 import { describe, expect, it, vi } from 'vitest'
-import type { LiteratureItemView } from '../../../../../shared/literature'
-import { createLiteratureDetailController } from './LiteratureDetailController'
 
 describe('Literature detail reads', () => {
   it('does not return an older relationship snapshot after a newer read has completed', async () => {
@@ -20,9 +20,8 @@ describe('Literature detail reads', () => {
           })
       )
       .mockResolvedValue(newer)
-    vi.stubGlobal('window', { api: { literature: { get } } })
     try {
-      const controller = createLiteratureDetailController()
+      const controller = createLiteratureDetailController(get)
       const pending = controller.read(older.id)
       expect(await controller.read(older.id)).toEqual(newer)
       finish(older)

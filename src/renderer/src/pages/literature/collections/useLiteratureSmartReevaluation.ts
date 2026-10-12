@@ -1,8 +1,8 @@
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
+import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCollectionView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
 import { shouldConfirmSmartReevaluation } from './smart-collection-preferences'
 import type { SmartCollectionState } from './smart-collection-state'
 type SingleReevaluation = { collectionId: string; itemId: string; previousRunId?: string }

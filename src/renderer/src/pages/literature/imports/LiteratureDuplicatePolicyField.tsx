@@ -1,5 +1,3 @@
-import { useId } from 'react'
-import { useTranslation } from 'react-i18next'
 import {
   Select,
   SelectContent,
@@ -10,7 +8,9 @@ import {
 import {
   literatureDuplicatePolicySchema,
   type LiteratureDuplicatePolicy
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { useId } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export function LiteratureDuplicatePolicyField({
   value,

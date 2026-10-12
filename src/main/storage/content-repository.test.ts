@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto'
 import {
+  copyFile,
+  lstat,
   mkdir,
   mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-  stat,
-  rename,
-  copyFile,
   readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
   symlink,
-  lstat
+  writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -18,10 +18,10 @@ import { basename, dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { literatureItemInputSchema } from '../../shared/literature'
-import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 import { markContentBlobAvailable, registerContentBlob } from './content-blob-registry'
 import { ContentRepository, resolveContentStorageKey } from './content-repository'
 

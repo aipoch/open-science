@@ -37,7 +37,9 @@ const plan = familyVerificationPlan([
   'literature-citations',
   'journal-catalog',
   'literature-discovery',
-  'literature-screening'
+  'literature-screening',
+  'literature-library',
+  'literature-reading'
 ])
 console.log('Package isolation plan:', JSON.stringify(plan))
 const entries = await Promise.all(
@@ -258,11 +260,13 @@ for (const e of entries) {
         'literature-citations',
         'journal-catalog',
         'literature-discovery',
-        'literature-screening'
+        'literature-screening',
+        'literature-library',
+        'literature-reading'
       ].includes(name)
     ) {
       await cp(join(root, e.root, 'test/packed-runtime.mjs'), join(consumer, 'packed-runtime.mjs'))
-      if (name === 'literature-screening')
+      if (['literature-screening', 'literature-library'].includes(name))
         await cp(join(root, e.root, 'test/memory-store.ts'), join(consumer, 'memory-store.ts'))
       await run(process.execPath, ['packed-runtime.mjs'], consumer, 'consumer-' + name + '-worker')
     }
@@ -290,9 +294,11 @@ for (const e of entries) {
               ? ['contracts', 'jobs'].map((entry) => e.manifest.name + '/' + entry)
               : name === 'literature-screening'
                 ? ['contracts', 'rules'].map((entry) => e.manifest.name + '/' + entry)
-                : name === 'journal-catalog'
-                  ? ['contracts', 'files'].map((entry) => e.manifest.name + '/' + entry)
-                  : []
+                : name === 'literature-library'
+                  ? ['contracts', 'client', 'item'].map((entry) => e.manifest.name + '/' + entry)
+                  : name === 'journal-catalog'
+                    ? ['contracts', 'files'].map((entry) => e.manifest.name + '/' + entry)
+                    : []
     if (browserEntries.length) {
       await writeFile(
         join(consumer, 'browser.ts'),

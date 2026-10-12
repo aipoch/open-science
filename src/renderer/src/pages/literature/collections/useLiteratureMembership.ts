@@ -1,10 +1,10 @@
-import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
   type LiteratureCatalogCommand
-} from '../../../../../shared/literature'
-import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
+} from '@aipoch/literature-library/contracts'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { LiteratureSelectionStore } from '../list/literature-selection'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200

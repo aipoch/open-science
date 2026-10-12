@@ -1,13 +1,13 @@
+import type { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
+import { downloadFullText, fullTextUrl } from '@aipoch/literature-discovery/download'
+import type { LiteratureCandidateOrigin } from '@aipoch/literature-library/contracts'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { LiteratureCandidateOrigin } from '../../shared/literature'
-import type { LiteratureLibraryDiscovery } from './library-mcp-server'
-import type { LiteratureCatalog } from './catalog'
 import type { ContentRepository } from '../storage/content-repository'
-import type { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
-import { downloadFullText, fullTextUrl } from '@aipoch/literature-discovery/download'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
+import type { LiteratureCatalog } from './catalog'
+import type { LiteratureLibraryDiscovery } from './library-mcp-server'
 
 type Request = {
   candidate: LiteratureLibraryDiscovery

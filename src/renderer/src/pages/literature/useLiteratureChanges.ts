@@ -1,5 +1,5 @@
+import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { useCallback, useLayoutEffect, useRef } from 'react'
-import type { LiteratureChangedEvent } from '../../../../shared/literature'
 
 export const isCollectionOnlyChange = (event?: LiteratureChangedEvent): boolean =>
   Boolean(event?.collectionIds?.length && !event.itemIds?.length && !event.candidateIds?.length)
