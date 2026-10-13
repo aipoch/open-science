@@ -691,7 +691,12 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `open-science-cli-${version}-1.aarch64.rpm`,
       `open-science-${version}-darwin-arm64.tar.gz`,
       `open-science-${version}-linux-x64-gnu.tar.gz`,
-      `open-science-${version}-win32-x64.zip`
+      `open-science-${version}-win32-x64.zip`,
+      `open-science-cli-${version}-darwin-arm64.tar.gz`,
+      `open-science-cli-${version}-darwin-x64.tar.gz`,
+      `open-science-cli-${version}-linux-arm64-gnu.tar.gz`,
+      `open-science-cli-${version}-linux-x64-gnu.tar.gz`,
+      `open-science-cli-${version}-win32-x64.zip`
     ]
     const sums: string[] = []
     for (const name of [...desktopInstallers, ...macZips, ...cliPackages]) {
