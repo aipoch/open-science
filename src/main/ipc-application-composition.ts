@@ -327,7 +327,9 @@ export const createApplicationModules = async (
     ...sessionPackages,
     ...managedFiles,
     ...sessionAuthority,
-    getNotebookService: () => notebookRuntime.notebookService
+    getNotebookService: () => notebookRuntime.notebookService,
+    clearSessionCredentials: (sessionId) =>
+      connectors.credentialRequestBroker.clearSession(sessionId)
   })
   const sessionProjection = composeSessionProjection({
     ...settingsBootstrap,
