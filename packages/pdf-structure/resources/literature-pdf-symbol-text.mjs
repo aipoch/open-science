@@ -973,13 +973,39 @@ const publisherSymbols = new Map([
   ]
 ])
 
+// Reviewed table and bold-caption fonts expose mathematical outlines as Latin
+// letters/digits. Share their family registry with re-subset name resolution;
+// reviewedSubsetSymbols still requires each font's observed encoding below.
+const conductanceSymbols = new Map([
+  ['AdvPS586D', [[53, ['5', '±', 1000]]]],
+  [
+    'AdvPS4721B4',
+    [
+      [97, ['a', 'α', 583, 'a']],
+      [98, ['b', 'β', 552, 'b']],
+      [100, ['d', 'δ', 468, 'd']],
+      [103, ['g', 'γ', 593, 'g']]
+    ]
+  ],
+  [
+    'AdvPS3ECA66',
+    [
+      [97, ['a', 'α', 625, 'a']],
+      [98, ['b', 'β', 593, 'b']],
+      [100, ['d', 'δ', 520, 'd']],
+      [103, ['g', 'γ', 614, 'g']]
+    ]
+  ],
+  ['AdvPS4731B1', [[78, ['N', '∞', 1000, 'N']]]]
+])
+
 // Re-subsetting can prepend a second six-letter tag without a plus sign.
 // Strip it only when the remaining family already has verified slot mappings;
 // the glyph's original code, Unicode and advance width are still checked below.
 const symbolFontName = (name) => {
   const family = name?.replace(/^[A-Z]{6}\+/, '')
   const untagged = family?.replace(/^[A-Z][a-z]{5}(?=Adv)/, '')
-  return publisherSymbols.has(untagged) ? untagged : family
+  return publisherSymbols.has(untagged) || conductanceSymbols.has(untagged) ? untagged : family
 }
 
 // These subsets paint mathematical outlines under Latin encoding names. Admit
@@ -1003,7 +1029,8 @@ const reviewedSubsetSymbols = (font, name) => {
     entries.every(([slot, value]) => font.differences[slot] === value)
   // Reviewed conductance tables paint ± at the sole `five` slot, while
   // ordinary numeric fonts still use that code for the digit 5.
-  if (name === 'AdvPS586D' && matches(54, [[53, 'five']])) return new Map([[53, ['5', '±', 1000]]])
+  if (name === 'AdvPS586D')
+    return matches(54, [[53, 'five']]) ? new Map(conductanceSymbols.get(name)) : undefined
   if (
     name === 'MathTechnicalPD' &&
     matches(57, [
@@ -1081,31 +1108,7 @@ const reviewedSubsetSymbols = (font, name) => {
   }
   if (name === 'AdvMacms' && matches(3, [[2, 'C3']])) return new Map([[2, ['\u0002', '*', 500]]])
   if (font.differences.length) return undefined
-  // These unmodified publisher encodings name Greek/infinity outlines with
-  // Latin letters. Both table and bold caption fonts were checked against
-  // rendered source pages; retain the original code, glyph name and advance.
-  const conductanceSymbols = new Map([
-    [
-      'AdvPS4721B4',
-      [
-        [97, ['a', 'α', 583, 'a']],
-        [98, ['b', 'β', 552, 'b']],
-        [100, ['d', 'δ', 468, 'd']],
-        [103, ['g', 'γ', 593, 'g']]
-      ]
-    ],
-    [
-      'AdvPS3ECA66',
-      [
-        [97, ['a', 'α', 625, 'a']],
-        [98, ['b', 'β', 593, 'b']],
-        [100, ['d', 'δ', 520, 'd']],
-        [103, ['g', 'γ', 614, 'g']]
-      ]
-    ],
-    ['AdvPS4731B1', [[78, ['N', '∞', 1000, 'N']]]]
-  ]).get(name)
-  if (conductanceSymbols) return new Map(conductanceSymbols)
+  if (conductanceSymbols.has(name)) return new Map(conductanceSymbols.get(name))
   // The embedded CMEX9/CMEX10 Type1 Encoding names slot 112 /radicalbig, but a
   // conflicting ToUnicode map can expose that large radical as Latin `p`.
   // Require its original slot, exact native advance and unmodified encoding;

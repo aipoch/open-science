@@ -49,35 +49,39 @@ it.each([
   }
 })
 
-it('preserves ordinary digits, Latin labels and native source evidence beside repaired symbols', async () => {
-  const fixture = readPdfFixture(resolve('test/fixtures/reviewed-publisher-glyph-variants.jsonl'))
-  for (const sample of fixture.cases) {
-    if (!sample.source) continue
-    const sourceItem = { pageNumber: 7, index: 1, text: sample.input }
-    const content = {
-      items: [
-        { str: sample.input, fontName: 'symbol', sourceItem, width: 10 },
-        { str: '5 a b d g N', fontName: 'prose', width: 50 }
-      ]
+it.each(['native', 'resubset'])(
+  'preserves ordinary text and source evidence beside %s symbols',
+  async (variant) => {
+    const fixture = readPdfFixture(resolve('test/fixtures/reviewed-publisher-glyph-variants.jsonl'))
+    for (const sample of fixture.cases) {
+      if (!sample.source) continue
+      if (variant === 'resubset') sample.font.name = sample.font.name.replace('+', '+Abcdef')
+      const sourceItem = { pageNumber: 7, index: 1, text: sample.input }
+      const content = {
+        items: [
+          { str: sample.input, fontName: 'symbol', sourceItem, width: 10 },
+          { str: '5 a b d g N', fontName: 'prose', width: 50 }
+        ]
+      }
+      const result = await repairPdfSymbolText(
+        {
+          commonObjs: {
+            get: (name: string) =>
+              name === 'symbol'
+                ? sample.font
+                : { name: 'Times-Roman', type: 'Type1', differences: [] }
+          }
+        },
+        content,
+        { fnArray: [OPS.setFont, OPS.showText], argsArray: [['symbol', 10], [sample.glyphs]] }
+      )
+      expect(result.items[0]).toEqual({
+        ...content.items[0],
+        str: sample.expected,
+        inlineSymbol: true
+      })
+      expect(result.items[0].sourceItem).toBe(sourceItem)
+      expect(result.items[1]).toBe(content.items[1])
     }
-    const result = await repairPdfSymbolText(
-      {
-        commonObjs: {
-          get: (name: string) =>
-            name === 'symbol'
-              ? sample.font
-              : { name: 'Times-Roman', type: 'Type1', differences: [] }
-        }
-      },
-      content,
-      { fnArray: [OPS.setFont, OPS.showText], argsArray: [['symbol', 10], [sample.glyphs]] }
-    )
-    expect(result.items[0]).toEqual({
-      ...content.items[0],
-      str: sample.expected,
-      inlineSymbol: true
-    })
-    expect(result.items[0].sourceItem).toBe(sourceItem)
-    expect(result.items[1]).toBe(content.items[1])
   }
-})
+)
