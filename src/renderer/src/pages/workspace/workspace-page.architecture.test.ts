@@ -143,8 +143,7 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps runtime controller consumers explicit and bounded', () => {
-    expect(importersOf(ownerPaths.composer)).toEqual([
-"pages/workspace/use-research-run-launcher.tsx",'pages/workspace/WorkspacePage.tsx'])
+    expect(importersOf(ownerPaths.composer)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
       'ApplicationPresentationHost.tsx',
       'lib/compute/WorkspaceComputeRecoveryBridge.tsx',

@@ -466,7 +466,7 @@ async function startDesktop(): Promise<void> {
     | undefined
   const recoveryEvents = createDesktopRecoveryEventBuffer()
   const native = createDesktopNativeHandler((id) => relay?.documentFor(id), isApplicationWindow)
-  const observationNative = createDesktopObservationNativeHandler({
+  let observationNative = createDesktopObservationNativeHandler({
     documentFor: (id) => relay?.documentFor(id)
   })
   let state: DatabaseStartupState = { phase: 'checking' }
@@ -701,6 +701,9 @@ async function startDesktop(): Promise<void> {
       notifications.dispose()
       client = candidate
       notifications = makeNotifications()
+      observationNative = createDesktopObservationNativeHandler({
+        documentFor: (id) => relay?.documentFor(id)
+      })
       const candidatePreview = await createDesktopPreviewProxy(configRoot, candidate.processId())
       if (signal.aborted) {
         candidatePreview.dispose()

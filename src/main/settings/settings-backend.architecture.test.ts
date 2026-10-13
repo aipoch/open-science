@@ -1111,7 +1111,7 @@ describe('Settings backend ownership architecture', () => {
     )
     expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual(
       expect.arrayContaining([
-"src/main/research-demos/owner.macos.integration.test.ts",
+        'src/main/research-demos/owner.macos.integration.test.ts',
         'src/main/composition/artifact-surfaces.test.ts',
         'src/main/composition/managed-execution.integration.test.ts',
         'src/main/composition/session-packages.test.ts',
