@@ -34,6 +34,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "packages/open-science/cli.test.ts",
       "packages/open-science/client.test.ts",

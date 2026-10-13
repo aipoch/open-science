@@ -20,6 +20,7 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "packages/reproducibility/src/output-comparison.test.ts",
       "packages/reproducibility/src/preflight.test.ts",

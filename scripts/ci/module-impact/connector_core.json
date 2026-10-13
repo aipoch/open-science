@@ -40,6 +40,7 @@
       "src/main/connectors/boundaries.architecture.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",

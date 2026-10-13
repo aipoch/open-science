@@ -10,6 +10,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/notebook/network-sandbox-owner.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/notebook/kernel-executor.test.ts",

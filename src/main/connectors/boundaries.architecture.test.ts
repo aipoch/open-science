@@ -70,13 +70,12 @@ it('consumes Connector packages only through exports and keeps packages independ
     const owner = packages.find((pkg) => file.startsWith(pkg.directory + sep))
     const source = readFileSync(file, 'utf8')
     for (const { fileName: specifier } of preProcessFile(source, true, true).importedFiles) {
-      const target = resolutionOptions
-        .map(
-          (options, index) =>
-            resolveModuleName(specifier, file, options, sys, resolutionCaches[index]).resolvedModule
-              ?.resolvedFileName
-        )
-        .find(Boolean)
+      let target: string | undefined
+      for (const [index, options] of resolutionOptions.entries()) {
+        target = resolveModuleName(specifier, file, options, sys, resolutionCaches[index])
+          .resolvedModule?.resolvedFileName
+        if (target) break
+      }
       for (const pkg of packages) {
         if (specifier === pkg.manifest.name || specifier.startsWith(pkg.manifest.name + '/')) {
           if (!pkg.entries.has(specifier)) violations.push(`${path} -> private export ${specifier}`)

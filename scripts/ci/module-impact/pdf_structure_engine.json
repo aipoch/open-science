@@ -2233,6 +2233,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/literature/pdf-structure/engine.test.ts",
       "src/main/literature/pdf-structure/worker-result.test.ts",

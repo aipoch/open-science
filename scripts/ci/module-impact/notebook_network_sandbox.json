@@ -119,6 +119,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",

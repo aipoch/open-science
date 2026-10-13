@@ -86,6 +86,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "cli/config-root.test.ts",
