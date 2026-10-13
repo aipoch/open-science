@@ -174,14 +174,12 @@ export class RuntimePayloadTransfers {
           }
           if (entry.offset !== entry.bytes) throw new Error('Payload upload is incomplete.')
           entry.mode = 'invoking'
-          const bytes = Buffer.alloc(entry.bytes)
-          await this.readExactly(entry.file!, bytes, 0)
-          const uploaded: unknown = parseRpcJson(
-            new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-          )
+          const byteLength = entry.bytes
+          // Reserve admission before materializing arguments, while retaining their original length.
+          this.reserve(entry, MAX_RUNTIME_PAYLOAD_BYTES)
+          const uploaded = await this.readUploadedArguments(entry, caller, byteLength)
           if (!Array.isArray(uploaded)) throw new Error('Invalid uploaded command arguments.')
           this.authorize(caller, lease, entry)
-          this.reserve(entry, MAX_RUNTIME_PAYLOAD_BYTES)
           return this.publish(entry, await dispatch(uploaded), caller)
         })
       } catch (error) {
@@ -385,6 +383,25 @@ export class RuntimePayloadTransfers {
     }
     // mkdtemp uses 0700, and the unpredictable suffix prevents claiming another process's root.
     return mkdtemp(join(this.temporaryParent, `${prefix}${process.pid}-${randomUUID()}-`))
+  }
+
+  private async readUploadedArguments(
+    entry: Transfer,
+    caller: CallerContext,
+    byteLength: number
+  ): Promise<unknown> {
+    const bytes = Buffer.alloc(Math.min(RUNTIME_PAYLOAD_PAGE_BYTES, byteLength))
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const chunks: string[] = []
+    for (let offset = 0; offset < byteLength; offset += bytes.length) {
+      this.authorize(caller, entry.lease, entry)
+      const page = bytes.subarray(0, Math.min(bytes.length, byteLength - offset))
+      await this.readExactly(entry.file!, page, offset)
+      this.authorize(caller, entry.lease, entry)
+      chunks.push(decoder.decode(page, { stream: true }))
+    }
+    chunks.push(decoder.decode())
+    return parseRpcJson(chunks.join(''))
   }
 
   private async readExactly(file: FileHandle, bytes: Buffer, offset: number): Promise<void> {

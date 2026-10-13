@@ -6,6 +6,7 @@ import { RuntimePayloadTransfers } from './runtime-payload-transfers'
 import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import { createWebCallerContext } from './caller-context'
 import {
+  RUNTIME_PAYLOAD_PAGE_BYTES,
   runtimePayloadDescriptorSchema,
   type RuntimePayloadRequest
 } from '../shared/runtime-payload-transfer'
@@ -566,5 +567,89 @@ it('bounds shutdown cleanup when an uploaded command ignores cancellation', asyn
     await operation
     await shutdown
   }
+  expect(await readdir(root)).toEqual([])
+})
+
+it('commits uploads when payload-sized buffer allocations are unavailable', async () => {
+  const client = caller()
+  const args = [
+    {
+      text:
+        'x'.repeat(RUNTIME_PAYLOAD_PAGE_BYTES - 12) +
+        '科学😀' +
+        'x'.repeat(RUNTIME_PAYLOAD_PAGE_BYTES)
+    }
+  ]
+  const bytes = Buffer.from(JSON.stringify(args))
+  const { $payload } = runtimePayloadDescriptorSchema.parse(
+    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: bytes.length })
+  )
+  for (let offset = 0; offset < bytes.length; offset += RUNTIME_PAYLOAD_PAGE_BYTES) {
+    await client.invoke('sessions:save-session', [], {
+      kind: 'append',
+      snapshotId: $payload.snapshotId,
+      offset,
+      data: bytes.subarray(offset, offset + RUNTIME_PAYLOAD_PAGE_BYTES).toString('base64')
+    })
+  }
+  client.dispatch.mockResolvedValue(null)
+  const allocate = Buffer.alloc
+  vi.spyOn(Buffer, 'alloc').mockImplementation((size, ...rest) => {
+    if (size > RUNTIME_PAYLOAD_PAGE_BYTES)
+      throw new RangeError('Payload-sized allocation unavailable')
+    return allocate(size, ...rest)
+  })
+  await expect(
+    client.invoke('sessions:save-session', [], { kind: 'commit', snapshotId: $payload.snapshotId })
+  ).resolves.toBeNull()
+  expect(client.dispatch).toHaveBeenCalledExactlyOnceWith(args)
+})
+
+it('rejects exhausted mutation capacity before reading uploaded arguments', async () => {
+  const client = caller('writer')
+  const { $payload } = runtimePayloadDescriptorSchema.parse(
+    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: 2 })
+  )
+  await client.invoke('sessions:save-session', [], {
+    kind: 'append',
+    snapshotId: $payload.snapshotId,
+    offset: 0,
+    data: 'W10='
+  })
+  await caller('quota-a').invoke('sessions:save-session', [], {
+    kind: 'upload',
+    byteLength: 512 * 1024 * 1024
+  })
+  await caller('quota-b').invoke('sessions:save-session', [], {
+    kind: 'upload',
+    byteLength: 512 * 1024 * 1024 - 2
+  })
+  const allocate = vi.spyOn(Buffer, 'alloc')
+  await expect(
+    client.invoke('sessions:save-session', [], { kind: 'commit', snapshotId: $payload.snapshotId })
+  ).rejects.toThrow('byte budget')
+  expect(allocate).not.toHaveBeenCalled()
+  expect(client.dispatch).not.toHaveBeenCalled()
+})
+
+it.each([
+  [0x5b, 0x22, 0xe2, 0x22, 0x5d],
+  [0x5b, 0x22, 0xe2]
+])('rejects invalid or unfinished uploaded UTF-8 before domain dispatch: %j', async (...data) => {
+  const client = caller()
+  const bytes = Buffer.from(data)
+  const { $payload } = runtimePayloadDescriptorSchema.parse(
+    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: bytes.length })
+  )
+  await client.invoke('sessions:save-session', [], {
+    kind: 'append',
+    snapshotId: $payload.snapshotId,
+    offset: 0,
+    data: bytes.toString('base64')
+  })
+  await expect(
+    client.invoke('sessions:save-session', [], { kind: 'commit', snapshotId: $payload.snapshotId })
+  ).rejects.toThrow(/encoding utf-8/)
+  expect(client.dispatch).not.toHaveBeenCalled()
   expect(await readdir(root)).toEqual([])
 })
