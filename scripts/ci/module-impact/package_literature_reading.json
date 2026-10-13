@@ -31,6 +31,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
       "src/main/acp/runtime-library-evidence.test.ts",

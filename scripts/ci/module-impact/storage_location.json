@@ -82,6 +82,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "cli/config-root.test.ts",
       "scripts/backend-dependencies.test.ts",
       "scripts/build-backend.integration.test.ts",

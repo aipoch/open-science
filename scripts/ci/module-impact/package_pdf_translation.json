@@ -546,6 +546,7 @@
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",

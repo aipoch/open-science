@@ -26,6 +26,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/codex-completion-handoff.integration.test.ts",
       "src/main/acp/ipc.test.ts",
       "src/main/acp/mcp-http-host.test.ts",

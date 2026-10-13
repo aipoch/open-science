@@ -21,6 +21,7 @@
     "src/main/composition/notebook-surfaces.ts",
     "src/main/composition/notifications.ts",
     "src/main/composition/project-lifecycle.ts",
+    "src/main/composition/project-lifecycle.test.ts",
     "src/main/composition/research-catalog.ts",
     "src/main/composition/session-authority.ts",
     "src/main/composition/session-foundation.ts",
@@ -247,6 +248,7 @@
   "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/app-branding.test.ts",

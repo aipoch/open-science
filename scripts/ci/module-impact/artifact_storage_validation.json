@@ -76,6 +76,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",

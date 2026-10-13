@@ -6,6 +6,7 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",

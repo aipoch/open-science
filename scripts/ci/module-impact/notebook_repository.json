@@ -62,6 +62,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/electron-fixture-teardown.test.ts",

@@ -23,6 +23,7 @@
     "owner": ["packages/compute/src/host-connection-profile.test.ts"],
     "contract": [],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "packages/compute/src/cleanup-stop-evidence.test.ts",
       "packages/compute/src/ssh-runner.real-process.test.ts",
       "packages/compute/src/concurrency-manager.test.ts",

@@ -123,6 +123,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "scripts/windows-runtime-cache-uninstall.test.ts",

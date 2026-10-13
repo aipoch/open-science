@@ -32,6 +32,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/skills/catalog.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",

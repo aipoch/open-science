@@ -13,6 +13,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/stage-default-envs.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/agent-process.test.ts",

@@ -65,6 +65,7 @@
       "src/preload/index.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",
       "src/main/acp/runtime-provider-session-composition.test.ts",

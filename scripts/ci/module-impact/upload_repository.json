@@ -52,6 +52,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
       "src/main/agents/agents-mutations.test.ts",
       "src/main/agents/agents-service.test.ts",

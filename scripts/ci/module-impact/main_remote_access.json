@@ -38,6 +38,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",
