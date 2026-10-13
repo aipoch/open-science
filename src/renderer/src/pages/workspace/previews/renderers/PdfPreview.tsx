@@ -176,7 +176,11 @@ import {
   PdfTranslationSidebar
 } from './PdfTranslationView'
 import { usePdfTranslationAgent } from './use-pdf-translation-agent'
-import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
+import {
+  usePdfTranslationJob,
+  type PdfTranslationExecutor,
+  type PdfTranslationOptions
+} from './use-pdf-translation-job'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
@@ -2447,6 +2451,11 @@ export const PdfPreviewContent = ({
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
   const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
+  const [pendingNewTranslation, setPendingNewTranslation] = useState<{
+    key: string
+    document: PdfDocument
+    options: PdfTranslationOptions
+  }>()
   const translationToggleRef = useRef<HTMLButtonElement>(null)
   const translationCloseRef = useRef<HTMLButtonElement>(null)
   const translationPanelId = useId()
@@ -2845,7 +2854,7 @@ export const PdfPreviewContent = ({
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recovery.checkpoint
+    recoveryCheckpoint
   )
   const jobSource =
     document && presentation !== 'search'
@@ -2867,6 +2876,31 @@ export const PdfPreviewContent = ({
     effectiveTranslationExecutor,
     recoveryCheckpoint
   )
+  useEffect(() => {
+    if (!pendingNewTranslation) return
+    if (
+      pendingNewTranslation.key !== resourceRequestKey ||
+      pendingNewTranslation.document !== document ||
+      preparation.state.status === 'error' ||
+      preparation.state.status === 'cancelled'
+    ) {
+      setPendingNewTranslation(undefined)
+      return
+    }
+    if (preparation.state.status === 'idle') prepareFullText()
+    else if (preparation.state.status === 'ready') {
+      // Start only after React has installed the freshly extracted source in the job owner.
+      setPendingNewTranslation(undefined)
+      translationJob.restart(pendingNewTranslation.options)
+    }
+  }, [
+    pendingNewTranslation,
+    resourceRequestKey,
+    document,
+    preparation.state.status,
+    prepareFullText,
+    translationJob
+  ])
   const {
     status: translationStatus,
     done: translatedCount,
@@ -3714,11 +3748,18 @@ export const PdfPreviewContent = ({
       onCancel={translationJob.cancel}
       onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
       onNewTranslation={(options) => {
+        if (!document) return
         setSuppressedRecoveryKey(resourceRequestKey)
-        translationJob.restart({
-          ...options,
-          ...(attachmentVersionId ? { attachmentVersionId } : {}),
-          ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+        translationJob.reset()
+        preparation.reset()
+        setPendingNewTranslation({
+          key: resourceRequestKey,
+          document,
+          options: {
+            ...options,
+            ...(attachmentVersionId ? { attachmentVersionId } : {}),
+            ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+          }
         })
         setTranslationQuery('')
         setSelectedTranslation(undefined)

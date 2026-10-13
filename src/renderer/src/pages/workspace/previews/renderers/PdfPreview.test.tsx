@@ -339,182 +339,278 @@ describe('PdfPreviewContent', () => {
     }
   }
 
-  it('keeps the sidebar mounted across edition selection and asynchronous layout verification', async () => {
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
-    const page = await (
-      getPage as () => Promise<{
-        getViewport: ReturnType<typeof vi.fn>
-        getTextContent: ReturnType<typeof vi.fn>
-        getAnnotations?: ReturnType<typeof vi.fn>
-      }>
-    )()
-    page.getViewport.mockReturnValue({ width: 600, height: 800 })
-    page.getTextContent.mockResolvedValue({
-      items: [
-        { str: 'Selectable text', width: 80, height: 10, transform: [10, 0, 0, 10, 60, 700] }
-      ],
-      styles: {}
-    })
-    page.getAnnotations = vi.fn().mockResolvedValue([])
-    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
-      promise: Promise.resolve({
-        numPages: 1,
-        fingerprints: ['fp'],
-        getPage,
-        getData: async () => new Uint8Array([0]),
-        destroy: destroyDocument
-      }),
-      destroy: vi.fn().mockResolvedValue(undefined)
-    } as never)
-    const saved = (key: string, unitId: string, text: string): PdfTranslationCheckpoint => ({
-      version: 1,
-      key,
-      revision: 1,
-      attachmentVersionId: 'version-1',
-      checksum: 'a'.repeat(64),
-      fingerprint: 'fp',
-      language: 'Chinese',
-      glossary: [],
-      targetKey: 'b'.repeat(64),
-      model: { frameworkId: 'direct-api', mode: 'api', modelId: unitId },
-      sources: ['Selectable text'],
-      translations: [text],
-      translatedSourceIndices: [0],
-      layoutSnapshot: {
-        version: 1,
-        parserVersion: unitId,
-        fingerprint: 'fp',
-        pages: [{ width: 600, height: 800 }],
-        units: [
+  it.each(['select', 'new', 'cancel', 'navigate'] as const)(
+    'handles the %s edition action with its own layout and lifetime',
+    async (action) => {
+      useSettingsStore.setState({
+        providers: [
           {
-            id: unitId,
-            source: 'Selectable text',
-            fragments: [
-              {
-                pageNumber: 1,
-                rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
-                items: [{ index: 0, text: 'Selectable text' }]
-              }
-            ]
+            id: 'api-provider',
+            name: 'API provider',
+            type: 'custom',
+            baseUrl: 'https://example.test',
+            apiEndpoints: ['openai'],
+            models: ['translation-test'],
+            hasKey: true,
+            needsKey: false,
+            supportsImageInput: false
           }
+        ]
+      })
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const page = await (
+        getPage as () => Promise<{
+          getViewport: ReturnType<typeof vi.fn>
+          getTextContent: ReturnType<typeof vi.fn>
+          getAnnotations?: ReturnType<typeof vi.fn>
+        }>
+      )()
+      page.getViewport.mockReturnValue({ width: 600, height: 800 })
+      page.getTextContent.mockResolvedValue({
+        items: [
+          { str: 'Selectable text', width: 80, height: 10, transform: [10, 0, 0, 10, 60, 700] }
         ],
-        coverage: {
-          pageCount: 1,
-          textItemCount: 1,
-          includedItemCount: 1,
-          excludedItemCount: 0,
-          pagesWithoutText: [],
-          exclusions: [],
-          warnings: []
+        styles: {}
+      })
+      page.getAnnotations = vi.fn().mockResolvedValue([])
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          fingerprints: ['fp'],
+          getPage,
+          getData: async () => new Uint8Array([0]),
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      const saved = (key: string, unitId: string, text: string): PdfTranslationCheckpoint => ({
+        version: 1,
+        key,
+        revision: 1,
+        attachmentVersionId: 'version-1',
+        checksum: 'a'.repeat(64),
+        fingerprint: 'fp',
+        language: 'Chinese',
+        glossary: [],
+        targetKey: 'b'.repeat(64),
+        model: {
+          frameworkId: 'direct-api',
+          mode: 'api',
+          providerId: 'api-provider',
+          modelId: action === 'select' ? unitId : 'translation-test'
+        },
+        sources: ['Selectable text'],
+        translations: [text],
+        translatedSourceIndices: [0],
+        layoutSnapshot: {
+          version: 1,
+          parserVersion: unitId,
+          fingerprint: 'fp',
+          pages: [{ width: 600, height: 800 }],
+          units: [
+            {
+              id: unitId,
+              source: 'Selectable text',
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+                  items: [{ index: 0, text: 'Selectable text' }]
+                }
+              ]
+            }
+          ],
+          coverage: {
+            pageCount: 1,
+            textItemCount: 1,
+            includedItemCount: 1,
+            excludedItemCount: 0,
+            pagesWithoutText: [],
+            exclusions: [],
+            warnings: []
+          }
         }
-      }
-    })
-    const first = saved('11111111-1111-4111-8111-111111111111', 'first-model', '上一份译文')
-    const second = saved('22222222-2222-4222-8222-222222222222', 'second-model', '新译本内容')
-    let resolveSelection!: (value: PdfTranslationCheckpoint) => void
-    let finishVerification!: () => void
-    const verification = new Promise<void>((resolve) => {
-      finishVerification = resolve
-    })
-    const bind = pdfTranslations.createPdfTranslationBinder()
-    const delayedBind = vi.fn<typeof bind>(async (...args) => {
-      if (args[1].checkpoint?.key === second.key) await verification
-      return bind(...args)
-    })
-    vi.spyOn(pdfTranslations, 'createPdfTranslationBinder').mockReturnValue(delayedBind)
-    const editions = [first, second].map((checkpoint, index) => ({
-      id: `edition-${index}`,
-      key: checkpoint.key,
-      language: checkpoint.language,
-      glossary: [],
-      model: checkpoint.model,
-      selected: index === 0,
-      updatedAt: 1700000000000 + index
-    }))
-    const selectEdition = vi.fn(
-      () =>
-        new Promise<PdfTranslationCheckpoint>((resolve) => {
-          resolveSelection = resolve
-        })
-    )
-    Object.assign(window.api, {
-      pdfTranslation: {
-        readCheckpoint: vi.fn().mockResolvedValue(first),
-        listEditions: vi.fn().mockResolvedValue(editions),
-        selectEdition,
-        generatePdf: vi.fn(() => new Promise(() => {})),
-        cancelPdf: vi.fn().mockResolvedValue(undefined)
-      }
-    })
-    const props = {
-      path: 'literature-attachment-version:version-1',
-      name: 'edition.pdf',
-      source: 'literature' as const
-    }
-    const executor = {
-      targets: [{ id: 'api', label: 'Direct API', mode: 'api' as const }],
-      translate: vi.fn()
-    }
-    await act(async () => {
-      root.render(<PdfPreviewContent {...props} translationExecutor={executor} />)
-      await flush()
-    })
-    await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
-    const selector = await screen.findByRole<HTMLButtonElement>('combobox', {
-      name: 'Saved translations'
-    })
-    const setup = screen.getByRole('button', { name: 'Translation settings' })
-    expect(setup.getAttribute('aria-expanded')).toBe('false')
-    const progress = screen.getByRole('group', { name: 'Translation progress' })
-    const toggle = screen.getByRole('button', { name: /^Translation\s*1$/ })
-    await act(async () => toggle.click())
-    const oldRow = container.querySelector('[data-translation-row="first-model"]')!
-    expect(oldRow).not.toBeNull()
-    await act(async () => fireEvent.keyDown(selector, { key: 'ArrowDown' }))
-    await act(async () =>
-      fireEvent.click(screen.getByRole('option', { name: /Chinese · second-model/ }))
-    )
-    expect(selectEdition).toHaveBeenCalledWith({ source: 'version-1', translationId: 'edition-1' })
-    expect(selector.disabled).toBe(true)
-    expect(progress.isConnected).toBe(true)
-    await act(async () => {
-      resolveSelection(second)
-      await flush()
-    })
-    await waitFor(() =>
-      expect(delayedBind.mock.calls.some((args) => args[1].checkpoint?.key === second.key)).toBe(
-        true
+      })
+      const first = saved('11111111-1111-4111-8111-111111111111', 'first-model', '上一份译文')
+      const second = saved('22222222-2222-4222-8222-222222222222', 'second-model', '新译本内容')
+      let resolveSelection!: (value: PdfTranslationCheckpoint) => void
+      let finishVerification!: () => void
+      const verification = new Promise<void>((resolve) => {
+        finishVerification = resolve
+      })
+      const bind = pdfTranslations.createPdfTranslationBinder()
+      const delayedBind = vi.fn<typeof bind>(async (...args) => {
+        if (args[1].checkpoint?.key === second.key) await verification
+        return bind(...args)
+      })
+      vi.spyOn(pdfTranslations, 'createPdfTranslationBinder').mockReturnValue(delayedBind)
+      const editions = [first, second].map((checkpoint, index) => ({
+        id: `edition-${index}`,
+        key: checkpoint.key,
+        language: checkpoint.language,
+        glossary: [],
+        model: checkpoint.model,
+        selected: index === 0,
+        updatedAt: 1700000000000 + index
+      }))
+      const selectEdition = vi.fn(
+        () =>
+          new Promise<PdfTranslationCheckpoint>((resolve) => {
+            resolveSelection = resolve
+          })
       )
-    )
-    expect(selector.isConnected).toBe(true)
-    expect(selector.disabled).toBe(true)
-    expect(selector.getAttribute('aria-busy')).toBe('true')
-    expect(setup.isConnected).toBe(true)
-    expect(setup.getAttribute('aria-expanded')).toBe('false')
-    expect(progress.isConnected).toBe(true)
-    expect(toggle.isConnected).toBe(true)
-    expect(oldRow.isConnected).toBe(true)
-    expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
-    await act(async () => {
-      finishVerification()
-      await flush()
-    })
-    await waitFor(() =>
-      expect(container.querySelector('[data-translation-row="second-model"]')).not.toBeNull()
-    )
-    expect(selector.disabled).toBe(false)
-    expect(progress.isConnected).toBe(true)
-    expect(toggle.isConnected).toBe(true)
-    expect(setup.getAttribute('aria-expanded')).toBe('false')
-    expect(oldRow.isConnected).toBe(false)
-    expect(container.querySelector('[data-translation-row="first-model"]')).toBeNull()
-    // Another PDF must never inherit the retained edition or its sidebar content.
-    await act(async () => {
-      root.render(<PdfPreviewContent path="other.pdf" name="other.pdf" />)
-      await flush()
-    })
-    expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
-  })
+      Object.assign(window.api, {
+        pdfTranslation: {
+          readCheckpoint: vi.fn().mockResolvedValue(first),
+          listEditions: vi.fn().mockResolvedValue(editions),
+          selectEdition,
+          generatePdf: vi.fn(() => new Promise(() => {})),
+          cancelPdf: vi.fn().mockResolvedValue(undefined)
+        }
+      })
+      const props = {
+        path: 'literature-attachment-version:version-1',
+        name: 'edition.pdf',
+        source: 'literature' as const
+      }
+      const executor = {
+        targets: [{ id: 'api', label: 'Direct API', mode: 'api' as const }],
+        begin: vi.fn(async () => undefined),
+        translate: vi.fn(() => new Promise<string>(() => {}))
+      }
+      await act(async () => {
+        root.render(<PdfPreviewContent {...props} translationExecutor={executor} />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+      const selector = await screen.findByRole<HTMLButtonElement>('combobox', {
+        name: 'Saved translations'
+      })
+      const setup = screen.getByRole('button', { name: 'Translation settings' })
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      const progress = screen.getByRole('group', { name: 'Translation progress' })
+      const toggle = screen.getByRole('button', { name: /^Translation\s*1$/ })
+      await act(async () => toggle.click())
+      const oldRow = container.querySelector('[data-translation-row="first-model"]')!
+      expect(oldRow).not.toBeNull()
+      if (action !== 'select') {
+        const originalSnapshot = JSON.stringify(first)
+        let finishExtraction!: (value: pdfTranslations.PdfTranslationExtraction) => void
+        const extract = vi.spyOn(pdfTranslations, 'extractPdfTranslationSource').mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishExtraction = resolve
+            })
+        )
+        await act(async () => fireEvent.click(setup))
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'New translation' }))
+        )
+        const dialog = await screen.findByRole('dialog', { name: 'New translation' })
+        await act(async () =>
+          fireEvent.click(within(dialog).getByRole('button', { name: 'Translate document' }))
+        )
+        await waitFor(() => expect(extract).toHaveBeenCalledTimes(1))
+        expect(executor.begin).not.toHaveBeenCalled()
+        if (action === 'cancel') {
+          await act(async () =>
+            fireEvent.click(
+              within(screen.getByRole('region', { name: 'Full-text preparation' })).getByRole(
+                'button',
+                { name: 'Cancel' }
+              )
+            )
+          )
+        } else if (action === 'navigate') {
+          await act(async () => {
+            root.render(<PdfPreviewContent path="other.pdf" name="other.pdf" />)
+            await flush()
+          })
+        }
+        const freshSource = createPdfTranslationSource({
+          resourceRequestKey: extract.mock.calls[0][0].resourceRequestKey,
+          fingerprint: 'fp',
+          pages: first.layoutSnapshot!.pages,
+          units: [
+            {
+              ...first.layoutSnapshot!.units[0],
+              id: 'fresh-layout',
+              source: 'Freshly grouped text'
+            }
+          ]
+        })
+        await act(async () => {
+          finishExtraction({ source: freshSource, coverage: first.layoutSnapshot!.coverage })
+          await flush()
+        })
+        if (action === 'new') {
+          await waitFor(() =>
+            expect(executor.begin).toHaveBeenCalledWith(
+              freshSource,
+              expect.not.objectContaining({ checkpoint: expect.anything() }),
+              expect.any(AbortSignal)
+            )
+          )
+          expect(executor.translate).toHaveBeenCalledWith(
+            expect.objectContaining({ source: 'Freshly grouped text' })
+          )
+          expect(executor.begin.mock.calls).toHaveLength(1)
+        } else {
+          expect(extract.mock.calls[0][0].signal.aborted).toBe(true)
+          expect(executor.begin).not.toHaveBeenCalled()
+        }
+        expect(JSON.stringify(first)).toBe(originalSnapshot)
+        return
+      }
+      await act(async () => fireEvent.keyDown(selector, { key: 'ArrowDown' }))
+      await act(async () =>
+        fireEvent.click(screen.getByRole('option', { name: /Chinese · second-model/ }))
+      )
+      expect(selectEdition).toHaveBeenCalledWith({
+        source: 'version-1',
+        translationId: 'edition-1'
+      })
+      expect(selector.disabled).toBe(true)
+      expect(progress.isConnected).toBe(true)
+      await act(async () => {
+        resolveSelection(second)
+        await flush()
+      })
+      await waitFor(() =>
+        expect(delayedBind.mock.calls.some((args) => args[1].checkpoint?.key === second.key)).toBe(
+          true
+        )
+      )
+      expect(selector.isConnected).toBe(true)
+      expect(selector.disabled).toBe(true)
+      expect(selector.getAttribute('aria-busy')).toBe('true')
+      expect(setup.isConnected).toBe(true)
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      expect(progress.isConnected).toBe(true)
+      expect(toggle.isConnected).toBe(true)
+      expect(oldRow.isConnected).toBe(true)
+      expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
+      await act(async () => {
+        finishVerification()
+        await flush()
+      })
+      await waitFor(() =>
+        expect(container.querySelector('[data-translation-row="second-model"]')).not.toBeNull()
+      )
+      expect(selector.disabled).toBe(false)
+      expect(progress.isConnected).toBe(true)
+      expect(toggle.isConnected).toBe(true)
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      expect(oldRow.isConnected).toBe(false)
+      expect(container.querySelector('[data-translation-row="first-model"]')).toBeNull()
+      // Another PDF must never inherit the retained edition or its sidebar content.
+      await act(async () => {
+        root.render(<PdfPreviewContent path="other.pdf" name="other.pdf" />)
+        await flush()
+      })
+      expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
+    }
+  )
 
   it('prefetches saved translation recovery while the literature PDF opens', async () => {
     const readCheckpoint = vi.fn().mockResolvedValue(null)
