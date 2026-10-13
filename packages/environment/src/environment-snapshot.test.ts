@@ -30,6 +30,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     statfs: vi.fn(actual.statfs),
     open: vi.fn(actual.open),
+    lstat: vi.fn(actual.lstat),
     link: vi.fn(actual.link),
     writeFile: vi.fn(actual.writeFile)
   }
@@ -55,6 +56,65 @@ afterEach(async () => {
 })
 
 describe('environment file snapshots', () => {
+  it.each(['metadata-before-copy', 'metadata', 'content', 'mode', 'inode'])(
+    'checks captured bytes when only ctime changes (%s)',
+    async (change) => {
+      const { prefix, store, root } = await fixture()
+      const path = join(await fs.realpath(prefix), 'lib', 'package.py')
+      const original = await lstat(path)
+      const stat = vi.mocked(fs.lstat).getMockImplementation()!
+      const link = vi.mocked(fs.link).getMockImplementation()!
+      let published = false
+      let observed = false
+      let changed = false
+      const digest = createHash('sha256')
+        .update(await readFile(path))
+        .digest('hex')
+      vi.mocked(fs.link).mockImplementation(async (...args) => {
+        await link(...args)
+        if (String(args[1]).endsWith(digest)) {
+          published = true
+          if (change === 'content') await writeFile(path, 'VERSION = "3"\n')
+        }
+      })
+      vi.mocked(fs.lstat).mockImplementation(async (...args) => {
+        const result = await stat(...args)
+        if (
+          String(args[0]) === path &&
+          (published || (observed && change === 'metadata-before-copy'))
+        ) {
+          changed = true
+          Object.assign(result, {
+            ctimeMs: original.ctimeMs + 1000,
+            mtimeMs: original.mtimeMs,
+            ...(change === 'mode' ? { mode: original.mode ^ 0o100 } : {}),
+            ...(change === 'inode' ? { ino: original.ino + 1 } : {})
+          })
+        }
+        if (String(args[0]) === path) observed = true
+        return result
+      })
+      try {
+        if (change.startsWith('metadata')) {
+          const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+          await materializeEnvironmentSnapshot(store, checksum, join(root, 'restored'))
+          expect(await readFile(join(root, 'restored', 'lib', 'package.py'), 'utf8')).toBe(
+            'VERSION = "2"\n'
+          )
+        } else {
+          await expect(captureEnvironmentSnapshot(prefix, store)).rejects.toThrow(
+            'changed during capture'
+          )
+          expect(await readdir(join(store, 'objects'))).toEqual([])
+        }
+        expect(changed).toBe(true)
+      } finally {
+        vi.mocked(fs.link).mockImplementation(link)
+        vi.mocked(fs.lstat).mockImplementation(stat)
+      }
+    }
+  )
+
   it('streams text prefixes across read boundaries without changing source bytes', async () => {
     const { root, prefix, store } = await fixture()
     const source = await fs.realpath(prefix)

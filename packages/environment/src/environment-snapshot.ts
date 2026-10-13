@@ -278,18 +278,13 @@ const captureSnapshot = async (
   if (contained(sourcePrefix, await canonicalDestination(store)))
     throw new Error('Environment snapshot storage must be outside the source environment.')
   const entries: EnvironmentSnapshotEntry[] = []
-  const observed = new Map<string, string>()
+  const observed = new Map<string, { stamp: string; identity: string }>()
   let totalBytes = 0
   let metadataBytes = 0
+  const identity = (metadata: Awaited<ReturnType<typeof lstat>>): string =>
+    [metadata.dev, metadata.ino, metadata.mode, metadata.size, metadata.mtimeMs].join(':')
   const stamp = (metadata: Awaited<ReturnType<typeof lstat>>): string =>
-    [
-      metadata.dev,
-      metadata.ino,
-      metadata.mode,
-      metadata.size,
-      metadata.mtimeMs,
-      metadata.ctimeMs
-    ].join(':')
+    `${identity(metadata)}:${metadata.ctimeMs}`
   const walk = async (directory: string): Promise<void> => {
     for (const name of await directoryNames(directory, MAX_ENTRIES - entries.length)) {
       const path = join(directory, name)
@@ -301,7 +296,7 @@ const captureSnapshot = async (
       if (metadataBytes > MAX_METADATA_BYTES)
         throw new Error('Environment snapshot metadata is too large.')
       const metadata = await lstat(path)
-      observed.set(key, stamp(metadata))
+      observed.set(key, { stamp: stamp(metadata), identity: identity(metadata) })
       if (metadata.isSymbolicLink()) {
         const target = await readlink(path)
         const targetPath = resolve(dirname(path), target)
@@ -336,18 +331,32 @@ const captureSnapshot = async (
   for (const entry of entries) {
     if (entry.kind !== 'file') continue
     const path = join(sourcePrefix, entry.path)
-    if (stamp(await lstat(path)) !== observed.get(entry.path))
+    if (identity(await lstat(path)) !== observed.get(entry.path)?.identity)
       throw new Error('Environment changed during capture.')
     entry.checksum = await writeFileObject(store, path, entry.size, created)
   }
   // Package operations are serialized by the caller; detect unrelated writes as well.
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]))
   const check = async (directory: string): Promise<void> => {
     for (const name of await directoryNames(directory)) {
       const path = join(directory, name)
       const key = relative(sourcePrefix, path).split(sep).join('/')
       const metadata = await lstat(path)
-      if (observed.get(key) !== stamp(metadata))
-        throw new Error('Environment changed during capture.')
+      const before = observed.get(key)
+      if (before?.stamp !== stamp(metadata)) {
+        const entry = byPath.get(key)
+        // Extended-attribute updates can change ctime without changing captured content.
+        // Only ordinary files may use a fresh byte hash as proof; retain every identity check.
+        if (
+          !before ||
+          !metadata.isFile() ||
+          entry?.kind !== 'file' ||
+          identity(metadata) !== before.identity ||
+          (await streamFile(path, undefined, entry.size)) !== entry.checksum ||
+          identity(await lstat(path)) !== before.identity
+        )
+          throw new Error('Environment changed during capture.')
+      }
       observed.delete(key)
       if (metadata.isDirectory() && !metadata.isSymbolicLink()) await check(path)
     }
@@ -363,7 +372,6 @@ const captureSnapshot = async (
     file_mode?: string
     prefix_placeholder?: string
   }
-  const byPath = new Map(entries.map((entry) => [entry.path, entry]))
   for (const entry of entries) {
     if (entry.kind !== 'file' || !/^conda-meta\/[^/]+\.json$/u.test(entry.path)) continue
     let record: { link?: { source?: string }; paths_data?: { paths?: CondaPath[] } }
