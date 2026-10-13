@@ -39,7 +39,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "Host SDK discovery in `repl_execute`: `await host.help()` is the role-aware catalog with field descriptions; query only needed topics. Main/root agents may call `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+  "In `repl_execute`, `await host.help()` gives a role-aware catalog with field descriptions. Query needed topics; do not prefetch all topics. Main/root agents: `await host.help('delegate')`. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
@@ -48,7 +48,7 @@ const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Guidance only applies when using open-science-notebook tools.',
-  'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first. Put all 1-3 known questions in one call with 2-16 options. Set kind to multi-select for combinable choices or single-select for one answer. Infer reversible details; omit Other (UI adds custom, agent-decide, Skip). Finish continues; pending ends the turn.',
+  'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first. Put all 1-3 known questions in one call with 2-16 options. Set kind to multi-select for combinable choices. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
@@ -184,9 +184,7 @@ const userChoiceQuestionSchema = z.object({
   kind: z
     .enum(['single-select', 'multi-select'])
     .default('single-select')
-    .describe(
-      'Use single-select for one answer or multi-select for combinable choices. Defaults to single-select.'
-    ),
+    .describe('One answer or combinable choices.'),
   options: z
     .array(userChoiceOptionSchema)
     .min(MIN_AGENT_USER_CHOICE_OPTIONS)
@@ -1546,7 +1544,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'Collect 1-3 decisions when a request has materially different interpretations. Use this app-owned tool as the first tool call, before inspecting the workspace or using other tools, and include every known question in one call. Never print a textual choice list. Give each question 2-16 unique options with descriptions and omit Other; the app adds custom, agent-decide, and Skip. Set kind to multi-select only when options can be combined; otherwise use single-select. Do not mix exclusive alternatives into multi-select questions. Questions appear one at a time. Multiple selections are returned to the continuation as a JSON array of option labels. A pending result ends the turn normally; the app continues after Finish.',
+      'For materially different interpretations, this app-owned tool must be the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique described options; omit Other and textual lists. UI adds custom/agent-decide/Skip, showing questions singly. Multi-select combines compatible options and returns a JSON label array; never mix exclusive alternatives. Otherwise single-select. Pending ends the turn; Finish continues.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,
