@@ -1,23 +1,22 @@
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { LocalModelCapability, LocalModelSnapshot } from '../local-models'
 
-import type { NotebookLanguage } from '../notebook'
+import type { NotebookLanguage } from '../notebook-language-contract'
 
-import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
-import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { DiscoveredInterpreter, EnvPackage } from '@aipoch/environment/contracts'
 import type { RuntimeEnablement, RuntimeUsage } from '../notebook-runtime'
 
 import {
   callable,
-  WEB,
-  RUNTIME_LANGUAGE_ENV,
-  RUNTIME_LANGUAGE,
-  type RemoveListener,
   EVENT,
   LOCAL,
-  RUNTIME_INTERPRETER,
+  RUNTIME_ENABLEMENT,
   RUNTIME_INSTALL_AUTH,
-  RUNTIME_ENABLEMENT
+  RUNTIME_INTERPRETER,
+  RUNTIME_LANGUAGE,
+  RUNTIME_LANGUAGE_ENV,
+  WEB,
+  type RemoveListener
 } from './definition'
 
 export const runtimeDescribeUsageContracts = {

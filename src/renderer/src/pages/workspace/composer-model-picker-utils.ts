@@ -4,10 +4,10 @@ import {
   configuredModelApiEndpoints,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
+import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
 import {
   ENDPOINT_PATHS,
   providerEndpoints,
-  type ChatApiEndpoint,
   type ProviderType,
   type ProviderView
 } from '../../../../shared/settings'

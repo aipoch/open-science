@@ -1,21 +1,22 @@
 import { join } from 'node:path'
 
-import { runtimeMetadata } from '../runtime-metadata'
 import { APP } from '../../shared/app-config'
+import { runtimeMetadata } from '../runtime-metadata'
 
-import type { ApplicationCommandComposition } from '../application-command-composition'
 import { createLogger } from '@aipoch/diagnostics/node'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
+import { resolveConfigRoot } from '../storage-root'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { FileTaskRunJournal, type TaskRunJournal } from '../tasks/task-run-journal'
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
-import { resolveConfigRoot } from '../storage-root'
-import { loadOrCreateWebToken } from './auth'
-import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
 import { projectTaskRuntimeEvents } from './application-event-projections'
-import { HeadlessTaskApi } from './task-api'
+import { loadOrCreateWebToken } from './auth'
+import type { ExternalWebAccess } from './external-access-contract'
+import { startWebHttpServer, type RunningWebServer } from './http-server'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
+import { HeadlessTaskApi } from './task-api'
 
 const log = createLogger('web-service')
 

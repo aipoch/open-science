@@ -5,12 +5,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClaudeSharedAuthController } from './claude-shared-auth'
 
 // Mock node:child_process so tests can script the subprocess without launching anything.
-const spawnCalls: { command: string; args: string[]; env?: NodeJS.ProcessEnv }[] = []
+const spawnCalls: {
+  command: string
+  args: string[]
+  env?: NodeJS.ProcessEnv
+  windowsHide?: boolean
+}[] = []
 let nextSpawn: (() => FakeChild) | undefined
 
 vi.mock('node:child_process', () => ({
-  spawn: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-    spawnCalls.push({ command, args, env: options?.env })
+  spawn: (
+    command: string,
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }
+  ) => {
+    spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
 }))
@@ -47,6 +56,7 @@ describe('ClaudeSharedAuthController.getStatus', () => {
     nextSpawn = scriptChild('{"loggedIn":true,"authMethod":"oauth_token"}', '', 0)
     const ctrl = makeController()
     await expect(ctrl.getStatus()).resolves.toEqual({ supported: true, authenticated: true })
+    expect(spawnCalls[0]?.windowsHide).toBe(true)
     expect(spawnCalls[0]?.args).toEqual(['auth', 'status', '--json'])
   })
 
@@ -121,6 +131,7 @@ describe('ClaudeSharedAuthController.loginShared', () => {
       supported: true,
       authenticated: true
     })
+    expect(spawnCalls[0]?.windowsHide).toBe(true)
     expect(spawnCalls[0]?.args).toEqual(['auth', 'login', '--claudeai'])
   })
 
@@ -178,6 +189,7 @@ describe('ClaudeSharedAuthController.loginShared', () => {
     await ctrl.loginShared()
 
     expect(spawnCalls[0]).toMatchObject({
+      windowsHide: true,
       command: process.execPath,
       args: ['/resolved/cli.js', 'auth', 'login', '--claudeai'],
       env: { ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined }

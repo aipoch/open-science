@@ -1,27 +1,35 @@
+import type { StoreApi } from 'zustand'
 import {
-  type PersistedMessageNode,
   projectConversationMessage,
   resolveActiveConversationActivities,
-  resolveActiveConversationMessages
+  resolveActiveConversationMessages,
+  type PersistedMessageNode
 } from '../../../shared/conversation-graph'
-import type { StoreApi } from 'zustand'
 
-import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import type { ElicitationAnswer } from '../../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../../shared/acp-usage-contract'
 import {
   MAX_ELICITATION_MESSAGE_CHARS,
   MAX_ELICITATION_MULTI_SELECT_VALUES,
   resolveAgentUserChoiceQuestions
 } from '../../../shared/elicitation'
-import type { AcpModelCallUsage, AcpTurnTokenUsage, ElicitationAnswer } from '../../../shared/acp'
 import type {
   PersistedChatSession,
   PersistedPendingHistoryReplay,
   PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import type { ChatSession, ElicitationEditDraft } from './session-store-contract'
 import {
   synchronizeSessionGraph,
   type AppendMessageResult
 } from './session-store-message-graph-helpers'
+import type { SessionStoreData } from './session-store-persistence-owner'
+import {
+  hydrateToolActivity,
+  materializeStreamingMessageContent,
+  removeStreamingMessageContentForSession
+} from './session-store-persistence-owner'
 import {
   canStartActivityGroup,
   projectActivePlan,
@@ -60,16 +68,6 @@ import {
   projectPermissionPending,
   type RunTerminalContextWindowSample
 } from './session-store-run-terminal-helpers'
-import type {
-  ChatSession,
-  ElicitationEditDraft,
-  SessionStoreData
-} from './session-store-persistence-owner'
-import {
-  hydrateToolActivity,
-  materializeStreamingMessageContent,
-  removeStreamingMessageContentForSession
-} from './session-store-persistence-owner'
 
 type SessionStateSetter = StoreApi<SessionStoreData>['setState']
 

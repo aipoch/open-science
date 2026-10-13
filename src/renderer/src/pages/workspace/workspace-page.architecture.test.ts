@@ -1,15 +1,16 @@
+import {
+  runtimeModuleSpecifiers,
+  expectBoundaryPaths
+} from '../../../../../test/module-boundary-assertions'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 import {
   createSourceFile,
   forEachChild,
   isCallExpression,
-  isExportDeclaration,
   isIdentifier,
-  isImportDeclaration,
   isPropertySignature,
   isPropertyAccessExpression,
-  isStringLiteralLike,
   isTypeAliasDeclaration,
   isTypeLiteralNode,
   ScriptKind,
@@ -74,30 +75,16 @@ const productionSources = (): string[] => {
   visit(rendererRoot)
   return sources.sort()
 }
-const importedTargets = (sourcePath: string): string[] => {
-  const targets: string[] = []
-  const sourceFile = createSourceFile(
-    sourcePath,
-    readSource(sourcePath),
-    ScriptTarget.Latest,
-    true,
-    extname(sourcePath) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
-  )
-  const visit = (node: Node): void => {
-    if (
-      (isImportDeclaration(node) || isExportDeclaration(node)) &&
-      node.moduleSpecifier &&
-      isStringLiteralLike(node.moduleSpecifier)
-    ) {
-      const specifier = node.moduleSpecifier.text
-      if (specifier.startsWith('@/')) targets.push(resolve(rendererRoot, specifier.slice(2)))
-      else if (specifier.startsWith('.')) targets.push(resolve(dirname(sourcePath), specifier))
-    }
-    forEachChild(node, visit)
-  }
-  visit(sourceFile)
-  return targets.map(modulePath)
-}
+const importedTargets = (sourcePath: string): string[] =>
+  runtimeModuleSpecifiers(readSource(sourcePath))
+    .flatMap((specifier) =>
+      specifier.startsWith('@/')
+        ? [resolve(rendererRoot, specifier.slice(2))]
+        : specifier.startsWith('.')
+          ? [resolve(dirname(sourcePath), specifier)]
+          : []
+    )
+    .map(modulePath)
 const productionSourcePaths = productionSources()
 const importedTargetsBySource = new Map(
   productionSourcePaths.map((path) => [path, importedTargets(path)] as const)
@@ -155,21 +142,14 @@ const conversationPanelPropNames = (): string[] => {
 }
 
 describe('workspace page architecture', () => {
-  it('keeps private controller consumers explicit and bounded', () => {
-    expect(importersOf(ownerPaths.composer)).toEqual([
-      'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/workspace-conversation-controller.ts',
-      'pages/workspace/workspace-message-queue-owner.ts'
-    ])
+  it('keeps runtime controller consumers explicit and bounded', () => {
+    expect(importersOf(ownerPaths.composer)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.messageQueue)).toEqual([
       'ApplicationPresentationHost.tsx',
       'lib/compute/WorkspaceComputeRecoveryBridge.tsx',
-      'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
     expect(importersOf(ownerPaths.messageQueueOwner)).toEqual([
-      'pages/workspace/workspace-composer-upload-controller.ts',
       'pages/workspace/workspace-message-queue-admission.ts',
       'pages/workspace/workspace-message-queue-controller.ts',
       'pages/workspace/workspace-message-queue-drain.ts',
@@ -193,27 +173,17 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-message-queue-projection.ts'
     ])
     expect(importersOf(ownerPaths.branchSwitchGuard)).toEqual(['pages/workspace/WorkspacePage.tsx'])
-    expect(importersOf(ownerPaths.session)).toEqual([
-      'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/workspace-conversation-controller.ts'
-    ])
+    expect(importersOf(ownerPaths.session)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.sessionAgentConfiguration)).toEqual([
       'pages/workspace/WorkspacePage.tsx'
     ])
-    expect(importersOf(ownerPaths.conversation)).toEqual([
-      'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/WorkspacePage.tsx'
-    ])
+    expect(importersOf(ownerPaths.conversation)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'ApplicationPresentationHost.tsx',
-      'pages/workspace/ConversationPanel.tsx',
-      'pages/workspace/SideChatPanel.tsx',
       'pages/workspace/SideChatWorkbench.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/annotations/AnnotationTransferSource.tsx',
       'pages/workspace/annotations/SideChatAnnotationDrop.tsx',
-      'pages/workspace/side-chat-summary.ts',
       'pages/workspace/workspace-message-queue-controller.ts'
     ])
   })
@@ -315,11 +285,12 @@ describe('workspace page architecture', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
     const workspacePage = manifest.modules.workspace_page
 
-    for (const ownerPath of Object.values(ownerPaths)) {
-      expect(workspacePage.ownerPaths).toContain(
-        relative(repositoryRoot, ownerPath).replaceAll('\\', '/')
-      )
-    }
+    expectBoundaryPaths(
+      manifest,
+      'workspace_page',
+      Object.values(ownerPaths).map((path) => relative(repositoryRoot, path).replaceAll('\\', '/'))
+    )
+    expect(workspacePage.ownerPaths).toContain('src/renderer/src/pages/workspace/WorkspacePage.tsx')
     for (const internalPath of Object.values(queueInternalPaths)) {
       expect(workspacePage.ownerPaths).not.toContain(
         relative(repositoryRoot, internalPath).replaceAll('\\', '/')

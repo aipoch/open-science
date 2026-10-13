@@ -1,44 +1,50 @@
-import type {
-  ToolCallContent,
-  ToolCallLocation,
-  ToolCallStatus,
-  ToolKind
-} from '@agentclientprotocol/sdk'
+import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
+import type { ChatArtifact, ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
+export type {
+  ChatArtifact,
+  ChatMessage,
+  ChatSession,
+  ElicitationEditDraft,
+  SessionStatus,
+  ToolActivity,
+  ToolActivityStatus
+} from './session-store-contract'
 
-import type { ElicitationProjection, ElicitationValue } from '../../../shared/acp'
-import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import { activateConversationBranch } from '../../../shared/conversation-graph'
-import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
-import type { PermissionProfileId } from '../../../shared/permission-profiles'
+import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
 import {
+  deriveSessionAttention,
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
+  projectSessionAttention,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
-  sessionRevision,
   sanitizeToolActivity,
-  type PersistedArtifact,
-  type PersistedActiveRun,
-  type PersistedActivityGroup,
-  type PersistedChatMessage,
-  type PersistedChatSession,
-  type PersistedMessageRole,
-  type PersistedMessageStatus,
-  type PersistedSessionManifest,
-  type PersistedSessionStatus,
-  type PersistedToolActivity,
-  type SessionSummary,
-  type SessionAttention,
-  deriveSessionAttention,
-  projectSessionAttention
+  sessionRevision
 } from '../../../shared/session-persistence'
+import type { PersistedSessionManifest } from '../../../shared/session-persistence-envelope'
+import type {
+  PersistedActivityGroup,
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedMessageRole,
+  PersistedMessageStatus,
+  PersistedToolActivity
+} from '../../../shared/session-message-contract'
+import type { PersistedActiveRun } from '../../../shared/session-run-contract'
+import type { PersistedChatSession, SessionSummary } from '../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands,
+  recordSessionConversationAuthority
+} from './session-conversation-intents'
 import {
   inferSessionInteractionState,
-  resolveSessionInteractionStatus,
-  type SessionInteractionState
+  resolveSessionInteractionStatus
 } from './session-store-interaction-state'
 import {
   mergeDelegatedWorkAuthorityProjection,
@@ -49,100 +55,13 @@ import {
   retainRuntimePlanProjection
 } from './session-store-persistence-merge'
 import * as sessionDetails from './session-store-session-details'
-import {
-  acknowledgeSessionConversationCommands,
-  pendingSessionConversationCommands,
-  recordSessionConversationAuthority
-} from './session-conversation-intents'
 
-export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
 export type ChatMessageStatus = PersistedMessageStatus
-export type ChatMessage = PersistedChatMessage & { sortIndex?: number }
+
 export type ActiveRun = PersistedActiveRun
-export type ToolActivityStatus = ToolCallStatus
-export type ToolActivity = {
-  id: string
-  kind: 'tool'
-  title: string
-  activityGroupId?: string
-  promptMessageId?: string
-  status: ToolActivityStatus
-  toolDisposition?: 'declined' | 'permission-closed'
-  executionInvocationId?: string
-  // Set only by the main-process permission owner, never by provider metadata.
-  appOwned?: true
-  eventIds: string[]
-  sortIndex: number
-  providerToolName?: string
-  toolKind?: ToolKind
-  toolContent?: ToolCallContent[]
-  toolLocations?: ToolCallLocation[]
-  rawInput?: unknown
-  rawOutput?: unknown
-  terminalOutput?: string
-  terminalExitCode?: number | null
-  elicitation?: ElicitationProjection
-  createdAt: number
-  updatedAt: number
-}
-export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
 
 // Renderer memory only: edits are separate from confirmed, durable draftAnswers.
-export type ElicitationEditDraft = {
-  requestId: string
-  values: Record<string, ElicitationValue | undefined>
-  activeQuestionIndex: number
-}
-
-export type ChatSession = Omit<
-  PersistedChatSession,
-  'messages' | 'activities' | 'permissionProfile' | 'artifacts'
-> & {
-  artifacts?: ChatArtifact[]
-  permissionProfile?: PermissionProfileId
-  messages: ChatMessage[]
-  activities?: ToolActivity[]
-  elicitationEditDrafts?: Record<string, ElicitationEditDraft>
-  activePlanProjection?: ActivePlanProjection
-  planHistoryProjections?: ActivePlanProjection[]
-  isPending?: boolean
-  // Renderer-only identity of the durable seed while the optimistic Session is being prepared.
-  pendingBindingSessionId?: string
-  // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
-  // authority and is refreshed from startup summaries and create/resume responses rather than
-  // persisted by renderer.
-  wslSetup?: true
-  // Transient: the first send has captured Delegation, but Main has not acknowledged the new
-  // Session policy yet. Binding an Agent Session does not make this policy authoritative.
-  delegationPolicyAuthorityPending?: true
-  // Transient: renameSession wrote a title that disk has not acknowledged.
-  unsavedTitle?: true
-  interrupted?: boolean
-  fixLoopActive?: boolean
-  compacting?: boolean
-  agentStatus?: string
-  awaitingFirstAgentOutput?: boolean
-  agentPromptInFlight?: boolean
-  // Transient provenance owner for responses emitted while an interrupted turn is resumed.
-  activeRunRuntimeSegmentId?: string
-  specialistSwitchResetRequired?: boolean
-  // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
-  // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
-  elicitationHistoryReplayRequestId?: string
-  branchSwitchBlocked?: boolean
-  conversationGraphSyncBlocked?: boolean
-  pendingContextReplayMessageId?: string
-  // Transient independent facts for the blocking lane. Plan remains owned by its durable
-  // projection, while Side chat remains an overlay that never settles these facts.
-  interactionState?: SessionInteractionState
-  // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
-  contentLoaded?: false
-  activeMessageCount?: number
-  artifactCount?: number
-  presentedActivityAt?: number
-  attention?: SessionAttention
-}
 
 export type StreamingMessageContent = {
   sessionId: string
@@ -208,6 +127,23 @@ const markExternallyHydratedSession = (
 ): void => {
   externallyHydratedSessionAuthorities.set(session, structuredClone(authority))
   recordSessionConversationAuthority(session, authority)
+}
+
+// Recovery replaces runtime authority while retaining only unsubmitted editable drafts. Keep the
+// authority marker on the new projection so the persistence saver cannot echo hydration as a write.
+export const retainSessionRecoveryDrafts = (
+  session: ChatSession,
+  previous: ChatSession
+): ChatSession => {
+  if (!previous.unsavedTitle && !previous.elicitationEditDrafts) return session
+  const retained: ChatSession = {
+    ...session,
+    elicitationEditDrafts: previous.elicitationEditDrafts,
+    ...(previous.unsavedTitle ? { title: previous.title, unsavedTitle: true } : {})
+  }
+  const authority = externallyHydratedSessionAuthorities.get(session)
+  if (authority) markExternallyHydratedSession(retained, authority)
+  return retained
 }
 
 export const createInitialSessionState = (): SessionStoreData => ({

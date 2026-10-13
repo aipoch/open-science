@@ -1,3 +1,4 @@
+import type { ComputeView } from '../../lib/settings-navigation'
 import { ErrorNotice } from '@/components/error-notice'
 import { Folder, Info, Plus, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -17,15 +18,7 @@ import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
-export type ComputeView =
-  | { kind: 'list' }
-  | { kind: 'add' }
-  | {
-      kind: 'detail'
-      providerId: string
-      authenticationFocus?: import('@aipoch/compute').ComputeAuthenticationErrorCode
-      authenticationRequestId?: number
-    }
+export type { ComputeView } from '../../lib/settings-navigation'
 
 type ComputePanelProps = {
   onNavigate: (view: ComputeView) => void

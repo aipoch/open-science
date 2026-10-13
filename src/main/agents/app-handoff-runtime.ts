@@ -7,13 +7,13 @@ import type {
   HandoffLifecyclePhase,
   HandoffTarget
 } from '../../shared/handoff-lifecycle'
+import type { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
+import type { SessionBindingService } from '../specialist/session-binding'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
   TrustedToolCompletionContext
-} from './completion-gate'
-import type { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
-import type { SessionBindingService } from '../specialist/session-binding'
+} from './completion-gate-contract'
 
 type CapturedHandoff = Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>
 

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { type UploadTransferProgress } from '../../../../../shared/uploads'
-import { stageComposerFile } from '../../workspace/composer-upload-transfer'
+import { stageUploadFile as stageComposerFile } from '@/lib/upload-transfer'
 
 /** One transfer owner for import and attachment, including native annotation cancellation. */
 export function useLiteraturePdfStaging(): {

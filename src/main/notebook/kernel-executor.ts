@@ -1,91 +1,56 @@
-import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { createLogger } from '@aipoch/diagnostics/node'
-import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
-import {
-  resolveWindowsNotebookRuntime,
-  type WindowsNotebookRuntime,
-  windowsNotebookRuntimeEnvironment
-} from './windows-notebook-runtime'
-import { prepareShellNpmEnvironment } from './shell-npm-environment'
-import {
-  NotebookExecutionStopError,
-  markNotebookKernelExitCleanedUp,
-  NotebookKernelExitError,
-  notebookErrorRecovery
-} from '../../shared/notebook-execution-error'
+import { resolveExternalRLibrary } from '@aipoch/environment'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
-import { diagnoseKernelExit } from './kernel-exit-diagnostics'
-import { kernelExecutableReadRoot } from './kernel-executable-read-root'
-import { resolveExternalRLibrary } from '@aipoch/environment'
 import { createInterface, type Interface } from 'node:readline'
 import { Transform, type TransformCallback } from 'node:stream'
+import {
+  NotebookExecutionStopError,
+  NotebookKernelExitError,
+  markNotebookKernelExitCleanedUp,
+  notebookErrorRecovery
+} from '../../shared/notebook-execution-error'
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { kernelExecutableReadRoot } from './kernel-executable-read-root'
+import { diagnoseKernelExit } from './kernel-exit-diagnostics'
+import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
+import { prepareShellNpmEnvironment } from './shell-npm-environment'
+import {
+  resolveWindowsNotebookRuntime,
+  windowsNotebookRuntimeEnvironment,
+  type WindowsNotebookRuntime
+} from './windows-notebook-runtime'
 
+import { boundedRuntimeDiagnostic } from '@aipoch/diagnostics/node'
 import {
-  createPosixProcessTreeOwnership,
-  assertProcessTreeSupport,
-  trackOwnedPosixProcessTree,
-  terminateProcessTree,
-  type ProcessTreeKillResult
-} from '../process-tree'
-import {
-  KERNEL_FIGURES_DIR_ENV,
-  frameRNamespaceRequest,
-  frameRRequest,
-  framePythonNamespaceRequest,
-  framePythonRequest,
-  parseLoopResponse,
-  type KernelLoopFigure,
-  type KernelLoopResponse
-} from './kernel-protocol'
-import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
-import { protectManagedRuntimeWrites } from './managed-runtime-guard'
-import {
+  DEFAULT_R_ENV,
   buildManagedRuntimeProcessEnvironment,
   buildNotebookKernelEnvironment,
+  condaActivatedPath,
+  envPrefix,
+  environmentPathRoots,
   normalizeRProcessLocale,
-  environmentPathRoots
-} from '@aipoch/environment'
-import {
-  NotebookRuntimeAccessCancelledError,
-  type NotebookProcessSandbox,
-  type NotebookRuntimeAccessAdmission,
-  type NotebookSandboxCleanupReason,
-  type NotebookSandboxCleanupResult,
-  type NotebookSandboxProcessOutcome,
-  withNotebookSandboxProcessState
-} from './process-sandbox'
-import {
   notebookWorkloadCacheEnv,
   notebookWorkloadCacheRoot,
-  prepareNotebookWorkloadCache
-} from '@aipoch/environment'
-import {
-  condaActivatedPath,
-  DEFAULT_R_ENV,
-  envPrefix,
+  prepareNotebookWorkloadCache,
   pythonBin,
   rBin,
   rScriptBin,
+  readProcessStartToken,
   resolveEnvName
 } from '@aipoch/environment'
-import { boundedRuntimeDiagnostic } from '@aipoch/diagnostics/node'
-import type {
-  NotebookSessionNamespaceRequest,
-  NotebookSessionNamespaceResult
-} from './session-aggregate'
-import type {
-  NotebookExecutionRequest,
-  NotebookExecutionResult,
-  NotebookExecutor
-} from './runtime-service'
-import { TimeoutController } from './timeout-controller'
-import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
+import {
+  assertProcessTreeSupport,
+  createPosixProcessTreeOwnership,
+  terminateProcessTree,
+  trackOwnedPosixProcessTree,
+  type ProcessTreeKillResult
+} from '../process-tree'
 import {
   NOTEBOOK_FIGURE_COUNT_LIMIT,
   NOTEBOOK_FIGURE_COUNT_LIMIT_ENV,
@@ -103,17 +68,48 @@ import {
   NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_ENV
 } from './content-limits'
+import type {
+  NotebookExecutionRequest,
+  NotebookExecutionResult,
+  NotebookExecutor
+} from './execution-contract'
 import {
   notebookHelperInitializationCode,
   type NotebookHelperModuleInjection
 } from './helper-module-host'
-import { notebookInterpreterIdentity } from './session-aggregate'
 import type {
   KernelProcessLifecycleOwner,
   KernelProcessReceipt,
   KernelProcessSpawnIntent
 } from './kernel-process-lifecycle.windows-posix'
-import { readProcessStartToken } from '@aipoch/environment'
+import {
+  KERNEL_FIGURES_DIR_ENV,
+  framePythonNamespaceRequest,
+  framePythonRequest,
+  frameRNamespaceRequest,
+  frameRRequest,
+  parseLoopResponse,
+  type KernelLoopFigure,
+  type KernelLoopResponse
+} from './kernel-protocol'
+import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
+import { protectManagedRuntimeWrites } from './managed-runtime-guard'
+import {
+  NotebookRuntimeAccessCancelledError,
+  withNotebookSandboxProcessState,
+  type NotebookProcessSandbox,
+  type NotebookRuntimeAccessAdmission,
+  type NotebookSandboxCleanupReason,
+  type NotebookSandboxCleanupResult,
+  type NotebookSandboxProcessOutcome
+} from './process-sandbox'
+import type {
+  NotebookSessionNamespaceRequest,
+  NotebookSessionNamespaceResult
+} from './session-aggregate'
+import { notebookInterpreterIdentity } from './session-aggregate'
+import { TimeoutController } from './timeout-controller'
+import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The

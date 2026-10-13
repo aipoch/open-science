@@ -16,6 +16,7 @@ import {
   normalizeExplicitLock,
   resolveMicromamba
 } from '@aipoch/environment'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Supply an already provisioned runtime root; never mutate the source installation. OpenCode ACP
 // is deterministic unless LIVE_SETTINGS and LIVE_MODEL explicitly select an existing live provider.
@@ -117,8 +118,7 @@ for (const language of ['python', 'r'] as const) {
         const prompt = liveSettings
           ? `Use the Notebook tools for ${language}. ${implicit ? 'Call notebook_execute directly without select_runtime; let the host choose the default environment.' : `First call select_runtime for the app-managed default-${language} environment.`} Execute exactly ${language === 'python' ? '`runtime_approval_value = 41; print(runtime_approval_value)`' : '`runtime_approval_value <- 41; print(runtime_approval_value)`'}. Do not use Shell, REPL, or any other tools. After successful execution reply exactly: ${reply}`
           : `Verify Runtime approval ${language === 'r' ? 'R' : 'Python'} ${implicit ? 'implicit' : 'explicit'} first cell.`
-        await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-        await page.getByRole('button', { name: 'Send message' }).click()
+        await submitPromptViaUi(page, prompt)
         if (profile === 'ask') {
           const card = page.getByTestId('permission-card')
           await expect(card).toBeVisible({ timeout: liveSettings ? 120_000 : 20_000 })
@@ -154,14 +154,12 @@ for (const language of ['python', 'r'] as const) {
           page,
           `${language}-${profile}-${implicit ? 'implicit' : 'explicit'}-first.png`
         )
-        await page
-          .getByRole('textbox', { name: 'Ask anything' })
-          .fill(
-            liveSettings
-              ? `Using the same Notebook ${language} kernel, execute exactly ${language === 'python' ? '`runtime_approval_value += 1; print(runtime_approval_value)`' : '`runtime_approval_value <- runtime_approval_value + 1; print(runtime_approval_value)`'}. Do not initialize the variable again. After the output is 42 reply exactly: Runtime ${language} continued cell verified: 42.`
-              : `Verify Runtime approval ${language === 'r' ? 'R' : 'Python'} explicit continued cell.`
-          )
-        await page.getByRole('button', { name: 'Send message' }).click()
+        await submitPromptViaUi(
+          page,
+          liveSettings
+            ? `Using the same Notebook ${language} kernel, execute exactly ${language === 'python' ? '`runtime_approval_value += 1; print(runtime_approval_value)`' : '`runtime_approval_value <- runtime_approval_value + 1; print(runtime_approval_value)`'}. Do not initialize the variable again. After the output is 42 reply exactly: Runtime ${language} continued cell verified: 42.`
+            : `Verify Runtime approval ${language === 'r' ? 'R' : 'Python'} explicit continued cell.`
+        )
         const continuedReply = page.getByText(`Runtime ${language} continued cell verified: 42.`, {
           exact: true
         })
@@ -213,10 +211,10 @@ for (const language of ['python', 'r'] as const) {
           })
         }
         if (profile === 'auto' && !liveSettings) {
-          await page
-            .getByRole('textbox', { name: 'Ask anything' })
-            .fill(`Verify Runtime approval ${language === 'r' ? 'R' : 'Python'} risky cell.`)
-          await page.getByRole('button', { name: 'Send message' }).click()
+          await submitPromptViaUi(
+            page,
+            `Verify Runtime approval ${language === 'r' ? 'R' : 'Python'} risky cell.`
+          )
           const risk = page.getByTestId('permission-card')
           await expect(risk).toHaveAttribute(
             'aria-label',

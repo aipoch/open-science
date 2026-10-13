@@ -2,11 +2,8 @@ import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { openAiCompletionsBase } from './base-url'
 import type { ProviderRuntimeTarget } from './provider-accounts'
-import type {
-  ResponsesBridge,
-  ResponsesBridgeOptions,
-  ResponsesBridgeTarget
-} from './responses-bridge'
+import type { ResponsesBridge, ResponsesBridgeOptions } from './responses-bridge'
+import type { ResponsesBridgeTarget } from './responses-bridge-contract'
 
 type SelectorPort = Pick<ResponsesBridge, 'close' | 'selectSkills'>
 type ProviderTransportLease = NonNullable<ResolvedAgentBackend['providerTransportLease']>

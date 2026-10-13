@@ -1,4 +1,6 @@
-import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
+import type { AcpPermissionResponse } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
   sanitizeSessionPermissionRuntimeContext,
@@ -6,7 +8,6 @@ import {
   type SessionPermissionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type {
   SessionCatalog,
   SessionMutation,

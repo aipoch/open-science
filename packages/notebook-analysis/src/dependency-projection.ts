@@ -15,11 +15,13 @@ import type {
   NotebookDependencyTypeSummary,
   NotebookDependencyReceiverCall,
   NotebookRunDependencyFacts,
+  NotebookPythonCallbackContainerSummary,
   NotebookSourceFileWriteScope
 } from './dependency-analysis-types'
 import { matchesWriteScope } from './write-scope'
 import {
   PYTHON_LIBRARY_EFFECTS,
+  acceptsPythonCallbackContainer,
   pythonUnpackedReturnType,
   pythonArgumentShapeReturnType,
   type PythonArgumentShape,
@@ -370,7 +372,10 @@ class NotebookDependencyProjector {
   private readonly possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
   private readonly rCopyAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
   private readonly builtinContainersByNamespace = new Map<string, Set<string>>()
-  private readonly pythonCallbackContainersByNamespace = new Map<string, Map<string, string[]>>()
+  private readonly pythonCallbackContainersByNamespace = new Map<
+    string,
+    Map<string, NotebookPythonCallbackContainerSummary>
+  >()
   private readonly copyOnModifyNamesByNamespace = new Map<string, Set<string>>()
   private readonly typeSummariesByNamespace = new Map<
     string,
@@ -453,7 +458,8 @@ class NotebookDependencyProjector {
     const builtinContainers = builtinContainersByNamespace.get(namespace) ?? new Set<string>()
     builtinContainersByNamespace.set(namespace, builtinContainers)
     const callbackContainers =
-      pythonCallbackContainersByNamespace.get(namespace) ?? new Map<string, string[]>()
+      pythonCallbackContainersByNamespace.get(namespace) ??
+      new Map<string, NotebookPythonCallbackContainerSummary>()
     pythonCallbackContainersByNamespace.set(namespace, callbackContainers)
     const callbackNamespaceUncertain =
       incompleteRun ||
@@ -474,7 +480,7 @@ class NotebookDependencyProjector {
             ].includes(reason) || reason.startsWith('parser-')
         ))
     if (callbackNamespaceUncertain) callbackContainers.clear()
-    // Lists capture a function object, not a live binding to its old global name.
+    // Containers capture function objects, not live bindings to their old global names.
     // A rebind or uncertain alias must not turn that stored object into the new one.
     const callbackCandidateWrites = new Set([
       ...(facts.definedNames ?? []),
@@ -483,7 +489,8 @@ class NotebookDependencyProjector {
     const callbackAliasExposures = new Set(
       (facts.aliases ?? []).flatMap((alias) => [alias.source, alias.target])
     )
-    for (const [container, callbacks] of callbackContainers) {
+    for (const [container, candidate] of callbackContainers) {
+      const callbacks = candidate.callbackNames
       if (
         [container, ...callbacks].some(
           (name) =>
@@ -566,7 +573,19 @@ class NotebookDependencyProjector {
             binding !== undefined
         )
     )
-    const callableSummary = (receiver: string): NotebookDependencyTypeSummary | undefined => {
+    const pythonCallOrderUncertain =
+      run.kernelKind === 'python' &&
+      facts.state === 'unknown' &&
+      facts.reasons.includes('dynamic-namespace')
+    const callableSummary = (
+      receiver: string,
+      call?: NotebookDependencyReceiverCall
+    ): NotebookDependencyTypeSummary | undefined => {
+      if (
+        call &&
+        (pythonCallOrderUncertain || call.unavailablePythonFunctionNames?.includes(receiver))
+      )
+        return undefined
       const pending = pendingTypeBindings.get(receiver)
       if (pending) return pending
       if ((facts.definedNames ?? []).includes(receiver)) return undefined
@@ -577,7 +596,9 @@ class NotebookDependencyProjector {
         .filter(
           (call) =>
             call.kind === 'callable' &&
-            callableSummary(call.receiver)?.methods.some((method) => method.name === '__call__')
+            callableSummary(call.receiver, call)?.methods.some(
+              (method) => method.name === '__call__'
+            )
         )
         .flatMap((call) => call.resultNames ?? [])
     )
@@ -661,6 +682,17 @@ class NotebookDependencyProjector {
       }
       return false
     }
+    // A later binding cannot authorize an earlier call, including through a
+    // possible alias. The missing identity stays opaque; no old body is restored.
+    const pythonFunctionBindingUnavailable = (
+      name: string,
+      call: NotebookDependencyReceiverCall | undefined
+    ): boolean =>
+      run.kernelKind === 'python' &&
+      call !== undefined &&
+      (pythonCallOrderUncertain ||
+        (call.unavailablePythonFunctionNames?.some((blocked) => receiversMayAlias(name, blocked)) ??
+          false))
     for (const write of facts.memberWrites ?? []) {
       const classSummary =
         [...typeSummaries.entries()].find(([name]) =>
@@ -753,7 +785,8 @@ class NotebookDependencyProjector {
     // Traverse only current plain function identities inside an
     // already opaque callback. These names are potential captures, not calls.
     const currentPythonFunctionSummary = (
-      name: string
+      name: string,
+      call?: NotebookDependencyReceiverCall
     ): NotebookDependencyTypeSummary | undefined => {
       if (run.kernelKind !== 'python' || incompleteRun) return undefined
       const aliasNames = [name]
@@ -762,6 +795,7 @@ class NotebookDependencyProjector {
         const current = aliasNames[cursor]
         if (visitedNames.has(current)) return undefined
         visitedNames.add(current)
+        if (pythonFunctionBindingUnavailable(current, call)) return undefined
         const definedInThisRun = (facts.definedNames ?? []).includes(current)
         const hasCurrentBinding =
           definedInThisRun &&
@@ -771,7 +805,7 @@ class NotebookDependencyProjector {
           (uncertainBindings.has(current) && !hasCurrentBinding)
         )
           return undefined
-        const summary = callableSummary(current)
+        const summary = callableSummary(current, call)
         if (summary) {
           // Plain functions and real classes share kind 'python-class'; the
           // reviewed python-function: identity is the required narrower seam.
@@ -807,9 +841,10 @@ class NotebookDependencyProjector {
     }
     const opaquePythonFunctionCaptures = (
       rootName: string,
-      rootSummary: NotebookDependencyTypeSummary
+      rootSummary: NotebookDependencyTypeSummary,
+      call?: NotebookDependencyReceiverCall
     ): string[] => {
-      const currentRoot = currentPythonFunctionSummary(rootName)
+      const currentRoot = currentPythonFunctionSummary(rootName, call)
       if (!currentRoot || currentRoot !== rootSummary) return []
       const names: string[] = []
       const worklist = [currentRoot]
@@ -820,7 +855,7 @@ class NotebookDependencyProjector {
         const method = worklist[cursor].methods.find((candidate) => candidate.name === '__call__')
         for (const name of method?.usedNames ?? []) {
           names.push(name)
-          const helper = currentPythonFunctionSummary(name)
+          const helper = currentPythonFunctionSummary(name, call)
           if (!helper || visitedSummaries.has(helper)) continue
           visitedSummaries.add(helper)
           worklist.push(helper)
@@ -882,12 +917,23 @@ class NotebookDependencyProjector {
           )
         )
           continue
-        callbackContainers.set(candidate.name, [...candidate.callbackNames])
+        callbackContainers.set(candidate.name, {
+          ...candidate,
+          callbackNames: [...candidate.callbackNames]
+        })
       }
     }
     for (const call of facts.receiverCalls ?? []) {
       const priorActualMutationCount = typeAwareMutatedNames.length
       const priorPossibleMutationCount = typeAwarePossiblyMutatedNames.length
+      if (call.kind === 'callable' && pythonFunctionBindingUnavailable(call.receiver, call)) {
+        // The earlier callable may mutate the namespace or a stored callback.
+        // Its later pure definition cannot prove that those identities survived.
+        typeAwarePossiblyMutatedNames.push(...(call.argumentNames ?? []))
+        typeAwareReasons.push('opaque-call', 'dynamic-namespace')
+        if (call.argumentNames?.length) typeAwareReasons.push('opaque-mutation')
+        continue
+      }
       const addTypeAwareMutation = (names: readonly string[]): void => {
         if (call.conditional) {
           typeAwarePossiblyMutatedNames.push(...names)
@@ -1254,8 +1300,17 @@ class NotebookDependencyProjector {
           if (!libraryEffect?.callbackContainerKeywords?.includes(keyword.name)) return [reference]
           if (reference.member !== undefined || reference.container !== undefined)
             return [reference]
-          const callbacks = callbackContainers.get(reference.root)
-          if (!callbacks) return [reference]
+          const candidate = callbackContainers.get(reference.root)
+          if (!candidate) return [reference]
+          const container = candidate.container ?? 'list'
+          // Named mappings have only the conservative converters contract.
+          // Existing inline formatter/aggregator mappings remain independent.
+          if (
+            (container === 'dict' && keyword.name !== 'converters') ||
+            !acceptsPythonCallbackContainer(libraryEffect, keyword.name, container)
+          )
+            return [reference]
+          const callbacks = candidate.callbackNames
           const names = [reference.root, ...callbacks]
           const uncertain = names.some(
             (name) =>
@@ -1270,13 +1325,22 @@ class NotebookDependencyProjector {
           // The solver's own use is allowed; any other exposure is a barrier.
           const otherCallUsesContainer = (facts.receiverCalls ?? []).some((other) => {
             if (other === call) return false
-            const helper = currentPythonFunctionSummary(other.receiver)
-            const captures = helper ? opaquePythonFunctionCaptures(other.receiver, helper) : []
-            const namespaceUncertain = [helper, ...captures.map(currentPythonFunctionSummary)].some(
-              (summary) =>
-                summary?.methods.some(
-                  (method) => method.effect === 'unknown' && method.unknownScope === 'namespace'
-                )
+            if (
+              other.kind === 'callable' &&
+              pythonFunctionBindingUnavailable(other.receiver, other)
+            )
+              return true
+            const helper = currentPythonFunctionSummary(other.receiver, other)
+            const captures = helper
+              ? opaquePythonFunctionCaptures(other.receiver, helper, other)
+              : []
+            const namespaceUncertain = [
+              helper,
+              ...captures.map((name) => currentPythonFunctionSummary(name, other))
+            ].some((summary) =>
+              summary?.methods.some(
+                (method) => method.effect === 'unknown' && method.unknownScope === 'namespace'
+              )
             )
             return (
               namespaceUncertain ||
@@ -1304,13 +1368,13 @@ class NotebookDependencyProjector {
                 names.some((name) => receiversMayAlias(mutation, name))
             ) ||
             otherCallUsesContainer ||
-            callbacks.some((name) => !currentPythonFunctionSummary(name))
+            callbacks.some((name) => !currentPythonFunctionSummary(name, call))
           ) {
             callbackContainers.delete(reference.root)
             return [reference]
           }
           namedCallbackContainersUsed.add(reference.root)
-          return callbacks.map((root) => ({ root, container: 'list' as const }))
+          return callbacks.map((root) => ({ root, container }))
         })
       // Visit every contracted callback before aggregating uncertainty: a
       // dynamic callback must not hide the known captures of later callbacks.
@@ -1322,6 +1386,11 @@ class NotebookDependencyProjector {
           ) {
             return false
           }
+          if (
+            reference.container &&
+            !acceptsPythonCallbackContainer(libraryEffect, keyword.name, reference.container)
+          )
+            return true
           if (
             knownBuiltinContainers.has(reference.root) &&
             !libraryEffect?.callbackContainerKeywords?.includes(keyword.name)
@@ -1336,14 +1405,15 @@ class NotebookDependencyProjector {
             (pendingTypeBindings.has(reference.root) || completeSummaryNames.has(reference.root))
           if (
             conditionallyDefinedNames.has(reference.root) ||
-            (uncertainBindings.has(reference.root) && !hasCurrentBinding)
+            (uncertainBindings.has(reference.root) && !hasCurrentBinding) ||
+            pythonFunctionBindingUnavailable(reference.root, call)
           )
             return true
           const namedTypeSummary =
             !definedInThisRun || completeSummaryNames.has(reference.root)
               ? typeSummaries.get(reference.root)
               : undefined
-          const summary = callableSummary(reference.root) ?? namedTypeSummary
+          const summary = callableSummary(reference.root, call) ?? namedTypeSummary
           if (!summary) {
             return reference.member !== undefined || libraryEffect?.callbackAllKeywords !== true
           }
@@ -1398,7 +1468,9 @@ class NotebookDependencyProjector {
           typeAwareUsedNames.push(...(callback?.usedNames ?? []))
           if (callback?.effect !== 'read') {
             if (!reference.member) {
-              typeAwareUsedNames.push(...opaquePythonFunctionCaptures(reference.root, summary))
+              typeAwareUsedNames.push(
+                ...opaquePythonFunctionCaptures(reference.root, summary, call)
+              )
             }
             return true
           }
@@ -1509,7 +1581,8 @@ class NotebookDependencyProjector {
       ...(facts.possiblyMutatedNames ?? []),
       ...typeAwarePossiblyMutatedNames
     ]
-    for (const [container, callbacks] of callbackContainers) {
+    for (const [container, candidate] of callbackContainers) {
+      const callbacks = candidate.callbackNames
       if (
         callbackActualMutationNames.some((mutation) => receiversMayAlias(mutation, container)) ||
         [container, ...callbacks].some((name) =>

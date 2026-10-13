@@ -1,77 +1,40 @@
-import { validatePackagePdfNotes, type PackagePdfNotes } from './pdf-notes'
-import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import {
-  packageLiteratureSchema,
-  validatePackageLiterature,
-  type PackageLiterature
-} from './literature'
-import {
-  parseLiteratureAttachmentVersionReference,
-  createLiteratureAttachmentVersionReference
-} from '../../shared/literature-attachment-reference'
-import { packageReproducibilitySchema, type PackageReproducibility } from './reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
-import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { SessionPackageManifest, SessionPackageRequest } from '../../shared/session-package'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
+import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
 } from '../../shared/artifact-version-locator'
-import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import {
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference
+} from '../../shared/literature-attachment-reference'
+import type { SessionPackageManifest, SessionPackageRequest } from '../../shared/session-package'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
 import { reproductionRecipes } from '../artifacts/reproducibility-host'
+import { validatePackageLiterature } from './literature'
+import { packageLiteratureSchema } from './literature-contract'
+import { validatePackagePdfNotes } from './pdf-notes'
+import type { NativeRow, NativeTable, PackageRecords } from './records-contract'
+import { COLUMNS } from './records-contract'
+import { packageReproducibilitySchema } from './reproducibility-contract'
+export { type NativeRow, type NativeTable, type PackageRecords } from './records-contract'
 
-import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { packageHistorySchema, type PackageHistory } from './history-schema'
-import { assertPackageSourcePath, readPackageJson } from './archive'
-import { NotebookRunRepository } from '../notebook/repository'
-import { createFrameNotebookLane } from '../notebook/lane-identity'
 import type { NotebookRunDocument } from '../../shared/notebook'
-import { readExecutionEvidence } from './execution-evidence'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copyFileWithinBudget } from '../bounded-file-io'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { NotebookRunRepository } from '../notebook/repository'
+import { assertPackageSourcePath, readPackageJson } from './archive'
 import { assertPackageCapacity } from './capacity'
-
-// A package contract is an allowlist, not an arbitrary database dump. Schema changes must opt in
-// here rather than silently exporting new columns (which could carry local authority or secrets).
-const COLUMNS = {
-  FileOriginSession:
-    'projectId sessionId titleSnapshot state deletedAt deletionOperationId retainedReviewIdsJson createdAt updatedAt',
-  Review:
-    'id projectId sessionId turnMessageId scope lifecycle outcome errorMessage model reviewerLog createdAt updatedAt',
-  Finding:
-    'id reviewId status resolution claim evidence locator artifactVersionId artifactBindingState sortIndex reflagCount',
-  ReviewFindingDisposition:
-    'id sourceFindingId causeReviewId sequence trigger outcome note assessedArtifactVersionId assessmentSnapshot createdAt',
-  ReviewScopeSnapshot:
-    'id projectId sessionId reviewId scopeTurnMessageId state snapshotJson checksum storageKey schemaVersion blockCount createdAt',
-  UploadFile:
-    'id projectId sessionId filename originalFilename currentVersionId createdAt updatedAt',
-  UploadVersion:
-    'id uploadFileId versionNumber state originKind basedOnVersionId storageTag storedFilename writeOperationId contentStorageKey filename originalFilename contentType sizeBytes checksum createdAt registeredAt updatedAt',
-  ArtifactVersionInput:
-    'id artifactVersionId ordinal inputFileVersionId sourceKind sourceFileId sourceArtifactVersionId sourceUploadVersionId sourceVersionNumber sourceCreatedAt sourceProjectId sourceSessionId filename contentType sizeBytes checksum storageKey strongestAssociation',
-  ArtifactMessageSnapshot:
-    'id projectId sessionId rootFrameId agentFrameId messageBranchId terminalMessageId state storageKey checksum messageCount createdAt updatedAt',
-  ArtifactLineage:
-    'id projectId sessionId normalizedFilename filename currentVersionId createdAt updatedAt',
-  ArtifactVersion:
-    'id artifactId versionNumber filename originKind basedOnVersionId storageTag storedFilename artifactRunId writeOperationId writeRequestChecksum rootFrameId agentFrameId messageBranchId runtimeSegmentId promptMessageId notebookSessionId producerRunId producerRunIndex messageId messageSnapshotId state managedVisibleAt contentStorageKey evidenceStorageKey contentType sizeBytes checksum evidenceJson evidenceChecksum evidenceSchemaVersion executionSnapshotJson executionSnapshotChecksum executionSnapshotStorageKey executionSnapshotSchemaVersion createdAt updatedAt'
-} as const
-export type NativeTable = keyof typeof COLUMNS
-export type NativeRow = Record<string, string | number | boolean | null>
-export type PackageRecords = {
-  schemaVersion: 1
-  tables: Record<NativeTable, NativeRow[]>
-  pdfNotes?: PackagePdfNotes
-  literature?: PackageLiterature
-  history?: PackageHistory
-  reproducibility?: PackageReproducibility
-}
+import { readExecutionEvidence } from './execution-evidence'
+import { packageHistorySchema } from './history-schema'
 const tableNames = Object.keys(COLUMNS) as NativeTable[]
 export const packageNativeTables: readonly NativeTable[] = tableNames
 const encodeRow = (table: NativeTable, row: object): NativeRow => {

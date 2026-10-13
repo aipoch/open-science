@@ -16557,3 +16557,305 @@ it.each([
   expect(visualCropOutput(f)).toEqual([5, 5, 196.5, 206])
   expect(f.table).toEqual(before)
 })
+
+function partialStubFaces(): ReturnType<typeof JSON.parse> {
+  const items: {
+    text: string
+    rect: number[]
+    baseline: number
+    height: number
+    horizontal: boolean
+  }[] = []
+  const cells: object[] = [],
+    grid: string[][] = []
+  const add = (
+    text: string,
+    left: number,
+    right: number,
+    baseline: number,
+    row: number,
+    column: number,
+    rect: number[]
+  ): void => {
+    const item = {
+      text,
+      rect: [left, baseline - 10, right, baseline],
+      baseline,
+      height: 10,
+      horizontal: true
+    }
+    items.push(item)
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect,
+      text,
+      sourceTokens: [item],
+      sourceRects: [item.rect]
+    })
+    ;(grid[row] ??= [])[column] = text
+  }
+  const cuts = [0, 60, 110, 160]
+  for (let c = 0; c < 3; c++)
+    add(['Group', 'Field', 'Value'][c], cuts[c] + 5, cuts[c] + 35, 15, 0, c, [
+      cuts[c],
+      0,
+      cuts[c + 1],
+      20
+    ])
+  const rules = [
+    [0, 20, 160, 20],
+    [0, 60, 160, 60],
+    [0, 100, 160, 100]
+  ]
+  for (let g = 0; g < 2; g++) {
+    const y = 20 + 40 * g
+    rules.push([60, y + 3, 60, y + 38], [65, y + 20, 105, y + 20], [115, y + 20, 155, y + 20])
+    for (let r = 0; r < 2; r++) {
+      const row = 1 + g * 2 + r
+      add(['Shared', 'label'][r], 10, 50, y + (r ? 28 : 14), row, 0, [
+        0,
+        y + r * 20,
+        60,
+        y + (r + 1) * 20
+      ])
+      add(`Field ${g * 2 + r}`, 70, 100, y + 15 + r * 20, row, 1, [
+        60,
+        y + r * 20,
+        110,
+        y + (r + 1) * 20
+      ])
+      add(String(10 + g * 2 + r), 120, 145, y + 15 + r * 20, row, 2, [
+        110,
+        y + r * 20,
+        160,
+        y + (r + 1) * 20
+      ])
+    }
+  }
+  return {
+    table: { cropRect: [0, 0, 160, 100], cells, grid, unassigned: [] },
+    items,
+    rules,
+    captions: [{ lines: ['Table 1. Records.'], rect: [0, 110, 150, 120] }]
+  }
+}
+
+it('joins wrapped stub fragments only inside partial-rule group faces while retaining all peer owners', () => {
+  const f = partialStubFaces(),
+    before = structuredClone(f)
+  const plan = lateFencedGroupHelpers.proveNativeFencedMultilineStubOwners(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules
+  )
+  expect(
+    plan.replacements.map(
+      (p: { row: number; rowSpan: number; sourceTokens: { text: string }[] }) => [
+        p.row,
+        p.rowSpan,
+        p.sourceTokens.map((i) => i.text)
+      ]
+    )
+  ).toEqual([
+    [1, 2, ['Shared', 'label']],
+    [3, 2, ['Shared', 'label']]
+  ])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'through stub',
+  'missing fence',
+  'missing wall',
+  'competing wall',
+  'missing peer',
+  'crossing group',
+  'damaged rule',
+  'foreign ink'
+])('declines partial-rule group faces with %s', (change) => {
+  const f = partialStubFaces()
+  if (change === 'through stub') f.rules.find((r: number[]) => r[0] === 65 && r[1] === 40)[0] = 0
+  if (change === 'missing fence') f.rules = f.rules.filter((r: number[]) => r[1] !== 60)
+  if (change === 'missing wall')
+    f.rules = f.rules.filter((r: number[]) => !(r[0] === 60 && r[1] === 23))
+  if (change === 'competing wall') f.rules.push([61, 23, 61, 58])
+  if (change === 'missing peer')
+    f.table.cells = f.table.cells.filter(
+      (c: { row: number; column: number }) => !(c.row === 2 && c.column === 2)
+    )
+  if (change === 'crossing group')
+    f.items.find((i: { text: string }) => i.text === 'Field 1').rect[3] = 61
+  if (change === 'damaged rule') f.rules.push([Number.NaN, 40, 100, 40])
+  if (change === 'foreign ink')
+    f.items.push({ ...f.items[4], text: 'extra', rect: [111, 25, 118, 35] })
+  const before = structuredClone(f)
+  expect(
+    lateFencedGroupHelpers.proveNativeFencedMultilineStubOwners(
+      f.table,
+      f.items,
+      f.captions,
+      f.rules
+    )
+  ).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+function commonLeafGutter(): ReturnType<typeof JSON.parse> {
+  const token = (
+    text: string,
+    left: number,
+    right: number,
+    baseline: number
+  ): ReturnType<typeof JSON.parse> => ({
+    text,
+    rect: [left, baseline - 10, right, baseline],
+    baseline,
+    height: 10,
+    horizontal: true
+  })
+  const items = [
+    token('Key', 5, 35, 15),
+    token('Left', 70, 95, 15),
+    token('Right', 125, 155, 15),
+    token('End', 175, 195, 15)
+  ]
+  const rules = Array.from({ length: 7 }, (_, n) => [0, 20 + n * 20, 210, 20 + n * 20])
+  for (let n = 0; n < 6; n++)
+    items.push(
+      token(`k${n}`, 5, 35, 35 + n * 20),
+      token('aa bb cc', 70, 155, 35 + n * 20),
+      token(String(n + 1), 180, 190, 35 + n * 20)
+    )
+  const runs = items.map((i) => ({
+    ...i,
+    literalGlyphs: [...i.text.replace(/\s/gu, '')],
+    glyphRuns: [...i.text.replace(/\s/gu, '')].map(() => 1),
+    gaps:
+      i.text === 'aa bb cc'
+        ? [
+            { left: i.baseline === 135 ? 90 : 99, right: i.baseline === 135 ? 94 : 103, index: 2 },
+            { left: 112, right: 117, index: 4 }
+          ]
+        : []
+  }))
+  const table = {
+    cropRect: [0, 0, 210, 142],
+    structure: {
+      objects: [0, 50, 165].map((x, n) => ({
+        label: 'table column',
+        rect: [x, 0, [50, 165, 210][n], 142]
+      }))
+    }
+  }
+  return {
+    table,
+    items,
+    rules,
+    runs,
+    captions: [{ lines: ['Table 1. Values.'], rect: [0, 150, 180, 160] }]
+  }
+}
+
+it('uses every fenced record to prove a unique common measured leaf gutter', () => {
+  const f = commonLeafGutter()
+  expect(
+    lateFencedGroupHelpers.recoverNativeAlignedLiteralLeafColumns(
+      f.table,
+      f.items,
+      f.captions,
+      f.rules,
+      f.runs
+    )?.cuts
+  ).toEqual([0, 50, 114.5, 165, 210])
+})
+
+it('preserves every literal field through the existing common-gutter token seam', () => {
+  const f = commonLeafGutter(),
+    original = structuredClone(f)
+  const items = lateFencedGroupHelpers.recoverNativePrintedLaneTokens(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules,
+    f.runs
+  )
+  expect(items.filter((i: { text: string }) => i.text === 'aa bb')).toHaveLength(6)
+  expect(items.filter((i: { text: string }) => i.text === 'cc')).toHaveLength(6)
+  expect(
+    items
+      .filter((i: { sourceToken?: unknown }) => i.sourceToken)
+      .every((i: { sourceToken: unknown }) => f.items.includes(i.sourceToken))
+  ).toBe(true)
+  expect(characters(items.map((i: { text: string }) => i.text).join(''))).toBe(
+    characters(f.items.map((i: { text: string }) => i.text).join(''))
+  )
+  expect(f).toEqual(original)
+})
+
+it.each([
+  'two gutters',
+  'crossing record',
+  'missing heading',
+  'changed glyph',
+  'operator boundary',
+  'missing record',
+  'missing observed run',
+  'nonfinite gap'
+])('declines the common measured leaf gutter with %s', (change) => {
+  const f = commonLeafGutter()
+  const last = f.runs.find(
+    (r: { text: string; baseline: number }) => r.text === 'aa bb cc' && r.baseline === 135
+  )
+  if (change === 'two gutters') last.gaps[0] = { left: 99, right: 103, index: 2 }
+  if (change === 'crossing record')
+    last.gaps = last.gaps.filter((g: { index: number }) => g.index !== 4)
+  if (change === 'missing heading')
+    f.items = f.items.filter((i: { text: string }) => i.text !== 'Right')
+  if (change === 'changed glyph') last.literalGlyphs[0] = 'z'
+  if (change === 'operator boundary') last.glyphRuns = [1, 1, 1, 1, 2, 2]
+  if (change === 'missing record')
+    f.items = f.items.filter((i: { baseline: number }) => i.baseline !== 135)
+  if (change === 'missing observed run')
+    f.runs = f.runs.filter(
+      (r: { text: string; baseline: number }) => !(r.text === 'aa bb cc' && r.baseline === 135)
+    )
+  if (change === 'nonfinite gap') last.gaps[1].right = Infinity
+  const before = structuredClone(f)
+  expect(
+    lateFencedGroupHelpers.recoverNativeAlignedLiteralLeafColumns(
+      f.table,
+      f.items,
+      f.captions,
+      f.rules,
+      f.runs
+    )
+  ).toBeUndefined()
+  expect(
+    lateFencedGroupHelpers.recoverNativePrintedLaneTokens(
+      f.table,
+      f.items,
+      f.captions,
+      f.rules,
+      f.runs
+    )
+  ).toEqual(f.items)
+  expect(f).toEqual(before)
+})
+
+it('returns four leaf columns and complete records through common-gutter production refinement', () => {
+  const f = commonLeafGutter()
+  f.table.structure.objects.push({ label: 'table column header', rect: [0, 0, 210, 20] })
+  for (let n = 0; n < 7; n++)
+    f.table.structure.objects.push({ label: 'table row', rect: [0, n * 20, 210, (n + 1) * 20] })
+  const result = refineTable(f.table, f.items, f.captions, [], f.rules, f.runs)
+  expect(result.grid).toEqual([
+    ['Key', 'Left', 'Right', 'End'],
+    ...Array.from({ length: 6 }, (_, n) => [`k${n}`, 'aa bb', 'cc', String(n + 1)])
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(result.cropRect).toEqual(f.table.cropRect)
+})

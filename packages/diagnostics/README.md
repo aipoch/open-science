@@ -21,6 +21,8 @@ redactSensitiveText('apiKey=example')
 
 The Node entry owns one log sink per process/module instance, shared by CommonJS and ESM imports. Initialize it once in application composition. A worker has its own isolated module state. Consumers use declared exports; formatting and other implementation details are private. The browser entry loads no Node builtins.
 
+Console mirroring defaults to readable text. Hosts can set `consoleFormat: 'json'` to mirror the same bounded, redacted JSON line written to the file, including time, level, run ID and optional correlation ID. `mirrorToConsole: false` disables either format. Debug/info retain stdout and warn/error retain stderr; file filtering, rotation and flush behavior are unchanged.
+
 ## Ownership
 
 This package owns common diagnostic mechanics and their tests. The host supplies log directories, correlation values, event payloads, lifecycle wiring and startup probe operations. The host remains responsible for selecting appropriate business information before logging it; generic redaction cannot decide which domain fields may be disclosed.

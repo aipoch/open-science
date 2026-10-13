@@ -1,9 +1,7 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
-import {
-  sanitizeAcpTurnTokenUsage,
-  type AcpMessageImage,
-  type AcpTurnTokenUsage
-} from '../../shared/acp'
+import { sanitizeAcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpMessageImage } from '../../shared/acp-image-contract'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 

@@ -1,5 +1,6 @@
-import { sanitizeAcpMessageImage, type AcpMessageImage } from '../../../../../shared/acp'
-import type { PdfNormalizedRect } from '../../../../../shared/annotations'
+import type { AcpMessageImage } from '../../../../../shared/acp-image-contract'
+import { sanitizeAcpMessageImage } from '../../../../../shared/acp-image-contract'
+import type { PdfNormalizedRect } from '../../../../../shared/annotation-contract'
 
 type NormalizedPoint = Readonly<{ x: number; y: number }>
 

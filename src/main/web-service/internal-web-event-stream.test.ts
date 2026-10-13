@@ -1,3 +1,4 @@
+import { projectSessionEventPayload } from '../session-event-payload'
 import { describe, expect, it } from 'vitest'
 
 import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
@@ -7,6 +8,32 @@ const parseFrames = (frames: readonly string[]): unknown[] =>
   frames.map((frame) => JSON.parse(frame))
 
 describe('InternalWebEventStream', () => {
+  it.each(['session:created', 'session:updated'])(
+    'retains an already projected %s invalidation without breaking replay',
+    (channel) => {
+      const payload = {
+        kind: 'session-invalidation',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        revision: 7,
+        originClientId: 'main:runtime-transcript'
+      }
+      const event = { channel, payload }
+      expect(projectSessionEventPayload(event)).toBe(payload)
+      const stream = new InternalWebEventStream({ streamId: 'stream-1' })
+      const frame = JSON.parse(
+        stream.publish({ ...event, payload: projectSessionEventPayload(event) })
+      )
+      expect(frame).toMatchObject({ kind: 'event', sequence: 1, channel, payload })
+      stream.publish({ channel: 'project:created', payload: { id: 'p' } })
+      expect(parseFrames(stream.resume({ streamId: 'stream-1', after: 0 }))).toEqual([
+        frame,
+        expect.objectContaining({ kind: 'event', sequence: 2 }),
+        expect.objectContaining({ kind: 'ready', latestSequence: 2 })
+      ])
+    }
+  )
+
   it('replays retained event frames in sequence before declaring the stream live', () => {
     const stream = new InternalWebEventStream({
       streamId: 'stream-1',

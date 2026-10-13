@@ -1,27 +1,27 @@
 import type {
-  AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
+  AcpCancelPromptRequest,
   AcpCompactSessionRequest,
   AcpConnectRequest,
-  AcpCreateSessionRequest,
   AcpContinueInterruptedTurnRequest,
+  AcpCreateSessionRequest,
   AcpCreateSessionResponse,
-  AcpRuntimeEvent,
   AcpDeleteSessionRequest,
-  AcpPermissionRequest,
   AcpPermissionResponse,
-  ElicitationResponse,
   AcpPromptRequest,
-  AcpSteerFollowUpRequest,
-  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
-  AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
+  AcpRuntimeEvent,
+  AcpSaveAsSkillRequest,
   AcpSetPermissionProfileRequest,
   AcpStateCommandResponse,
   AcpStateSnapshot,
-  AcpStateUpdate
+  AcpStateUpdate,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
+  ElicitationResponse
 } from '../acp'
+import type { AcpPermissionRequest } from '../acp-permission-contract'
 
 import type {
   ActivePlanProjection,
@@ -31,13 +31,13 @@ import type {
 
 import {
   callable,
-  WEB,
   DEFAULT_EMPTY,
   DEFAULT_EMPTY_ABSENT_ONLY,
-  type AcpListener,
-  type RemoveListener,
   EVENT,
-  RUNTIME_VALIDATED
+  RUNTIME_VALIDATED,
+  WEB,
+  type AcpListener,
+  type RemoveListener
 } from './definition'
 
 export const contracts = {

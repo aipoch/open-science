@@ -716,6 +716,17 @@ export function nativeOwnedAnnotationFrame(
     return
   const font = captionFont(page, caption)
   if (!(font > 0) || !Number.isFinite(font)) return
+  const attachedLabel = nativeAttachedFrameLabel(
+    page,
+    figure,
+    captions,
+    tables,
+    frames,
+    tokens,
+    foreignOwns,
+    font
+  )
+  if (attachedLabel) return attachedLabel
   const epsilon = 1e-8,
     tile = [page.width / 128, page.height / 128],
     enclosures = frames.filter(
@@ -803,6 +814,113 @@ export function nativeOwnedAnnotationFrame(
   )
     return
   return union([rect, frame])
+}
+
+// Complete one already intersecting native label only when a closed frame
+// uniquely owns its row or an overlapping painted title tab. A loose path box
+// alone is not a frame and cannot expand a figure into a paragraph above it.
+function nativeAttachedFrameLabel(
+  page,
+  figure,
+  captions,
+  tables,
+  frames,
+  tokens,
+  foreignOwns,
+  font
+) {
+  const rect = figure.rect
+  const valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0
+  if (
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds) ||
+    !frames.every(valid) ||
+    !tokens.every((t) => valid(t.rect) && Number.isFinite(t.height) && t.height > 0)
+  )
+    return
+  const ownedFrames = frames.filter((f) => contains(rect, f) && f[2] - f[0] > font * 8)
+  const paths = graphics(page, 'path').filter(valid)
+  const selected = []
+  for (const token of tokens) {
+    const r = token.rect
+    if (
+      !token.horizontal ||
+      token.text.trim().length < 4 ||
+      token.text.length > 70 ||
+      token.height < font * 0.5 ||
+      token.height > font * 1.5 ||
+      !intersection(r, rect) ||
+      contains(rect, r) ||
+      r[3] >= figure.caption.rect[1]
+    )
+      continue
+    const side = ownedFrames.filter(
+      (f) =>
+        r[2] > rect[2] &&
+        r[0] >= f[2] &&
+        r[0] - f[2] < token.height * 0.7 &&
+        r[1] >= f[1] - token.height * 0.1 &&
+        r[3] <= f[3] + token.height * 0.1 &&
+        f[3] - f[1] <= token.height * 2 &&
+        r[2] - rect[2] <= token.height * 6
+    )
+    if (side.length === 1) {
+      selected.push({ token, rect: r, frame: side[0] })
+      continue
+    }
+    const top = ownedFrames.flatMap((f) =>
+      paths
+        .filter(
+          (p) =>
+            r[1] < rect[1] &&
+            r[3] > rect[1] &&
+            r[1] >= rect[1] - token.height * 2 &&
+            f[3] - f[1] >= font * 8 &&
+            p[1] < f[1] &&
+            p[3] > f[1] &&
+            p[0] >= f[0] &&
+            p[2] <= f[2] &&
+            p[3] - p[1] <= token.height * 3 &&
+            p[2] - p[0] < (f[2] - f[0]) * 0.75 &&
+            contains(p, r, token.height * 0.1) &&
+            r[2] - r[0] > (p[2] - p[0]) * 0.5
+        )
+        .map((p) => ({ token, rect: union([p, r]), frame: f, paint: p }))
+    )
+    if (top.length === 1) selected.push(top[0])
+  }
+  if (selected.length !== 1) return
+  const chosen = selected[0],
+    target = union([rect, chosen.rect])
+  if (
+    blocked(target, figure.caption, captions, tables) ||
+    foreignOwns(target) ||
+    intersection(figure.caption.rect, target) > 0 ||
+    tokens.some(
+      (t) => t !== chosen.token && intersection(t.rect, target) > intersection(t.rect, rect) + 0.01
+    )
+  )
+    return
+  // Quantization may put the already proved frame's own border into this strip.
+  // All other newly included painted components remain an ownership barrier.
+  for (const g of page.graphicsBounds) {
+    const r = (g.paintedNormalizedRect ?? g.normalizedRect)?.map(
+      (v, i) => v * (i % 2 ? page.height : page.width)
+    )
+    if (!valid(r)) return
+    if (intersection(r, target) <= intersection(r, rect) + 0.01) continue
+    if (
+      g.kind === 'path' &&
+      (r.every((v, i) => v === chosen.paint?.[i]) ||
+        (contains(r, chosen.frame) &&
+          r.every(
+            (v, i) => Math.abs(v - chosen.frame[i]) < (i % 2 ? page.height : page.width) / 128
+          )))
+    )
+      continue
+    return
+  }
+  return target
 }
 
 // Two independently hashed source images can share one caption even when one
@@ -3191,6 +3309,39 @@ export function nativeCaptionedVectorChartStrip(
 // separated panels and can otherwise leave this single framed chart
 // unresolved. Require the same numeric ticks and category labels as a chart,
 // plus a unique broad frame directly above the caption.
+// A frame or bar-shaped path is only a local hypothesis. Defer to ordinary
+// association when it would omit substantial drawing ink in the same caption
+// band. This is a veto, not permission to attach that ink or enlarge a crop.
+function incompleteNativeChart(page, caption, captions, tables, rect, font) {
+  return graphics(page, 'path').some((r) => {
+    if (
+      !r.every(Number.isFinite) ||
+      r[2] - r[0] < font * 6 ||
+      r[3] - r[1] < font * 6 ||
+      contains(rect, r, font) ||
+      r[3] > caption.rect[1] ||
+      (Math.min(r[3], rect[3]) - Math.max(r[1], rect[1]) < font * 3 &&
+        !(
+          r[1] < rect[1] - font * 6 &&
+          r[3] < rect[1] + font * 3 &&
+          rect[1] - r[3] < font * 6 &&
+          Math.min(r[2], rect[2]) - Math.max(r[0], rect[0]) > (rect[2] - rect[0]) * 0.8
+        )) ||
+      Math.min(r[2], caption.rect[2]) - Math.max(r[0], caption.rect[0]) < font * 3 ||
+      tables.some((t) => contains(t, r, font))
+    )
+      return false
+    return !captions.some(
+      (c) =>
+        c !== caption &&
+        c.page === caption.page &&
+        c.rect[1] >= r[3] - font &&
+        c.rect[3] < caption.rect[1] &&
+        Math.min(c.rect[2], r[2]) - Math.max(c.rect[0], r[0]) > font * 3
+    )
+  })
+}
+
 export function nativeCaptionedVectorBarChart(page, caption, captions, tables, rules = []) {
   // A few publishers omit punctuation after the ordinal.  Accept that form
   // only when the next word starts with an uppercase title word; lowercase
@@ -3310,6 +3461,7 @@ export function nativeCaptionedVectorBarChart(page, caption, captions, tables, r
     .filter((word) => word.length >= 2)
   if (numeric.length < 4 || (labels.length < 3 && categoryWords.length < 3)) return
   const rect = union([frame, ...chartPaths, ...chartLines.map(lineRect)])
+  if (incompleteNativeChart(page, caption, captions, tables, rect, font)) return
   return {
     caption,
     rect,
@@ -3415,6 +3567,7 @@ export function nativeCaptionedVectorBarPanels(page, caption, captions, tables) 
   )
   if (horizontalOverlap / Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0]) < 0.5)
     return
+  if (incompleteNativeChart(page, caption, captions, tables, rect, font)) return
   return {
     caption,
     rect,

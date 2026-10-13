@@ -3,7 +3,12 @@ import { networkInterfaces } from 'node:os'
 
 import type { NetworkConnectionType, NetworkInfo } from '../../shared/network'
 import type { ManagedClaudeRegistry } from '../../shared/settings'
-import { REGISTRY_URLS, probeRegistryReachability } from '../settings/environment-check'
+import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  REGISTRY_URLS,
+  probeRegistryReachability,
+  RegistryProbeFailure
+} from '../settings/environment-check'
 
 type NetworkInterfaceMap = ReturnType<typeof networkInterfaces>
 
@@ -13,18 +18,40 @@ type RegistryProbe = typeof probeRegistryReachability
 // environment check's HTTPS HEAD probe against both registry roots (npmjs and npmmirror) —
 // not a generic "is the internet usable" check. Reachable when either registry answers 2xx;
 // each probe carries the probe's own 5s timeout and they run in parallel.
-const checkInternetReachability = (
+const checkInternetReachability = async (
   probe: RegistryProbe = probeRegistryReachability
 ): Promise<boolean> => {
+  const log = createLogger('network')
   const registries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
-  return Promise.all(
-    registries.map((registry) =>
-      probe(registry).then(
-        () => true,
-        () => false
-      )
-    )
-  ).then((results) => results.some(Boolean))
+  const results = await Promise.all(
+    registries.map(async (registry) => {
+      const checkedAt = Date.now()
+      try {
+        await probe(registry)
+        log.info('registry check completed', {
+          registry,
+          checkedAt,
+          durationMs: Date.now() - checkedAt,
+          outcome: 'reachable'
+        })
+        return 'reachable'
+      } catch (error) {
+        const outcome = error instanceof RegistryProbeFailure ? 'unreachable' : 'check-failed'
+        log.warn('registry check completed', {
+          registry,
+          checkedAt,
+          durationMs: Date.now() - checkedAt,
+          outcome,
+          failureReason: error instanceof RegistryProbeFailure ? error.failureReason : 'unknown'
+        })
+        return outcome
+      }
+    })
+  )
+  if (results.includes('reachable')) return true
+  if (results.includes('check-failed'))
+    throw new Error('Package registry checks could not be completed.')
+  return false
 }
 
 // First non-internal IPv4 address across the active interfaces. Internal (loopback) and

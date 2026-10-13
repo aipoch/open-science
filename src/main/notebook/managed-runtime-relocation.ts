@@ -1,4 +1,4 @@
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { relocatedPosixManagedRuntimeId } from './posix-runtime-binding'
 import { relocatedWindowsManagedRuntimeId } from './windows-runtime-binding'

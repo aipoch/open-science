@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { sanitizeAnnotations } from '../../../../shared/annotations'
+import type { ComposerDraft } from './composer-contract'
 import { docToText } from './composer/composer-doc'
-import type { ComposerDraft } from './workspace-composer-upload-controller'
 
 const STORAGE_KEY = 'open-science-composer-drafts-v1'
 const RECOVERY_STORAGE_KEY = 'open-science-composer-drafts-recovery-v1'

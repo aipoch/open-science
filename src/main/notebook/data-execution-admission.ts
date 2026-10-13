@@ -1,26 +1,27 @@
 import { realpathSync } from 'node:fs'
 
-import type { NotebookCell, NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement } from '../../shared/notebook-runtime'
-import { NotebookEnvironmentOperations } from './environment-operations'
-import { resolveExternalRLibrary } from '@aipoch/environment'
-import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRecoveryCoordinator } from '@aipoch/environment'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  NotebookRecoveryCoordinator,
   pythonBin,
   rBin,
-  resolveEnvName
+  resolveEnvName,
+  resolveExternalRLibrary
 } from '@aipoch/environment'
-import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
+import type { NotebookCell } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import { NotebookEnvironmentOperations } from './environment-operations'
+import { notebookLaneKey } from './lane-identity'
+import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
-import { notebookLaneKey } from './lane-identity'
 
 type NotebookDataExecutionRoute = Readonly<{
   environment: string

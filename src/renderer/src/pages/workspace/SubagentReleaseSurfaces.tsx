@@ -3,7 +3,6 @@ import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest, DelegatedWorkUnavailableReason } from '../../../../shared/acp'
 import {
   Select,
   SelectContent,
@@ -12,26 +11,28 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { ChatSession } from '@/stores/session-store'
+import { useWorkspaceSubagentRuntimeSession } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { cn } from '@/lib/utils'
 import {
   createProjectLibraryPreviewItem,
   createSessionSubagentsPreviewItem,
   type PreviewToolItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
-import { cn } from '@/lib/utils'
-import { useWorkspaceSubagentRuntimeSession } from '@/lib/acp/useWorkspaceAgentRuntime'
+import type { DelegatedWorkUnavailableReason } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 
-import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
-import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
-import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import {
   projectSessionSubagents,
   selectSubagentFrame,
   type SessionSubagentChild,
   type SubagentRawStatus
 } from './subagent-release-projection'
+import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
+import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
+import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 
 const returnFocusBySession = new Map<string, HTMLElement>()
 

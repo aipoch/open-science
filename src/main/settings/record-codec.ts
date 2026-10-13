@@ -1,5 +1,14 @@
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
+import type { PackageMirror } from '../../shared/mirror'
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
+import { isOfficialVendorId } from '../../shared/provider-registry'
+import {
+  isCustomReasoningEffortTransport,
+  isReasoningEffortPresetSetting
+} from '../../shared/reasoning-effort'
 import type {
-  ChatApiEndpoint,
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
@@ -7,26 +16,17 @@ import type {
   ValidationCategory
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider, providerValidationTargetMatches } from '../../shared/settings'
-import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
-import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
-import type { PackageMirror } from '../../shared/mirror'
-import { isOfficialVendorId } from '../../shared/provider-registry'
-import {
-  isCustomReasoningEffortTransport,
-  isReasoningEffortPresetSetting
-} from '../../shared/reasoning-effort'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { isRecord } from '../value-guards'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { isPositiveWholeTokenLimit } from './provider-token-limits'
+import { characterCount } from './settings-resource-limits'
 import type {
+  StoredCodexInfo,
   StoredComputeGrant,
   StoredConnectors,
-  StoredCodexInfo,
   StoredCustomMcpServer,
   StoredProvider
 } from './types'
-import { isRecord } from '../value-guards'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { characterCount } from './settings-resource-limits'
 
 const log = createLogger('settings.repository')
 

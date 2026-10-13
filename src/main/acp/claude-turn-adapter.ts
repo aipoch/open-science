@@ -1,5 +1,5 @@
 import { toAcpTurnTokenUsage } from '../../shared/acp'
-import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,

@@ -1,4 +1,5 @@
-import type { AnnotationValidationError, TextAnnotation } from '../../../../../shared/annotations'
+import type { TextAnnotation } from '../../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../../shared/annotations'
 
 type AnnotationPort = Readonly<{
   sessionId: string

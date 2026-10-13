@@ -1,5 +1,5 @@
+import type { SessionConversationCommand } from '../../../shared/conversation-command-contract'
 import { projectConversationMessage } from '../../../shared/conversation-graph'
-import type { SessionConversationCommand } from '../../../shared/session-conversation-command'
 import type { PersistedChatSession } from '../../../shared/session-persistence'
 
 const discardedPreparations = new Set<string>()

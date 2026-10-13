@@ -1,59 +1,59 @@
-import type {
-  PdfAnnotationSource,
-  PdfAnnotationTarget
-} from '../../../../../shared/pdf-annotations'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import {
-  Highlighter,
   Check,
   Copy,
+  Highlighter,
   ListCollapse,
   MessageCircleQuestionMark,
   Quote
 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type {
+  PdfAnnotationSource,
+  PdfAnnotationTarget
+} from '../../../../../shared/pdf-annotations'
 
 import { ErrorNotice } from '@/components/error-notice'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import {
-  resolveManagedProjectFileAnnotationIdentity,
-  type Annotation,
-  type PdfAnnotation,
-  type TextAnnotation
-} from '../../../../../shared/annotations'
+import type {
+  Annotation,
+  PdfAnnotation,
+  TextAnnotation
+} from '../../../../../shared/annotation-contract'
+import { resolveManagedProjectFileAnnotationIdentity } from '../../../../../shared/annotations'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
-import type { PreviewFileRendererProps } from './preview-types'
 import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'
 import { type PdfMarkColor, type PdfMarkKind } from '../../../../../shared/pdf-bookmarks'
-import { useBookmarks } from '../bookmarks/bookmark-context'
-import { usePdfAnnotations } from '../pdf-annotations/pdf-annotations-context'
-import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
+import { createAnnotationId } from '../annotations/annotation-id'
 import {
+  retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation,
   subscribeBookmarkReveal,
   subscribeBookmarkRevealPreparation,
-  type BookmarkRevealTarget,
-  retryPendingAnnotationReveal
+  type BookmarkRevealTarget
 } from '../annotations/annotation-reveal'
 import { isBackwardSelection } from '../annotations/annotation-trigger-anchor'
-import { createAnnotationId } from '../annotations/annotation-id'
+import type { AnnotationTriggerAction } from '../annotations/AnnotationTrigger'
+import {
+  pdfTextSelectorForRange,
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange,
+  textAnnotationAnchorForRange
+} from '../annotations/text-annotation-range'
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
   type AnnotationControl,
   type PdfTextMarkStyle
 } from '../annotations/TextAnnotationEditors'
-import type { AnnotationTriggerAction } from '../annotations/AnnotationTrigger'
-import {
-  pdfTextSelectorForRange,
-  textAnnotationAnchorForRange,
-  quoteOccurrenceForRange,
-  reconcileTextAnnotationRanges,
-  retargetTextAnnotationRange
-} from '../annotations/text-annotation-range'
+import { useBookmarks } from '../bookmarks/bookmark-context'
+import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
+import { usePdfAnnotations } from '../pdf-annotations/pdf-annotations-context'
+import type { PreviewFileRendererProps } from './preview-types'
 
 type RangeAnnotation = TextAnnotation
 

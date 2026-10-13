@@ -1,19 +1,19 @@
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpConnectRequest,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { AgentFramework } from '../agent-framework/types'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 

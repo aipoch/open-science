@@ -1,3 +1,4 @@
+import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../shared/web-rpc-contract'
 import { ChildProcess } from 'node:child_process'
 import { PermissionApprovalPresence } from './permission-approval-presence'
 import { randomUUID } from 'node:crypto'
@@ -12,6 +13,8 @@ import { connectDesktopRuntime } from './desktop-runtime-client'
 import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
+import { createRemoteNotificationDelivery } from './notifications/desktop-delivery'
+import type { NativeTranslator } from './locale/main-process-messages'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -82,34 +85,63 @@ async function setup(
   }
 }
 
-it('keeps notification clicks on the authenticated attachment and clears them on disconnect', async () => {
-  const onAction = vi.fn()
+it('rebinds notification actions to the recovered attachment and rejects old capabilities', async () => {
   const disconnected = vi.fn()
+  const errors = vi.fn()
+  const delivery = createRemoteNotificationDelivery(
+    (request) => server.requestNative(request),
+    ((key: string) => key) as NativeTranslator,
+    errors
+  )
   const server = await startDesktopRuntimeTransport({
     version: 'test',
     commands: { commandNames: () => [], invoke: vi.fn() },
     events: new ApplicationEventHub(),
-    onNotificationAction: onAction,
-    onDisconnect: disconnected
+    onNotificationAction: delivery.handleAction,
+    onDisconnect: () => {
+      delivery.disconnect()
+      disconnected()
+    }
   })
   cleanups.push(server.close)
-  const native = vi.fn(async () => false)
-  const client = await connectDesktopRuntime({
-    endpoint: server.endpoint,
-    onNativeRequest: native,
-    onEvent: vi.fn(),
-    onDisconnect: vi.fn()
-  })
-  expect(server.isConnected()).toBe(true)
-  expect(await server.requestNative({ operation: 'notification-focus' })).toBe(false)
-  const token = randomUUID()
-  client.notificationAction(token, 'clicked')
-  await vi.waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith(token, 'clicked'))
-  client.close()
+  const tokens: string[] = []
+  const connect = (): ReturnType<typeof connectDesktopRuntime> =>
+    connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onNativeRequest: async ({ request }) => {
+        if (request.operation === 'notification-show') {
+          tokens.push(request.token)
+          return null
+        }
+        return false
+      },
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+  const old = await connect()
+  const staleClick = vi.fn()
+  delivery.show({ title: 'Fixture old', body: 'Generated', onClick: staleClick })
+  await vi.waitFor(() => expect(tokens).toHaveLength(1))
+  old.close()
   await vi.waitFor(() => expect(disconnected).toHaveBeenCalledOnce())
-  expect(server.isConnected()).toBe(false)
-  client.notificationAction(token, 'clicked')
-  expect(onAction).toHaveBeenCalledOnce()
+  const current = await connect()
+  const currentClick = vi.fn()
+  delivery.show({ title: 'Fixture current', body: 'Generated', onClick: currentClick })
+  await vi.waitFor(() => expect(tokens).toHaveLength(2))
+  old.notificationAction(tokens[0], 'clicked')
+  current.notificationAction(tokens[0], 'clicked')
+  current.notificationAction(tokens[1], 'clicked')
+  await vi.waitFor(() => {
+    expect(errors.mock.calls).toEqual([])
+    expect(disconnected).toHaveBeenCalledOnce()
+    expect(currentClick).toHaveBeenCalledOnce()
+  })
+  expect(staleClick).not.toHaveBeenCalled()
+  current.notificationAction(tokens[1], 'clicked')
+  expect(await server.requestNative({ operation: 'notification-focus' })).toBe(false)
+  expect(currentClick).toHaveBeenCalledOnce()
+  expect(errors).not.toHaveBeenCalled()
+  current.close()
 })
 
 describe('desktop projection of application commands and events', () => {
@@ -230,7 +262,7 @@ describe('desktop projection of application commands and events', () => {
     client.release(document)
     await expect(client.invoke(document, 'projects:list', [])).rejects.toThrow('released')
     const waiting = expect(client.invoke(randomUUID(), 'projects:list', ['wait'])).rejects.toThrow(
-      'Desktop runtime connection closed (1006).'
+      'result of a submitted operation is unknown'
     )
     await server.close()
     await waiting
@@ -281,6 +313,23 @@ describe('desktop projection of application commands and events', () => {
     })
     expect(() => server.reportUploadProgress(other, { ...payload, receivedBytes: -1 })).toThrow()
     client.close()
+    await vi.waitFor(() => expect(server.isConnected()).toBe(false))
+    const recoveredProgress = vi.fn()
+    const recovered = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onUploadProgress: recoveredProgress,
+      onDisconnect: vi.fn()
+    })
+    const freshDocument = randomUUID()
+    await recovered.invoke(freshDocument, 'projects:list', [])
+    server.reportUploadProgress(other, payload)
+    server.reportUploadProgress(document, payload)
+    server.reportUploadProgress(freshDocument, payload)
+    await recovered.invoke(freshDocument, 'projects:list', [])
+    expect(recoveredProgress).toHaveBeenCalledExactlyOnceWith(freshDocument, payload)
+    expect(progress).toHaveBeenCalledTimes(2)
+    recovered.close()
     await server.close()
     server.reportUploadProgress(other, payload)
     expect(progress).toHaveBeenCalledTimes(2)
@@ -526,7 +575,7 @@ describe('desktop projection of application commands and events', () => {
     const event = await value.received.next()
     expect(event).toMatchObject({
       kind: 'event',
-      protocolVersion: 3,
+      protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
       streamId: cursor.streamId,
       sequence: 1,
       channel: 'side-chat:relay-delivered'
@@ -687,6 +736,34 @@ describe('desktop quit ownership', () => {
     }
   )
 
+  it('publishes deferred socket loss when final owned shutdown fails and Electron stays open', async () => {
+    const startedProcess = child()
+    const shutdown = vi.fn()
+    const server = await host(shutdown)
+    const disconnected = vi.fn()
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      startedProcess,
+      onEvent: vi.fn(),
+      onDisconnect: disconnected
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const quit = expect(client.quit()).rejects.toThrow('No process signal was sent')
+      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+      await server.close()
+      expect(disconnected).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(15_000)
+      await quit
+      expect(disconnected).toHaveBeenCalledOnce()
+      expect(startedProcess.exitCode).toBeNull()
+      expect(startedProcess.kill).not.toHaveBeenCalled()
+    } finally {
+      client.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('reports an abnormal child exit without force-kill or success', async () => {
     const shutdown = vi.fn()
     const server = await host(shutdown)
@@ -778,7 +855,9 @@ describe('desktop quit ownership', () => {
       await result
       expect(startedProcess.kill).not.toHaveBeenCalled()
       expect(startedProcess.listenerCount('exit')).toBe(0)
-      await expect(client.invoke(randomUUID(), 'projects:list', [])).resolves.toEqual([])
+      await expect(client.invoke(randomUUID(), 'projects:list', [])).rejects.toThrow(
+        'shutting down'
+      )
     } finally {
       client.close()
       vi.useRealTimers()
@@ -791,6 +870,7 @@ describe('native desktop requests over the authenticated connection', () => {
   async function nativeSetup(
     onNativeRequest?: import('./desktop-native-contract').DesktopNativeHandler
   ) {
+    const disconnected = vi.fn()
     const { currentDesktopCaller } = await import('./desktop-native-contract')
     const server = await startDesktopRuntimeTransport({
       version: 'test',
@@ -798,6 +878,7 @@ describe('native desktop requests over the authenticated connection', () => {
       commands: {
         commandNames: () => ['projects:list'],
         invoke: async (_name, invocation) => {
+          if (invocation.args[0] === 'ping') return 'pong'
           const caller = currentDesktopCaller()!
           expect(caller.clientId).toBe(invocation.callerContext.clientId)
           return server.requestNative(
@@ -813,9 +894,9 @@ describe('native desktop requests over the authenticated connection', () => {
       endpoint: server.endpoint,
       onNativeRequest,
       onEvent: () => {},
-      onDisconnect: () => {}
+      onDisconnect: disconnected
     })
-    return { server, client, document: randomUUID() }
+    return { server, client, document: randomUUID(), disconnected }
   }
 
   it('round-trips native selections through the original command and caller lease', async () => {
@@ -867,6 +948,7 @@ describe('native desktop requests over the authenticated connection', () => {
       let signal: AbortSignal | undefined
       let finish!: (value: unknown) => void
       const value = await nativeSetup(async (_request, callerSignal) => {
+        if (signal) return { canceled: true }
         signal = callerSignal
         return new Promise((resolve) => {
           finish = resolve
@@ -883,15 +965,127 @@ describe('native desktop requests over the authenticated connection', () => {
       finish({ canceled: true })
       if (reason === 'release') {
         // A cancelled operation's late return must not corrupt the next document/command.
-        await vi.waitFor(() => expect(value.client.commandNames()).toContain('projects:list'))
+        await expect(value.client.invoke(randomUUID(), 'projects:list', ['ping'])).resolves.toBe(
+          'pong'
+        )
+        await expect(value.client.invoke(randomUUID(), 'projects:list', [])).resolves.toEqual({
+          canceled: true
+        })
+        expect(value.disconnected).not.toHaveBeenCalled()
         value.client.close()
       }
     }
   )
 
+  it('bounds cancelled but unsettled native resources independently and releases them on settlement', async () => {
+    const finishes: Array<() => void> = []
+    let started!: (signal: AbortSignal) => void
+    const handler = vi.fn(async (_request, signal: AbortSignal) => {
+      started(signal)
+      return new Promise((resolve) => finishes.push(() => resolve({ canceled: true })))
+    })
+    const value = await nativeSetup(handler)
+    try {
+      for (let index = 0; index < 64; index++) {
+        const arrived = new Promise<AbortSignal>((resolve) => {
+          started = resolve
+        })
+        const controller = new AbortController()
+        const operation = value.server.requestNative(
+          { operation: 'save-dialog', options: {} },
+          undefined,
+          controller.signal
+        )
+        const nativeSignal = await arrived
+        const rejected = expect(operation).rejects.toThrow('cancelled')
+        controller.abort()
+        await rejected
+        await vi.waitFor(() => expect(nativeSignal.aborted).toBe(true))
+      }
+      await expect(
+        value.server.requestNative({ operation: 'save-dialog', options: {} })
+      ).rejects.toThrow('resources are still busy')
+      expect(handler).toHaveBeenCalledTimes(64)
+      // A fresh attachment must not reset the real resource budget of retired handlers.
+      value.client.close()
+      await vi.waitFor(() => expect(value.server.isConnected()).toBe(false))
+      value.client = await connectDesktopRuntime({
+        endpoint: value.server.endpoint,
+        onNativeRequest: handler,
+        onEvent: () => {},
+        onDisconnect: value.disconnected
+      })
+      await expect(
+        value.server.requestNative({ operation: 'save-dialog', options: {} })
+      ).rejects.toThrow('resources are still busy')
+      expect(handler).toHaveBeenCalledTimes(64)
+      await expect(value.client.invoke(randomUUID(), 'projects:list', ['ping'])).resolves.toBe(
+        'pong'
+      )
+      finishes.shift()!()
+      await new Promise((resolve) => setImmediate(resolve))
+      handler.mockImplementation(async () => ({ canceled: true }))
+      await expect(
+        value.server.requestNative({ operation: 'save-dialog', options: {} })
+      ).resolves.toEqual({ canceled: true })
+      expect(value.disconnected).not.toHaveBeenCalled()
+    } finally {
+      for (const finish of finishes) finish()
+      value.client.close()
+    }
+  })
+
+  it('reclaims cancelled protocol slots before delayed handlers settle across repeated operations', async () => {
+    let nextStarted!: (signal: AbortSignal) => void
+    let completeNative = false
+    const finishes: Array<() => void> = []
+    const value = await nativeSetup(async (_request, signal) => {
+      if (completeNative) return { canceled: true }
+      nextStarted(signal)
+      return new Promise((resolve) => {
+        finishes.push(() => resolve({ canceled: true }))
+      })
+    })
+    try {
+      for (let index = 0; index < 70; index++) {
+        const started = new Promise<AbortSignal>((resolve) => {
+          nextStarted = resolve
+        })
+        const document = randomUUID()
+        const operation = value.client.invoke(document, 'projects:list', [])
+        // Race against rejection so exhausted client capacity fails promptly, not by timeout.
+        const signal = await Promise.race([
+          started,
+          operation.then(() => {
+            throw new Error('Native operation unexpectedly completed.')
+          })
+        ])
+        const rejected = expect(operation).rejects.toThrow()
+        value.client.release(document)
+        await rejected
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+        // Keep cleanup delayed past the next admission, but do not accumulate real resources.
+        if (finishes.length > 2) finishes.shift()!()
+      }
+      await expect(value.client.invoke(randomUUID(), 'projects:list', ['ping'])).resolves.toBe(
+        'pong'
+      )
+      for (const finish of finishes.splice(0)) finish()
+      completeNative = true
+      await expect(value.client.invoke(randomUUID(), 'projects:list', [])).resolves.toEqual({
+        canceled: true
+      })
+      expect(value.disconnected).not.toHaveBeenCalled()
+    } finally {
+      for (const finish of finishes) finish()
+      value.client.close()
+    }
+  })
+
   it('times out native dialogs, cancels the client operation and retains the command connection', async () => {
     let signal: AbortSignal | undefined
     const value = await nativeSetup(async (_request, callerSignal) => {
+      if (signal) return { canceled: true }
       signal = callerSignal
       return new Promise(() => {})
     })
@@ -904,7 +1098,13 @@ describe('native desktop requests over the authenticated connection', () => {
       await vi.advanceTimersByTimeAsync(300_000)
       await pending
       while (!signal.aborted) await new Promise((resolve) => setImmediate(resolve))
-      expect(value.client.commandNames()).toEqual(['projects:list'])
+      await expect(value.client.invoke(value.document, 'projects:list', ['ping'])).resolves.toBe(
+        'pong'
+      )
+      await expect(value.client.invoke(value.document, 'projects:list', [])).resolves.toEqual({
+        canceled: true
+      })
+      expect(value.disconnected).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
       value.client.close()

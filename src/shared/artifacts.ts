@@ -1,5 +1,5 @@
 import type { ProjectIdScope } from './project-scope'
-import type { PdfReadingPosition } from './session-persistence'
+import type { PdfReadingPosition } from './session-pdf-contract'
 
 // Renderer-safe description of one generated file without embedding file contents.
 export type ArtifactFile = ProjectIdScope & {

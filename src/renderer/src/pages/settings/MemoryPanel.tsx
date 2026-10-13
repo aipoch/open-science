@@ -1,3 +1,4 @@
+import type { MemoryView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { ErrorNotice } from '@/components/error-notice'
 import * as AlertDialog from '@/components/ui/alert-dialog'
@@ -55,8 +56,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { useMemoryStore } from '@/stores/memory-store'
 
-export type MemoryView =
-  { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; categoryId: string }
+export type { MemoryView } from '../../lib/settings-navigation'
 
 type MemoryPanelProps = {
   view: MemoryView

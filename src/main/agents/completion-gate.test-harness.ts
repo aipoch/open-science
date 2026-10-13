@@ -1,18 +1,17 @@
-import { projectConnectorsFromStored } from '../connectors/read-model'
 import { vi, type Mock } from 'vitest'
+import { projectConnectorsFromStored } from '../connectors/read-model'
 
 import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
 import type { SpecialistView } from '../../shared/specialist'
 import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
-import {
-  CompletionGateCoordinator,
-  createCompletionGateSwitchNotifier,
-  type CompletionDisposition,
-  type CompletionGateRuntime,
-  type ToolCompletionEnvelope
-} from './completion-gate'
+import { CompletionGateCoordinator, createCompletionGateSwitchNotifier } from './completion-gate'
+import type {
+  CompletionDisposition,
+  CompletionGateRuntime,
+  ToolCompletionEnvelope
+} from './completion-gate-contract'
 import {
   CompletionHandoffLifecycle,
   InMemoryCompletionHandoffRepository

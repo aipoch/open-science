@@ -3,6 +3,8 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Pacing must actually run: hidden windows emulate reduced motion (instant commits), so this
 // journey needs a normal window with live animation frames.
@@ -21,10 +23,7 @@ test('flushes a large completed reply before releasing the queued message', asyn
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -90,10 +89,7 @@ test('Send now returns to a usable queue when the provider cannot inject into th
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Send now lifecycle project')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Send now lifecycle project')
   const textbox = page.getByRole('textbox', { name: 'Ask anything' })
   const send = page.getByRole('button', { name: 'Send message' })
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -160,19 +156,16 @@ test('renders expensive streamed output through the native parser Worker and com
       }
     })
   })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Native Markdown streaming')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Native Markdown streaming')
   const conversation = page.getByRole('region', { name: 'Conversation' })
   // Match the browser Worker journey: exercise the measured-cost boundary on fast hosts too.
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
   const releaseFile = join(await app.createTestDirectory('markdown-parser'), 'release')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill(`Run the native Markdown parser journey. Release file: ${JSON.stringify(releaseFile)}`)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(
+    page,
+    `Run the native Markdown parser journey. Release file: ${JSON.stringify(releaseFile)}`
+  )
   await expect
     .poll(
       () =>

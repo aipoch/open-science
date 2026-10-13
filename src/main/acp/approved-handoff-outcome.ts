@@ -1,5 +1,5 @@
-import type { CompletionGateRuntime } from '../agents/completion-gate'
 import { completionContextKey } from '../agents/completion-gate'
+import type { CompletionGateRuntime } from '../agents/completion-gate-contract'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 
 // Capture before the provider cancellation drains the Attempt. Reconfiguration may fail before

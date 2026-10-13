@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, type ReactNode, type ReactElement } from 'react'
+import { createContext, useContext, useState, type ReactElement, type ReactNode } from 'react'
 
-import type { ComposerDraft } from './workspace-composer-upload-controller'
+import type { ComposerDraft } from './composer-contract'
 
 type ComposerDraftOwner = {
   draftsRef: { current: Record<string, ComposerDraft> }

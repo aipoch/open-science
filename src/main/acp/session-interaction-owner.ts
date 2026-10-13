@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
-import type { AcpPromptRequest, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpPromptRequest } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 
 const cloneProvenanceContext = (
   provenanceContext: AcpPromptRequest['provenanceContext']

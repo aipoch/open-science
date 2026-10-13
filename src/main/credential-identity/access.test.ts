@@ -2,7 +2,7 @@ import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { describe, expect, it, vi, type Mock, type Mocked } from 'vitest'
 import type { SecureStorageCipher } from '../secure-storage'
 import { createCredentialAccess } from './access'
-import type { CredentialIdentity } from './selection'
+import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 const identity: CredentialIdentity = {
   backend: 'mac-keychain',
@@ -36,6 +36,23 @@ const fixture = (
 }
 
 describe('process credential access', () => {
+  it.each(['native-secret-operation-failed', 'unsupported-ciphertext-version'])(
+    'preserves the classified %s failure instead of reporting every failure as bad decryption',
+    (reason) => {
+      const { access, cipher, recover } = fixture()
+      const failure = new CredentialIdentityError(reason)
+      cipher.decryptString.mockImplementation(() => {
+        throw failure
+      })
+
+      expect(() => access.decryptString(Buffer.from('legacy:original'))).toThrow(/recovery/i)
+      expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
+      expect(cipher.encryptString).not.toHaveBeenCalled()
+      expect(recover).toHaveBeenCalledOnce()
+      expect(recover.mock.calls[0][0].reason).toBe(reason)
+    }
+  )
+
   it('reads old ciphertext with the one selected identity, without a second name lookup', () => {
     const { access, cipher, probe } = fixture()
     expect(access.validateEncryptedCookie).toBeUndefined()

@@ -1,10 +1,10 @@
-import {
-  ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
-  type AcpContextWindowSample,
-  type AcpModelCallUsage
-} from '../../../../shared/acp'
-import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { ChatSession } from '@/stores/session-store'
+import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
+import type {
+  AcpContextWindowSample,
+  AcpModelCallUsage
+} from '../../../../shared/acp-usage-contract'
+import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 
 type ContextWindowTrendSession = Pick<ChatSession, 'activities' | 'conversationGraph' | 'messages'>
 

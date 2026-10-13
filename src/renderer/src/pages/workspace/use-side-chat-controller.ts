@@ -1,14 +1,10 @@
-import { sideChatParentBranch } from '../../../../shared/side-chat'
-import { useProjectStore } from '@/stores/project-store'
-import { sideChatBlock, sideChatBlockMessage, type SideChatAction } from './side-chat-availability'
-import { validateAnnotations, type Annotation } from '../../../../shared/annotations'
 import { previewCloseGuards } from '@/stores/preview-close-guard'
 import {
-  usePreviewWorkbenchStore,
   sideChatTabId,
+  usePreviewWorkbenchStore,
   type PreviewItem
 } from '@/stores/preview-workbench-store'
-import { SideChatCloseConfirmation } from './SideChatCloseConfirmation'
+import { useProjectStore } from '@/stores/project-store'
 import {
   Fragment,
   createContext,
@@ -23,20 +19,22 @@ import {
   type ReactElement,
   type SetStateAction
 } from 'react'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import { validateAnnotations } from '../../../../shared/annotations'
+import { sideChatParentBranch } from '../../../../shared/side-chat'
+import { sideChatBlock, sideChatBlockMessage, type SideChatAction } from './side-chat-availability'
+import { SideChatCloseConfirmation } from './SideChatCloseConfirmation'
 
 import { useTranslation } from 'react-i18next'
 
-import { getAcpRuntimeEventText } from '../../../../shared/acp'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useSettingsStore, selectFrameworkApiEndpoints } from '@/stores/settings-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import { getAcpRuntimeEventText } from '../../../../shared/acp'
 import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
 import { resolveSessionAgentConfiguration } from '../../../../shared/session-agent-configuration'
-import type {
-  SideChatModelSelection,
-  SideChatEntry,
-  SideChatSnapshot
-} from '../../../../shared/side-chat'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import type { SideChatModelSelection, SideChatSnapshot } from '../../../../shared/side-chat'
+import type { SideChatEntry } from '../../../../shared/side-chat-entry-contract'
 
 type SideChatView = Readonly<{
   modelSelection?: SideChatModelSelection
@@ -1023,8 +1021,8 @@ const useIsSideChatOpenForSession = (sessionId: string): boolean =>
   )
 
 export {
-  hasMainConversation,
   SideChatProvider,
+  hasMainConversation,
   useIsSideChatOpenForSession,
   useOpenSideChatParentSessionIds,
   useSideChatController,

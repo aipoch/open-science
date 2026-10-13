@@ -1,5 +1,5 @@
 import { callLinuxCredentialMetadata } from './linux-dbus'
-import type { IdentityProbeResult } from './selection'
+import type { IdentityProbeResult } from './probe-contract'
 
 const service = 'org.freedesktop.secrets'
 const servicePath = '/org/freedesktop/secrets'

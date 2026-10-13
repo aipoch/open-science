@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from './desktop-runtime-recovery-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJobsListFilter, JobSummary } from '../../../shared/compute'
@@ -24,6 +25,7 @@ const setJobsApi = (api: Partial<Window['api']['compute']>): void => {
 }
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   useSessionJobStore.setState(createInitialSessionJobState())
 })
 
@@ -327,4 +329,116 @@ describe('session job store — allJobsForSession', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'sess-A' }))
     expect(useSessionJobStore.getState().allJobsForSession('sess-B')).toHaveLength(0)
   })
+})
+
+describe('desktop recovery snapshots', () => {
+  it('refreshes retained full job projections when completed jobs disappear from nonterminal listing', async () => {
+    useSessionJobStore.getState().applyUpdate(makeJob())
+    const completed = makeJob({ status: 'success', finished_at: 2000 })
+    const jobsList = vi.fn(async (filter?: ComputeJobsListFilter) =>
+      filter && 'nonTerminal' in filter ? [] : [completed]
+    )
+    setJobsApi({ jobsList })
+    await useSessionJobStore.getState().hydrateForRecovery()
+    expect(useSessionJobStore.getState().jobsById.get('job-1')?.status).toBe('success')
+    expect(jobsList).toHaveBeenCalledWith({ sessionId: 'session-abc' })
+    expect(useSessionJobStore.getState().nonTerminalJobsById.size).toBe(0)
+  })
+
+  it('ignores full snapshots completed by the old attachment', async () => {
+    let resolve!: (jobs: JobSummary[]) => void
+    setJobsApi({
+      jobsList: vi.fn(
+        () =>
+          new Promise<JobSummary[]>((yes) => {
+            resolve = yes
+          })
+      )
+    })
+    const pending = useSessionJobStore.getState().hydrate('session-abc')
+    useDesktopRuntimeRecoveryStore.setState({ epoch: 1, phase: 'disconnected' })
+    resolve([makeJob()])
+    await pending
+    expect(useSessionJobStore.getState().jobsById.size).toBe(0)
+    expect(useSessionJobStore.getState().isLoaded).toBe(false)
+  })
+})
+
+describe('bounded Job recovery admission', () => {
+  const retainSessions = (): JobSummary[] => {
+    const jobs = Array.from({ length: 257 }, (_, index) =>
+      makeJob({
+        job_id: `job-${index}`,
+        session_id: `session-${index}`
+      })
+    )
+    useSessionJobStore.setState({ jobsById: new Map(jobs.map((job) => [job.job_id, job])) })
+    return jobs
+  }
+
+  it('refreshes all 257 retained sessions under a controlled four-pending API limit', async () => {
+    const retained = retainSessions()
+    let pending = 0
+    let peak = 0
+    const jobsList = vi.fn((filter: ComputeJobsListFilter): Promise<JobSummary[]> => {
+      if (pending >= 4) return Promise.reject(new Error('Pending API limit exceeded.'))
+      pending += 1
+      peak = Math.max(peak, pending)
+      return new Promise((resolve) =>
+        setTimeout(() => {
+          pending -= 1
+          resolve(
+            'sessionId' in filter
+              ? retained
+                  .filter((job) => job.session_id === filter.sessionId)
+                  .map((job) => ({ ...job, status: 'success', finished_at: 2000 }))
+              : []
+          )
+        }, 1)
+      )
+    })
+    setJobsApi({ jobsList })
+    vi.useFakeTimers()
+    try {
+      const result = expect(
+        useSessionJobStore.getState().hydrateForRecovery()
+      ).resolves.toBeUndefined()
+      await vi.runAllTimersAsync()
+      await result
+      expect(peak).toBe(4)
+      expect(pending).toBe(0)
+      expect(jobsList).toHaveBeenCalledTimes(258)
+      expect([...useSessionJobStore.getState().jobsById.values()]).toHaveLength(257)
+      expect(
+        [...useSessionJobStore.getState().jobsById.values()].every(
+          (job) => job.status === 'success'
+        )
+      ).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['epoch', 'phase', 'closing'] as const)(
+    'stops old queued reads after %s cancellation, even after availability returns',
+    async (reason) => {
+      retainSessions()
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+      const pending: Array<(jobs: JobSummary[]) => void> = []
+      const jobsList = vi.fn(() => new Promise<JobSummary[]>((resolve) => pending.push(resolve)))
+      setJobsApi({ jobsList })
+      const result = expect(useSessionJobStore.getState().hydrateForRecovery()).rejects.toThrow(
+        'Desktop recovery changed.'
+      )
+      expect(jobsList).toHaveBeenCalledTimes(4)
+      if (reason === 'epoch') useDesktopRuntimeRecoveryStore.setState({ epoch: 2 })
+      if (reason === 'phase') useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected' })
+      if (reason === 'closing') useDesktopRuntimeRecoveryStore.setState({ closing: true })
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', closing: false })
+      for (const resolve of pending) resolve([])
+      await result
+      await Promise.resolve()
+      expect(jobsList).toHaveBeenCalledTimes(4)
+    }
+  )
 })

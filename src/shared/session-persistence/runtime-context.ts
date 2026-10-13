@@ -1,25 +1,25 @@
+import type { SessionDelegatedWorkRuntimeContext } from '../delegated-work-contract'
+import type { SessionPdfContext } from '../session-pdf-contract'
+import type { SessionPlanRuntimeContext } from '../session-plan/contract'
+import { MAX_PLAN_RUNTIME_CONTEXT_NODES } from '../session-plan/contract'
 import { sessionReadingContextSchema, type SessionReadingContext } from '../session-reading'
 import {
-  type SessionRuntimeContext,
-  type SessionPlanRuntimeContext,
-  type SessionDelegatedWorkRuntimeContext,
-  type SessionPermissionRuntimeContext,
-  type SessionPdfContext,
+  getPersistedSideChats,
   type PersistedSideChat,
   type PersistedSideChatRelay,
-  getPersistedSideChats
+  type SessionPermissionRuntimeContext,
+  type SessionRuntimeContext
 } from '../session-runtime-context'
-import { isRecord, asNumber, sanitizeRuntimeContextValue } from './primitives'
-import { MAX_PLAN_RUNTIME_CONTEXT_NODES } from '../session-plan/contract'
-import { sanitizeSessionPdfContext } from './pdf-context'
-import { sanitizeSessionPlanRuntimeContext } from './plan'
-import { sanitizeSessionPermissionRuntimeContext } from './permissions'
 import { sanitizeSessionDelegatedWorkRuntimeContext } from './delegated-work'
+import { sanitizeSessionPdfContext } from './pdf-context'
+import { sanitizeSessionPermissionRuntimeContext } from './permissions'
+import { sanitizeSessionPlanRuntimeContext } from './plan'
+import { asNumber, isRecord, sanitizeRuntimeContextValue } from './primitives'
 import {
-  sanitizePersistedSideChatWithLegacyRelays,
-  sanitizePersistedSideChat,
   MAX_SIDE_CHAT_RELAYS,
-  sanitizePersistedSideChatRelay
+  sanitizePersistedSideChat,
+  sanitizePersistedSideChatRelay,
+  sanitizePersistedSideChatWithLegacyRelays
 } from './side-chat'
 
 export const sanitizeSessionRuntimeContext = (

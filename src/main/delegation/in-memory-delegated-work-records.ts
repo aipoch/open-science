@@ -1,13 +1,13 @@
-import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import { allocateDelegateNames } from './delegated-work-admission'
 import { currentAttempt, sameSession } from './delegated-work-record-invariants'
 import type {
   DelegatedWorkDurableRecords,
   DurableMessage,
   DurableMessageCommand,
   DurableSnapshot
-} from './durable-delegated-work'
+} from './delegated-work-record-types'
+import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 import { canonicalStructuredOutputEqual } from './structured-output'
-import { allocateDelegateNames } from './delegated-work-admission'
 
 type SessionKey = DurableSnapshot['session']
 type DurableChild = DurableSnapshot['records'][number]

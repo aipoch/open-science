@@ -1,6 +1,6 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
-import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 
 /**
  * Provider-facing identity and workspace facts for one prompt attempt.

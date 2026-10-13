@@ -1,5 +1,5 @@
-import type { SecureStorageCipher } from '../secure-storage'
 import { createCredentialAccess, type CredentialAccess } from './access'
+import type { SecureStorageCipher } from './cipher-contract'
 
 let access: CredentialAccess | undefined
 

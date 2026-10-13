@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test('restores app interaction after navigating from a search file preview to its conversation', async ({
   app
@@ -7,14 +9,8 @@ test('restores app interaction after navigating from a search file preview to it
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search file navigation')
-  await create.getByRole('button', { name: 'Create project' }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await createProjectViaUi(page, 'Search file navigation')
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({ timeout: 90_000 })
@@ -50,17 +46,13 @@ test('previews a recent upload without leaving search and locates its source mes
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Recent upload navigation')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Recent upload navigation')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'source-notes.md',
     mimeType: 'text/markdown',
     buffer: Buffer.from('# Source notes\n\nThe file opens in a large preview.')
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read the source notes.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Read the source notes.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
   const search = page.getByRole('dialog', { name: 'Global search' })

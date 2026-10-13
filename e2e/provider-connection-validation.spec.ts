@@ -1,27 +1,17 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { expect } from '@playwright/test'
-import type { Locator, Page } from 'playwright'
+import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
 import type { SettingsSnapshot } from '../src/shared/settings'
+import { submitPromptViaUi } from './fixtures/conversation'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 const PROVIDER_NAME = 'Connection validation E2E'
 const SYNTHETIC_KEY = 'sk-e2e-connection-validation-only'
 
 type Probe = { model: unknown; authorization?: string; path?: string }
-
-const openModelSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: /^Settings$/ }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
-  await expect(settings).toBeVisible()
-  const navigation = settings.getByRole('navigation', { name: 'Settings', exact: true })
-  if (!(await navigation.isVisible())) {
-    await settings.getByRole('button', { name: 'Open settings navigation' }).click()
-  }
-  await navigation.getByRole('button', { name: 'Model', exact: true }).click()
-  return settings
-}
 
 const snapshot = (page: Page): Promise<SettingsSnapshot> =>
   page.evaluate(() => window.api.settings.getSettings())
@@ -71,7 +61,7 @@ test('tests current provider input and commits only verified configurations', as
     const page = await app.completeOnboarding()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
-    let settings = await openModelSettings(page)
+    let settings = await openSettingsPage(page, 'Model')
     await settings.locator('[data-settings-anchor="model.add-provider"]').click()
     await settings.getByRole('combobox', { name: 'Provider type', exact: true }).click()
     await page.getByRole('option', { name: 'Custom Gateway', exact: true }).click()
@@ -151,7 +141,7 @@ test('tests current provider input and commits only verified configurations', as
       model: 'original-model'
     })
     await page.reload({ waitUntil: 'domcontentloaded' })
-    settings = await openModelSettings(page)
+    settings = await openSettingsPage(page, 'Model')
     const row = settings
       .locator('[data-slot="settings-list-row"]')
       .filter({ hasText: PROVIDER_NAME })
@@ -298,12 +288,9 @@ for (const upstreamStatus of [401, 403]) {
         })
       }, providerId)
       rejectRuntime = true
-      await page
-        .getByRole('textbox', { name: 'Ask anything' })
-        .fill('Verify runtime provider failure synchronization.')
-      await page.getByRole('button', { name: 'Send message' }).click()
+      await submitPromptViaUi(page, 'Verify runtime provider failure synchronization.')
       await expect.poll(() => Boolean(rejectPendingRequest)).toBe(true)
-      const settings = await openModelSettings(page)
+      const settings = await openSettingsPage(page, 'Model')
       const row = settings
         .locator('[data-slot="settings-list-row"]')
         .filter({ hasText: 'Runtime health E2E' })
@@ -427,7 +414,7 @@ for (const action of ['Test connection', 'Save']) {
         (provider) => provider.id === providerId
       )!
       expect(before.lastValidatedAt).toBeDefined()
-      const settings = await openModelSettings(page)
+      const settings = await openSettingsPage(page, 'Model')
       const row = settings
         .locator('[data-slot="settings-list-row"]')
         .filter({ hasText: 'Saved connection 403 E2E' })

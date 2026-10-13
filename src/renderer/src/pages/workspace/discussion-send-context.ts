@@ -1,6 +1,6 @@
-import type { Annotation } from '../../../../shared/annotations'
-import type { SessionReadingBinding } from '../../../../shared/session-reading'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import type { SessionReadingBinding } from '../../../../shared/session-reading'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,

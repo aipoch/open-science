@@ -27,11 +27,15 @@ import {
   nativeOwnedFigureBottomLabels,
   nativeOwnedRasterTitleRows,
   nativeOwnedFigureTopLabel,
+  nativeOwnedFormPaintBounds,
   nativeTableDividerGraphic
 } from './literature-pdf-native-owned-figure-labels.mjs'
 import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
 import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
-import { nativeCompleteAxisFigure } from './literature-pdf-figure-complete-axis-ownership.mjs'
+import {
+  nativeCompleteAxisFigure,
+  nativeCompletedAxisPanels
+} from './literature-pdf-figure-complete-axis-ownership.mjs'
 import {
   nativeConnectedKeyedLegend,
   nativeFiniteTopRowKeyedLegend
@@ -1549,6 +1553,12 @@ export function associateFigures(
       )
     }
   return associated.map((figure, figureIndex) => {
+    // The panel-row proof has already split the two caption envelopes using
+    // independent same-row graphics and a column boundary.  Do not run the
+    // later generic completion passes over that bounded result: plot-band
+    // completion can mistake the following prose column for the chart and
+    // expand the first crop across unrelated body text.
+    if (figure.panelRowRecovery) return { ...figure, issue: undefined }
     // Complete native enclosures and their unique directed connectors own
     // every node label. Preserve this whole component before generic padding.
     const connectedNodes = nativeCaptionedConnectedNodes(
@@ -1771,6 +1781,15 @@ export function associateFigures(
       candidate = excludeOwnedFigurePriorProse(page, candidate, candidates, tableRects)
       const stem = nativeOwnedTimelineStroke(page, candidate, candidates, tableRects, rules)
       if (stem) candidate = { ...candidate, rect: stem }
+      const formPaint = nativeOwnedFormPaintBounds(
+        page,
+        candidate.caption,
+        candidates,
+        tableRects,
+        candidate.rect,
+        operatorContext
+      )
+      if (formPaint) candidate = { ...candidate, rect: formPaint }
       const foreignOwns = (r) =>
         associated.some(
           (other, n) => n !== figureIndex && other.rect && intersection(other.rect, r) > 0
@@ -2945,8 +2964,8 @@ function associateFigureFaces(
     // caption and return one shared crop before the per-caption association
     // pass has a chance to separate adjacent plates.
     const strictMatches = captions
-      .map(
-        (caption) =>
+      .map((caption) => {
+        const match =
           nativeCaptionedFramedRasterTextPanel(page, caption, captions, tableRects) ??
           nativeCaptionedRasterVectorCompositeGrid(page, caption, captions, tableRects) ??
           nativeCaptionedMixedWorkflowPanel(page, caption, captions, tableRects) ??
@@ -2967,7 +2986,10 @@ function associateFigureFaces(
             closedFrames
           ) ??
           nativeCaptionedVectorGrid(page, caption, captions, tableRects)
-      )
+        return match
+          ? nativeAttachedPlotLabels(page, match, captions, tableRects, rules, nativeTokens)
+          : undefined
+      })
       .filter(Boolean)
     if (strictMatches.length) {
       const strictCaptions = new Set(strictMatches.map((match) => match.caption))
@@ -4393,6 +4415,153 @@ function associateFigureFaces(
       items.push(item)
     }
   }
+  // A wide caption can introduce a two-panel row whose second panel is
+  // followed by a separately captioned chart in the next column.  The normal
+  // distance heuristic sees the panel and the chart as one ambiguous side
+  // band.  Resolve only this strongly evidenced layout directly: two
+  // substantial graphics share a row between the captions, and a distinct
+  // right-column graphic starts below the later caption and ends before the
+  // following prose baseline.  Keeping the two envelopes separate prevents
+  // body text from expanding the first crop and gives the second caption a
+  // complete chart crop.
+  const panelRowRecovery = (() => {
+    if (captions.length !== 2 || !page.graphicsBounds?.length) return undefined
+    const figureCaptions = captions.filter(
+      (caption) => captionKind(caption.lines?.[0] ?? '') === 'figure'
+    )
+    if (figureCaptions.length !== 2) return undefined
+    const [wideCaption, chartCaption] = [...figureCaptions].sort((a, b) => a.rect[1] - b.rect[1])
+    if (
+      wideCaption.rect[2] - wideCaption.rect[0] < page.width * 0.7 ||
+      chartCaption.rect[2] - chartCaption.rect[0] > page.width * 0.5 ||
+      chartCaption.rect[0] < page.width * 0.45 ||
+      chartCaption.rect[1] <= wideCaption.rect[3]
+    )
+      return undefined
+    const toRect = (graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    const graphics = page.graphicsBounds.map((graphic) => ({ ...graphic, rect: toRect(graphic) }))
+    const topPanels = graphics.filter(
+      ({ rect }) =>
+        rect[1] >= wideCaption.rect[3] - edgeTolerance &&
+        rect[3] <= chartCaption.rect[1] + edgeTolerance &&
+        rect[2] - rect[0] >= page.width * 0.2 &&
+        rect[3] - rect[1] >= page.height * 0.03
+    )
+    if (topPanels.length < 2) return undefined
+    const topBounds = union(topPanels.map(({ rect }) => rect))
+    if (topBounds[2] - topBounds[0] < page.width * 0.6) return undefined
+    // A ruled table or a table-backed graphic in this corridor invalidates
+    // the panel proof.  Do not let a captioned figure claim table ink merely
+    // because the table happens to share the right column.
+    if (tableRects.some((table) => intersection(table, topBounds) > 0)) return undefined
+    const nextProseY = Math.min(
+      page.height,
+      ...page.lines
+        .filter(
+          (line) =>
+            line.x >= chartCaption.rect[0] - edgeTolerance &&
+            line.y > chartCaption.rect[3] + edgeTolerance &&
+            line.fontSize > 0 &&
+            line.text.trim().length > 20
+        )
+        .map((line) => line.y)
+    )
+    const chartGraphics = graphics.filter(
+      ({ rect }) =>
+        rect[0] >= chartCaption.rect[0] - edgeTolerance &&
+        rect[1] >= chartCaption.rect[3] - edgeTolerance &&
+        rect[3] <= nextProseY - edgeTolerance &&
+        !topPanels.some((panel) => panel.rect === rect)
+    )
+    if (!chartGraphics.length) return undefined
+    const chartBounds = union(chartGraphics.map(({ rect }) => rect))
+    // Axis titles, tick labels, and compact legends are native text rather
+    // than graphics.  Keep short labels in the chart's vertical envelope so
+    // the crop does not lose the y-axis title or terminal x-axis marker;
+    // exclude the longer prose column that follows the chart.
+    const chartLabels = page.lines
+      .filter(
+        (line) =>
+          line.text.trim().length > 0 &&
+          line.text.trim().length <= 24 &&
+          line.y >= chartCaption.rect[3] - edgeTolerance &&
+          line.y <= chartBounds[3] + 20 &&
+          line.x >= chartBounds[0] - 40 &&
+          line.x + line.width <= chartBounds[2] + 40
+      )
+      .map(lineRect)
+    const chartWithLabels = chartLabels.length ? union([chartBounds, ...chartLabels]) : chartBounds
+    if (area(chartWithLabels) < page.width * page.height * 0.01) return undefined
+    if (tableRects.some((table) => intersection(table, chartWithLabels) > 0)) return undefined
+    return [
+      {
+        caption: wideCaption,
+        rect: topBounds,
+        graphicsCount: topPanels.length,
+        panelRowRecovery: true
+      },
+      {
+        caption: chartCaption,
+        rect: chartWithLabels,
+        graphicsCount: chartGraphics.length,
+        panelRowRecovery: true
+      }
+    ]
+  })()
+  if (panelRowRecovery) return panelRowRecovery
+  const compositePlateRecovery = (() => {
+    if (captions.length !== 1 || !page.graphicsBounds?.length) return undefined
+    const [caption] = captions
+    if (captionKind(caption.lines?.[0] ?? '') !== 'figure') return undefined
+    const toRect = (graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    const graphics = page.graphicsBounds.map((graphic) => ({ ...graphic, rect: toRect(graphic) }))
+    const images = graphics.filter(
+      ({ kind, rect }) =>
+        kind === 'image' &&
+        rect[1] < caption.rect[1] &&
+        rect[3] <= caption.rect[1] + edgeTolerance &&
+        rect[3] - rect[1] >= page.height * 0.03
+    )
+    if (images.length < 4) return undefined
+    const firstRow = images
+      .slice()
+      .sort((a, b) => a.rect[1] - b.rect[1])
+      .slice(0, 4)
+    const rowY = Math.min(...firstRow.map(({ rect }) => rect[1]))
+    if (firstRow.some(({ rect }) => Math.abs(rect[1] - rowY) > edgeTolerance * 2)) return undefined
+    const firstRowBounds = union(firstRow.map(({ rect }) => rect))
+    const plateImages = images.filter(
+      ({ rect }) =>
+        rect[0] >= firstRowBounds[0] - edgeTolerance &&
+        rect[2] <= firstRowBounds[2] + edgeTolerance &&
+        rect[1] >= firstRowBounds[1] - edgeTolerance
+    )
+    const plateBounds = union(plateImages.map(({ rect }) => rect))
+    const selected = graphics.filter(
+      ({ rect }) =>
+        rect[1] >= plateBounds[1] - 24 &&
+        rect[3] <= caption.rect[1] + edgeTolerance &&
+        intersection(rect, [
+          plateBounds[0] - page.width * 0.2,
+          plateBounds[1] - 24,
+          plateBounds[2] + 24,
+          plateBounds[3] + 24
+        ]) > 0
+    )
+    const hasSideComponent = selected.some(
+      ({ rect }) =>
+        rect[2] < plateBounds[0] - edgeTolerance &&
+        Math.min(rect[3], plateBounds[3]) - Math.max(rect[1], plateBounds[1]) >
+          (rect[3] - rect[1]) * 0.25
+    )
+    if (!hasSideComponent || selected.length < plateImages.length + 2) return undefined
+    return [
+      { caption, rect: union(selected.map(({ rect }) => rect)), graphicsCount: selected.length }
+    ]
+  })()
+  if (compositePlateRecovery) return compositePlateRecovery
   // Legend marks inside another caption's panel belong to that panel, even
   // when their small individual boxes are closer to the previous caption.
   for (const [index, items] of assigned.entries()) {
@@ -6188,6 +6357,16 @@ function associateFigureFaces(
         }
       }
     }
+    const completedPanels = nativeCompletedAxisPanels(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      rules,
+      nativeTokens,
+      rect
+    )
+    if (completedPanels) rect.splice(0, 4, ...completedPanels.rect)
     const categories = nativeClosedCategoryLabels(
       page,
       caption,
@@ -6237,12 +6416,6 @@ export function associateGraphicalTables(page, candidates, tableRects = [], empt
     (c) => c.page === page.pageNumber && captionKind(c.lines[0]) === 'table'
   )
   return tables.flatMap((caption) => {
-    if (
-      tableRects.some(
-        (r) => Math.min(Math.abs(r[1] - caption.rect[3]), Math.abs(caption.rect[1] - r[3])) < 60
-      )
-    )
-      return []
     const proxy = { ...caption, lines: ['Figure 1. Graphical table'] }
     const proxies = candidates.map((c) => (c === caption ? proxy : c))
     let match = associateFigures(page, proxies, tableRects).find((m) => m.caption === proxy)
@@ -6281,6 +6454,22 @@ export function associateGraphicalTables(page, candidates, tableRects = [], empt
       area(match.rect) < page.width * page.height * 0.04 ||
       tableRects.some(
         (r) => intersection(r, match.rect) / Math.min(area(r), area(match.rect)) > 0.8
+      )
+    )
+      return []
+    // A nearby recognized grid can own this caption only in its column and
+    // on the matched graphic's side of the caption. The next table below a
+    // bottom caption must not suppress the independently bounded graphic above.
+    if (
+      tableRects.some(
+        (r) =>
+          Math.min(r[2], caption.rect[2]) > Math.max(r[0], caption.rect[0]) &&
+          Math.min(Math.abs(r[1] - caption.rect[3]), Math.abs(caption.rect[1] - r[3])) < 60 &&
+          (match.rect[3] <= caption.rect[1]
+            ? r[1] < caption.rect[3]
+            : match.rect[1] >= caption.rect[3]
+              ? r[3] > caption.rect[1]
+              : true)
       )
     )
       return []
@@ -7281,7 +7470,7 @@ function associateCompleteNativeBelowTableCaptions(page, tables, candidates, rul
   const captions = candidates.filter(
     (c) => c.page === page.pageNumber && captionKind(c.lines?.[0] ?? '') === 'table'
   )
-  if (captions.length !== tables.length) return
+  if (captions.length < tables.length || captions.length > tables.length + 2) return
   const nativeRules = joinHorizontalTableRules(rules)
   const nativeLines = groupPageLines(page)
   // Grouped runs locate the records, but cannot prove an intersecting native
@@ -7407,8 +7596,78 @@ function associateCompleteNativeBelowTableCaptions(page, tables, candidates, rul
   if (
     matches.every((owners) => owners.length === 1) &&
     new Set(matches.map((owners) => owners[0])).size === tables.length
-  )
+  ) {
+    // A missed independently closed plate may own another footer. Reserve it
+    // only through the same complete native-font/fence proof; do not discard
+    // an unmatched caption merely to force page-wide cardinality.
+    const unmatched = captions.filter((c) => !matches.some((owners) => owners[0] === c))
+    for (const caption of unmatched) {
+      const em = Math.max(
+        ...page.lines
+          .filter((l) => intersection(lineRect(l), caption.rect) > 0)
+          .map((l) => l.fontSize)
+          .filter((v) => v > 0)
+      )
+      if (!Number.isFinite(em)) return
+      const closings = nativeRules.filter(
+        (r) =>
+          r[1] < caption.rect[1] &&
+          caption.rect[1] - r[1] < em * 3 &&
+          Math.abs((r[0] + r[2] - caption.rect[0] - caption.rect[2]) / 2) < em * 2
+      )
+      const frames = closings.flatMap((closing) => {
+        const family = nativeRules.filter(
+          (r) =>
+            r[1] <= closing[1] &&
+            Math.abs(r[0] - closing[0]) < 0.05 &&
+            Math.abs(r[2] - closing[2]) < 0.05
+        )
+        if (family.length < 3) return []
+        const first = family[0],
+          frame = [first[0], first[1], first[2], closing[1]]
+        const headerFonts = page.lines.filter(
+          (l) => intersection(lineRect(l), frame) > 0 && l.y < first[1]
+        )
+        if (headerFonts.length) {
+          if (
+            headerFonts.length !== 1 ||
+            headerFonts[0].y + headerFonts[0].height >= family[1][1] ||
+            first[1] - headerFonts[0].y > headerFonts[0].fontSize * 0.25 ||
+            headerFonts[0].x < first[0] ||
+            headerFonts[0].x + headerFonts[0].width > first[2]
+          )
+            return []
+          // Preserve the whole native header font envelope. Its baseline is
+          // inside the independent header face, even when its em starts above
+          // the first painted rule; no foreign font is silently discarded.
+          frame[1] = headerFonts[0].y
+        }
+        const corridor = [
+          Math.min(first[0], caption.rect[0]),
+          closing[1],
+          Math.max(first[2], caption.rect[2]),
+          caption.rect[1]
+        ]
+        if (
+          tables.some((t) => intersection(t.rect, frame) > 0) ||
+          !completeNativeFonts(
+            frame,
+            candidates.filter((c) => c.page === page.pageNumber).map((c) => c.rect)
+          ) ||
+          page.lines.filter((l) => intersection(lineRect(l), frame) > 0).length < 8 ||
+          page.lines.some((l) => intersection(lineRect(l), corridor) > 0) ||
+          !completeNativeFonts(
+            caption.rect,
+            captions.filter((c) => c !== caption).map((c) => c.rect)
+          )
+        )
+          return []
+        return [frame]
+      })
+      if (frames.length !== 1) return
+    }
     return matches.map(([caption]) => ({ caption }))
+  }
 }
 
 function associateCompleteNativeTableCaptions(page, tables, candidates, rules) {

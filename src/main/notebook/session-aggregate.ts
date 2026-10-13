@@ -1,20 +1,22 @@
 import { randomUUID } from 'node:crypto'
+import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
+export type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
 
-import type {
-  NotebookEnvironmentManifest,
-  NotebookLiveEnvironmentOverlay
-} from '../../shared/notebook'
 import type {
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type {
   NotebookCell,
-  NotebookHelperModuleEvidence,
+  NotebookEnvironmentManifest,
   NotebookHelperEvidenceStatus,
+  NotebookHelperModuleEvidence,
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
-  NotebookLanguage,
+  NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
   NotebookRunInputFile,
@@ -23,14 +25,12 @@ import type {
   NotebookWorkingFile,
   NotebookWriteLock
 } from '../../shared/notebook'
-import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
-import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
-import type { TransientViewImage } from './host-view-image-service'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
-import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
-import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { TransientViewImage } from './host-view-image-service'
+import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type { NestedWorkingFileReader } from './nested-working-file-owner'
 
 export type NotebookSessionResolvedInterpreter = {
@@ -203,10 +203,6 @@ export type NotebookSessionExecutorGeneration = symbol
 // Stable object identity owned by the Aggregate for exactly one concrete process epoch. Host-owned
 // kernel extensions key their volatile state by this object, so retiring a process cannot accidentally
 // reuse loaded state even if a caller retains the printable UUID.
-export type NotebookKernelEpochOwnership = Readonly<{
-  id: string
-  processKey: string
-}>
 
 type NotebookKernelEpochSlot = {
   ownership: NotebookKernelEpochOwnership

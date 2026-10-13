@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -99,6 +100,7 @@ const libraryPdf: LiteratureItemView = {
 }
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   // Non-image rows never read previews, but stub the api so an accidental read never throws.
   ;(window as unknown as { api: unknown }).api = {
     uploads: {
@@ -239,6 +241,72 @@ describe('ArtifactMentionPopup', () => {
       finish({ content: '', encoding: 'base64', size: 0, truncated: false })
     })
     expect(read).toHaveBeenCalledTimes(4)
+  })
+
+  it('retains physical read slots across close and reopen and discards the closed popup queue', async () => {
+    const files = Array.from({ length: 8 }, (_, index) => ({
+      ...defaultProjectFiles[1],
+      id: `reopen-image-${index}`,
+      path: `reopen-${index}`,
+      name: `reopen-${index}.png`,
+      mimeType: 'image/png'
+    }))
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValue({ items: files, totalCount: files.length })
+    let finish!: (value: unknown) => void
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const read = vi.fn().mockReturnValue(pending)
+    window.api.artifacts.readPreview = read
+    await renderPopup()
+    expect(read).toHaveBeenCalledTimes(4)
+    await act(async () => root.render(null))
+    await renderPopup()
+    expect(read).toHaveBeenCalledTimes(4)
+    read.mockResolvedValue({ content: 'FRESH', encoding: 'base64', size: 3, truncated: false })
+    await act(async () => finish({ content: 'OLD', encoding: 'base64', size: 3, truncated: false }))
+    // Four old active reads plus eight new visible rows; the four old queued reads never start.
+    expect(read).toHaveBeenCalledTimes(12)
+    expect(container.innerHTML).not.toContain('base64,OLD')
+    expect(container.innerHTML).toContain('base64,FRESH')
+  })
+
+  it('ignores old thumbnails across recovery and keeps one four-read popup queue', async () => {
+    const files = Array.from({ length: 8 }, (_, index) => ({
+      ...defaultProjectFiles[1],
+      id: `recovery-image-${index}`,
+      path: `image-${index}`,
+      name: `image-${index}.png`,
+      mimeType: 'image/png'
+    }))
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValue({ items: files, totalCount: files.length })
+    let finish!: (value: unknown) => void
+    const pending = new Promise((resolve) => {
+      finish = resolve
+    })
+    const read = vi.fn().mockReturnValue(pending)
+    window.api.artifacts.readPreview = read
+    await renderPopup()
+    expect(read).toHaveBeenCalledTimes(4)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(read).toHaveBeenCalledTimes(4)
+    read.mockResolvedValue({ content: 'NEW', encoding: 'base64', size: 3, truncated: false })
+    await act(async () => {
+      finish({ content: 'OLD', encoding: 'base64', size: 3, truncated: false })
+    })
+    expect(read).toHaveBeenCalledTimes(12)
+    expect(container.innerHTML).not.toContain('base64,OLD')
+    expect(container.innerHTML).toContain('base64,NEW')
+    expect(read.mock.calls.every(([request]) => request.maxBytes === 256 * 1024)).toBe(true)
   })
 
   it('only reads thumbnails after their rows enter the viewport', async () => {

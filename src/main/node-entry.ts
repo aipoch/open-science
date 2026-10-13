@@ -1,54 +1,19 @@
-import { z } from 'zod'
-import { LocalePreferenceOwner } from './locale/owner'
-import { createNetworkCommandOwner } from './network-ipc'
-import { requireDesktopCaller } from './caller-context'
-import { addRendererBroadcastSink, broadcastToRenderers } from './renderer-broadcast'
-import type { ApplicationEvent } from './application-events'
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
+import { createBackendStartupReporter } from './backend-startup'
 import {
-  createDatabaseStartupOwner,
-  waitForVerifiedDatabaseStartup
-} from './database/database-startup-owner'
-import { createDatabaseStartupLogging } from './database/database-startup-logging'
-import { buildStartupDiagnostics } from '@aipoch/diagnostics/node'
-import { createDesktopRuntimeLifecycle } from './desktop-runtime-lifecycle'
-import { isMigrationInProgress, cancelMigrationForQuit } from './storage/migration-state'
-import {
-  configureDesktopReviewer,
-  createRemoteReviewerResolver
-} from './reviewer/paged-preview-host'
-import {
-  configureOfficePreviewHost,
-  createRemoteOfficePreviewHost
-} from './office-preview/application-commands'
-import { createRemoteNotificationDelivery } from './notifications/desktop-delivery'
-import { currentDesktopCaller } from './desktop-native-contract'
-import {
-  configureDesktopShellInteraction,
-  createRemoteDesktopShellInteraction,
-  configureDesktopFileInteraction,
-  createRemoteDesktopFileInteraction,
-  DesktopCapabilityUnavailable
-} from './desktop-interaction'
-import { CredentialIdentityError } from './credential-identity/selection'
-import { startRuntimeControl } from './runtime-control'
-import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
+  buildStartupDiagnostics,
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs
+} from '@aipoch/diagnostics/node'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readFileSync } from 'node:fs'
-import { configureRuntimeMetadata } from './runtime-metadata'
-import {
-  acquireRuntimeDirectorySync,
-  RuntimeOwnershipConflict,
-  RuntimeDirectoryOwnership,
-  configureRuntimeDirectoryOwnership
-} from './runtime-ownership'
-import { configureRuntimeLifecycle } from './runtime-lifecycle'
-import { configureRuntimeNetwork } from './runtime-network'
-import { createNodeRuntimeNetwork } from './runtime-network-node'
-import { configureSecureStorageCipher } from './secure-storage'
-import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
+import { z } from 'zod'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
+import type { ApplicationEvent } from './application-events'
+import { requireDesktopCaller } from './caller-context'
 import {
   prepareCredentialValidation,
   selectStartupCredentialIdentity
@@ -57,18 +22,56 @@ import {
   createNodeSecureStorageCipher,
   initializeNodeWindowsProfileKey
 } from './credential-identity/node-cipher'
+import { CredentialIdentityError } from './credential-identity/selection'
+import { createDatabaseStartupLogging } from './database/database-startup-logging'
+import {
+  createDatabaseStartupOwner,
+  waitForVerifiedDatabaseStartup
+} from './database/database-startup-owner'
+import {
+  configureDesktopFileInteraction,
+  configureDesktopShellInteraction,
+  createRemoteDesktopFileInteraction,
+  createRemoteDesktopShellInteraction,
+  DesktopCapabilityUnavailable
+} from './desktop-interaction'
+import { currentDesktopCaller } from './desktop-native-contract'
+import { createDesktopRuntimeLifecycle } from './desktop-runtime-lifecycle'
+import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
+import { initializeApplicationDiagnostics } from './diagnostics/startup'
+import { LocalePreferenceOwner } from './locale/owner'
+import { createNetworkCommandOwner } from './network-ipc'
+import { createRemoteNotificationDelivery } from './notifications/desktop-delivery'
+import {
+  configureOfficePreviewHost,
+  createRemoteOfficePreviewHost
+} from './office-preview/application-commands'
+import { RemoteAccessService } from './remote-access/service'
+import { addRendererBroadcastSink, broadcastToRenderers } from './renderer-broadcast'
+import {
+  configureDesktopReviewer,
+  createRemoteReviewerResolver
+} from './reviewer/paged-preview-host'
+import { startRuntimeControl } from './runtime-control'
+import { isRuntimeHelper, runRuntimeHelper } from './runtime-helper'
+import { configureRuntimeLifecycle } from './runtime-lifecycle'
+import { configureRuntimeMetadata } from './runtime-metadata'
+import { configureRuntimeNetwork } from './runtime-network'
+import { createNodeRuntimeNetwork } from './runtime-network-node'
+import {
+  acquireRuntimeDirectorySync,
+  configureRuntimeDirectoryOwnership,
+  RuntimeDirectoryOwnership,
+  RuntimeOwnershipConflict
+} from './runtime-ownership'
+import { configureSecureStorageCipher } from './secure-storage'
+import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
 import { resolveBootstrapConfigRoot } from './storage/config-root'
 import { resolveElectronProfile } from './storage/electron-profile'
+import { cancelMigrationForQuit, isMigrationInProgress } from './storage/migration-state'
 import { parseWebModeOptions } from './web-service/options'
-import { isRuntimeHelper, runRuntimeHelper } from './runtime-helper'
-import { initializeApplicationDiagnostics } from './diagnostics/startup'
-import { RemoteAccessService } from './remote-access/service'
-import {
-  createLogger,
-  diagnosticErrorFields,
-  errorLogFields,
-  flushLogs
-} from '@aipoch/diagnostics/node'
+
+const startupReporter = createBackendStartupReporter()
 
 async function main(): Promise<void> {
   const mainEntryPath = fileURLToPath(import.meta.url)
@@ -111,6 +114,7 @@ async function main(): Promise<void> {
   let restartRequested = false
   let desktopWillRestart = false
   let stopRequested = false
+  let credentialFailure: CredentialIdentityError | undefined
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
     finishStartup = resolve
@@ -156,7 +160,7 @@ async function main(): Promise<void> {
       cipher?.dispose()
       // A failed child-process drain must not release ownership while this process remains alive.
       if (!failed) await ownership.close()
-      process.exitCode = failed ? 1 : 0
+      process.exitCode = failed || credentialFailure ? 1 : 0
       if (restartRequested && !desktopWillRestart && !failed) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
@@ -201,6 +205,7 @@ async function main(): Promise<void> {
     exit: (code) => process.exit(code)
   })
   try {
+    startupReporter.phase('credentials')
     configureCredentialStore(process.argv, process.platform, true)
     const passwordStore = process.argv
       .find((arg) => arg.startsWith('--password-store='))
@@ -229,6 +234,7 @@ async function main(): Promise<void> {
       cipher = createNodeSecureStorageCipher(identity, profilePath)
       configureSecureStorageCipher(cipher)
       validateCredentials(cipher, (error) => {
+        credentialFailure = error
         createLogger('node-runtime').error('credential recovery required', { reason: error.reason })
         void stop()
       })
@@ -238,6 +244,7 @@ async function main(): Promise<void> {
     }
     const diagnostics = initializeApplicationDiagnostics({
       logDir: join(configRoot, 'logs'),
+      consoleFormat: process.stdout.isTTY ? 'text' : 'json',
       version: metadata.version,
       isPackaged: packaged,
       platform: process.platform,
@@ -245,6 +252,7 @@ async function main(): Promise<void> {
       nodeVersion: process.versions.node,
       cpuUsage: process.cpuUsage
     })
+    startupReporter.phase('storage')
     const { prepareApplicationLocations } = await import('./storage/initialize-location')
     const { settingsStore, repository } = await prepareApplicationLocations(configRoot)
     const startupSettings = await repository.getSettings()
@@ -423,12 +431,14 @@ async function main(): Promise<void> {
       },
       desktop.endpoint
     )
+    startupReporter.phase('database')
     const state = await databaseStartup.start()
     if (state.phase === 'blocked' && !process.argv.includes('--desktop'))
       throw Object.assign(new Error(state.error.message), state.error)
     await waitForVerifiedDatabaseStartup(databaseStartup, startupCancellation.signal)
 
     abortStartupIfStopping()
+    startupReporter.phase('runtime')
     const { createCoreRuntime } = await import('./core-runtime')
     configureDesktopFileInteraction(
       createRemoteDesktopFileInteraction(async (request, callerId) => {
@@ -537,6 +547,7 @@ async function main(): Promise<void> {
       }
     })
     remoteAccess.attachWebController(web)
+    startupReporter.phase('endpoint')
     const serving = await web.ensureStarted(parseWebModeOptions(process.argv).port, {
       attached: false
     })
@@ -544,16 +555,20 @@ async function main(): Promise<void> {
     void remoteAccess.restore()
     databaseStartup.complete()
     diagnostics.operation.complete()
+    startupReporter.ready()
     finishStartup()
     if (stopRequested) await stop()
   } catch (error) {
     const cancelled = stopRequested
+    if (credentialFailure || !cancelled) startupReporter.failed(credentialFailure ?? error)
     finishStartup()
     await stop()
+    if (credentialFailure) throw credentialFailure
     if (!cancelled) throw error
   }
 }
 void main().catch((error: unknown) => {
+  startupReporter.failed(error)
   createLogger('node-runtime').error('startup failed', {
     ...diagnosticErrorFields(error),
     ...errorLogFields(error),

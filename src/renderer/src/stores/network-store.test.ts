@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { startNetworkMonitor, useNetworkStore } from './network-store'
 import { useSettingsStore } from './settings-store'
+import { useDesktopRuntimeRecoveryStore } from './desktop-runtime-recovery-store'
 
 type CheckConnectivity = () => Promise<boolean>
 
@@ -17,7 +18,17 @@ const setNavigatorOnline = (online: boolean): void => {
   Object.defineProperty(window.navigator, 'onLine', { value: online, configurable: true })
 }
 
+let systemResumed!: () => void
 beforeAll(() => {
+  ;(window as unknown as { api: unknown }).api = {
+    network: {
+      onSystemResumed: (listener: () => void) => {
+        systemResumed = listener
+        return () => {}
+      },
+      checkConnectivity: async () => true
+    }
+  }
   startNetworkMonitor()
 })
 
@@ -55,6 +66,107 @@ describe('useNetworkStore', () => {
 })
 
 describe('probeConnectivity', () => {
+  it('rejects a late network result after the backend disconnects', async () => {
+    let finish!: (value: boolean) => void
+    stubCheckConnectivity(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = useNetworkStore.getState().probeConnectivity({ invalidate: true })
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'disconnected',
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+    })
+    finish(true)
+    await pending
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    await vi.advanceTimersByTimeAsync(10_001)
+  })
+
+  it('invalidates a completed probe during its announced presentation delay', async () => {
+    stubCheckConnectivity(async () => true)
+    const pending = useNetworkStore
+      .getState()
+      .probeConnectivity({ announce: true, invalidate: true })
+    await vi.advanceTimersByTimeAsync(1)
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'disconnected',
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+    })
+    await vi.advanceTimersByTimeAsync(500)
+    await pending
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    await vi.advanceTimersByTimeAsync(500)
+  })
+
+  it('rechecks a previously healthy network after system resume', async () => {
+    const check = vi.fn().mockResolvedValue(false)
+    stubCheckConnectivity(check)
+    useNetworkStore.setState({ connectivity: 'reachable', isOnline: true })
+    expect(systemResumed).toBeTypeOf('function')
+    systemResumed()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(check).toHaveBeenCalledOnce()
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+  })
+
+  it('settles a stalled connectivity check and ignores its late success', async () => {
+    let finish!: (value: boolean) => void
+    stubCheckConnectivity(
+      vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finish = resolve
+          })
+      )
+    )
+    const pending = useNetworkStore
+      .getState()
+      .probeConnectivity({ announce: true, invalidate: true })
+    await vi.advanceTimersByTimeAsync(15_001)
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
+    finish(true)
+    await pending
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
+  })
+
+  it('coalesces repeated checks within the same network generation', async () => {
+    let finish!: (value: boolean) => void
+    const check = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    )
+    stubCheckConnectivity(check)
+    const first = useNetworkStore.getState().probeConnectivity({ invalidate: true })
+    const second = useNetworkStore.getState().probeConnectivity()
+    expect(check).toHaveBeenCalledOnce()
+    finish(true)
+    await Promise.all([first, second])
+  })
+
+  it('revalidates stale network status when the desktop connection recovers without an OS online event', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    setNavigatorOnline(true)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'disconnected',
+      epoch: 1,
+      closing: false
+    })
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 2 })
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(checkConnectivity).toHaveBeenCalledOnce()
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
   it.each(['unreachable', 'probe-failed'] as const)(
     'rechecks a saved proxy and discards prior success on %s',
     async (result) => {
@@ -140,14 +252,14 @@ describe('probeConnectivity', () => {
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })
 
-  it('keeps the last known state when the bridge call rejects', async () => {
+  it('reports a failed check when a silent bridge call rejects', async () => {
     const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
     stubCheckConnectivity(checkConnectivity)
     useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
 
     await useNetworkStore.getState().probeConnectivity()
 
-    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
   })
 
   it('settles a rejected cold-start probe as a retryable terminal failure', async () => {
@@ -161,7 +273,7 @@ describe('probeConnectivity', () => {
     expect(coldStartStore.getState().connectivity).toBe('probe-failed')
   })
 
-  it('restores the last known state when an announced bridge call rejects', async () => {
+  it('reports a failed check when an announced bridge call rejects', async () => {
     const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
     stubCheckConnectivity(checkConnectivity)
     useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
@@ -174,7 +286,7 @@ describe('probeConnectivity', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     await probe
-    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
   })
 
   it('keeps the offline state when a pending announced probe rejects', async () => {
@@ -197,7 +309,7 @@ describe('probeConnectivity', () => {
     })
   })
 
-  it('does not restore transient unknown when overlapping announced probes reject', async () => {
+  it('does not let an older success erase a newer check failure', async () => {
     let resolveFirst!: (reachable: boolean) => void
     const firstResult = new Promise<boolean>((resolve) => {
       resolveFirst = resolve
@@ -210,15 +322,17 @@ describe('probeConnectivity', () => {
     useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
 
     const firstProbe = useNetworkStore.getState().probeConnectivity({ announce: true })
-    const secondProbe = useNetworkStore.getState().probeConnectivity({ announce: true })
+    const secondProbe = useNetworkStore
+      .getState()
+      .probeConnectivity({ announce: true, invalidate: true })
 
     await vi.advanceTimersByTimeAsync(500)
     await secondProbe
-    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
 
     resolveFirst(true)
     await firstProbe
-    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(useNetworkStore.getState().connectivity).toBe('probe-failed')
     expect(checkConnectivity).toHaveBeenCalledTimes(2)
   })
 

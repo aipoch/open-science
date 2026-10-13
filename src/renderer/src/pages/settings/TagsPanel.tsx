@@ -1,3 +1,4 @@
+import type { TagsView } from '../../lib/settings-navigation'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
@@ -76,8 +77,7 @@ type TagResourceRow = TagResourceRef & {
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
 type CustomTagView = Extract<TagView, { name: string }>
-export type TagsView =
-  { kind: 'list'; tagId?: string } | { kind: 'create' } | { kind: 'edit'; tagId: string }
+export type { TagsView } from '../../lib/settings-navigation'
 type TagDropTarget = { tagId: string; edge: 'before' | 'after' }
 type TagDropZone = { tagId: string; top: number; bottom: number }
 type TagPointerDrag = {

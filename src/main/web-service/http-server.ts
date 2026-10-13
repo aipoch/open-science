@@ -1,74 +1,91 @@
-import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
 import { createHash } from 'node:crypto'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
-import { extname, resolve, sep } from 'node:path'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { isIP } from 'node:net'
+import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
+import { runtimePayloadTransfers } from '../runtime-payload-transfers'
+import { projectSessionEventPayload } from '../session-event-payload'
+import type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebSocketAccess
+} from './external-access-contract'
+export type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebAccessDecision,
+  ExternalWebSocketAccess
+} from './external-access-contract'
 
 import { WebSocket, WebSocketServer } from 'ws'
 
-import {
-  ApplicationCommandError,
-  toApplicationCommandErrorEnvelope
-} from '../../shared/application-command-contract'
-import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
-import {
-  createTaskCallerContext,
-  createWebCallerContext,
-  type CallerContext
-} from '../caller-context'
-import { createApplicationCommandClient } from '../application-command-client'
-import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { ApplicationEventSource } from '../application-events'
-import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   createLogger,
   diagnosticErrorFields,
   runWithDiagnosticCorrelation
 } from '@aipoch/diagnostics/node'
 import {
-  WEB_RPC_CAPABILITIES,
-  WEB_EVENT_STREAM_PROTOCOL_VERSION,
-  isWebRpcChannel,
-  WEB_RPC_PROTOCOL_VERSION,
-  webRpcRequestSchema
-} from '../../shared/web-rpc-contract'
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../../shared/application-command-contract'
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
-import {
-  projectPublicTaskEvents,
-  projectPublicTaskProgressEvent,
-  projectWebRendererEvent
-} from './application-event-projections'
-import { InternalWebEventStream } from './internal-web-event-stream'
-import { authenticateRequest, persistAuthCookie } from './auth'
+import type {
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest
+} from '../../shared/session-configuration'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskPlanResponseRequest,
-  UpdateProjectSessionDefaultsRequest,
-  UpdateSessionConfigurationRequest,
   UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
-import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
+import {
+  isWebRpcChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITIES,
+  WEB_RPC_PROTOCOL_VERSION,
+  webRpcRequestSchema
+} from '../../shared/web-rpc-contract'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
+import type { ApplicationEventSource } from '../application-events'
+import {
+  createTaskCallerContext,
+  createWebCallerContext,
+  type CallerContext
+} from '../caller-context'
 import {
   MANAGED_EXECUTION_EXTERNAL_METHODS,
   ManagedExecutionExternalError,
   type ManagedExecutionExternalMethod
 } from '../managed-execution-external-port'
+import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   SESSION_PACKAGE_EXTERNAL_METHODS,
   SessionPackageExternalError,
   type SessionPackageExternalMethod
 } from '../session-package-external-port'
+import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
+import {
+  projectPublicTaskEvents,
+  projectPublicTaskProgressEvent,
+  projectWebRendererEvent
+} from './application-event-projections'
+import { authenticateRequest, persistAuthCookie } from './auth'
+import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -79,8 +96,7 @@ const MAX_WEB_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
-// The replay stream retains 16 MiB. Keep 64 KiB for its mandatory ready frame and framing overhead.
-const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
+const MAX_WEB_EVENT_FRAME_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const MAX_WEBSOCKET_INBOUND_BYTES = 1_024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
@@ -459,51 +475,9 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
   return 500
 }
 
-const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
-  if (socket.readyState !== WebSocket.OPEN) return false
-  if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_WEBSOCKET_BUFFERED_BYTES) {
-    socket.terminate()
-    return false
-  }
-
-  try {
-    socket.send(message, (error) => {
-      if (error) socket.terminate()
-    })
-    return true
-  } catch {
-    socket.terminate()
-    return false
-  }
-}
-
-export type ExternalWebAccessAuthorization = {
-  kind: 'authorized' | 'authorized-pairing-manager'
-  principalId: string
-  isCurrent: () => boolean
-}
-
-export type ExternalWebAccessDecision = ExternalWebAccessAuthorization | 'handled' | 'denied'
-
-export type ExternalWebSocketAccess = {
-  principalId: string
-  isCurrent: () => boolean
-}
-
 // Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
 // remains unchanged; an isolated remote-access adapter can authenticate its own origin/cookies or
 // render a pairing page without coupling the web server to a tunnel provider.
-export type ExternalWebAccess = {
-  authorizeHttp: (
-    request: IncomingMessage,
-    response: ServerResponse,
-    url: URL
-  ) => Promise<ExternalWebAccessDecision>
-  authorizeWebSocket: (
-    request: IncomingMessage,
-    url: URL
-  ) => Promise<ExternalWebSocketAccess | undefined>
-}
 
 export type RunningWebServer = {
   port: number
@@ -1504,6 +1478,8 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
+  const outboundBudget = createWebSocketFrameBudget()
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
   const externalSockets = new Map<WebSocket, ExternalWebSocketAccess>()
   const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
@@ -1569,7 +1545,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   }
 
   const sendCurrentWebSocketMessage = (socket: WebSocket, message: string): boolean =>
-    isWebSocketAuthorizationCurrent(socket) && sendWebSocketMessage(socket, message)
+    isWebSocketAuthorizationCurrent(socket) && (senders.get(socket)?.send(message) ?? false)
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -1640,7 +1616,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .digest('hex'),
           taskCapabilities: options.tasks ? ['permission-prompts-none'] : [],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
+          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
           eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
@@ -1806,7 +1782,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             dispatcher,
             channel,
             callerContext,
-            parsed.data.args
+            parsed.data.args,
+            parsed.data
           )
           assertExternalAuthorizationCurrent(externalAuthorization)
           json(
@@ -1922,6 +1899,23 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   wsServer.on('connection', (socket, request) => {
+    senders.set(
+      socket,
+      createWebSocketFrameSender(
+        socket,
+        (failure) => {
+          log.warn('web event transport terminated', failure)
+        },
+        {
+          // Preserve the HTTP event stream’s existing framing allowance.
+          maxFrameBytes: MAX_WEB_EVENT_FRAME_BYTES,
+          socketByteBudget: MAX_WEB_EVENT_FRAME_BYTES,
+          budget: outboundBudget,
+          isAuthorized: () => isWebSocketAuthorizationCurrent(socket),
+          writeTimeoutMs: 30_000
+        }
+      )
+    )
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientNonce = parseClientNonce(url.searchParams.getAll('client'))
     const externalAuthorization = externalSockets.get(socket)
@@ -1998,6 +1992,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (requestedProtocol === null) {
         internalEventSockets.set(socket, 'legacy')
       } else if (requestedProtocol !== String(WEB_EVENT_STREAM_PROTOCOL_VERSION)) {
+        // Old pages already request a reload on a resync frame or a newer protocol version.
+        sendCurrentWebSocketMessage(
+          socket,
+          JSON.stringify({
+            kind: 'resync-required',
+            ...internalEventStream.cursor(),
+            reason: 'stream-changed'
+          })
+        )
         socket.close(1002, 'Unsupported event stream protocol')
         return
       } else {
@@ -2020,7 +2023,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
-    const internalProjection = projectWebRendererEvent(event)
+    const projection = projectWebRendererEvent(event)
+    const internalProjection = projection
+      ? { ...projection, payload: projectSessionEventPayload(projection) }
+      : undefined
+    const needsPayloadClient = internalProjection?.payload !== projection?.payload
     const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
       options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
     ).map((projection) => publicTaskEventStream.publish(projection))
@@ -2038,6 +2045,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
+        if (needsPayloadClient) {
+          socket.close(1002, 'Reload to receive large Session updates')
+          continue
+        }
         sendCurrentWebSocketMessage(socket, legacyInternalMessage)
       }
     }
@@ -2128,6 +2139,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             : error
         }
       }
+      await runtimePayloadTransfers.settleReleased()
       server.closeAllConnections()
       await closePromise
       if (cleanupError) throw cleanupError

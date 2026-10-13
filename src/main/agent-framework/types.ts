@@ -1,29 +1,26 @@
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
 import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
+import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
 
-import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
+import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type {
-  AgentFrameworkId,
-  ChatApiEndpoint,
-  CodexSubscriptionTransport
-} from '../../shared/settings'
+import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
   ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { AcpModelStepTokenUsage } from '../../shared/acp'
+import type { AgentFrameworkId, CodexSubscriptionTransport } from '../../shared/settings'
+import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { ResolvedProvider } from '../settings/provider-env'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
-  ResponsesBridgeNamespacedTool,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
-} from '../settings/responses-bridge'
+} from '../settings/responses-bridge-contract'
+import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
 // and persisted settings share it). Adding one means implementing AgentFramework.

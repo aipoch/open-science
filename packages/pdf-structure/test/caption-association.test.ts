@@ -29,6 +29,55 @@ const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> =>
   graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
 })
 
+it('reserves the footer of an independently closed missed plate before matching two native numeric tables', () => {
+  const line = (
+    text: string,
+    y: number,
+    x = 60,
+    width = 140
+  ): { text: string; x: number; y: number; width: number; height: number; fontSize: number } => ({
+    text,
+    x,
+    y,
+    width,
+    height: 10,
+    fontSize: 10
+  })
+  const captions = [170, 310, 450].map((y, n) => ({
+    page: 1,
+    lines: [`Table ${n + 1}. Anonymous comparison.`],
+    rect: [50, y, 250, y + 10]
+  }))
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [
+      line('Literal header', 19),
+      ...[45, 60, 75, 90, 105, 120, 135].map((y) => line('Quoted content', y)),
+      ...[210, 350].flatMap((y) => [
+        line('Method Score', y + 3),
+        ...[30, 45, 60].map((d) => line('A 12 14', y + d))
+      ]),
+      ...captions.map((c) => line(c.lines[0], c.rect[1], c.rect[0], 200))
+    ]
+  }
+  const rules = [
+    [50, 20, 250, 20],
+    [50, 40, 250, 40],
+    [50, 160, 250, 160],
+    ...[210, 350].flatMap((y) => [y, y + 20, y + 90].map((b) => [50, b, 250, b]))
+  ]
+  const tables = [{ rect: [50, 210, 250, 300] }, { rect: [50, 350, 250, 440] }]
+  const before = structuredClone({ page, captions, rules, tables })
+  expect(
+    associateTableCaptions(page, tables, captions, rules).map((c) => c.caption?.lines)
+  ).toEqual(captions.slice(1).map((c) => c.lines))
+  expect({ page, captions, rules, tables }).toEqual(before)
+})
+
 it.each(['Figure 1b. Results', 'Fig. 1b. Results'])(
   'associates the complete native multiline caption after its first line is accepted: %s',
   (title) => {
@@ -697,6 +746,129 @@ it('does not cross another caption to match a side legend', () => {
     { page: 1, lines: ['Table 1. Other'], rect: [210, 100, 240, 250] }
   ])
   expect(result.rect).toBeUndefined()
+})
+
+it('keeps a right-column chart when a full-width captioned figure is above it', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [60 / 600, 50 / 800, 280 / 600, 220 / 800] },
+      { kind: 'path', normalizedRect: [320 / 600, 270 / 800, 520 / 600, 430 / 800] }
+    ]
+  }
+  const results = associateFigures(page, [
+    { page: 1, lines: ['Figure 1: Left panel.'], rect: [50, 20, 550, 40] },
+    { page: 1, lines: ['Figure 2: Right chart.'], rect: [320, 240, 520, 260] }
+  ])
+  expect(results[1].rect).toEqual([320, 270, 520, 430])
+})
+
+it('includes compact chart axis labels in the recovered right-column crop', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: 'Score (%)', x: 285, y: 300, width: 55, height: 10, fontSize: 10 },
+      { text: 'K', x: 395, y: 445, width: 8, height: 10, fontSize: 10 },
+      { text: '20', x: 300, y: 400, width: 15, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [70 / 600, 98 / 800, 285 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [296 / 600, 98 / 800, 522 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [320 / 600, 190 / 800, 520 / 600, 430 / 800] }
+    ]
+  }
+  const results = associateFigures(page, [
+    { page: 1, lines: ['Figure 1: Two panels.'], rect: [70, 69, 524, 91] },
+    { page: 1, lines: ['Figure 2: Right chart.'], rect: [306, 161, 526, 183] }
+  ])
+  expect(results[1].rect).toEqual([285, 190, 520, 455])
+})
+
+it('keeps a full-width two-panel figure together before the next column caption', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [70 / 600, 98 / 800, 285 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [296 / 600, 98 / 800, 522 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [306 / 600, 190 / 800, 526 / 600, 330 / 800] }
+    ]
+  }
+  const results = associateFigures(page, [
+    { page: 1, lines: ['Figure 1: Two panels.'], rect: [70, 69, 524, 91] },
+    { page: 1, lines: ['Figure 2: Right chart.'], rect: [306, 161, 526, 183] }
+  ])
+  expect(results[0].rect).toEqual([70, 98, 522, 161])
+  expect(results[1].rect).toEqual([306, 190, 526, 330])
+})
+
+it('does not use panel-row recovery across a recognized table', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [70 / 600, 98 / 800, 285 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [296 / 600, 98 / 800, 522 / 600, 161 / 800] },
+      { kind: 'path', normalizedRect: [306 / 600, 190 / 800, 526 / 600, 330 / 800] }
+    ]
+  }
+  const results = associateFigures(
+    page,
+    [
+      { page: 1, lines: ['Figure 1: Two panels.'], rect: [70, 69, 524, 91] },
+      { page: 1, lines: ['Figure 2: Right chart.'], rect: [306, 161, 526, 183] }
+    ],
+    [[300, 185, 530, 335]]
+  )
+  expect(results.some((result) => result.panelRowRecovery)).toBe(false)
+})
+
+it('keeps a side map in a mixed raster composite plate', () => {
+  const images = [0, 1, 2, 3].flatMap((column) =>
+    [0, 1].map((row) => ({
+      kind: 'image',
+      normalizedRect: [
+        (210 + column * 60) / 600,
+        (130 + row * 80) / 800,
+        (260 + column * 60) / 600,
+        (195 + row * 80) / 800
+      ]
+    }))
+  )
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      ...images,
+      { kind: 'path', normalizedRect: [100 / 600, 155 / 800, 195 / 600, 250 / 800] },
+      { kind: 'path', normalizedRect: [205 / 600, 130 / 800, 500 / 600, 295 / 800] }
+    ]
+  }
+  const [result] = associateFigures(page, [
+    { page: 1, lines: ['Figure 1: Composite map plate.'], rect: [100, 320, 500, 345] }
+  ])
+  expect(result.rect).toEqual([100, 130, 500, 295])
 })
 it('matches side captions without crossing the neighboring figure or including the caption', () => {
   const sidePage = {

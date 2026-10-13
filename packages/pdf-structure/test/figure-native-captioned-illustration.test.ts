@@ -2108,3 +2108,189 @@ it.each([
   const match = associateFigures(x.page, [x.caption], [], [], x.frames, x.fonts, x.context)[0]
   expect(match.rect).toEqual([90, 104, 480, 254])
 })
+
+const { nativeOwnedFormPaintBounds } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-owned-figure-labels.mjs')).href
+)
+function mixedFormPaint(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    fnArray: number[] = [],
+    argsArray: unknown[] = []
+  const emit = (op: number, a: unknown): void => {
+    fnArray.push(op)
+    argsArray.push(a)
+  }
+  const rect = (x: number, y: number, w: number, h: number): void =>
+    emit(OPS.constructPath, [
+      OPS.fill,
+      [[0, x, y, 1, x + w, y, 1, x + w, y + h, 1, x, y + h, 4]],
+      [x, y, x + w, y + h]
+    ])
+  emit(OPS.paintFormXObjectBegin, [null, [80, 470, 520, 730]])
+  emit(OPS.setFillRGBColor, ['#fffffe'])
+  rect(100, 500, 400, 200)
+  const images = [
+    [120, 500, 100, 100],
+    [360, 500, 100, 100]
+  ]
+  for (const [x, y, w, h] of images) {
+    emit(OPS.save, null)
+    emit(OPS.transform, [w, 0, 0, h, x, y])
+    emit(OPS.paintImageXObject, ['image', w, h])
+    emit(OPS.restore, null)
+  }
+  emit(OPS.paintFormXObjectEnd, null)
+  const caption = { page: 1, lines: ['Figure 3. A mixed diagram.'], rect: [80, 340, 520, 350] }
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 80, y: 340, width: 440, height: 10, fontSize: 10 }],
+    graphicsBounds: images.map(([x, y, w, h], i) => ({
+      kind: 'image',
+      operationIndex: 5 + i * 4,
+      normalizedRect: [x / width, (height - y - h) / height, (x + w) / width, (height - y) / height]
+    }))
+  }
+  return {
+    page,
+    caption,
+    captions: [caption],
+    tables: [],
+    rect: [90, 180, 510, 320],
+    context: {
+      operators: { fnArray, argsArray },
+      viewport: { width, height, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, height] }
+    }
+  }
+}
+const ownedForm = (f: ReturnType<typeof JSON.parse>): unknown =>
+  nativeOwnedFormPaintBounds(f.page, f.caption, f.captions, f.tables, f.rect, f.context)
+it('restores opaque native frame paint owned by the same mixed Form, not its BBox', () => {
+  const f = mixedFormPaint()
+  expect(ownedForm(f)).toEqual([90, 100, 510, 320])
+})
+it.each([
+  'white',
+  'clipped',
+  'unknown alpha',
+  'late cover',
+  'unbalanced',
+  'other caption',
+  'table',
+  'unmatched image'
+])('rejects mixed Form expansion for %s', (kind) => {
+  const f = mixedFormPaint(),
+    o = f.context.operators
+  if (kind === 'white') o.argsArray[1] = ['#ffffff']
+  if (kind === 'clipped') o.argsArray[0] = [null, [80, 470, 520, 610]]
+  if (kind === 'unknown alpha') {
+    o.fnArray.splice(2, 0, OPS.setGState)
+    o.argsArray.splice(2, 0, [['ca', 0.5]])
+  }
+  if (kind === 'late cover') {
+    o.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+    o.argsArray.push(
+      ['#ffffff'],
+      [OPS.fill, [[0, 0, 0, 1, 600, 0, 1, 600, 800, 1, 0, 800, 4]], [0, 0, 600, 800]]
+    )
+  }
+  if (kind === 'unbalanced') {
+    o.fnArray.pop()
+    o.argsArray.pop()
+  }
+  if (kind === 'other caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Other.'], rect: [90, 130, 510, 145] })
+  if (kind === 'table') f.tables.push([90, 100, 510, 150])
+  if (kind === 'unmatched image') f.page.graphicsBounds.pop()
+  expect(ownedForm(f)).toBeUndefined()
+})
+
+it('uses tight cubic extrema rather than control points to validate source paths', () => {
+  const f = mixedFormPaint(),
+    o = f.context.operators
+  o.fnArray.splice(-1, 0, OPS.constructPath)
+  o.argsArray.splice(-1, 0, [
+    OPS.fill,
+    [[0, 150, 520, 2, 150, 560, 190, 560, 190, 520, 4]],
+    [150, 520, 190, 550]
+  ])
+  expect(ownedForm(f)).toEqual([90, 100, 510, 320])
+  o.argsArray[o.argsArray.length - 2][2] = [150, 520, 190, 560]
+  expect(ownedForm(f)).toBeUndefined()
+})
+it('accepts a quarter-turn image with the same unique native paint owner', () => {
+  const f = mixedFormPaint()
+  f.context.operators.argsArray[4] = [0, -100, 100, 0, 120, 600]
+  expect(ownedForm(f)).toEqual([90, 100, 510, 320])
+})
+it.each([
+  'foreign operation',
+  'negative image width',
+  'nonfinite bounds',
+  'skew image',
+  'invalid path',
+  'text clip'
+])('rejects mixed Form evidence with %s', (kind) => {
+  const f = mixedFormPaint(),
+    o = f.context.operators
+  if (kind === 'foreign operation') f.page.graphicsBounds[0].operationIndex++
+  if (kind === 'negative image width') f.page.graphicsBounds[0].normalizedRect[2] = 0
+  if (kind === 'nonfinite bounds') o.argsArray[2][2][1] = Infinity
+  if (kind === 'skew image') o.argsArray[4] = [100, 10, 0, 100, 120, 500]
+  if (kind === 'invalid path') o.argsArray[2][1][0][2] = NaN
+  if (kind === 'text clip') {
+    o.fnArray.push(OPS.setTextRenderingMode)
+    o.argsArray.push([7])
+  }
+  expect(ownedForm(f)).toBeUndefined()
+})
+
+const { nativeOwnedFigureBottomLabels } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-owned-figure-labels.mjs')).href
+)
+function cutRasterLabels(): ReturnType<typeof JSON.parse> {
+  const f = mixedFormPaint()
+  f.rect = [90, 100, 510, 305]
+  f.page.graphicsBounds = [0, 1, 2].map((i) => ({
+    kind: 'image',
+    imageHash: 'raster',
+    normalizedRect: [(100 + i * 135) / 600, 100 / 800, (220 + i * 135) / 600, 310 / 800]
+  }))
+  f.tokens = [0, 1, 2].map((i) => ({
+    text: 'Label ' + i,
+    rect: [120 + i * 135, 303, 200 + i * 135, 315],
+    horizontal: true,
+    height: 12,
+    baseline: 315
+  }))
+  return f
+}
+const cutLabels = (f: ReturnType<typeof JSON.parse>): unknown =>
+  nativeOwnedFigureBottomLabels(f.page, f.caption, f.captions, f.tables, f.rect, [], f.tokens)
+it('completes a repeated raster label row already intersecting the crop', () => {
+  const f = cutRasterLabels()
+  expect(cutLabels(f)).toEqual(f.tokens.map((t: ReturnType<typeof JSON.parse>) => t.rect))
+})
+it.each(['no raster', 'below crop', 'prose', 'caption', 'invalid width', 'duplicate raster'])(
+  'rejects repeated raster row completion with %s',
+  (kind) => {
+    const f = cutRasterLabels()
+    if (kind === 'no raster') f.page.graphicsBounds = []
+    if (kind === 'below crop')
+      f.tokens.forEach((t: ReturnType<typeof JSON.parse>) => {
+        t.rect[1] += 5
+        t.rect[3] += 5
+        t.baseline += 5
+      })
+    if (kind === 'prose')
+      f.tokens[1].text =
+        'This complete sentence is unrelated to this comparison and must stay outside.'
+    if (kind === 'caption') f.captions.push({ page: 1, rect: [100, 306, 500, 316] })
+    if (kind === 'invalid width') f.tokens[0].rect[2] = 0
+    if (kind === 'duplicate raster') f.page.graphicsBounds.push({ ...f.page.graphicsBounds[0] })
+    expect(cutLabels(f)).toEqual([])
+  }
+)

@@ -1,7 +1,10 @@
-import type { PersistedConversationGraph } from './conversation-graph'
 import { z } from 'zod'
 import { defineApplicationCommandContract } from './application-command-contract'
-import { isReasoningEffort, type ReasoningEffort } from './settings'
+import type { PersistedConversationGraph } from './conversation-graph'
+import type { ReasoningEffort } from './model-preference-contract'
+import { isReasoningEffort } from './settings'
+import type { SideChatEntry } from './side-chat-entry-contract'
+export { type SideChatEntry } from './side-chat-entry-contract'
 export type SideChatModelSelection = Readonly<{
   providerId: string
   model?: string
@@ -66,10 +69,6 @@ export type SideChatSessionRequest = Readonly<{
 
 export type SideChatCloseRequest = SideChatSessionRequest | Readonly<{ parentSessionId: string }>
 
-export type SideChatEntry =
-  | Readonly<{ id: string; kind: 'message'; role: 'user' | 'assistant'; text: string }>
-  | Readonly<{ id: string; kind: 'tool'; title: string; status?: string }>
-
 export type SideChatSnapshot = Readonly<{
   modelSelection?: SideChatModelSelection
   revision: number
@@ -107,7 +106,7 @@ export type SideChatRuntimeEvent = Readonly<{
 export type SideChatRelayDeliveredEvent = Readonly<{
   parentSessionId: string
   projectId: string
-  message: import('./session-persistence').PersistedChatMessage
+  message: import('./session-message-contract').PersistedChatMessage
 }>
 
 const identity = z.string().min(1)
