@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v0.37.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.37.1 では、PDF 構造抽出の忠実性が復元され、図・罫線テーブル・キャプションの帰属が完全に保持されるようになりました。Windows 体験も強化され、デスクトップ CLI が非 ASCII（中国語など）のインストールパスに対応し、PDF 翻訳が Windows のドライブパスに対応し、Notebook のサブプロセスがコンソールウィンドウを表示しなくなりました。さらに、インストーラが瘦身され、v0.37.0 のバックエンド分離で増加した未使用のランタイムペイロードが除去されました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+> 💡 **[AIPOCH Open-Science v0.37.2 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.37.2 では、復旧力が向上しました — 起動時にバックエンド・設定・ネットワークの障害を自動修復し、ランタイムの切断でアプリが操作不能になることはなくなり（終了は常に利用可能で、手動の再接続も提供）、大規模なセッションやノートブックのスナップショットも確実に転送されます。科学 PDF の構造抽出はさらに精度を上げ、Linux CLI は独立した .deb / .rpm パッケージでも提供され、Windows のバックグラウンドサブプロセスはコンソールウィンドウを表示しなくなりました。 詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
