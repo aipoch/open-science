@@ -283,6 +283,7 @@
         "src/main/session-diagnostics/environment.ts",
         "src/main/settings/agent-runtime-manager.ts",
         "src/main/settings/application-commands.ts",
+        "src/main/settings/claude-cli-process.ts",
         "src/main/settings/claude-detect.ts",
         "src/main/settings/claude-install.ts",
         "src/main/settings/codebuddy-detect.ts",

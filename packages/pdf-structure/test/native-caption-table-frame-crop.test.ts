@@ -505,6 +505,25 @@ it('recovers a double painted opening above complete descriptive native records 
   expect(f.table.grid.slice(1).every((r) => r.every((s) => s.startsWith('Text')))).toBe(true)
 })
 
+it('uses measured opening paint when an above-table caption is fully owned', () => {
+  const f = textFrame(),
+    caption = f.pageItems.at(-1)!
+  caption.baseline = -2
+  caption.rect[1] = -14
+  caption.rect[3] = -2
+  f.caption.rect = [...caption.rect]
+  f.pageFontItems = f.pageItems.map((item) => ({ ...item, fontDescent: -0.2 }))
+  f.cropRect[1] = 9.5
+  f.table.cropRect[1] = 0
+  f.cropRect[3] = f.table.cropRect[3] = 90
+  f.rulePaintBounds = new Map([
+    [f.rules[0].join(','), [0, 9.6, 180, 10.4]],
+    [f.rules[2].join(','), [0, 84.6, 180, 85.4]]
+  ])
+  trim(f)
+  expect(f.cropRect[1]).toBe(9.1)
+})
+
 it.each([
   { name: 'three text columns', columns: 3, twoTier: false, smallFont: false, wrapped: false },
   { name: 'two text columns', columns: 2, twoTier: false, smallFont: false, wrapped: false },

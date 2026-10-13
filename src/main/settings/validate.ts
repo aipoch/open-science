@@ -1,26 +1,23 @@
-import { randomUUID } from 'node:crypto'
 import { redactSensitiveText } from '@aipoch/diagnostics'
+import { randomUUID } from 'node:crypto'
 
-import type {
-  ChatApiEndpoint,
-  ValidateProviderResult,
-  ValidationCategory
-} from '../../shared/settings'
-import { preferredEndpoint } from '../../shared/settings'
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
+import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
+import { preferredEndpoint } from '../../shared/settings'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
+import { toErrorMessage } from '../error-message'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
   openAiCompletionsBase
 } from './base-url'
-import type { ResolvedProvider } from './provider-env'
-import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
-import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { toErrorMessage } from '../error-message'
+import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
+import type { ResolvedProvider } from './provider-env'
 import { fetchProviderRequest } from './provider-fetch'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -831,10 +828,10 @@ export {
   ANTHROPIC_VERSION,
   DEFAULT_VALIDATE_TIMEOUT_MS,
   buildValidationRequest,
-  hasBridgeProbeToolCall,
-  hasResponsesBridgeProbeToolCall,
   classifyFetchError,
   classifyStatus,
   extractProviderErrorMessage,
+  hasBridgeProbeToolCall,
+  hasResponsesBridgeProbeToolCall,
   validateProvider
 }

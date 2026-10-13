@@ -521,7 +521,12 @@ describe('completion gate through the real host.agents SDK and executeControl se
       const execution = harness.executeControl(
         "return await host.agents.switch('Approved Specialist')"
       )
-      await approvalEmitted.promise
+      await Promise.race([
+        approvalEmitted.promise,
+        execution.then((result) => {
+          throw new Error(`Control execution ended before approval: ${JSON.stringify(result)}`)
+        })
+      ])
       expect(emitted).toHaveLength(1)
       await expect(lifecycle.getEvents('trusted-session')).resolves.toMatchObject([
         { phase: 'awaiting-approval', target: 'Approved Specialist' }

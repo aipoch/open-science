@@ -7,7 +7,7 @@
 // that shifts over time — update the lists here as vendors publish new models. Only vendors with a
 // documented endpoint belongs here, including native Responses providers.
 
-import type { ChatApiEndpoint } from './settings'
+import type { ChatApiEndpoint } from './model-preference-contract'
 import {
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,

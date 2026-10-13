@@ -766,6 +766,10 @@ const receiverCallArray = (
     const record = candidate as Record<string, unknown>
     const argumentNames =
       record.argumentNames === undefined ? undefined : stringArray(record.argumentNames)
+    const unavailablePythonFunctionNames =
+      record.unavailablePythonFunctionNames === undefined
+        ? undefined
+        : stringArray(record.unavailablePythonFunctionNames)
     const receiverChain =
       record.receiverChain === undefined ? undefined : orderedStringArray(record.receiverChain)
     const receiverChainFirstArgumentNames = (() => {
@@ -1045,6 +1049,11 @@ const receiverCallArray = (
       (requireArgumentNames && record.resultNames === undefined) ||
       (requireArgumentNames && record.keywordArguments === undefined) ||
       (record.argumentNames !== undefined && !argumentNames) ||
+      (record.unavailablePythonFunctionNames !== undefined &&
+        (!unavailablePythonFunctionNames ||
+          unavailablePythonFunctionNames.some(
+            (name) => name.length === 0 || name.length > 4096
+          ))) ||
       (record.receiverChain !== undefined && !receiverChain) ||
       (record.positionalStaticShapes !== undefined &&
         (!positionalStaticShapes ||
@@ -1100,6 +1109,7 @@ const receiverCallArray = (
           ? record.kind
           : 'receiver',
       argumentNames: argumentNames ?? [],
+      ...(unavailablePythonFunctionNames !== undefined ? { unavailablePythonFunctionNames } : {}),
       receiverChain: receiverChain ?? [],
       receiverChainFirstArgumentNames: receiverChainFirstArgumentNames || [],
       receiverChainPositionalArgumentNames: receiverChainPositionalArgumentNames || [],
@@ -1158,6 +1168,7 @@ const callbackContainerSummaryArray = (
     if (
       typeof record.name !== 'string' ||
       !record.name ||
+      (record.container !== undefined && record.container !== 'dict') ||
       record.name.length > MAX_STATIC_STRING_LENGTH ||
       seen.has(record.name) ||
       !callbackNames?.length ||
@@ -1169,7 +1180,11 @@ const callbackContainerSummaryArray = (
       return undefined
     seen.add(record.name)
     totalMembers += callbackNames.length
-    summaries.push({ name: record.name, callbackNames })
+    summaries.push({
+      name: record.name,
+      callbackNames,
+      ...(record.container === 'dict' ? { container: 'dict' as const } : {})
+    })
   }
   return summaries
 }

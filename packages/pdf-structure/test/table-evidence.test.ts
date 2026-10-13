@@ -301,6 +301,60 @@ it('rejects a keyword sidebar beside an abstract without rejecting prose tables'
   ).toBe(true)
 })
 
+it('rejects a partial detector grid owned by a complete native bracketed assignment', () => {
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width = 6
+  ): { text: string; rect: number[]; height: number; baseline: number; horizontal: boolean } => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    height: 10,
+    baseline: y + 10,
+    horizontal: true
+  })
+  const items = [
+    token('A', 0, 20),
+    token('=', 9, 20),
+    ...[0, 7, 14, 21, 28, 35].flatMap((y, n) => [
+      token(n === 0 ? '⎡' : n === 5 ? '⎣' : '⎢', 20, y),
+      token(n === 0 ? '⎤' : n === 5 ? '⎦' : '⎥', 110, y)
+    ]),
+    ...[2, 17, 32].flatMap((y) => [35, 60, 85].map((x) => token('α', x, y)))
+  ]
+  const table = {
+    cropRect: [0, 1, 118, 43],
+    grid: [
+      ['⎢', 'α', '⎥'],
+      ['⎢', 'α', '⎥']
+    ],
+    issues: [],
+    unassigned: []
+  }
+  expect(hasTableEvidence(table, undefined, items, [])).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Coefficients.'] }, items, [])).toBe(true)
+  for (const variant of ['cap', 'pair', 'foreign', 'invalid', 'rule', 'equals']) {
+    const source = structuredClone(items)
+    const rules: number[][] = []
+    if (variant === 'cap')
+      source.splice(
+        source.findIndex((i) => i.text === '⎣'),
+        1
+      )
+    if (variant === 'pair') source.find((i) => i.text === '⎥')!.rect[1] += 2
+    if (variant === 'foreign') source.push(token('Ordinary prose', 35, 20, 50))
+    if (variant === 'invalid') source.find((i) => i.text === 'α')!.height = NaN
+    if (variant === 'rule') rules.push([20, 15, 116, 15])
+    if (variant === 'equals')
+      source.splice(
+        source.findIndex((i) => i.text === '='),
+        1
+      )
+    expect(hasTableEvidence(table, undefined, source, rules), variant).toBe(true)
+  }
+})
+
 it('rejects an uncaptioned syntax-highlighted code listing mistaken for a table', () => {
   const table = {
     cropRect: [0, 0, 500, 160],
@@ -362,6 +416,133 @@ it('rejects an uncaptioned numbered algorithm listing mistaken for a table', () 
   )
   expect(hasTableEvidence(table, undefined, items)).toBe(false)
   expect(hasTableEvidence(table, { text: 'Table 2: Algorithm details.' }, items)).toBe(true)
+})
+
+it('rejects a captionless ruled two-column action listing while retaining a captioned table', () => {
+  const grid = [
+    ['1 PLAN 1 (4 steps)', 'PLAN-2 (4 steps)'],
+    ['2 navigate_to_obj(Box-1)', 'navigate_to_obj(Cup-1)'],
+    ['3 pick_up(Box-1)', 'pick_up(Cup-1)'],
+    ['4 put_in(Box-1,Bin-1)', 'put_in(Cup-1,Bin-1)'],
+    ['5 toggle_on(Switch-1)', 'toggle_off(Switch-1)'],
+    ['6 close_obj(Box-1)', 'close_obj(Cup-1)']
+  ]
+  const table = {
+    cropRect: [10, 20, 490, 200],
+    grid,
+    issues: ['unassigned-source-text'],
+    unassigned: ['navigate_to_obj(Bin-1)']
+  }
+  const items = grid.flatMap((row, rowIndex) =>
+    row.map((text, column) => ({
+      text,
+      horizontal: true,
+      rect: [20 + column * 240, 30 + rowIndex * 25, 220 + column * 240, 42 + rowIndex * 25],
+      height: 12,
+      baseline: 42 + rowIndex * 25
+    }))
+  )
+  const rules = [
+    [10, 20, 490, 20],
+    [10, 200, 490, 200]
+  ]
+  expect(hasTableEvidence(table, undefined, items, rules)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Action outcomes.' }, items, rules)).toBe(true)
+})
+
+it('rejects a captionless ruled action listing when source text is combined per row', () => {
+  const grid = [
+    ['1 PLAN 1 (3 steps)', 'PLAN-2 (3 steps)'],
+    ['2 navigate_to_obj(Box-1)', 'navigate_to_obj(Cup-1)'],
+    ['3 pick_up(Box-1)', 'pick_up(Cup-1)'],
+    ['4 put_in(Box-1,Bin-1)', 'put_in(Cup-1,Bin-1)'],
+    ['5 close_obj(Box-1)', 'close_obj(Cup-1)'],
+    ['6 toggle_on(Switch-1)', 'toggle_off(Switch-1)']
+  ]
+  const table = {
+    cropRect: [10, 20, 490, 200],
+    grid,
+    issues: ['unassigned-source-text'],
+    unassigned: ['navigate_to_obj(Bin-1)']
+  }
+  const items = grid.map((row, rowIndex) => ({
+    text: row.join(' '),
+    horizontal: true,
+    rect: [20, 30 + rowIndex * 25, 460, 42 + rowIndex * 25],
+    height: 12,
+    baseline: 42 + rowIndex * 25
+  }))
+  const rules = [
+    [10, 20, 490, 20],
+    [10, 200, 490, 200]
+  ]
+  expect(hasTableEvidence(table, undefined, items, rules)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Action outcomes.' }, items, rules)).toBe(true)
+})
+
+it('uses a complete native listing owner despite spaced keywords and a truncated detector grid', () => {
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 10
+  ): { text: string; rect: number[]; height: number; baseline: number; horizontal: boolean } => ({
+    text,
+    rect: [x, y, x + width, y + height],
+    height,
+    baseline: y + height,
+    horizontal: true
+  })
+  const code = [
+    'w h i l e t < end do:',
+    'update(x);',
+    'i f valid(x):',
+    'accept(x);',
+    'e l s e:',
+    'reject(x);'
+  ]
+  const items = [
+    ...code.flatMap((text, n) => [
+      token(String(n + 1), 10, n * 15 + 4, 5, 6),
+      token(text, n === 0 || n === 2 || n === 4 ? 30 : 45, n * 15, 125)
+    ]),
+    token('Listing 1:', 40, 96, 60)
+  ]
+  const table = {
+    cropRect: [0, 25, 200, 90],
+    grid: code.slice(2).map((t, n) => [String(n + 3), t]),
+    cells: items.slice(4, 12).map((item, n) => ({
+      row: Math.floor(n / 2),
+      column: n % 2,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [...item.rect],
+      text: item.text,
+      sourceRects: [item.rect]
+    })),
+    issues: [],
+    unassigned: []
+  }
+  expect(hasTableEvidence(table, undefined, items, [])).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Procedure comparison.'] }, items, [])).toBe(
+    true
+  )
+  for (const variant of ['heading', 'number', 'indent', 'invalid', 'duplicate']) {
+    const source = structuredClone(items)
+    if (variant === 'heading') source.pop()
+    if (variant === 'number') source.find((i) => i.text === '2')!.text = '9'
+    if (variant === 'indent')
+      source
+        .filter((i) => i.height === 10 && !i.text.startsWith('Listing'))
+        .forEach((i) => {
+          i.rect[0] = 30
+          i.rect[2] = 155
+        })
+    if (variant === 'invalid') source[0].baseline = NaN
+    if (variant === 'duplicate') source.push(structuredClone(source[0]))
+    expect(hasTableEvidence(table, undefined, source, []), variant).toBe(true)
+  }
 })
 
 it('rejects an uncaptioned boxed procedure without an Algorithm heading', () => {
@@ -1128,4 +1309,124 @@ it('rejects reference columns detected across a crop boundary', () => {
   ]
   expect(hasTableEvidence(table, undefined, source)).toBe(false)
   expect(hasTableEvidence(table, { text: 'Table 1. Included studies' }, source)).toBe(true)
+})
+
+it('does not let an adjacent bracketed assignment discard an independently owned table', () => {
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width = 6
+  ): { text: string; rect: number[]; height: number; baseline: number; horizontal: boolean } => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    height: 10,
+    baseline: y + 10,
+    horizontal: true
+  })
+  const matrix = [
+    token('A', 0, 20),
+    token('=', 9, 20),
+    ...[0, 7, 14, 21, 28, 35].flatMap((y, n) => [
+      token(n === 0 ? '⎡' : n === 5 ? '⎣' : '⎢', 20, y),
+      token(n === 0 ? '⎤' : n === 5 ? '⎦' : '⎥', 110, y)
+    ]),
+    ...[2, 17, 32].flatMap((y) => [35, 60, 85].map((x) => token('α', x, y)))
+  ]
+  const source = [
+    token('Treatment', 150, 5, 55),
+    token('Rate', 250, 5, 25),
+    token('Control', 150, 25, 45),
+    token('12', 250, 25, 12),
+    token('Trial', 150, 45, 35),
+    token('15', 250, 45, 12)
+  ]
+  const table = {
+    cropRect: [0, 0, 300, 60],
+    grid: [
+      ['Treatment', 'Rate'],
+      ['Control', '12'],
+      ['Trial', '15']
+    ],
+    cells: source.map((i, n) => ({
+      row: Math.floor(n / 2),
+      column: n % 2,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [
+        n % 2 ? 240 : 140,
+        Math.floor(n / 2) * 20,
+        n % 2 ? 285 : 220,
+        Math.floor(n / 2) * 20 + 20
+      ],
+      text: i.text,
+      sourceRects: [i.rect]
+    })),
+    issues: [],
+    unassigned: []
+  }
+  expect(hasTableEvidence(table, undefined, [...matrix, ...source], [])).toBe(true)
+})
+
+it('does not let a nearby numbered listing discard an independently owned table', () => {
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width = 6,
+    height = 10
+  ): { text: string; rect: number[]; height: number; baseline: number; horizontal: boolean } => ({
+    text,
+    rect: [x, y, x + width, y + height],
+    height,
+    baseline: y + height,
+    horizontal: true
+  })
+  const text = [
+    'w h i l e t < end do:',
+    'update(x);',
+    'i f valid(x):',
+    'accept(x);',
+    'e l s e:',
+    'reject(x);'
+  ]
+  const listing = text.flatMap((value, n) => [
+    token(String(n + 1), 10, n * 15 + 4, 5, 6),
+    token(value, n % 2 ? 45 : 30, n * 15, 125)
+  ])
+  const source = [
+    token('Treatment', 230, 0, 60),
+    token('Rate', 330, 0, 25),
+    token('Control', 230, 15, 45),
+    token('12', 330, 15, 12),
+    token('Trial', 230, 30, 35),
+    token('15', 330, 30, 12)
+  ]
+  const table = {
+    cropRect: [0, 0, 400, 90],
+    grid: [
+      ['Treatment', 'Rate'],
+      ['Control', '12'],
+      ['Trial', '15']
+    ],
+    cells: source.map((i, n) => ({
+      row: Math.floor(n / 2),
+      column: n % 2,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [
+        n % 2 ? 320 : 220,
+        Math.floor(n / 2) * 15,
+        n % 2 ? 380 : 310,
+        Math.floor(n / 2) * 15 + 15
+      ],
+      text: i.text,
+      sourceRects: [i.rect]
+    })),
+    issues: [],
+    unassigned: []
+  }
+  expect(
+    hasTableEvidence(table, undefined, [...listing, ...source, token('Listing 1:', 40, 96, 60)], [])
+  ).toBe(true)
 })

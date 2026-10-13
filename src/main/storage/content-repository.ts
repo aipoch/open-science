@@ -6,12 +6,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
 import type { PrismaClient } from '@prisma/client'
+import type { ManagedFileReadLease } from '../managed-file-versions/read-port'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import {
   registerPublishedPdfContent,
   removeUnreferencedPdfDocument
 } from '../pdf-documents/identity'
-import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
-import type { ManagedFileReadLease } from '../managed-file-versions/service'
 
 type ContentReadLease = Pick<
   ManagedFileReadLease,

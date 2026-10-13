@@ -1,15 +1,19 @@
 import type { ArtifactFile } from '../../shared/artifacts'
 import type {
   DelegatedArtifactEvidence,
-  DelegatedArtifactProjectionScope,
-  DelegatedReviewEvidence,
-  DelegatedWorkDurableRecords,
-  DurableDelegateResult,
-  DurableDelegateObservation,
-  DurableSnapshot,
-  ReadOnlyAgentFrameDetail
-} from './durable-delegated-work'
+  DelegatedArtifactProjectionScope
+} from './artifact-evidence-contract'
 import { currentAttempt, sameSession } from './delegated-work-record-invariants'
+import type {
+  DelegatedWorkDurableRecords,
+  DurableDelegateObservation,
+  DurableDelegateResult,
+  DurableSnapshot
+} from './delegated-work-record-types'
+import type {
+  DelegatedReviewEvidence,
+  ReadOnlyAgentFrameDetail
+} from './durable-delegated-work-contract'
 import { associateStructuredOutputEvidence } from './structured-output'
 
 type DurableChild = DurableSnapshot['records'][number]

@@ -1,12 +1,12 @@
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { CompletionGateRuntimeRegistry } from './completion-gate'
+import { completionContextKey } from './completion-gate'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
-  CompletionGateRuntimeRegistry,
   ToolCompletionEnvelope,
   TrustedToolCompletionContext
-} from './completion-gate'
-import { completionContextKey } from './completion-gate'
+} from './completion-gate-contract'
 import type { SwitchBindingReadBack } from './switch-operation'
 
 type CapturedHandoff = Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>

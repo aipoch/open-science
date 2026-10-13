@@ -1,21 +1,23 @@
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   extractRestrictedInferenceUsage,
   RestrictedInferenceError,
+  type RestrictedInferenceClient,
   type RestrictedInferenceResult,
-  type RestrictedInferenceRunInput,
-  type RestrictedInferenceClient
+  type RestrictedInferenceRunInput
 } from './restricted-inference-contract'
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
 
+import { type AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
-import { type AcpRuntimeEvent, type AcpTurnTokenUsage } from '../../shared/acp'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { ResolvedAgentBackend } from '../agent-framework/types'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
-import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
-import { AcpRuntime, type AcpRuntimeOptions } from './runtime'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
+import { AcpRuntime } from './runtime'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
+import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const STALE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000
 const DEFAULT_OUTPUT_LIMIT_BYTES = 256 * 1024
@@ -328,9 +330,9 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
 export {
   DEFAULT_OUTPUT_LIMIT_BYTES,
   extractRestrictedInferenceUsage,
+  resolveRestrictedInferenceModel,
   RestrictedInferenceError,
-  RestrictedInferenceRunner,
-  resolveRestrictedInferenceModel
+  RestrictedInferenceRunner
 }
 export type {
   RestrictedInferenceResult,

@@ -1,15 +1,11 @@
 import { createLogger } from '@aipoch/diagnostics/node'
+import type { KWalletProbeResult } from './kwallet-probe-contract'
+import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend-contract'
 import { safeCredentialProbeResult } from './probe'
-import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend'
-import type { KWalletProbeResult } from './linux-kwallet'
+import type { IdentityProbeResult } from './probe-contract'
+export type { IdentityProbeResult } from './probe-contract'
 
 const log = createLogger('credential-identity')
-
-export type IdentityProbeResult = Readonly<{
-  status: 'exists' | 'not-found' | 'access-blocked' | 'error' | 'unsupported'
-  reason?: string
-  osStatus?: number
-}>
 
 export type CredentialIdentity = Readonly<
   | { backend: 'mac-keychain' | 'linux-secret-service'; appName: string; exists: boolean }

@@ -1,14 +1,7 @@
-import { isReviewerCorrectionAttribution, type MessagePart } from './session-persistence'
-
-export type HistoryReplayTarget =
-  'claude-code' | 'opencode' | 'codebuddy' | 'codex-response' | 'codex-bridge'
-
-export type HistoryReplayDescriptor = {
-  target: HistoryReplayTarget
-  contextWindow?: number
-  // Test/diagnostic override; production callers use the target policy above.
-  budget?: number
-}
+import type { HistoryReplayDescriptor, HistoryReplayTarget } from './history-replay-contract'
+import { isReviewerCorrectionAttribution } from './session-persistence'
+import type { MessagePart } from './session-message-contract'
+export { type HistoryReplayDescriptor, type HistoryReplayTarget } from './history-replay-contract'
 
 type HistoryReplayPolicy = {
   contextShare: number

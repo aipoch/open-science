@@ -1,4 +1,4 @@
-import type { AcpModelStepTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
 
 const tokenCount = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined

@@ -1,10 +1,10 @@
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import { normalizeOpenAiChatModelStepUsage } from '../settings/openai-chat-usage'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,
   AcpProviderTurnResult
 } from './provider-turn-adapter'
-import { normalizeOpenAiChatModelStepUsage } from '../settings/openai-chat-usage'
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

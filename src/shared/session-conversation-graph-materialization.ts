@@ -1,4 +1,3 @@
-import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 import {
   createLinearConversationGraph,
   materializeNestedDelegateActivities,
@@ -8,11 +7,12 @@ import {
   synchronizeActiveConversationMessages,
   type PersistedConversationGraph
 } from './conversation-graph'
+import { parseNestedDelegateInvocationId } from './delegated-caller-source'
+import type { PersistedToolActivity } from './session-message-contract'
 import type {
   MaterializedPersistedChatSession,
   PersistedChatSession
 } from './session-persistence/session'
-import type { PersistedToolActivity } from './session-persistence/message'
 
 export type ConversationGraphMaterializationPhase = 'create' | 'messages' | 'activities'
 

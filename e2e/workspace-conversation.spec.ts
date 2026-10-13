@@ -6,6 +6,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { JSHandle, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
+import { activatePermissionDecisionViaDom, submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Agent journey project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -22,8 +24,7 @@ test('preserves an unavailable saved model until an explicit replacement is sele
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: false })).toBeVisible()
   const saved = await page.evaluate(async () => {
     const loaded = await window.api.sessions.loadAll()
@@ -81,10 +82,7 @@ test('keeps source icons inside table cells after expanding a message table', as
     })
   )
   await createProject(page)
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Expand a table with source links.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Expand a table with source links.')
 
   const table = page.getByRole('region', { name: 'Conversation' }).locator('table')
   await expect(table).toBeVisible()
@@ -151,10 +149,7 @@ const persistedMemoryState = async (
   }, USER_MESSAGE)
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -214,7 +209,7 @@ test('returns from Library to the originating conversation and New Conversation 
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
+  await expect(homeNewProjectButton(page)).toBeVisible()
 })
 
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
@@ -226,20 +221,6 @@ const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
     })
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
-}
-
-const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
-  const button = page
-    .getByTestId('permission-actions')
-    .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
-  await expect(button).toBeEnabled()
-  // Windows E2E can raise a session-persistence conflict toast over the sticky
-  // Allow/Deny row. A pointer click, even with force, still hits that overlay;
-  // Retry would reload the Session and drop the prompt. Activate the button
-  // through its DOM click handler instead.
-  await button.evaluate((element: HTMLButtonElement) => {
-    element.click()
-  })
 }
 
 test('explains disabled revision navigation while a turn is running', async ({ app }, testInfo) => {
@@ -266,10 +247,10 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   const previous = conversation.getByRole('button', { name: 'Previous message revision' })
   await expect(previous).toBeEnabled()
   const releaseFile = resolve(await app.createTestDirectory('revision-hint'), 'release')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill(`Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(
+    page,
+    `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
+  )
   try {
     await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
     await expect(previous).toBeDisabled()
@@ -389,8 +370,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
   await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
@@ -470,7 +450,7 @@ test('resolves Agent permission requests through both Allow and Deny decisions @
     await page.mouse.up()
   }
   await page.mouse.move(8, 8)
-  await clickPermissionDecision(page, 'allow')
+  await activatePermissionDecisionViaDom(page, 'allow')
   await expect(page.getByText('Fixture permission allowed.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 
@@ -480,7 +460,7 @@ test('resolves Agent permission requests through both Allow and Deny decisions @
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
   await expect(page.getByTestId('permission-composer')).toBeVisible()
   await expect(composer).toBeHidden()
-  await clickPermissionDecision(page, 'deny')
+  await activatePermissionDecisionViaDom(page, 'deny')
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 })
@@ -492,8 +472,7 @@ test('shows context compaction loading and completion inside the Session transcr
   const page = await app.configureFakeAgent()
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CONTEXT_COMPACTION_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CONTEXT_COMPACTION_PROMPT)
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const compaction = conversation.getByTestId('context-compaction-activity')
@@ -541,8 +520,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   })
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CITATION_PREVIEW_PROMPT)
 
   const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
   await expect(sourceLink).toBeVisible()
@@ -1077,8 +1055,7 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   })
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CITATION_PREVIEW_PROMPT)
 
   const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
   await sourceLink.hover()
@@ -1133,8 +1110,7 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   const page = await app.configureFakeAgent()
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   const advanceRevision = async (): Promise<void> => {
@@ -1214,8 +1190,7 @@ test('identifies the Project before deleting a workspace Session', async ({ app 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   await page.setViewportSize({ width: 375, height: 900 })
@@ -1238,8 +1213,7 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   const projectId = await page.evaluate(
     async () =>
@@ -1319,8 +1293,7 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   expect(markdown).toContain('CLI export completed before opening.')
   expect(markdown).toContain(AGENT_REPLY)
   await page.screenshot({ path: testInfo.outputPath('cli-export-completed.png') })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after export.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue after export.')
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toHaveCount(2)
 })
 

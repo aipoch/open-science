@@ -1,18 +1,14 @@
+import { getAcpRuntimeEventText, type AcpAgentRuntimeUpdate } from '../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import {
   getActivityGroupTitleFromToolEvent,
   isActivityGroupToolEvent
 } from '../../shared/activity-groups'
-import {
-  getAcpRuntimeEventText,
-  type AcpAgentRuntimeUpdate,
-  type AcpModelCallUsage,
-  type AcpTurnTokenUsage
-} from '../../shared/acp'
 import type {
   PersistedActivityGroup,
   PersistedToolActivity,
   PersistedToolActivityStatus
-} from '../../shared/session-persistence'
+} from '../../shared/session-message-contract'
 import type { DelegatedWorkDurableRecords, DurableMessage } from './delegated-work-record-types'
 
 type AttemptRuntimeTranscript = Readonly<{

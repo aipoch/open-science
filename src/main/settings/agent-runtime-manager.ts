@@ -426,7 +426,12 @@ export class AgentRuntimeManager {
       getAdapterVersion: (path, signal) =>
         runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion, signal),
       getCodexVersion: baseOpencodeDetectDeps.getVersion,
-      smokeInitialize: runAcpInitializeSmoke(baseOpencodeDetectDeps.platform),
+      smokeInitialize: async (path, opts, signal) => {
+        signal?.throwIfAborted()
+        if (path === managedAdapterPath) await ensureManagedCodexContextUsage(path)
+        signal?.throwIfAborted()
+        return runAcpInitializeSmoke(baseOpencodeDetectDeps.platform)(path, opts, signal)
+      },
       resolveNpmBinDirs: baseOpencodeDetectDeps.resolveNpmBinDirs,
       extraDirs: [dirname(managedAdapterPath)],
       managedAdapterPath,

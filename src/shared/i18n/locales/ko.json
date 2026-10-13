@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요.",
     "Close window": "창 닫기",
     "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
-    "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인"
+    "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인",
+    "Quit app": "앱 종료"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
@@ -132,7 +133,16 @@
     "Running sessions": "실행 중",
     "Pinned sessions": "고정됨",
     "Recent items": "최근 세션",
-    "More items": "더 많은 세션"
+    "More items": "더 많은 세션",
+    "Quit while disconnected?": "연결이 끊어진 상태에서 종료할까요?",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "저장하지 않은 변경 사항이 손실될 수 있습니다. 전송된 작업은 이미 완료되었을 수 있습니다. 백엔드는 중지되지 않습니다.",
+    "Open-Science could not start the backend.": "Open-Science에서 백엔드를 시작하지 못했습니다.",
+    "The backend stopped before startup completed. Check the logs, resolve the cause, and retry.": "시작이 완료되기 전에 백엔드가 중지되었습니다. 로그를 확인하고 원인을 해결한 후 다시 시도하세요.",
+    "The backend did not finish starting. It may still be running. Check the logs before quitting; no process will be terminated automatically.": "백엔드 시작이 완료되지 않았습니다. 아직 실행 중일 수 있습니다. 종료하기 전에 로그를 확인하세요. 프로세스는 자동으로 종료되지 않습니다.",
+    "Retry startup": "시작 다시 시도",
+    "Open startup logs": "시작 로그 열기",
+    "Could not open the logs folder.": "로그 폴더를 열지 못했습니다.",
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
@@ -906,7 +916,6 @@
     "Check all": "모두 확인",
     "Check now": "지금 확인하세요",
     "Check proxy, VPN, or firewall settings.": "프록시, VPN 또는 방화벽 설정을 확인하세요.",
-    "Check the package mirror configuration below.": "아래에서 패키지 미러 구성을 확인하세요.",
     "Check your cable or Wi-Fi connection.": "케이블이나 Wi-Fi 연결을 확인하세요.",
     "Checking access…": "액세스 확인 중…",
     "Checking and setting up remote access…": "원격 접속 확인 및 설정 중…",
@@ -1537,7 +1546,6 @@
     "Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.": "시스템 설정을 따르거나 언어를 선택하세요. 시스템은 시작 시 한 번 감지되므로 다음에 앱을 열 때 장치 언어 변경 사항이 적용됩니다.",
     "Follow up…": "후속 조치…",
     "Follow {{appName}} on X": "X에서 {{appName}} 팔로우",
-    "Follows this device": "이 기기 설정을 따름",
     "Forward": "앞으로",
     "Found {{count}} skills._other": "스킬 {{count}}개를 찾았습니다.",
     "Found {{count}} skills_other": "스킬 {{count}}개를 찾았습니다.",
@@ -2641,6 +2649,7 @@
     "Settings": "설정",
     "Settings navigation": "설정 탐색",
     "Settings panel couldn't be loaded.": "설정 패널을 불러올 수 없습니다.",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science에서 설정을 불러오지 못했습니다. 계속하려면 다시 시도하세요.",
     "Settings could not be loaded": "설정을 로드할 수 없습니다.",
     "Settings → Permissions": "설정 → 권한",
     "Setup could not be completed": "설정을 완료할 수 없습니다.",
@@ -2784,7 +2793,6 @@
     "System_language": "시스템 설정 사용",
     "System_runtime": "시스템",
     "System compatibility": "시스템 호환성",
-    "System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open-Science started with; choose Manual to give them a fixed proxy.": "시스템 설정을 선택하면 앱 요청에 이 기기의 프록시를 사용합니다. 에이전트 프로세스는 Open-Science 시작 시의 프록시 환경만 상속합니다. 고정 프록시를 사용하려면 수동을 선택하세요.",
     "System prompt": "시스템 프롬프트",
     "System requirements not met": "시스템 요구 사항이 충족되지 않았습니다.",
     "TYPE": "유형",
@@ -3103,7 +3111,6 @@
     "Where Open-Science stores your projects, artifacts, and other app data on this device.": "이 기기에서 Open-Science가 프로젝트, 아티팩트 및 기타 앱 데이터를 저장하는 위치입니다.",
     "Where should Open-Science store your data?": "Open-Science 데이터를 저장할 위치를 선택하세요.",
     "Where the notebook environment fetches conda and Python packages from when installing or updating.": "Notebook 환경은 설치 또는 업데이트 시 conda 및 Python 패키지를 가져옵니다.",
-    "Whether this machine can currently reach the package registries.": "이 컴퓨터가 현재 패키지 레지스트리에 연결할 수 있는지 여부입니다.",
     "Wi-Fi": "Wi-Fi",
     "Window behavior": "창 동작",
     "Window used": "사용된 창",
@@ -7162,6 +7169,16 @@
     "Selected environment": "선택한 환경",
     "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다.",
     "No code has run in this view yet.": "이 보기에서는 아직 코드가 실행되지 않았습니다.",
-    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다."
+    "Code received; waiting for execution details.": "코드를 받았습니다. 실행 세부 정보를 기다리는 중입니다.",
+    "Desktop connection lost": "데스크톱 연결이 끊어졌습니다",
+    "Restoring desktop connection…": "데스크톱 연결 복구 중…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "로컬 초안은 열린 상태로 유지됩니다. 전송된 작업은 이미 완료되었을 수 있으며 다시 실행되지 않습니다.",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "기존 백엔드를 더 이상 사용할 수 없습니다. 계속하려면 앱을 종료한 후 다시 여세요.",
+    "Reconnect": "다시 연결",
+    "Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.": "npmjs와 npmmirror를 확인합니다. Conda 및 Python 패키지 미러는 아래에서 별도로 설정합니다.",
+    "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Open-Science가 사용하는 프록시를 확인하세요. 정상 작동하는 브라우저 연결은 다른 프록시 설정을 사용할 수 있습니다.",
+    "Reconnect the backend, then check again.": "백엔드에 다시 연결한 후 다시 확인하세요.",
+    "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "시스템 모드는 백엔드에서 사용 가능한 프록시 설정을 사용합니다. 브라우저 및 운영 체제 설정과 다를 수 있습니다. 고정 프록시를 설정하려면 수동을 선택하세요.",
+    "Backend defaults": "백엔드 기본값"
   }
 }

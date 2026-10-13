@@ -1,17 +1,17 @@
-import { AnnotationDragSource } from './annotations/AnnotationDragSource'
-import { annotationTransfers } from './annotations/annotation-transfer'
-import { SideChatAnnotationDrop } from './annotations/SideChatAnnotationDrop'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
-import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { AnnotationDragSource } from './annotations/AnnotationDragSource'
+import { SideChatAnnotationDrop } from './annotations/SideChatAnnotationDrop'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { annotationTransfers } from './annotations/annotation-transfer'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 /*
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArrowUp, Square, X } from 'lucide-react'
@@ -26,11 +26,11 @@ import {
   type SetStateAction
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { Annotation } from '../../../../shared/annotation-contract'
 import {
   parseSideChatAnnotationText,
   sideChatAnnotationText,
   validateAnnotations,
-  type Annotation,
   type SideChatAnnotationItem
 } from '../../../../shared/annotations'
 

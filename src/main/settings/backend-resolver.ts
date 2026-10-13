@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import type { CodexSubscriptionTransport, ReasoningEffort } from '../../shared/settings'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortProfile, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import {
+  buildActiveModelIncompatibleMessage,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/run-error-classification'
+import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
@@ -9,27 +17,28 @@ import {
   usesAppProviderTransport
 } from '../../shared/settings'
 import {
-  buildActiveModelIncompatibleMessage,
-  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
-  NO_ACTIVE_PROVIDER_MESSAGE
-} from '../../shared/run-error-classification'
-import type { ReasoningEffortProfile, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
-import {
   getAgentFramework,
   releaseResolvedAgentBackendLeases,
+  type AgentFrameworkId,
   type AgentModelChangeTarget,
   type AgentModelRoute,
-  type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
-import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { opencodeConfigDir } from '../agent-framework/opencode'
 import { renderConnectorInstructions } from '../connectors/skill-document-renderer'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
-import { buildProviderEnv } from './provider-env'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
+import { BackendRoutePlanner } from './backend-route-planner'
+import {
+  BackendSelectionOwner,
+  type AgentBackendSelection,
+  type BackendSelectionResolution,
+  type ExplicitAgentBackendTarget
+} from './backend-selection-owner'
+import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
+import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
 import type { ConnectorSettingsModule } from './connector-settings'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
@@ -37,21 +46,13 @@ import {
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-accounts'
-import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
-import type { StoredSettings } from './types'
 import type { ResolvedProvider } from './provider-env'
-import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
-import {
-  BackendSelectionOwner,
-  type AgentBackendSelection,
-  type BackendSelectionResolution,
-  type ExplicitAgentBackendTarget
-} from './backend-selection-owner'
-import { BackendRoutePlanner } from './backend-route-planner'
+import { buildProviderEnv } from './provider-env'
 import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
+import type { StoredSettings } from './types'
 
 export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 

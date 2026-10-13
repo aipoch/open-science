@@ -1,16 +1,16 @@
-import { probeLinuxCredentialIdentity } from './linux-secret-service'
+import type { SecureStorageCipher } from './cipher-contract'
+import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
 import { selectLinuxCredentialBackend } from './linux-backend'
 import { probeLinuxKWalletIdentity } from './linux-kwallet'
-import { validateWindowsProfileKey } from './windows-profile-key'
-import type { SecureStorageCipher } from '../secure-storage'
-import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
-import { installCredentialAccess, credentialCipher } from './runtime'
+import { probeLinuxCredentialIdentity } from './linux-secret-service'
 import { probeCredentialIdentity } from './probe'
+import { credentialCipher, installCredentialAccess } from './runtime'
 import {
   CredentialIdentityError,
   selectCredentialIdentity,
   type CredentialIdentity
 } from './selection'
+import { validateWindowsProfileKey } from './windows-profile-key'
 
 export const selectStartupCredentialIdentity = (
   options: Omit<

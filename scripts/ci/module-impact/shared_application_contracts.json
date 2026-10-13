@@ -7,8 +7,6 @@
     "src/shared/annotations.test.ts",
     "src/shared/annotations.ts",
     "src/shared/app-config.ts",
-    "src/shared/application-command-contract.test.ts",
-    "src/shared/application-command-contract.ts",
     "src/shared/background-result-delivery.ts",
     "src/shared/bookmarks.test.ts",
     "src/shared/bookmarks.ts",
@@ -25,7 +23,6 @@
     "src/shared/execution-recovery.ts",
     "src/shared/fuzzy-match.ts",
     "src/shared/handoff-lifecycle.ts",
-    "src/shared/history-preamble.ts",
     "src/shared/host-lineage.ts",
     "src/shared/in-flight-promise.test.ts",
     "src/shared/in-flight-promise.ts",
@@ -51,7 +48,6 @@
     "src/shared/memory.test.ts",
     "src/shared/memory.ts",
     "src/shared/message-search.ts",
-    "src/shared/mirror.ts",
     "src/shared/network-proxy.ts",
     "src/shared/network.ts",
     "src/shared/node-install-hint.test.ts",
@@ -122,8 +118,6 @@
     "src/shared/renderer-contracts/artifacts.ts",
     "src/shared/renderer-contracts/compute.ts",
     "src/shared/renderer-contracts/conversation.ts",
-    "src/shared/renderer-contracts/definition.test.ts",
-    "src/shared/renderer-contracts/definition.ts",
     "src/shared/renderer-contracts/files.ts",
     "src/shared/renderer-contracts/literature.ts",
     "src/shared/renderer-contracts/memory.ts",
@@ -169,7 +163,14 @@
     "src/shared/pdf-translation-models.test.ts",
     "src/shared/pdf-text.test.ts",
     "src/shared/pdf-translation.test.ts",
-    "src/shared/skill-marketplace.ts"
+    "src/shared/skill-marketplace.ts",
+    "src/shared/annotation-contract.ts",
+    "src/shared/model-preference-contract.ts",
+    "src/shared/runtime-payload-transfer.ts",
+    "src/shared/runtime-payload-client.ts",
+    "src/shared/runtime-payload-client.test.ts",
+    "src/shared/session-event-hydrator.ts",
+    "src/shared/session-event-hydrator.test.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -252,9 +253,17 @@
     "src/shared/journal-attributes.ts",
     "src/shared/provider-text-generation-failure.ts",
     "src/shared/pdf-translation-models.ts",
-    "src/shared/skill-marketplace.ts"
+    "src/shared/skill-marketplace.ts",
+    "src/shared/runtime-payload-transfer.ts",
+    "src/shared/runtime-payload-client.ts",
+    "src/shared/session-event-hydrator.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
   "testFiles": {
     "owner": [
       "src/shared/activity-groups.test.ts",
@@ -299,7 +308,9 @@
       "src/shared/provider-text-generation-failure.test.ts",
       "src/shared/pdf-translation-models.test.ts",
       "src/shared/pdf-text.test.ts",
-      "src/shared/pdf-translation.test.ts"
+      "src/shared/pdf-translation.test.ts",
+      "src/shared/runtime-payload-client.test.ts",
+      "src/shared/session-event-hydrator.test.ts"
     ],
     "contract": [],
     "consumer": [

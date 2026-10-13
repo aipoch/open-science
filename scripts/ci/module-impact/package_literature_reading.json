@@ -41,7 +41,8 @@
       "src/main/literature/migration-writers.test.ts",
       "src/main/literature/pdf-attachment-reliability.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
-      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

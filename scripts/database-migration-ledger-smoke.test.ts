@@ -666,13 +666,46 @@ describe('packaged database migration ledger smoke', () => {
       await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/backend log/)
       await writeFile(current, 'Open-Science Web: ready\n')
       await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/SQLite runtime version/)
-      await writeFile(current, '[main] database runtime verified: sqlite_version=3.46.0\n')
+      await writeFile(
+        current,
+        JSON.stringify({ scope: 'main', msg: 'database runtime verified: sqlite_version=3.46.0' }) +
+          '\n'
+      )
       await expect(readDesktopSqliteVersion(root, 42)).resolves.toBe('3.46.0')
       await writeFile(join(logs, 'desktop-backend-42-1791680000001.log'), '')
       await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/backend log/)
     } finally {
       await rm(root, { force: true, recursive: true })
     }
+  })
+
+  it('reads structured SQLite evidence alongside raw stderr and CRLF text', () => {
+    const record = JSON.stringify({
+      scope: 'main',
+      msg: 'database runtime verified: sqlite_version=3.46.0'
+    })
+    expect(parsePackagedSqliteVersion(`Node warning\n{broken json\n${record}\n`)).toBe('3.46.0')
+    expect(
+      parsePackagedSqliteVersion('[main] database runtime verified: sqlite_version=3.46.0 \r\n')
+    ).toBe('3.46.0')
+  })
+
+  it.each([
+    JSON.stringify({ scope: 'other', msg: 'database runtime verified: sqlite_version=3.46.0' }),
+    JSON.stringify({
+      scope: 'other',
+      msg: '[main] database runtime verified: sqlite_version=3.46.0'
+    }),
+    JSON.stringify({ scope: 'main', msg: { sqliteVersion: '3.46.0' } }),
+    JSON.stringify({
+      scope: 'main',
+      msg: 'database runtime verified: sqlite_version=3.46.0-invalid'
+    }),
+    'null',
+    '{broken json',
+    '[other] database runtime verified: sqlite_version=3.46.0'
+  ])('rejects unrelated or invalid SQLite evidence: %s', (output) => {
+    expect(() => parsePackagedSqliteVersion(output)).toThrow(/SQLite runtime version/)
   })
 
   it('records the packaged SQLite compatibility floor and certified matrix', async () => {

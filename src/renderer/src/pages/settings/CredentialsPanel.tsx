@@ -1,3 +1,4 @@
+import type { CredentialsServiceId, CredentialsView } from '../../lib/settings-navigation'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
@@ -36,12 +37,8 @@ import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
 
-export type CredentialsServiceId = 'github' | 'literature' | 'openalex' | 'unpaywall'
-export type CredentialsView =
-  | { kind: 'list' }
-  | { kind: 'service'; serviceId: CredentialsServiceId }
-  | { kind: 'create' }
-  | { kind: 'credential'; id: string }
+export type { CredentialsServiceId } from '../../lib/settings-navigation'
+export type { CredentialsView } from '../../lib/settings-navigation'
 type DesktopCredentialAvailability = 'checking' | 'available' | 'unavailable'
 
 type CredentialsPanelProps = {

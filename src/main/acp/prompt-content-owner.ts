@@ -2,13 +2,14 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { isImportableSkillArchive, isImportableSkillArchivePath } from '@aipoch/skills/sources'
+import type { AcpMessageImage, AcpReplayMessageImage } from '../../shared/acp-image-contract'
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  sanitizeAcpMessageImage,
-  type AcpMessageImage,
-  type AcpReplayMessageImage
-} from '../../shared/acp'
+  sanitizeAcpMessageImage
+} from '../../shared/acp-image-contract'
 import type { FileReference } from '../../shared/artifacts'
 import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
 import {
@@ -26,10 +27,9 @@ import {
   readBoundedManagedFilePreview,
   readBoundedManagedFilePreviewLease
 } from '../managed-file-preview'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import {
   buildImageContentData,
-  prepareModelImageData,
   canInlineImageInSession,
   consumeInlineImageBudget,
   extractPdfText,
@@ -37,14 +37,12 @@ import {
   MAX_AUTO_EXTRACT_PDF_BYTES,
   MAX_AUTO_PROCESS_IMAGE_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
+  prepareModelImageData,
   type InlineImageBudget
 } from '../uploads/attachment-media'
-import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
-import { isImportableSkillArchive, isImportableSkillArchivePath } from '@aipoch/skills/sources'
 import {
   ATTACHMENT_PREVIEW_BYTES,
-  MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildDatasetAttachmentNotice,
   buildDeferredMediaNotice,
   buildLocalFileAttachmentNotice,
@@ -52,6 +50,7 @@ import {
   isDatasetAttachment,
   isTabularAttachment,
   isTextLikeAttachment,
+  MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   mimeEssence
 } from './attachment-content'
 import type { FileReferenceResolver, TrustedFileReferenceLease } from './file-reference-resolver'

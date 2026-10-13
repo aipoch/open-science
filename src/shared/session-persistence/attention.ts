@@ -1,25 +1,20 @@
 import { resolveActiveConversationMessages } from '../conversation-graph'
-import type { PersistedChatSession } from './session'
+import type {
+  SessionAttention,
+  SessionAttentionFacts,
+  SessionAttentionTurn,
+  SessionRecordProblem
+} from '../session-attention-contract'
 import { isHiddenControlMessage } from './message'
+import type { PersistedChatSession } from './session'
 import { isInheritedForkTurn, isTurnAnchor } from './turn-anchor'
-import { resolveTurnOutcome, type TurnOutcome } from './turn-outcome'
-
-export type SessionRecordProblem = 'missing-record' | 'size-limit' | 'conversation-graph-sync'
-
-export type SessionAttentionTurn = Readonly<{
-  promptMessageId: string
-  outcome: Extract<TurnOutcome, { kind: 'failed' | 'interrupted' }>
-}>
-
-export type SessionAttention = Readonly<{
-  turn?: SessionAttentionTurn
-  recordProblems: readonly SessionRecordProblem[]
-}>
-
-export type SessionAttentionFacts = Readonly<{
-  latestVisibleTurn?: SessionAttentionTurn
-  recordProblems?: readonly SessionRecordProblem[]
-}>
+import { resolveTurnOutcome } from './turn-outcome'
+export {
+  type SessionAttention,
+  type SessionAttentionFacts,
+  type SessionAttentionTurn,
+  type SessionRecordProblem
+} from '../session-attention-contract'
 
 const PROBLEM_ORDER: readonly SessionRecordProblem[] = [
   'missing-record',

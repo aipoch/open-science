@@ -1,6 +1,8 @@
+import { readWithDeadline } from '@/lib/read-with-deadline'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { PackageMirror } from '../../../../shared/mirror'
@@ -69,6 +71,7 @@ const NetworkPanel = ({
   // returning to the window while a previous probe is still failing, and Retry), so this
   // panel and the header/sidebar indicators never disagree. 'unknown' renders as Checking…;
   // 'probe-failed' remains retryable.
+  const runtimeEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
@@ -80,42 +83,34 @@ const NetworkPanel = ({
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
   const [networkInfoError, setNetworkInfoError] = useState(false)
-  const networkInfoRequestRef = useRef(0)
-
-  // Local interface details come from the main process; window.api.network is Electron-only,
-  // so stay with placeholders when the preload bridge is unavailable. A rejected IPC call is
-  // an explicit load failure, not "no interface". Overlapping refreshes (list remount, Retry)
-  // keep only the latest response so a stale rejection cannot wipe a newer success.
-  const refreshNetworkInfo = useCallback((): void => {
+  // A result belongs to the current view and runtime epoch only. Recheck after a network probe
+  // finishes; cleanup also rejects late reads after disconnect, navigation, or unmount.
+  useEffect(() => {
+    if (view.kind !== 'list' || !isOnline || connectivity === 'unknown') return
     const getInfo = window.api?.network?.getInfo
     if (!getInfo) return
-    const request = ++networkInfoRequestRef.current
-
-    void getInfo().then(
+    let active = true
+    void readWithDeadline(getInfo, 10_000).then(
       (info) => {
-        if (request !== networkInfoRequestRef.current) return
+        if (!active) return
         setNetworkInfo(info)
         setNetworkInfoError(false)
       },
       () => {
-        if (request !== networkInfoRequestRef.current) return
+        if (!active) return
         setNetworkInfo(null)
         setNetworkInfoError(true)
       }
     )
-  }, [])
-
-  // Pull local interface details when the list view mounts while online, and re-pull whenever
-  // connectivity comes back; offline rows show placeholders, so a drop has nothing to refresh.
-  useEffect(() => {
-    if (view.kind === 'list' && isOnline) refreshNetworkInfo()
-  }, [view.kind, isOnline, refreshNetworkInfo])
+    return () => {
+      active = false
+    }
+  }, [view.kind, isOnline, connectivity, runtimeEpoch])
 
   const recheckOnline = useNetworkStore((state) => state.recheckOnline)
 
   const handleRetry = (): void => {
     recheckOnline()
-    refreshNetworkInfo()
     // Announced even while offline: the store short-circuits a link-down probe to
     // 'unreachable', but still holds the Checking… state for its minimum delay first.
     void probeConnectivity({ announce: true })
@@ -254,7 +249,9 @@ const NetworkPanel = ({
       {!isConfiguring ? (
         <SettingsSection
           title={t('Network status')}
-          description={t('Whether this machine can currently reach the package registries.')}
+          description={t(
+            'Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.'
+          )}
           aria-label={t('Network status')}
         >
           <div className="rounded-xl border border-border px-4">
@@ -287,7 +284,15 @@ const NetworkPanel = ({
                 <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
                   {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
                   <li>{t('Check proxy, VPN, or firewall settings.')}</li>
-                  <li>{t('Check the package mirror configuration below.')}</li>
+                  {connectivity !== 'probe-failed' ? (
+                    <li>
+                      {t(
+                        'Check the proxy used by Open-Science. A working browser connection may use different proxy settings.'
+                      )}
+                    </li>
+                  ) : (
+                    <li>{t('Reconnect the backend, then check again.')}</li>
+                  )}
                 </ol>
               </div>
             ) : null}
@@ -358,7 +363,7 @@ const NetworkPanel = ({
                   {networkProxy.mode === 'manual'
                     ? networkProxy.server
                     : networkProxy.mode === 'system'
-                      ? t('Follows this device')
+                      ? t('Backend defaults')
                       : t('Connects without a proxy')}
                 </p>
               </div>

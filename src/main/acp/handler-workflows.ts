@@ -1,29 +1,32 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type {
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
-  AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
-  AcpSaveAsSkillRequest,
-  AcpRuntimeState
+  AcpRuntimeState,
+  AcpSaveAsSkillRequest
 } from '../../shared/acp'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
-import type { TaskNotificationService } from '../notifications/task-notifications'
-import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import { bindResumeRequestToProject } from './session-project-binding'
-import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
-import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
-import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
-import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
+import type {
+  HistoryReplayDescriptor,
+  HistoryReplayTarget
+} from '../../shared/history-replay-contract'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
+import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
+import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
+import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
+import { bindResumeRequestToProject } from './session-project-binding'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)

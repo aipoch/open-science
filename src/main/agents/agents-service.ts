@@ -1,3 +1,5 @@
+import type { SkillCatalogReadModel } from './catalog-contract'
+export type { SkillCatalogReadModel } from './catalog-contract'
 // host.agents adapter: the control-plane SDK's server-side read surface.
 //
 // This module is the ONLY place that turns internal Specialist/catalog records into the public
@@ -12,12 +14,7 @@
 //    instructions, connector args, credentials, headers, environment values, or tokens.
 //  - The SpecialistService and catalog services remain authoritative; nothing is copied here.
 
-import type { ConnectorReadModel } from '../connectors/read-model'
-
-export type { ConnectorReadModel } from '../connectors/read-model'
-import type { SpecialistService } from '../specialist/service'
-import type { SessionBindingService } from '../specialist/session-binding'
-import type { SpecialistView } from '../../shared/specialist'
+import type { SpecialistDeleteRequest, SpecialistDeleteResult } from '@aipoch/specialists'
 import {
   isAgentsOpName,
   isAgentsParams,
@@ -26,13 +23,18 @@ import {
   type SwitchNotifier,
   type TrustedCallingSession
 } from '../../shared/agents-contract'
-import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-mutations'
-import { SwitchOperation, SwitchCommitSequencer, type SwitchParams } from './switch-operation'
-import { applyDelete } from './specialist-privileged-ops'
 import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
-import type { SpecialistDeleteRequest, SpecialistDeleteResult } from '@aipoch/specialists'
+import type { SpecialistView } from '../../shared/specialist'
+import type { ConnectorReadModel } from '../connectors/read-model'
+import type { SpecialistService } from '../specialist/service'
+import type { SessionBindingService } from '../specialist/session-binding'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
+import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-mutations'
 import { applyNameOrIdFilter } from './name-or-id-filter'
+import { applyDelete } from './specialist-privileged-ops'
+import { SwitchCommitSequencer, SwitchOperation, type SwitchParams } from './switch-operation'
+
+export type { ConnectorReadModel } from '../connectors/read-model'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -106,15 +108,6 @@ export type SpecialistDetailReadModel = SpecialistSummaryReadModel & {
   fullAccess: SpecialistView['fullAccess']
   selectedCapabilities: SpecialistView['selectedCapabilities']
   revision: number
-}
-
-export type SkillCatalogReadModel = {
-  id: string
-  name: string
-  displayName: string
-  source: string
-  mainEnabled: boolean
-  available: boolean
 }
 
 export type ConnectorToolReadModel = {

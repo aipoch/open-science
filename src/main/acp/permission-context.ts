@@ -5,25 +5,25 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
-  AcpPermissionGrant,
-  AcpPermissionRequest,
   AcpPermissionResponse,
-  AcpRuntimeEvent,
-  AcpPermissionSettlementState
+  AcpPermissionSettlementState,
+  AcpRuntimeEvent
 } from '../../shared/acp'
-import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import type { NotebookExecutionRpcMethod, ShellRuntimeBinding } from '../../shared/notebook'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { getAgentFramework, type AgentFramework } from '../agent-framework'
-import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
-import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
-import { shellRuntimeDialect } from '../notebook/shell-runtime'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { shellRuntimeDialect } from '../notebook/shell-runtime'
 import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { isRecord } from '../value-guards'
+import { APP_AUTO_OPERATION_IDENTITIES } from './auto-operation-policy'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
@@ -34,18 +34,16 @@ import {
   type RestoredPermissionContinuation
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
-import { APP_AUTO_OPERATION_IDENTITIES } from './auto-operation-policy'
 import {
+  isMcpToolName,
   isNativeWebFetchCandidate,
   isNativeWebSearchCandidate,
-  isMcpToolName,
   trustedMcpToolIdentity,
-  withTrustedMcpToolIdentity,
   withTrustedAutoOperation,
+  withTrustedMcpToolIdentity,
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
-import { isRecord } from '../value-guards'
 
 const log = createLogger('acp')
 

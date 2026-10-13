@@ -1,3 +1,4 @@
+import type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -60,19 +61,7 @@ import {
   type SkillConflictResolutionMap
 } from './specialist-skill-conflicts'
 
-export type SpecialistMarketplaceView =
-  | { kind: 'marketplace' }
-  | { kind: 'marketplace-sources' }
-  | {
-      kind: 'marketplace-release'
-      sourceId: string
-      sourceName?: string
-      sourceTrust?: 'official' | 'user-approved'
-      id: string
-      version: string
-      installedVersion?: string
-      updateAvailable?: boolean
-    }
+export type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 
 type Props = {
   view: SpecialistMarketplaceView

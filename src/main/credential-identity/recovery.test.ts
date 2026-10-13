@@ -31,3 +31,12 @@ it.each(['keychain-locked', 'keychain-search-incomplete', 'keychain-state-change
     }
   }
 )
+
+it('distinguishes unsupported ciphertext from an unsupported OS credential backend', () => {
+  const message = credentialRecoveryMessage(
+    new CredentialIdentityError('unsupported-ciphertext-version'),
+    ['en']
+  )
+  expect(message).toContain('encrypted data format')
+  expect(message).not.toContain('not supported by this system credential backend')
+})

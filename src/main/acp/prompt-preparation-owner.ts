@@ -1,43 +1,44 @@
-import { prepareReplayReferences, type PrepareSessionReading } from './replay-reference-prompt'
-import type {
-  ClassifyReadingRoute,
-  ClassifySkills,
-  ClassificationUsage
-} from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
+import type {
+  ClassificationUsage,
+  ClassifyReadingRoute,
+  ClassifySkills
+} from '../../shared/classification'
+import type { PrepareSessionReading } from '../session-replay/session-reading'
+import { prepareReplayReferences } from './replay-reference-prompt'
 
-import type { AcpPromptRequest } from '../../shared/acp'
-import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactReference, FileReference } from '../../shared/artifacts'
-import type { NotebookPromptInput } from '../../shared/notebook'
-import { resolveFileTextBudget } from '../../shared/history-preamble'
-import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
 import {
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
   runWithDiagnosticCorrelation
 } from '@aipoch/diagnostics/node'
+import type { AcpPromptRequest } from '../../shared/acp'
+import type { ArtifactReference, FileReference } from '../../shared/artifacts'
+import { resolveFileTextBudget } from '../../shared/history-preamble'
+import type { NotebookPromptInput } from '../../shared/notebook'
+import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
+import type { UploadedAttachment } from '../../shared/uploads'
+import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework/types'
+import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
   ContextWindowTurnHandle,
   SessionEstimateInput
 } from './context-usage-tracker'
+import type { ImageInputCompatibilityPort } from './image-input-compatibility-port'
+import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
-import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type {
   AcpSessionPresentationPolicy,
   AcpSessionToolingAvailability
 } from './session-presentation-policy'
-import type { SessionCapabilityPolicy } from './session-capability-owner'
-import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
-import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
-import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
-import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
+import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -50,7 +51,7 @@ type NotebookTurnInputs = Readonly<{
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
-  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
+  imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
   presentation: Pick<
     AcpSessionPresentationPolicy,
     'buildTurnPromptPrefix' | 'computeExecutionTargetReminder' | 'continuationText'

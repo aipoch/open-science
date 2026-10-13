@@ -1,18 +1,18 @@
-import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { createRequire } from 'node:module'
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto'
 import {
-  readFileSync,
+  closeSync,
+  fsyncSync,
   mkdirSync,
   openSync,
-  writeFileSync,
-  fsyncSync,
-  closeSync,
+  readFileSync,
   renameSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import type { SecureStorageCipher } from '../secure-storage'
+import type { SecureStorageCipher } from './cipher-contract'
 import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 // Electron 43.7.5's pinned OSCrypt sync format; no new ciphertext envelope is persisted.

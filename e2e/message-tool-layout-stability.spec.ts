@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Tool layout stability project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -53,10 +54,7 @@ const runLayoutStabilityJourney = async (
   const page = await app.configureFakeAgent()
   await page.setViewportSize({ width: 1008, height: 681 })
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -151,10 +149,7 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -233,10 +228,7 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
 
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(PROJECT_NAME)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, PROJECT_NAME)
     await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
     const conversation = page.getByRole('region', { name: 'Conversation' })

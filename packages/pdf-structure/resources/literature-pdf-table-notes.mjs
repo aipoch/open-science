@@ -2929,7 +2929,55 @@ export function associateTableNotes(page, tables, rules = []) {
         block
       )
   }
-  return notes
+  return notes.map((owned) =>
+    owned.filter((note) => {
+      // An adjoint belongs to its operator when the native carriers prove a
+      // unique base with both an upper dagger and a lower script. A free-standing
+      // note marker, including a raised marker before prose, lacks this witness.
+      if (/^[†‡]$/u.test(note.text)) {
+        const markers = page.lines.filter(
+          (l) =>
+            l.text === note.text &&
+            Math.abs(l.x - note.rect[0]) < 0.1 &&
+            Math.abs(l.y - note.rect[1]) < 0.1
+        )
+        const validCarrier = (l) =>
+          [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) &&
+          l.width > 0 &&
+          l.height > 0 &&
+          l.fontSize > 0
+        if (markers.length === 1 && validCarrier(markers[0])) {
+          const marker = markers[0],
+            bases = page.lines.filter(
+              (l) =>
+                validCarrier(l) &&
+                /^\p{L}$/u.test(l.text) &&
+                marker.fontSize >= l.fontSize * 0.5 &&
+                marker.fontSize <= l.fontSize * 0.8 &&
+                Math.abs(l.x + l.width - marker.x) <= l.fontSize * 0.1 &&
+                l.y - marker.y > l.fontSize * 0.1 &&
+                l.y - marker.y < l.fontSize * 0.5
+            )
+          if (
+            bases.length === 1 &&
+            page.lines.filter(
+              (l) =>
+                l !== marker &&
+                validCarrier(l) &&
+                /^(?:ˆ|\u0302)?[\p{L}\p{N}]{1,2}$/u.test(l.text) &&
+                Math.abs(l.fontSize - marker.fontSize) < marker.fontSize * 0.05 &&
+                Math.abs(l.x - marker.x) < marker.fontSize * 0.1 &&
+                l.y - bases[0].y > bases[0].fontSize * 0.4 &&
+                l.y - bases[0].y < bases[0].fontSize &&
+                l.y >= marker.y + marker.height
+            ).length === 1
+          )
+            return false
+        }
+      }
+      return true
+    })
+  )
 }
 export function recoverRepeatedRecordFooterNotes(page, proof, rules) {
   if (proof?.tables?.length !== 2) return

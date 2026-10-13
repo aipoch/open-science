@@ -517,6 +517,43 @@ describe('SystemSshRunner', () => {
     extraArgs: []
   })
 
+  it('hides the Windows console on every background SSH command and preserves output', async () => {
+    const env = { SSH_ASKPASS_REQUIRE: 'force' }
+    for (let poll = 0; poll < 3; poll++) {
+      const child = new FakeChild()
+      execFileMock.mockReturnValueOnce(child)
+      const pending = runner.run(target(), 'printf ready', { timeoutMs: 5000, env })
+      child.stdout.emit('data', Buffer.from('ready'))
+      child.stderr.emit('data', Buffer.from('diagnostic'))
+      child.emit('close', 0)
+      await expect(pending).resolves.toMatchObject({
+        exitCode: 0,
+        stdout: 'ready',
+        stderr: 'diagnostic',
+        timedOut: false
+      })
+    }
+    expect(execFileMock).toHaveBeenCalledTimes(3)
+    for (const call of execFileMock.mock.calls) {
+      expect(call[2]).toMatchObject({ windowsHide: true, env })
+    }
+  })
+
+  it('hides the Windows console while resolving SSH configuration', async () => {
+    execFileMock.mockImplementationOnce((_file, _args, _options, callback) => {
+      callback(null, 'user researcher\nport 2222\n', '')
+      return new FakeChild()
+    })
+    const resolved = await resolveTarget('cluster', undefined, undefined, { sshBinary: 'ssh' })
+    expect(resolved.extraArgs).toEqual(expect.arrayContaining(['User=researcher', '-p', '2222']))
+    expect(execFileMock).toHaveBeenCalledWith(
+      'ssh',
+      ['-G', 'cluster'],
+      expect.objectContaining({ windowsHide: true, timeout: 5000 }),
+      expect.any(Function)
+    )
+  })
+
   it('does not place a large remote command in the local process arguments', async () => {
     const child = new FakeChild()
     execFileMock.mockImplementationOnce((_file: string, args: string[]) => {

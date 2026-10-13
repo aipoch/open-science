@@ -1,19 +1,19 @@
 import type {
   SessionPlanApproval,
-  SessionPlanStepStatus,
+  SessionPlanDelivery,
   SessionPlanRuntimeContext,
-  SessionPlanDelivery
-} from '../session-runtime-context'
+  SessionPlanStepStatus
+} from '../session-plan/contract'
 import {
-  type PlanLifecycle,
-  type PlanDocumentV1,
-  parsePlanDocumentV1,
   type ActivePlanProjection,
-  planStepTitles,
+  type PlanDocumentV1,
+  type PlanLifecycle,
   derivePlanLifecycle,
+  parsePlanDocumentV1,
+  planStepTitles,
   projectPlanStepStates
 } from '../session-plan/contract'
-import { isRecord, asString, asNumber, sanitizeRuntimeContextValue } from './primitives'
+import { asNumber, asString, isRecord, sanitizeRuntimeContextValue } from './primitives'
 
 const SESSION_PLAN_APPROVALS = new Set<SessionPlanApproval>(['pending', 'approved', 'rejected'])
 

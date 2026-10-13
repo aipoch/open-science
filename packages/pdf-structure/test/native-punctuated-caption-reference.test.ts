@@ -6,6 +6,143 @@ const { captionKind, findCaptionCandidates } = await import(
   pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
 )
 
+type NativeReferenceLine = {
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+  fontSize: number
+}
+
+it('rejects compact and omitted-label finite references while retaining noun captions', () => {
+  expect(captionKind('Fig.3 shows the observed behavior.')).toBeUndefined()
+  expect(captionKind('Fig. 2 and 4 illustrate the measured behavior.')).toBeUndefined()
+  expect(captionKind('Fig.3. Comparison of the measured behavior.')).toBe('figure')
+  expect(captionKind('Fig. 2 and 4: Measured behavior.')).toBe('figure')
+})
+
+it.each([
+  'Table 2 The evaluation measures described in the methods',
+  'Tab. 2. A detailed description of the independent measurements'
+])('requires a native predecessor for the wrapped reference %s', (reference) => {
+  const line = (text: string, y: number): NativeReferenceLine => ({
+    text,
+    x: 50,
+    y,
+    width: 230,
+    height: 10,
+    fontSize: 10
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      line('The validation values and independent measures are shown in', 100),
+      line(reference, 112)
+    ]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+  expect(findCaptionCandidates([{ ...page, lines: page.lines.slice(1) }])).toHaveLength(1)
+  expect(
+    findCaptionCandidates([{ ...page, lines: [{ ...page.lines[0], x: 310 }, page.lines[1]] }])
+  ).toHaveLength(1)
+  expect(findCaptionCandidates([page], new Map([[1, [[50, 111, 280, 111]]]]))).toHaveLength(1)
+})
+
+it('keeps a tightly wrapped infinitive table reference in its native body paragraph', () => {
+  const line = (text: string, y: number): NativeReferenceLine => ({
+    text,
+    x: 50,
+    y,
+    width: 220,
+    height: 10,
+    fontSize: 10
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      line('The paragraph describes the procedure. We provide', 500),
+      line('Table 7 to present the independent validation patterns', 512),
+      line('and complete the description of the source records.', 524)
+    ]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+  expect(findCaptionCandidates([{ ...page, lines: page.lines.slice(1) }])).toHaveLength(1)
+  expect(findCaptionCandidates([page], new Map([[1, [[50, 511, 270, 511]]]]))).toHaveLength(1)
+  expect(
+    findCaptionCandidates([
+      { ...page, lines: page.lines.map((l, i) => (i ? l : { ...l, fontSize: 12 })) }
+    ])
+  ).toHaveLength(1)
+  expect(
+    findCaptionCandidates([
+      {
+        ...page,
+        graphicsBounds: [
+          { kind: 'image', normalizedRect: [50 / 600, 400 / 800, 270 / 600, 510 / 800] }
+        ]
+      }
+    ])
+  ).toHaveLength(1)
+})
+
+it('keeps a panel reference joined across two complete native body columns out of captions', () => {
+  const line = (text: string, x: number, y: number): NativeReferenceLine => ({
+    text,
+    x,
+    y,
+    width: 220,
+    height: 10,
+    fontSize: 10
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      line('The independent paragraph describes the observations', 50, 400),
+      line('and continues with the comparison between conditions', 50, 412),
+      line('before concluding its first column. As shown in', 50, 424),
+      line('Figure 7 (b), both measured quantities follow the', 310, 400),
+      line('same progression under the remaining conditions', 310, 412),
+      { ...line('records.', 310, 424), width: 35 }
+    ],
+    graphicsBounds: [] as { kind: string; normalizedRect: number[] }[]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+  for (const changed of [
+    { ...page, lines: page.lines.slice(3) },
+    {
+      ...page,
+      lines: [...page.lines, line('A further left column paragraph remains below.', 50, 436)]
+    },
+    {
+      ...page,
+      lines: [...page.lines, line('An earlier right column paragraph is still present.', 310, 388)]
+    },
+    { ...page, lines: page.lines.filter((_, i) => i !== 1) },
+    {
+      ...page,
+      lines: page.lines.map((l, i) =>
+        i === 2 ? { ...l, text: 'An independently completed source sentence.' } : l
+      )
+    },
+    { ...page, lines: page.lines.map((l, i) => (i < 3 ? { ...l, fontSize: 12 } : l)) },
+    {
+      ...page,
+      graphicsBounds: [
+        { kind: 'image', normalizedRect: [310 / 600, 300 / 800, 530 / 600, 390 / 800] }
+      ]
+    }
+  ])
+    expect(findCaptionCandidates([changed])).toHaveLength(1)
+  expect(findCaptionCandidates([page], new Map([[1, [[310, 398, 530, 398]]]]))).toHaveLength(1)
+})
+
 it('recognizes a punctuated full figure keyword while preserving source text', () => {
   const text = 'Figure. 9. Native descriptor for independent panels.'
   const page = {

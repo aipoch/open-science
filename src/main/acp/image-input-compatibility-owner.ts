@@ -1,11 +1,12 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
+import type { PrepareImageInputCompatibilityInput } from './image-input-compatibility-port'
 
+import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  sanitizeAcpMessageImage,
-  type AcpMessageImage
-} from '../../shared/acp'
+  sanitizeAcpMessageImage
+} from '../../shared/acp-image-contract'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   VISION_EVIDENCE_BUDGET_MESSAGE,
@@ -15,15 +16,15 @@ import {
   VISION_IMAGE_TOO_LARGE_MESSAGE,
   VISION_MODEL_NOT_CONFIGURED_MESSAGE
 } from '../../shared/run-error-classification'
-import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
-import {
-  extractRestrictedInferenceUsage,
-  type RestrictedInferenceResult,
-  type RestrictedInferenceRunInput
-} from './restricted-inference-runner'
-import type { VisionEvidencePersistence, VisionEvidenceSource } from './vision-evidence-repository'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { isRecord } from '../value-guards'
+import type {
+  RestrictedInferenceResult,
+  RestrictedInferenceRunInput
+} from './restricted-inference-contract'
+import { extractRestrictedInferenceUsage } from './restricted-inference-runner'
+import type { VisionEvidencePersistence, VisionEvidenceSource } from './vision-evidence-repository'
 
 // Older cached evidence may have been truncated or produced by an incomplete turn.
 const EVIDENCE_SCHEMA_VERSION = 3
@@ -84,16 +85,6 @@ type ImageInputCompatibilityOwnerOptions = Readonly<{
   >
   evidenceRepository?: VisionEvidencePersistence
   recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
-}>
-
-type PrepareImageInputCompatibilityInput = Readonly<{
-  content: string | ContentBlock[]
-  supportsImageInput: boolean
-  projectId?: string
-  sessionId?: string
-  imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
-  historyImageCount?: number
-  signal?: AbortSignal
 }>
 
 type ImageRelayBlock =

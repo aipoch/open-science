@@ -1,11 +1,10 @@
 import type { ContentBlock, SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
 
+import { normalizeClaudeCodeRefusalText, type AcpRuntimeEvent } from '../../shared/acp'
 import {
   ACP_MESSAGE_IMAGE_EVENT_TEXT,
-  normalizeClaudeCodeRefusalText,
-  sanitizeAcpMessageImage,
-  type AcpRuntimeEvent
-} from '../../shared/acp'
+  sanitizeAcpMessageImage
+} from '../../shared/acp-image-contract'
 import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
 import { isRecord } from '../value-guards'
 

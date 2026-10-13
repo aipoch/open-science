@@ -1,33 +1,34 @@
-import type { NotebookLanguage, NotebookSessionRequest } from '../../shared/notebook'
-import type { PackageMirror } from '../../shared/mirror'
-import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
-import type { NotebookEnvironmentOperations } from './environment-operations'
 import type {
   EnvironmentCaptureTarget,
   EnvironmentStateTracker,
+  InstallDeps,
+  InstallSpawn,
+  MicromambaRunner,
+  MicromambaWorkingCacheRetainer,
+  NotebookRecoveryCoordinator,
+  NotebookRuntimeRepairPolicy,
   PackageInspectionResult
 } from '@aipoch/environment'
-import { boundedFailureDiagnostic } from './failure-diagnostic'
-import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
-import { NotebookPackageAdmissionOwner } from './package-admission'
-import type { NotebookPackageAdmittedTarget } from './package-admission'
-import type { InstallDeps, InstallSpawn } from '@aipoch/environment'
-import type { InstallRequest } from '../../shared/notebook-env'
-import type { InstallResult } from '../../shared/notebook-env'
-import type { MicromambaWorkingCacheRetainer } from '@aipoch/environment'
-import { EnvironmentPackageMutationOwner } from '@aipoch/environment'
-import type { NotebookRecoveryCoordinator } from '@aipoch/environment'
 import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  EnvironmentPackageMutationOwner,
   envPrefix,
   pythonReady,
   rReady
 } from '@aipoch/environment'
+import type { PackageMirror } from '../../shared/mirror'
+import type { NotebookSessionRequest } from '../../shared/notebook'
+import type { InstallRequest, InstallResult } from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
+import type { NotebookEnvironmentOperations } from './environment-operations'
+import { boundedFailureDiagnostic } from './failure-diagnostic'
+import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
+import type { NotebookPackageAdmittedTarget } from './package-admission'
+import { NotebookPackageAdmissionOwner } from './package-admission'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
-import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
-import type { MicromambaRunner } from '@aipoch/environment'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,

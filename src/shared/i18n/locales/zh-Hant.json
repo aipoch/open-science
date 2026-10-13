@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。",
     "Close window": "關閉視窗",
     "Review potentially destructive code": "檢查可能具有破壞性的程式碼",
-    "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境"
+    "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境",
+    "Quit app": "結束應用程式"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
@@ -132,7 +133,16 @@
     "Running sessions": "執行中",
     "Pinned sessions": "已釘選",
     "Recent items": "最近會話",
-    "More items": "更多會話"
+    "More items": "更多會話",
+    "Quit while disconnected?": "在連線中斷時結束？",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "未儲存的變更可能遺失。已提交的操作可能已經完成。後端不會停止。",
+    "Open-Science could not start the backend.": "Open-Science 無法啟動後端。",
+    "The backend stopped before startup completed. Check the logs, resolve the cause, and retry.": "後端在啟動完成前已停止。請查看日誌、解決問題後重試。",
+    "The backend did not finish starting. It may still be running. Check the logs before quitting; no process will be terminated automatically.": "後端未完成啟動，可能仍在執行。結束前請查看日誌；應用程式不會自動終止任何程序。",
+    "Retry startup": "重試啟動",
+    "Open startup logs": "開啟啟動日誌",
+    "Could not open the logs folder.": "無法開啟日誌資料夾。",
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "目前的應用程式版本不支援此加密資料格式。請使用相容的應用程式版本或還原原始設定檔。現有憑證未被替換。"
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、調控證據與批次資料集。",
@@ -1017,7 +1027,6 @@
     "Check all": "全選",
     "Check now": "立即檢查",
     "Check proxy, VPN, or firewall settings.": "檢查代理、VPN 或防火牆設定。",
-    "Check the package mirror configuration below.": "檢查下方的套件鏡像設定。",
     "Check your cable or Wi-Fi connection.": "檢查網路線或 Wi-Fi 連線。",
     "Checking access…": "正在檢查存取…",
     "Checking and setting up remote access…": "正在檢查並設定遠端存取…",
@@ -1603,7 +1612,6 @@
     "Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.": "跟隨系統設定，或指定一種語言。「系統」只在啟動時偵測一次，變更裝置語言後需重新開啟應用程式才會生效。",
     "Follow up…": "繼續追問…",
     "Follow {{appName}} on X": "在 X 上追蹤 {{appName}}",
-    "Follows this device": "跟隨此裝置",
     "Forward": "下一步",
     "Found {{count}} skills._other": "找到 {{count}} 個技能。",
     "Found {{count}} skills_other": "找到 {{count}} 個技能",
@@ -2718,6 +2726,7 @@
     "Settings": "設定",
     "Settings navigation": "設定導覽",
     "Settings panel couldn't be loaded.": "無法載入設定面板。",
+    "Open-Science could not load settings. Retry to continue.": "Open-Science 無法載入設定。請重試以繼續。",
     "Settings could not be loaded": "無法載入設定",
     "Settings → Permissions": "設定 → 權限",
     "Setup could not be completed": "設定未能完成",
@@ -2859,7 +2868,6 @@
     "System_language": "跟隨系統",
     "System_runtime": "系統",
     "System compatibility": "系統相容性",
-    "System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open-Science started with; choose Manual to give them a fixed proxy.": "系統模式下，應用請求跟隨裝置代理。智能體處理程序僅繼承 Open-Science 啟動時的代理環境；選擇手動模式可為它們指定固定代理。",
     "System prompt": "系統提示詞",
     "System requirements not met": "不符合系統需求",
     "TYPE": "類型",
@@ -3177,7 +3185,6 @@
     "Where Open-Science stores your projects, artifacts, and other app data on this device.": "Open-Science 在這台裝置上存放專案、產物和其他應用資料的位置。",
     "Where should Open-Science store your data?": "Open-Science 應該把你的資料存放在哪裡？",
     "Where the notebook environment fetches conda and Python packages from when installing or updating.": "Notebook 環境在安裝或更新時，從哪裡取得 conda 和 Python 套件。",
-    "Whether this machine can currently reach the package registries.": "此裝置目前能否連上軟體源。",
     "Wi-Fi": "Wi-Fi",
     "Window behavior": "視窗行為",
     "Window used": "已使用視窗",
@@ -7164,6 +7171,16 @@
     "Selected environment": "所選環境",
     "Switching environments clears the current kernel's variables.": "切換環境會清除目前核心中的變數。",
     "No code has run in this view yet.": "此檢視中尚未執行程式碼。",
-    "Code received; waiting for execution details.": "已收到程式碼，正在等候執行詳情。"
+    "Code received; waiting for execution details.": "已收到程式碼，正在等候執行詳情。",
+    "Desktop connection lost": "桌面連線已中斷",
+    "Restoring desktop connection…": "正在恢復桌面連線…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "本機草稿仍保持開啟。已提交的操作可能已經完成，不會自動重試。",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "原後端已無法使用。請結束並重新開啟應用程式以繼續。",
+    "Reconnect": "重新連線",
+    "Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.": "檢查 npmjs 和 npmmirror。Conda 和 Python 套件鏡像在下方個別設定。",
+    "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "請檢查 Open-Science 使用的代理。瀏覽器連線正常時，可能使用了不同的代理設定。",
+    "Reconnect the backend, then check again.": "請重新連接後端，然後再次檢查。",
+    "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "系統模式使用後端可用的代理設定，可能與瀏覽器和作業系統的代理設定不同。如需固定代理，請選擇手動模式。",
+    "Backend defaults": "後端預設設定"
   }
 }

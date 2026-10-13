@@ -28,7 +28,7 @@ import {
   type IpcHandlerInstallation
 } from '../ipc-handler-registry'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
-import type { ComputeHandlers } from './ipc'
+import type { ComputeHandlers } from './handler-contract'
 import type { SessionEnabledComputeHostsOwner } from './session-enabled-hosts-owner'
 
 // IPC channel name for the renderer job feed (Phase 3d, issue 05).

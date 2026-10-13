@@ -4,6 +4,8 @@ import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { createPreviewPptx } from './fixtures/pptx'
 import { sendPrompt } from './certification/helpers'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Project files journey'
 const FILE_NAME = 'research-notes.md'
@@ -44,10 +46,7 @@ const createTwoPagePdf = (): Buffer => {
 }
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -112,8 +111,7 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-ma
   })
   await expect(page.getByRole('button', { name: `Remove attachment ${FILE_NAME}` })).toBeVisible()
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached research notes.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Use the attached research notes.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
@@ -246,8 +244,7 @@ test('links a multi-page PDF upload as Reading context in a new project', async 
   await expect(page.getByTestId('new-conversation-start')).toBeVisible()
   await captureChinese('pdf-staged-new-conversation.png')
   const originalEditor = await page.getByRole('textbox', { name: 'Ask anything' }).elementHandle()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Summarize the attached paper.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Summarize the attached paper.')
 
   await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
   const readingPicker = page.getByRole('button', { name: 'Choose PDFs for Reading' })
@@ -363,8 +360,7 @@ test('loads managed image previews from Project files', async ({ app }) => {
     buffer: IMAGE_CONTENT
   })
   await expect(page.getByRole('button', { name: `Remove attachment ${IMAGE_NAME}` })).toBeVisible()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached image.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Use the attached image.')
   // The attachment chip is optimistic. Wait for Main to commit the upload before
   // navigating away from the new Session and asking the Project index for its files.
   await expect
@@ -464,8 +460,7 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
     page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
   ).toBeVisible()
   const prompt = 'Replay inline thinking. Render the sanitized message images.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   const images = page.locator(
     '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
   )
@@ -642,10 +637,7 @@ test.describe('Workspace dividers', () => {
     await expect(
       page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
     ).toBeVisible()
-    await page
-      .getByRole('textbox', { name: 'Ask anything' })
-      .fill('Render the sanitized message images.')
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, 'Render the sanitized message images.')
     const images = page.locator(
       '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
     )

@@ -1,10 +1,10 @@
-import { AnnotationMoveTarget } from './AnnotationTransferSource'
-import { useAnnotationDrag } from './use-annotation-drag'
-import type { HTMLAttributes } from 'react'
+import type { TFunction } from 'i18next'
 import { FileText, Image, Pencil, Quote, Trash2 } from 'lucide-react'
+import type { HTMLAttributes } from 'react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { TFunction } from 'i18next'
+import { AnnotationMoveTarget } from './AnnotationTransferSource'
+import { useAnnotationDrag } from './use-annotation-drag'
 
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -12,14 +12,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
   Annotation,
-  AnnotationValidationError,
   SessionTextAnnotationItemType
-} from '../../../../../shared/annotations'
-import { prepareImagePointAnnotations } from './image-annotation-payload'
-import { annotationValidationMessage } from './annotation-validation-message'
-import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
+} from '../../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../../shared/annotations'
 import { replayAnnotationTarget } from '../session-discussion-annotation'
 import { composerContextRowClassName, SessionDiscussionBar } from '../SessionDiscussionBar'
+import { annotationValidationMessage } from './annotation-validation-message'
+import { prepareImagePointAnnotations } from './image-annotation-payload'
+import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
 
 // Keep the source shortcut compact while the quote carries the selected content.
 // Accept the old Research header on previously saved annotations.

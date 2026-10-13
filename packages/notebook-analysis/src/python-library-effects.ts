@@ -61,6 +61,16 @@ export type PythonLibraryMethodEffect = {
   }
 }
 
+// Mapping values are callbacks for registered converters/formatters/aggregators.
+// SciPy events instead iterates a supplied sequence; a mapping exposes its keys.
+export const acceptsPythonCallbackContainer = (
+  effect: PythonLibraryMethodEffect | undefined,
+  keyword: string,
+  container: 'list' | 'dict'
+): boolean =>
+  Boolean(effect?.callbackContainerKeywords?.includes(keyword)) &&
+  (container !== 'dict' || keyword !== 'events')
+
 type PythonLibraryObjectSummary = {
   kind: 'module' | 'type'
   methods: Record<string, PythonLibraryMethodEffect>
@@ -799,7 +809,10 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         effect: 'read',
         returnType: 'numpy.ndarray',
         possiblyMutatesFirstArgument: true,
-        firstArgumentKeyword: 'fname'
+        firstArgumentKeyword: 'fname',
+        callbackKeywords: ['converters'],
+        callbackContainerKeywords: ['converters'],
+        callbackPositionalKeywords: { 6: 'converters' }
       },
       hstack: { effect: 'read', returnType: 'numpy.ndarray' },
       linspace: { effect: 'read', returnType: 'numpy.ndarray' },
@@ -807,7 +820,10 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         effect: 'read',
         returnType: 'numpy.ndarray',
         possiblyMutatesFirstArgument: true,
-        firstArgumentKeyword: 'fname'
+        firstArgumentKeyword: 'fname',
+        callbackKeywords: ['converters'],
+        callbackContainerKeywords: ['converters'],
+        callbackPositionalKeywords: { 4: 'converters' }
       },
       isfinite: {
         effect: 'read',
@@ -1247,6 +1263,16 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'scipy.optimize': {
     kind: 'module',
     methods: {
+      minimize: {
+        // Objective and gradient callbacks may perform I/O or mutate captures.
+        // Preserve these known dependencies without certifying solver results
+        // or complete coverage of its other callback-capable options.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['fun', 'jac'],
+        callbackPositionalKeywords: { 0: 'fun', 4: 'jac' }
+      },
       root_scalar: {
         // The objective can read files or mutate arguments and captured state.
         // Preserve known captures without certifying results or complete callback I/O.

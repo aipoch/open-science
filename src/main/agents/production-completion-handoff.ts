@@ -1,6 +1,9 @@
 import { inspect } from 'node:util'
 
-import type { CompletionGateRuntime, TrustedToolCompletionContext } from './completion-gate'
+import type {
+  CompletionGateRuntime,
+  TrustedToolCompletionContext
+} from './completion-gate-contract'
 
 export type ProductionCompletionHandoffDependencies = {
   stopPromptForHandoff(sessionId: string): Promise<void>

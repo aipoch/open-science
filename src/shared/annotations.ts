@@ -1,17 +1,41 @@
-import { replayAnnotationTarget, replayReferenceText } from './replay-reference'
-import type { ArtifactReference, FileReference } from './artifacts'
+import type { AcpMessageImage } from './acp-image-contract'
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  sanitizeAcpMessageImage,
-  type AcpMessageImage
-} from './acp'
+  sanitizeAcpMessageImage
+} from './acp-image-contract'
+import type {
+  Annotation,
+  ImagePointAnnotation,
+  PdfAnnotation,
+  PdfNormalizedQuad,
+  PdfNormalizedRect,
+  PdfTextSelector,
+  SessionTextAnnotationItemType,
+  TextAnnotationAnchor,
+  TextAnnotationSource
+} from './annotation-contract'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
 } from './artifact-version-locator'
+import type { ArtifactReference, FileReference } from './artifacts'
 import { parseLiteratureAttachmentVersionReference } from './literature-attachment-reference'
+import { replayAnnotationTarget, replayReferenceText } from './replay-reference'
 import { createUploadVersionReference, parseUploadVersionReference } from './uploads'
+export {
+  type Annotation,
+  type ImagePointAnnotation,
+  type PdfAnnotation,
+  type PdfNormalizedQuad,
+  type PdfNormalizedRect,
+  type PdfRegionSelector,
+  type PdfTextSelector,
+  type SessionTextAnnotationItemType,
+  type TextAnnotation,
+  type TextAnnotationAnchor,
+  type TextAnnotationSource
+} from './annotation-contract'
 
 export const ANNOTATION_LIMITS = Object.freeze({
   count: 10,
@@ -20,15 +44,6 @@ export const ANNOTATION_LIMITS = Object.freeze({
   payload: 10_000,
   messagePayload: 100_000
 })
-
-export type SessionTextAnnotationItemType =
-  | 'tool-activity'
-  | 'plan'
-  | 'elicitation'
-  | 'delegated-elicitation'
-  | 'subagent-message'
-  | 'notebook-run'
-  | 'review'
 
 const SESSION_TEXT_ANNOTATION_ITEM_TYPES = new Set<SessionTextAnnotationItemType>([
   'tool-activity',
@@ -39,30 +54,6 @@ const SESSION_TEXT_ANNOTATION_ITEM_TYPES = new Set<SessionTextAnnotationItemType
   'notebook-run',
   'review'
 ])
-
-export type TextAnnotationSource =
-  | Readonly<{
-      kind: 'agent-message'
-      sessionId: string
-      messageId: string
-    }>
-  | Readonly<{
-      kind: 'project-file'
-      projectId: string
-      path: string
-      name?: string
-      fileSource?: 'artifact' | 'upload'
-      sourceFileId?: string
-      versionId?: string
-      sessionId?: string
-    }>
-  | Readonly<{
-      kind: 'session-item'
-      sessionId: string
-      itemId: string
-      itemType: SessionTextAnnotationItemType
-      sectionId?: string
-    }>
 
 type ProjectFileAnnotationSource = Extract<TextAnnotationSource, { kind: 'project-file' }>
 
@@ -132,87 +123,6 @@ export type SessionTextAnnotationSource = Exclude<
   TextAnnotationSource,
   Readonly<{ kind: 'project-file'; projectId: string; path: string }>
 >
-
-export type TextAnnotationAnchor = Pick<PdfTextSelector, 'position' | 'prefix' | 'suffix'>
-
-export type TextAnnotation = Readonly<{
-  id: string
-  kind: 'text'
-  target: 'agent'
-  quote: string
-  anchor?: TextAnnotationAnchor
-  note?: string
-  source: TextAnnotationSource
-}>
-
-export type ImagePointAnnotation = Readonly<{
-  id: string
-  kind: 'image-point'
-  target: 'agent'
-  note: string
-  source: Readonly<{
-    kind: 'artifact-version' | 'upload-version'
-    projectId: string
-    sessionId: string
-    versionId: string
-    name: string
-    path: string
-    mimeType: string
-  }>
-  point: Readonly<{ x: number; y: number }>
-  naturalSize: Readonly<{ width: number; height: number }>
-}>
-
-export type PdfNormalizedQuad = Readonly<{
-  x: number
-  y: number
-  width: number
-  height: number
-}>
-
-export type PdfNormalizedRect = PdfNormalizedQuad
-
-export type PdfTextSelector = Readonly<{
-  kind: 'text'
-  pageNumber: number
-  exact: string
-  prefix?: string
-  suffix?: string
-  position: Readonly<{ start: number; end: number }>
-  quads: readonly PdfNormalizedQuad[]
-  extractorVersion: string
-}>
-
-export type PdfRegionSelector = Readonly<{
-  kind: 'region'
-  pageNumber: number
-  rect: PdfNormalizedRect
-  pageRotation: number
-  text?: string
-}> &
-  (
-    | Readonly<{ image: AcpMessageImage; imageOmissionReason?: never }>
-    | Readonly<{ image?: never; imageOmissionReason: 'session-budget' }>
-  )
-
-export type PdfAnnotation = Readonly<{
-  id: string
-  kind: 'pdf'
-  target: 'agent'
-  note?: string
-  source: Readonly<{
-    kind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
-    projectId: string
-    sessionId?: string
-    versionId: string
-    name: string
-    path: string
-    checksum: string
-  }>
-  selector: PdfTextSelector | PdfRegionSelector
-}>
-
-export type Annotation = TextAnnotation | ImagePointAnnotation | PdfAnnotation
 
 export const annotationRequiresImageInput = (annotation: Annotation): boolean =>
   annotation.kind === 'image-point' ||

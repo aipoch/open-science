@@ -2,12 +2,12 @@
 // disposition and lifecycle ordering; this module owns only the runtime projection needed once that
 // coordinator has captured an OpenCode completion.
 
+import type { AcpPromptRequest } from '../../shared/acp'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
   TrustedToolCompletionContext
-} from '../agents/completion-gate'
-import type { AcpPromptRequest } from '../../shared/acp'
+} from '../agents/completion-gate-contract'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 
 export type OpenCodePromptContinuation = {

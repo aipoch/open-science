@@ -1,6 +1,6 @@
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useProjectStore } from '@/stores/project-store'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 
 let importing = false
 

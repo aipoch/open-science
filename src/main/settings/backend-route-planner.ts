@@ -1,19 +1,19 @@
 import { z } from 'zod'
-import {
-  CODEX_ISOLATED_PROVIDER_ID,
-  canUseClaudeProviderTransport,
-  DEFAULT_REASONING_EFFORT,
-  isCodexSubscriptionProvider,
-  shareProviderTransportFamily,
-  usesAppProviderTransport,
-  type ReasoningEffort
-} from '../../shared/settings'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import {
   resolveReasoningEffortValue,
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
+import {
+  canUseClaudeProviderTransport,
+  CODEX_ISOLATED_PROVIDER_ID,
+  DEFAULT_REASONING_EFFORT,
+  isCodexSubscriptionProvider,
+  shareProviderTransportFamily,
+  usesAppProviderTransport
+} from '../../shared/settings'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,
@@ -30,7 +30,6 @@ import { CODEX_BRIDGE_MODEL, resolveResponsesBaseUrl } from '../agent-framework/
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
-import { codexBridgeStaticMcpTools } from './codex-bridge-tools'
 import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
 import {
   normalizeAnthropicBaseUrl,
@@ -38,6 +37,7 @@ import {
   openAiCompletionsBase
 } from './base-url'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
+import { codexBridgeStaticMcpTools } from './codex-bridge-tools'
 import type { ProviderAccountsModule, ProviderRuntimeTarget } from './provider-accounts'
 import type { ResponsesBridgeNamespacedTool } from './responses-bridge'
 import type { StoredSettings } from './types'

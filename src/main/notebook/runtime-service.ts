@@ -1,26 +1,55 @@
-import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
-import { verifyExecutable, installEnvironmentPackages } from './environment-process'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
-import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-import { desktopFileInteraction } from '../desktop-interaction'
-import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
-import type { ReplayRunIndex } from '../../shared/replay'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
-import { isImportedResearchSession } from '../storage/session-package-state'
-import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { ReplayRunIndex } from '../../shared/replay'
+import { desktopFileInteraction } from '../desktop-interaction'
+import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { installEnvironmentPackages, verifyExecutable } from './environment-process'
+import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
 import type {
-  NotebookCell,
+  NotebookExecutionRequest,
+  NotebookExecutionResult,
+  NotebookExecutor
+} from './execution-contract'
+
+import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { InstallDeps, MicromambaRunner } from '@aipoch/environment'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  EnvironmentStateTracker,
+  NotebookRecoveryCoordinator,
+  NotebookRuntimeRepairPolicy,
+  envPrefix,
+  managedNotebookWorkingCache,
+  pythonBin,
+  rBin,
+  rScriptBin,
+  resolveEnvName,
+  type EnvironmentCaptureTarget
+} from '@aipoch/environment'
+import type {
+  DiscoveredInterpreter,
+  NotebookEnvironmentLock,
+  ProvisionProgress
+} from '@aipoch/environment/contracts'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import {
+  analyzeNotebookCodeRisk,
+  analyzePowerShellCodeRisk,
+  type NotebookCodeRisk
+} from '@aipoch/notebook-code-risk'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { PackageMirror } from '../../shared/mirror'
+import type {
   AbortNotebookCodeCellRequest,
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
-  NotebookBackgroundRunLookupRequest,
-  NotebookBackgroundRunReceipt,
-  NotebookBackgroundRunResult,
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
   ExportNotebookAllRequest,
@@ -28,79 +57,42 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
-  NotebookLanguage,
+  NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundRunReceipt,
+  NotebookBackgroundRunResult,
+  NotebookCell,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
   NotebookProjectActivity,
-  NotebookProjectBackgroundRunActivity,
   NotebookProjectActivityRequest,
+  NotebookProjectBackgroundRunActivity,
   NotebookRestartRequest,
   NotebookRunRecord,
   NotebookRunSummary,
+  NotebookSessionReference,
+  NotebookSessionRequest,
+  NotebookSessionState,
+  NotebookSessionStateRequest,
   RequestNotebookNetworkAccessRequest,
   RequestNotebookNetworkAccessResult,
-  NotebookSessionRequest,
-  NotebookSessionStateRequest,
-  NotebookSessionReference,
-  NotebookSessionState,
   RunNotebookCellRequest,
   ShellRuntimeBinding
 } from '../../shared/notebook'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { publishUserFile } from '../user-file-publisher'
-import { NotebookBackgroundRunError } from '../../shared/notebook'
 import {
-  isNotebookRunCursor,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
+  NotebookBackgroundRunError,
+  isNotebookRunCursor,
   parseNotebookLanguage
 } from '../../shared/notebook'
-import type { ProvisionProgress } from '@aipoch/environment/contracts'
-import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
-import type { PackageMirror } from '../../shared/mirror'
-import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
-import {
-  analyzeNotebookCodeRisk,
-  analyzePowerShellCodeRisk,
-  type NotebookCodeRisk
-} from '@aipoch/notebook-code-risk'
-import { parsePowerShellSearchCommands } from './powershell-search-parser'
-import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
-import {
-  NotebookEnvironmentManagementOwner,
-  type NotebookEnvironmentManager
-} from './environment-management'
-import { NotebookExportReader } from './export-reader'
-import type { NotebookKernelExecutorOptions } from './kernel-executor'
-import { saveIpynbAll } from './save-ipynb-all'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
-import type { ProbeDeps } from './mirror-probe'
-import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
-import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
-import type { InstallDeps } from '@aipoch/environment'
-import type { InstallRequest } from '../../shared/notebook-env'
+import type {
+  InstallRequest,
+  ManageEnvironmentsRequest,
+  ManageEnvironmentsResult
+} from '../../shared/notebook-env'
 import { type InstallResult } from '../../shared/notebook-env'
-import {
-  NotebookPackageOperations,
-  type InspectPackagesRequest,
-  type InspectPackagesResult
-} from './package-operations'
-import {
-  NotebookRunRepository,
-  getNotebookFileEvidenceLocation,
-  getRuntimeRoot
-} from './repository'
-import {
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  pythonBin,
-  rBin,
-  rScriptBin,
-  resolveEnvName
-} from '@aipoch/environment'
-import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type {
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
@@ -108,54 +100,74 @@ import type {
   RuntimeEnablement,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
-import type { NotebookRuntimeSettings } from '../settings/capabilities'
-import { NotebookRecoveryCoordinator } from '@aipoch/environment'
-import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
-import { managedNotebookWorkingCache } from '@aipoch/environment'
-import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
-import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
-import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
-import type { MicromambaRunner } from '@aipoch/environment'
-import {
-  type NotebookSessionAggregate,
-  type NotebookSessionExecutionRequest,
-  type NotebookSessionExecutionResult,
-  type NotebookSessionExecutor,
-  type NotebookSessionMcpRpcConnection,
-  type NotebookSessionResolvedInterpreter,
-  type NotebookSessionRuntimeBinding
-} from './session-aggregate'
-import { NotebookSessionRegistry } from './session-registry'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from '@aipoch/environment'
-import {} from '@aipoch/environment'
-import { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
-import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
-import { NotebookRunTerminalizationOwner } from './run-terminalization'
-import type { NotebookShellProcess, NotebookShellResult } from './shell-process'
-import { NotebookShellProcessAdapter } from './shell-process'
-import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
-import type { NotebookProcessSandbox } from './process-sandbox'
-import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import type { NotebookRuntimeSettings } from '../settings/capabilities'
+import { isImportedResearchSession } from '../storage/session-package-state'
+import { publishUserFile } from '../user-file-publisher'
+import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
+import {
+  NotebookEnvironmentManagementOwner,
+  type NotebookEnvironmentManager
+} from './environment-management'
+import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
 import {
   NotebookExecutionOwner,
   type NotebookControlCompletionInterceptor,
   type NotebookControlResult
 } from './execution-owner'
-import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
+import { NotebookExportReader } from './export-reader'
+import type { NotebookKernelExecutorOptions } from './kernel-executor'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
+import type { ProbeDeps } from './mirror-probe'
 import {
-  completeWorkingFileEvidence,
-  deleteWorkingFileEvidenceProject
-} from './working-file-observer'
+  NotebookPackageOperations,
+  type InspectPackagesRequest,
+  type InspectPackagesResult
+} from './package-operations'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { parsePowerShellSearchCommands } from './powershell-search-parser'
+import type { NotebookProcessSandbox } from './process-sandbox'
+import {
+  NotebookRunRepository,
+  getNotebookFileEvidenceLocation,
+  getRuntimeRoot
+} from './repository'
+import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import { NotebookRuntimeBindingOwner } from './runtime-binding'
+import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
+import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
+import { saveIpynbAll } from './save-ipynb-all'
+import {
+  type NotebookSessionAggregate,
+  type NotebookSessionMcpRpcConnection,
+  type NotebookSessionResolvedInterpreter,
+  type NotebookSessionRuntimeBinding
+} from './session-aggregate'
 import {
   NotebookSessionLifecycleOwner,
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
 } from './session-lifecycle'
+import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
+import { NotebookSessionRegistry } from './session-registry'
+import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
+import type { NotebookShellProcess } from './shell-process'
+import { NotebookShellProcessAdapter } from './shell-process'
+import type { NotebookShellResult } from './shell-process-contract'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
+import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
+import {
+  completeWorkingFileEvidence,
+  deleteWorkingFileEvidenceProject
+} from './working-file-observer'
 
+import type {
+  AgentResultFollowUpDelivery,
+  BackgroundResultSourceRef
+} from '../../shared/background-result-delivery'
+import { notebookRunSourceRef } from '../background-result-delivery/notebook-adapter'
 import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
@@ -166,11 +178,6 @@ import {
   deleteNotebookProjectPromptInputs,
   deleteNotebookSessionPromptInputs
 } from './prompt-input-materialization'
-import type {
-  AgentResultFollowUpDelivery,
-  BackgroundResultSourceRef
-} from '../../shared/background-result-delivery'
-import { notebookRunSourceRef } from '../background-result-delivery/notebook-adapter'
 
 // The default stays outside CN mirror routing when no explicit locale is injected.
 const DEFAULT_LOCALE = 'en-US'
@@ -192,10 +199,7 @@ const dataProcessKey = (language: NotebookLanguage, environment?: string): strin
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
 
 type ResolvedInterpreter = NotebookSessionResolvedInterpreter
-type NotebookExecutionRequest = NotebookSessionExecutionRequest
-type NotebookExecutionResult = NotebookSessionExecutionResult
 
-type NotebookExecutor = NotebookSessionExecutor
 type NotebookDependencyAnalyzerPort = Pick<NotebookDependencyAnalyzer, 'project'> &
   Partial<Pick<NotebookDependencyAnalyzer, 'sourceFileAccessContext' | 'finalizeEpochs'>>
 
@@ -2908,19 +2912,19 @@ class NotebookRuntimeService {
   }
 }
 
-export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
 export { NotebookControlCompletionCapturedError } from './execution-owner'
+export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
 export type {
-  NotebookExecutionRequest,
-  NotebookExecutionResult,
-  NotebookControlResult,
-  NotebookShellResult,
   InspectPackagesRequest,
   InspectPackagesResult,
+  NotebookControlResult,
+  NotebookEnvironmentManager,
+  NotebookExecutionRequest,
+  NotebookExecutionResult,
   NotebookExecutor,
   NotebookExecutorLifecycleCallbacks,
-  NotebookEnvironmentManager,
   NotebookHandoffContext,
   NotebookRuntimeServiceCallbacks,
-  NotebookRuntimeServiceOptions
+  NotebookRuntimeServiceOptions,
+  NotebookShellResult
 }

@@ -1,10 +1,10 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import { createHash } from 'node:crypto'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type { PermissionCapability, PermissionGrantScope } from '../../shared/permission-grants'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
-import type { AcpPermissionRequest } from '../../shared/acp'
 import type { AgentModelRoute } from '../agent-framework/types'
-import { createLogger } from '@aipoch/diagnostics/node'
 import { isPreRegisteredPermissionIdentity } from './identity-catalog'
 
 // Keep this boundary metadata-only. Provider IDs and capability keys can contain arbitrary text;

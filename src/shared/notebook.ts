@@ -1,15 +1,16 @@
 import type {
   NotebookEnvironmentManifest as EnvironmentManifest,
-  NotebookLiveEnvironmentOverlay as EnvironmentOverlay
-} from '@aipoch/environment/contracts'
-import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
-export type NotebookEnvironmentManifest = EnvironmentManifest<NotebookExecutionContext>
-export type NotebookLiveEnvironmentOverlay = EnvironmentOverlay<NotebookExecutionContext>
-import type {
+  NotebookLiveEnvironmentOverlay as EnvironmentOverlay,
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import { z } from 'zod'
+import type { NotebookLanguage } from './notebook-language-contract'
+import { NOTEBOOK_LANGUAGES } from './notebook-language-contract'
+export { NOTEBOOK_LANGUAGES, type NotebookLanguage } from './notebook-language-contract'
+export type NotebookEnvironmentManifest = EnvironmentManifest<NotebookExecutionContext>
+export type NotebookLiveEnvironmentOverlay = EnvironmentOverlay<NotebookExecutionContext>
 
 import {
   defineApplicationCommandContract,
@@ -130,12 +131,6 @@ export type NotebookRunProvenanceContext = {
   promptMessageId: string
   originMessageId?: string
 }
-
-// Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
-// (no ipykernel/IRkernel involved). Renderer IPC must parse this at runtime — TypeScript unions
-// do not reject a compromised or stale client.
-export const NOTEBOOK_LANGUAGES = ['python', 'r'] as const
-export type NotebookLanguage = (typeof NOTEBOOK_LANGUAGES)[number]
 export const notebookLanguageSchema = z.enum(NOTEBOOK_LANGUAGES)
 
 export const parseNotebookLanguage = (value: unknown): NotebookLanguage => {

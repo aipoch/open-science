@@ -1,3 +1,5 @@
+import { CredentialIdentityError } from '../credential-identity/selection'
+import { settingsDocumentReadError } from './document-read-error'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SettingsSnapshot } from '../../shared/settings'
@@ -23,6 +25,31 @@ const snapshot = (): SettingsSnapshot => ({
 })
 
 describe('SettingsSnapshotCommitOwner', () => {
+  it.each([
+    [new CredentialIdentityError('decryption-failed'), 'settings-credential-unavailable'],
+    [
+      settingsDocumentReadError(
+        '/private/settings.json',
+        Object.assign(new Error('denied'), { code: 'EACCES' })
+      ),
+      'settings-storage-unavailable'
+    ],
+    [
+      settingsDocumentReadError('/private/settings.json', new SyntaxError('invalid')),
+      'settings-invalid'
+    ]
+  ])(
+    'classifies a failed settings read without transporting private details (%s)',
+    async (failure, code) => {
+      const owner = new SettingsSnapshotCommitOwner(
+        { getSettingsView: vi.fn().mockRejectedValue(failure) },
+        { publish: vi.fn() }
+      )
+      await expect(owner.readCurrentSnapshot()).rejects.toMatchObject({ code })
+      await expect(owner.readCurrentSnapshot()).rejects.not.toThrow('/private')
+    }
+  )
+
   it('preserves real operation errors and allows projection recovery after publication fails', async () => {
     const current = snapshot()
     const read = vi.fn().mockResolvedValue(current)

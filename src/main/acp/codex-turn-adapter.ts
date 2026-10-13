@@ -1,9 +1,9 @@
 import {
   ACP_MODEL_CALL_USAGE_META_KEY,
   ACP_MODEL_TURN_COUNT_META_KEY,
-  ACP_TURN_TOKEN_USAGE_META_KEY,
-  type AcpTurnTokenUsage
+  ACP_TURN_TOKEN_USAGE_META_KEY
 } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import { toCodexTurnTokenUsage } from './codex-turn-usage'
 import type { AcpProviderModelCallUsage, AcpProviderTurnAdapter } from './provider-turn-adapter'
 

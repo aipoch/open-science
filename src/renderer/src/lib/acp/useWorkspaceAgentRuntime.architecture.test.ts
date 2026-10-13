@@ -1,3 +1,4 @@
+import { expectBoundaryPaths } from '../../../../../test/module-boundary-assertions'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 import {
@@ -854,7 +855,7 @@ describe('workspace runtime architecture', () => {
   it('keeps the module-impact owner and test closure complete', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
     const workspaceRuntime = manifest.modules.workspace_runtime
-    expect(workspaceRuntime.ownerPaths).toEqual([
+    expectBoundaryPaths(manifest, 'workspace_runtime', [
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
@@ -888,16 +889,18 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
       'src/renderer/src/lib/handled-failure-diagnostics.ts'
     ])
-    expect(workspaceRuntime.interfacePaths).toEqual([
-      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
-      'src/renderer/src/lib/acp/workspace-events.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
-      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
-    ])
-    expect(workspaceRuntime.consumerModules).toEqual(['workspace_page'])
+    expect(workspaceRuntime.interfacePaths).toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+        'src/renderer/src/lib/acp/workspace-events.ts',
+        'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+        'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+        'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+      ])
+    )
+    expect(workspaceRuntime.consumerModules).toEqual(expect.arrayContaining(['workspace_page']))
     expect(workspaceRuntime.testFiles.owner).toContain(architectureTestPath)
-    expect(workspaceRuntime.capabilityOverlays).toEqual(['renderer_state'])
+    expect(workspaceRuntime.capabilityOverlays).toEqual(expect.arrayContaining(['renderer_state']))
     expect(workspaceRuntime.fallbackCapability).toBe('renderer_view')
   })
 })

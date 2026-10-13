@@ -1,29 +1,24 @@
 import { existsSync } from 'node:fs'
 
 import {
-  parseNotebookLanguage,
-  parseOptionalNotebookLanguage,
-  type NotebookLanguage
-} from '../../shared/notebook'
-import { withDataRootWrite } from '../storage/migration-state'
-import { serializeProvisioner } from '@aipoch/environment'
-import {
-  logStartupGateFailure,
-  runLoggedRuntimeOperation
-} from './environment-lifecycle-diagnostics'
-import {
+  DEFAULT_ENV_VERSION,
+  DEFAULT_PY_ENV,
+  envPrefix,
   planStartupAction,
+  readReadyMarker,
+  serializeProvisioner,
   type ProvisionProgress,
   type ProvisionStatus,
   type RuntimeProvisioner
 } from '@aipoch/environment'
-import { explicitRuntimeRepairTarget, type ExplicitRuntimeRepairTarget } from './runtime-repair'
+import { parseNotebookLanguage, parseOptionalNotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { withDataRootWrite } from '../storage/migration-state'
 import {
-  DEFAULT_ENV_VERSION,
-  DEFAULT_PY_ENV,
-  envPrefix,
-  readReadyMarker
-} from '@aipoch/environment'
+  logStartupGateFailure,
+  runLoggedRuntimeOperation
+} from './environment-lifecycle-diagnostics'
+import { explicitRuntimeRepairTarget, type ExplicitRuntimeRepairTarget } from './runtime-repair'
 
 type NotebookEnvironmentLifecycle = {
   status: () => Promise<ProvisionStatus>

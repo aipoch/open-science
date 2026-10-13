@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import type { ContentRepository } from '../storage/content-repository'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import type { LiteratureCatalog } from './catalog'
-import type { LiteratureLibraryDiscovery } from './library-mcp-server'
+import type { LiteratureLibraryDiscovery } from './discovery-contract'
 
 type Request = {
   candidate: LiteratureLibraryDiscovery
