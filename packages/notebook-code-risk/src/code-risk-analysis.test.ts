@@ -10762,6 +10762,136 @@ ${source}`
   })
 
   describe('deferred callbacks and reflected constructors', () => {
+    const resultBinding = 'const r = await host.mcp("catalog", "get_record", {id: "sample"});'
+    it.each([
+      'new Promise(r => setTimeout(r, 100))',
+      'new Promise((r, reject) => setTimeout(reject, 100))',
+      'new Promise(function (r) { setTimeout(r, 100) })',
+      'new Promise(function r(r) { setTimeout(r, 100) })',
+      'new globalThis.Promise(r => setTimeout(r, 100))',
+      'const P = Promise; new P(r => setTimeout(r, 100))',
+      'const P = Promise.bind(null); new P(r => setTimeout(r, 100))',
+      'const P = Function.prototype.bind.call(Promise, null); new P(r => setTimeout(r, 100))',
+      'Function.prototype.call.call(Reflect.construct, null, Promise, [r => setTimeout(r, 100)])',
+      'Reflect.construct(Promise, [r => setTimeout(r, 100)])',
+      'new Promise((r) => { const done = r; setTimeout(done, 100) })'
+    ])('keeps a Promise timer delay prompt-free with an outer result: %s', async (source) => {
+      expect(await analyzeNotebookCodeRisk('repl', `${resultBinding} ${source}`)).toEqual([])
+    })
+    it('keeps a throttled connector loop prompt-free', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `
+        const records = {};
+        const errors = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          try {
+            const r = await host.mcp("catalog", "get_record", {id: item.id});
+            if (r && r.data) records[item.name] = r;
+            else errors.push({name: item.name, error: "missing_data"});
+          } catch (e) {
+            errors.push({name: item.name, error: String(e).slice(0, 100)});
+          }
+          if (i % 10 === 0) await new Promise(r => setTimeout(r, 100));
+        }
+        globalThis.records = records;
+        JSON.stringify({count: Object.keys(records).length, errors});
+      `
+        )
+      ).toEqual([])
+    })
+    it('isolates Promise parameters from replayed bindings and restores the outer target', async () => {
+      const history = ['const r = require("fs").unlinkSync;']
+      const wait = 'await new Promise(r => setTimeout(r, 100));'
+      expect(await analyzeNotebookCodeRisk('repl', wait, undefined, history)).toEqual([])
+      expect(
+        await analyzeNotebookCodeRisk('repl', 'setTimeout(r, 0, "target.txt")', undefined, [
+          ...history,
+          wait
+        ])
+      ).toEqual([expect.objectContaining({ operation: 'fs.unlinkSync' })])
+    })
+    it.each([
+      'new Promise(r => { r = fs.unlinkSync; setTimeout(r, 0, "target.txt") })',
+      'new Promise(r => { if (flag) r = fs.unlinkSync; setTimeout(r, 0, "target.txt") })',
+      'new Promise(r => { setTimeout(() => fs.unlinkSync("target.txt"), 0); r() })',
+      'new Promise(r => { ((r) => setTimeout(r, 0))(fs.unlinkSync) })',
+      'new Promise(r => { function nested(r) { setTimeout(r, 0) }; nested(fs.unlinkSync) })',
+      'const Promise = customConstructor; new Promise(r => setTimeout(r, 0))',
+      'new Promise((resolve, reject, r) => setTimeout(r, 0))',
+      'new Promise(({r}) => setTimeout(r, 0))',
+      'new Promise(r => r({then() { fs.unlinkSync("target.txt") }}))',
+      'new Promise(r => { setTimeout(r, 0); fs.unlinkSync("target.txt") })'
+    ])('retains review for unsafe or unresolved Promise timer callbacks: %s', async (source) => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `const fs = require("fs"); ${resultBinding} ${source}`
+        )
+      ).not.toEqual([])
+    })
+    it.each([
+      ['Promise', 'new Promise(r => setTimeout(r, 0))'],
+      ['globalThis', 'new globalThis.Promise(r => setTimeout(r, 0))'],
+      ['global', 'new global.Promise(r => setTimeout(r, 0))'],
+      ['Reflect', 'Reflect.construct(Promise, [r => setTimeout(r, 0)])'],
+      ['setTimeout', 'new Promise(r => setTimeout(r, 0))'],
+      [
+        'Function',
+        'const P = Function.prototype.bind.call(Promise, null); new P(r => setTimeout(r, 0))'
+      ]
+    ])('does not assume a shadowed %s parameter is native', async (name, source) => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `function run(${name}) { ${resultBinding} ${source} }; run(custom);`
+        )
+      ).not.toEqual([])
+    })
+    it('does not unwrap an unknown Function call helper into a native constructor', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `function run(Function) {
+        ${resultBinding}
+        Function.prototype.call.call(Reflect.construct, null, Promise, [r => setTimeout(r, 0)]);
+      }; run(custom);`
+        )
+      ).not.toEqual([])
+    })
+    it('does not treat a named executor self binding as the native Promise', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `
+        new Promise(function Promise(done) {
+          if (arguments.length === 2) {
+            ${resultBinding}
+            new Promise(r => setTimeout(r, 0, "target.txt"));
+          } else done(require("fs").unlinkSync);
+        });
+      `
+        )
+      ).not.toEqual([])
+    })
+    it('does not treat a function declaration self binding as the native Promise', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `
+        function Promise(done) {
+          if (done === "start") {
+            ${resultBinding}
+            new Promise(r => setTimeout(r, 0, "target.txt"));
+          } else done(require("fs").unlinkSync);
+        }
+        new Promise("start");
+      `
+        )
+      ).not.toEqual([])
+    })
     const prelude =
       'const fs = require("fs"); const timers = require("node:timers"); const task = require("node:process"); function erase(path) { fs.unlinkSync(path) }; function read(path) { return fs.readFileSync(path, "utf8") };'
     it('keeps long ordinary returned-object chains bounded and prompt-free', async () => {

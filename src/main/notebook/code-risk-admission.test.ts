@@ -6497,6 +6497,10 @@ print(reader("."))`)
 
   it.each([
     [
+      'Promise timer with an outer result',
+      'const r = JSON.parse("{}"); await new Promise(r => setTimeout(r, 1)); OP'
+    ],
+    [
       'global timeout',
       'await new Promise(done => { function run() { OP; done() }; setTimeout(run, 0) })'
     ],

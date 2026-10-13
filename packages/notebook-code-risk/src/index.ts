@@ -611,6 +611,13 @@ const pythonPartialSensitive = (target: string): boolean =>
 
 const jsPromiseCall = /\.(?:then|catch|finally)$/
 const jsPromiseConstructor = /^(?:(?:globalThis|global)\.)?Promise$/
+const jsNativeExecutionGlobal = (name: string): boolean =>
+  jsPromiseConstructor.test(name) ||
+  jsCallbackIndex(name) !== undefined ||
+  ['from', 'groupBy', 'nextTick'].some(
+    (method) => jsCallbackIndex(`${name}.${method}`) !== undefined
+  ) ||
+  ['globalThis', 'global', 'Reflect', 'Function'].includes(name)
 
 const jsNonCallableLiteral = (node: Node | null): boolean => {
   while (node?.type === 'parenthesized_expression')
@@ -1178,6 +1185,11 @@ const jsInvocation = (
   }
   let hops = 0
   while (!construct) {
+    // Unknown call/apply/bind members cannot prove a native constructor's identity.
+    if (callee?.startsWith('<dynamic>')) {
+      thisValue = undefined
+      break
+    }
     const boundApply = jsApplyBoundTarget(callee ?? '')
     const method = /\.(call|apply)$/.exec(callee ?? '')?.[1]
     const reflection = /^(?:(?:globalThis|global)\.)?Reflect\.(?:apply|construct)$/.test(
@@ -5156,7 +5168,7 @@ export async function analyzeNotebookCodeRisk(
         }
       }
     }
-    const visit = (node: Node, output: RiskEvidence[]): void => {
+    const visit = (node: Node, output: RiskEvidence[], promiseExecutor = false): void => {
       spendWork()
       // String contents are leaves; interpolations may contain real calls (Python f-strings,
       // JavaScript templates and Bash substitutions), so traverse their syntax rather than text.
@@ -5690,7 +5702,38 @@ export async function analyzeNotebookCodeRisk(
           ...(methodOwners.has(functionNode.id) ? ['method_definition'] : [])
         ].includes(functionNode.type)
       ) {
+        const jsParameters =
+          language === 'repl'
+            ? (fieldChild(functionNode, 'parameters')?.namedChildren.filter(
+                (child) => child.type !== 'comment'
+              ) ??
+              [fieldChild(functionNode, 'parameter')].filter((child): child is Node => !!child))
+            : []
+        const parameterBindings: Bindings = new Map()
+        for (const [index, parameter] of jsParameters.entries()) {
+          // Only a native Promise supplies known resolve/reject functions. Other callback
+          // arguments remain unknown, and must never inherit an outer same-named value.
+          const value =
+            promiseExecutor && index < 2 && parameter.type === 'identifier'
+              ? index === 0
+                ? 'Promise.resolve'
+                : 'Promise.reject'
+              : '<dynamic>'
+          for (const [name, target] of bindingUpdates(parameter, null, bindings, language, value))
+            // Preserve the existing policy for ordinary unresolved scientific calls, while
+            // preventing a parameter from borrowing known provenance from an outer scope.
+            if (promiseExecutor || bindings.has(name) || jsNativeExecutionGlobal(name))
+              parameterBindings.set(name, target)
+        }
         const declaredName = fieldChild(functionNode, 'name')
+        if (
+          language === 'repl' &&
+          declaredName &&
+          !parameterBindings.has(declaredName.text) &&
+          (functionNode.type === 'function_expression' ||
+            jsNativeExecutionGlobal(declaredName.text))
+        )
+          parameterBindings.set(declaredName.text, '<dynamic>')
         // R labels the anonymous `function` keyword as its name; it is not a declaration.
         const assignedObject =
           assigned?.left &&
@@ -5723,6 +5766,7 @@ export async function analyzeNotebookCodeRisk(
           // Python evaluates defaults when defining the function; R/JS evaluate them on a call.
           if (language === 'python' && parameters) visit(parameters, output)
           const saved = new Map(bindings)
+          for (const [name, target] of parameterBindings) bindings.set(name, target)
           bindings.set(CWD_BINDING, INITIAL_CWD)
           bindings.set(FILE_SCOPE_BINDING, `@scope:${functionNode.id}`)
           const savedPrefixes = exceptionPrefixes.splice(0)
@@ -5785,6 +5829,19 @@ export async function analyzeNotebookCodeRisk(
             members
           })
           capturePrefixes()
+          return
+        }
+        if (language === 'repl') {
+          const restoreParameters = preserveScopedBindings(
+            [...parameterBindings.keys()],
+            [bindings, ...exceptionPrefixes]
+          )
+          for (const [name, target] of parameterBindings) bindings.set(name, target)
+          try {
+            for (const child of functionNode.namedChildren) visit(child, output)
+          } finally {
+            restoreParameters()
+          }
           return
         }
         if (
@@ -5913,7 +5970,21 @@ export async function analyzeNotebookCodeRisk(
             ) {
               spendWork()
               for (const child of value.namedChildren) evaluate(child)
-            } else visit(value, output)
+            } else {
+              const promiseExecutor =
+                language === 'repl' &&
+                ['arrow_function', 'function_expression'].includes(value.type) &&
+                possibleTargets(resolved).every((callee) => {
+                  const invocation = jsInvocation(node, bindings, callee, argumentValues)
+                  return (
+                    invocation.construct &&
+                    !invocation.uncertainArgs &&
+                    jsPromiseConstructor.test(invocation.callee ?? '') &&
+                    unparenthesized(invocation.args[0])?.id === value.id
+                  )
+                })
+              visit(value, output, promiseExecutor)
+            }
             argumentValues.set(value.id, identity(value, bindings))
           }
           evaluatedArguments = fieldChild(node, 'arguments')
