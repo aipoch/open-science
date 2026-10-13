@@ -19,9 +19,7 @@
     "src/shared/session-diagnostics.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/shared/session-diagnostics-contracts.test.ts"
-    ],
+    "owner": ["src/shared/session-diagnostics-contracts.test.ts"],
     "contract": [
       "src/main/data-content-application-commands.test.ts",
       "src/preload/index.test.ts",
@@ -105,9 +103,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

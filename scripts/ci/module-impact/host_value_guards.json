@@ -64,9 +64,7 @@
     "src/main/websocket-frame-sender.ts"
   ],
   "testFiles": {
-    "owner": [
-      "src/main/error-message.test.ts"
-    ],
+    "owner": ["src/main/error-message.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -991,13 +989,7 @@
       "src/main/runtime-payload-transfers.test.ts"
     ]
   },
-  "consumerModules": [
-    "main_web_service"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["main_web_service"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

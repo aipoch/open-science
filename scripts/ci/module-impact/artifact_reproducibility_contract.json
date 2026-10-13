@@ -1,7 +1,5 @@
 {
-  "ownerPaths": [
-    "src/shared/artifact-reproducibility.ts"
-  ],
+  "ownerPaths": ["src/shared/artifact-reproducibility.ts"],
   "interfacePaths": [
     "src/main/artifacts/artifact-provenance-graph.ts",
     "src/main/artifacts/artifact-reproducibility-commands.ts",
@@ -476,13 +474,7 @@
       "src/main/notebook-payload.integration.test.ts"
     ]
   },
-  "consumerModules": [
-    "session_persistence"
-  ],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "consumerModules": ["session_persistence"],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
