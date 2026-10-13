@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
@@ -47,6 +47,63 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it('captures and relocates a binary snapshot of a one-character managed environment', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'short-environment-'))
+    const prefix = join(dataRoot, 'runtime', 'envs', 'a')
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    const canonical = await realpath(prefix)
+    const bytes = Buffer.from(`terminfo\0${canonical}/share\0`)
+    await writeFile(join(prefix, 'terminal'), bytes)
+    await writeFile(
+      join(prefix, 'conda-meta', 'terminal.json'),
+      JSON.stringify({
+        paths_data: {
+          paths: [
+            {
+              _path: 'terminal',
+              sha256_in_prefix: createHash('sha256').update(bytes).digest('hex'),
+              file_mode: 'binary',
+              prefix_placeholder: '/build/placeholder'
+            }
+          ]
+        }
+      })
+    )
+    const verify = vi.fn(async (restored: string) => {
+      const destination = await realpath(restored)
+      expect(Buffer.byteLength(destination)).toBeLessThanOrEqual(Buffer.byteLength(canonical))
+      const relocated = await readFile(join(destination, 'terminal'))
+      expect(relocated.includes(Buffer.from(destination))).toBe(true)
+      expect(relocated.includes(Buffer.from(canonical))).toBe(false)
+      return 'OPEN_SCIENCE_SNAPSHOT_VERIFIED'
+    })
+    const observation = {
+      runtimeVersion: '3.12.14',
+      platform: process.platform,
+      architecture: process.arch,
+      packages: []
+    }
+    const captured = await new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => observation,
+      captureFingerprint: async () => 'stable',
+      verifySnapshotRuntime: verify
+    }).captureCompletedRun(
+      {
+        language: 'python',
+        environmentName: 'a',
+        runtimeSource: 'managed',
+        command: join(prefix, 'python'),
+        condaPrefix: prefix
+      },
+      observation
+    )
+    expect(captured.environmentLock).toMatchObject({ state: 'available' })
+    expect(verify).toHaveBeenCalledOnce()
+    expect(await readFile(join(prefix, 'terminal'))).toEqual(bytes)
+    expect(await readdir(join(dataRoot, '.e'))).toEqual([])
+  })
+
   it.each(['python', 'r'] as const)(
     'keeps %s fingerprint, inventory, and lock subprocesses hidden throughout a run',
     async (language) => {
@@ -236,6 +293,46 @@ describe('EnvironmentStateTracker', () => {
       expect(await readdir(dataRoot)).toEqual([])
     }
   )
+
+  it('retains every installed distribution version and attaches live evidence only to its match', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'mixed-python-inventory-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: ['1.0', '2.0'].map((version) => ({
+          name: 'example',
+          version,
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-importlib-metadata']
+        }))
+      })
+    })
+    const capture = await tracker.captureCompletedRun(target, {
+      packages: [
+        {
+          name: 'example',
+          version: '2.0.0',
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-kernel-modules'],
+          loadedState: 'loaded'
+        }
+      ]
+    })
+    expect(capture.manifest.packages).toEqual([
+      expect.objectContaining({
+        version: '1.0',
+        loadedState: 'installed-only',
+        evidenceSources: ['python-importlib-metadata']
+      }),
+      expect.objectContaining({
+        version: '2.0',
+        loadedState: 'loaded',
+        evidenceSources: ['python-importlib-metadata', 'python-kernel-modules']
+      })
+    ])
+  })
 
   it('does not certify conflicting Python distribution versions', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'ambiguous-python-inspection-'))
@@ -557,6 +654,31 @@ describe('EnvironmentStateTracker', () => {
       expect(inspectInstalled).toHaveBeenCalledOnce()
     }
   )
+
+  it('attaches live evidence to an exact installed version before an equivalent spelling', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'python-exact-installed-version-'))
+    const packages: NotebookEnvironmentPackage[] = ['1.0', '1.0.0'].map((version) => ({
+      name: 'demo',
+      version,
+      versionStatus: 'known',
+      ecosystem: 'python',
+      evidenceSources: ['python-importlib-metadata']
+    }))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      captureFingerprint: async () => 'stable',
+      inspectInstalled: async () => ({ packages })
+    })
+    const captured = await tracker.captureCompletedRun(target, {
+      packages: [
+        { ...packages[1]!, loadedState: 'loaded', evidenceSources: ['python-kernel-modules'] }
+      ]
+    })
+    expect(captured.manifest.packages).toEqual([
+      expect.objectContaining({ version: '1.0', loadedState: 'installed-only' }),
+      expect.objectContaining({ version: '1.0.0', loadedState: 'loaded' })
+    ])
+  })
 
   it('merges equivalent live Python release spellings', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'python-equivalent-version-'))
@@ -1504,6 +1626,113 @@ describe('EnvironmentStateTracker', () => {
       expect(
         (await tracker.inspectPackages(rTarget, ['tidyverse/ggplot2@main'])).packages[0]?.status
       ).toBe('missing')
+    }
+  )
+
+  it.each(
+    [
+      {
+        before: ['1.0', '2.0'],
+        after: ['2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'removed', beforeVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['2.0'],
+        after: ['1.0', '2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'installed', afterVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['1.0', '2.0'],
+        after: ['2.0', '3.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'updated', beforeVersion: '1.0', afterVersion: '3.0' }
+        ]
+      },
+      {
+        before: ['1.0', '2.0'],
+        after: ['3.0', '4.0'],
+        changes: [
+          { change: 'removed', beforeVersion: '1.0' },
+          { change: 'removed', beforeVersion: '2.0' },
+          { change: 'installed', afterVersion: '3.0' },
+          { change: 'installed', afterVersion: '4.0' }
+        ]
+      },
+      {
+        before: ['1.0', '1.0.0'],
+        after: ['1.0.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '1.0.0', afterVersion: '1.0.0' },
+          { change: 'removed', beforeVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['1.0.0'],
+        after: ['1.0', '1.0.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '1.0.0', afterVersion: '1.0.0' },
+          { change: 'installed', afterVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['2026.07.22', '2.0'],
+        after: ['2026.7.22', '2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'unchanged', beforeVersion: '2026.07.22', afterVersion: '2026.7.22' }
+        ]
+      }
+    ].flatMap((scenario) => [false, true].map((reverse) => ({ ...scenario, reverse })))
+  )(
+    'preserves same-name Python changes $before -> $after (reverse=$reverse)',
+    async ({ before, after, changes, reverse }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'environment-multiple-versions-'))
+      const inventory = (versions: string[]): NotebookEnvironmentPackage[] =>
+        (reverse ? [...versions].reverse() : versions).map((version) => ({
+          name: 'Demo_pkg',
+          version,
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-importlib-metadata']
+        }))
+      const installed = { runtimeVersion: '3.12.14', packages: inventory(after) }
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi
+          .fn()
+          .mockResolvedValueOnce({ runtimeVersion: '3.12.14', packages: inventory(before) })
+          .mockResolvedValue(installed),
+        captureFingerprint: async () => 'stable'
+      })
+      const operation = {
+        operationId: 'duplicate-version-change',
+        operation: 'install' as const,
+        packages: ['demo-pkg']
+      }
+      await tracker.markPackageMutationDirty(target, operation)
+      const verification = await tracker.refreshAfterPackageMutation(target, {
+        ...operation,
+        result: 'success'
+      })
+      expect(verification.packageChanges).toEqual(
+        changes.map((change) => ({
+          name: 'Demo_pkg',
+          ecosystem: 'python',
+          relationship: 'requested',
+          ...change
+        }))
+      )
+      const captured = await tracker.captureCompletedRun(target, installed)
+      expect(captured.manifest.operationLog?.[0]?.packageChanges).toEqual(
+        verification.packageChanges
+      )
     }
   )
 

@@ -90,6 +90,7 @@ export type ArtifactEnvironmentLockBundleInfo = {
   platform?: string
   architecture?: string
   packageManagers: ArtifactEnvironmentLockPackageManager[]
+  snapshot?: true
 }
 
 export type DescribeArtifactEnvironmentLockRequest = ExportArtifactEnvironmentLockRequest

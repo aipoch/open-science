@@ -34,6 +34,7 @@ import {
   MIGRATED_DIRS,
   PROJECT_DATABASE_FILE,
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
+  RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_REPAIR_REGISTRY_FILE,
   RUNTIME_NPM_DIR,
@@ -982,6 +983,7 @@ describe('runDataRootMigration (copy phase)', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
+          RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -1228,6 +1230,11 @@ describe('runDataRootMigration (copy phase)', () => {
       join(currentDataRoot, RUNTIME_ENVIRONMENT_LOCKS_DIR, lockName),
       '{"schemaVersion":1}\n'
     )
+    const snapshotObject = join(RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR, 'objects', 'c'.repeat(64))
+    await mkdir(join(currentDataRoot, RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR, 'objects'), {
+      recursive: true
+    })
+    await writeFile(join(currentDataRoot, snapshotObject), 'captured installed bytes')
     const repairRegistry = {
       runtimeIds: ['managed:python:default-python'],
       reasons: { 'managed:python:default-python': 'interrupted-install' }
@@ -1247,6 +1254,10 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(result).toEqual({ ok: true })
     expect(existsSync(join(target, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName))).toBe(true)
     expect(existsSync(join(target, RUNTIME_ENVIRONMENT_LOCKS_DIR, lockName))).toBe(true)
+    expect(await readFile(join(target, snapshotObject), 'utf8')).toBe('captured installed bytes')
+    expect(await readFile(join(currentDataRoot, snapshotObject), 'utf8')).toBe(
+      'captured installed bytes'
+    )
     await expect(readFile(join(target, RUNTIME_REPAIR_REGISTRY_FILE), 'utf8')).resolves.toBe(
       `${JSON.stringify(repairRegistry)}\n`
     )
@@ -2299,25 +2310,28 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(setDataRoot).not.toHaveBeenCalled()
   })
 
-  it('refuses a legacy staged marker that omitted existing durable package archives', async () => {
-    await mkdir(join(currentDataRoot, 'runtime', 'pkgs'), { recursive: true })
-    await writeFile(join(currentDataRoot, 'runtime', 'pkgs', 'archive.conda'), 'durable archive')
-    await seedVerifiedMarker(emptyParent, currentDataRoot)
-    const setDataRoot = vi.fn(async () => {})
-    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+  it.each([join('runtime', 'pkgs'), RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR])(
+    'refuses a legacy staged marker that omitted durable %s',
+    async (directory) => {
+      await mkdir(join(currentDataRoot, directory), { recursive: true })
+      await writeFile(join(currentDataRoot, directory, 'retained'), 'durable bytes')
+      await seedVerifiedMarker(emptyParent, currentDataRoot)
+      const setDataRoot = vi.fn(async () => {})
+      const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
-    const result = await commitDataRootSwitch(
-      { currentDataRoot, setDataRoot, deleteSources, expectedToken: 'tok-test' },
-      emptyParent
-    )
+      const result = await commitDataRootSwitch(
+        { currentDataRoot, setDataRoot, deleteSources, expectedToken: 'tok-test' },
+        emptyParent
+      )
 
-    expect(result).toEqual({
-      ok: false,
-      error: 'The staged copy does not include all required provenance data. Run the move again.'
-    })
-    expect(setDataRoot).not.toHaveBeenCalled()
-    expect(deleteSources).not.toHaveBeenCalled()
-  })
+      expect(result).toEqual({
+        ok: false,
+        error: 'The staged copy does not include all required provenance data. Run the move again.'
+      })
+      expect(setDataRoot).not.toHaveBeenCalled()
+      expect(deleteSources).not.toHaveBeenCalled()
+    }
+  )
 
   it('refuses a legacy staged marker that omitted an existing runtime quarantine', async () => {
     await mkdir(dirname(join(currentDataRoot, RUNTIME_REPAIR_REGISTRY_FILE)), { recursive: true })
@@ -2564,6 +2578,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
+          RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -2599,6 +2614,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
+          RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -2638,6 +2654,7 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
+          RUNTIME_ENVIRONMENT_SNAPSHOTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')

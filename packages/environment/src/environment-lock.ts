@@ -1,7 +1,12 @@
+import {
+  createEnvironmentSnapshotLease,
+  type EnvironmentSnapshotLease,
+  type EnvironmentSnapshotProcessObserver
+} from './environment-snapshot-lifecycle'
 import { packageVersionsMatch } from './package-version-comparison'
 import { createHash } from 'node:crypto'
 import { lstat, readFile, realpath } from 'node:fs/promises'
-import { join, posix, relative, resolve, sep } from 'node:path'
+import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookEnvironmentLock,
@@ -20,6 +25,7 @@ import { lockedPackageVersions } from './native-lock-restoration'
 import { nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
 import { normalizeRuntimeArchitecture, rLibraryDir, rScriptBin } from './runtime-paths'
+import { captureEnvironmentSnapshot, restoreEnvironmentSnapshot } from './environment-snapshot'
 type EnvironmentLockDecodeResult =
   | { status: 'valid'; version: number; value: NotebookEnvironmentLock }
   | { status: 'unsupported'; version: number }
@@ -47,6 +53,12 @@ type CaptureNotebookEnvironmentLockOptions = {
   execute: EnvironmentLockExec
   environmentFingerprint?: string
   workspace?: EnvironmentLockWorkspace
+  snapshotStorage?: { store: string; restoreRoot: string }
+  verifySnapshotRuntime?: (
+    prefix: string,
+    argv: string[],
+    observer?: EnvironmentSnapshotProcessObserver
+  ) => Promise<string>
 }
 
 type EnvironmentLockCaptureResult =
@@ -425,35 +437,44 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
       })
     : []
   if (
-    (lock.schemaVersion !== 1 && lock.schemaVersion !== 2) ||
+    (lock.schemaVersion !== 1 && lock.schemaVersion !== 2 && lock.schemaVersion !== 3) ||
     lock.format !== 'environment-lock-bundle' ||
     (lock.kernelKind !== 'python' && lock.kernelKind !== 'r') ||
     typeof lock.environmentName !== 'string' ||
     (lock.platform !== undefined && typeof lock.platform !== 'string') ||
     (lock.architecture !== undefined && typeof lock.architecture !== 'string') ||
     !Array.isArray(components) ||
-    components.length === 0 ||
+    (components.length === 0 && lock.schemaVersion !== 3) ||
     !components.every(lockComponentValue) ||
     new Set(componentIdentities).size !== componentIdentities.length ||
-    (lock.schemaVersion === 1
-      ? components.filter((component) => component.ecosystem === 'conda').length !== 1 ||
-        lock.externalRuntime !== undefined
-      : components.some((component) => component.ecosystem === 'conda') ||
-        !recordValue(lock.externalRuntime) ||
-        !hasOnlyKeys(recordValue(lock.externalRuntime)!, ['version', 'installerVersion']) ||
-        !/^\d+\.\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
-          String(recordValue(lock.externalRuntime)?.version ?? '')
-        ) ||
-        !/^\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
-          String(recordValue(lock.externalRuntime)?.installerVersion ?? '')
-        ) ||
+    (lock.schemaVersion === 3
+      ? lock.kernelKind !== 'python' ||
+        lock.externalRuntime !== undefined ||
+        !recordValue(lock.snapshot) ||
+        !hasOnlyKeys(recordValue(lock.snapshot)!, ['checksum']) ||
+        !/^[a-f0-9]{64}$/u.test(String(recordValue(lock.snapshot)?.checksum)) ||
         !['win32', 'darwin', 'linux'].includes(String(lock.platform)) ||
-        !['x64', 'arm64'].includes(normalizeRuntimeArchitecture(String(lock.architecture))) ||
-        components.length !== 1 ||
-        !components.every(
-          (component) =>
-            component.format === (lock.kernelKind === 'r' ? 'renv-lock' : 'pip-requirements')
-        )) ||
+        !['x64', 'arm64'].includes(normalizeRuntimeArchitecture(String(lock.architecture)))
+      : lock.snapshot !== undefined ||
+        (lock.schemaVersion === 1
+          ? components.filter((component) => component.ecosystem === 'conda').length !== 1 ||
+            lock.externalRuntime !== undefined
+          : components.some((component) => component.ecosystem === 'conda') ||
+            !recordValue(lock.externalRuntime) ||
+            !hasOnlyKeys(recordValue(lock.externalRuntime)!, ['version', 'installerVersion']) ||
+            !/^\d+\.\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
+              String(recordValue(lock.externalRuntime)?.version ?? '')
+            ) ||
+            !/^\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
+              String(recordValue(lock.externalRuntime)?.installerVersion ?? '')
+            ) ||
+            !['win32', 'darwin', 'linux'].includes(String(lock.platform)) ||
+            !['x64', 'arm64'].includes(normalizeRuntimeArchitecture(String(lock.architecture))) ||
+            components.length !== 1 ||
+            !components.every(
+              (component) =>
+                component.format === (lock.kernelKind === 'r' ? 'renv-lock' : 'pip-requirements')
+            ))) ||
     components.some(
       (component) => component.ecosystem !== 'conda' && component.ecosystem !== lock.kernelKind
     ) ||
@@ -487,7 +508,8 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
       'untrackedPackages',
       'omittedPackages',
       'nonCondaInstallers',
-      'externalRuntime'
+      'externalRuntime',
+      'snapshot'
     ])
   ) {
     return undefined
@@ -499,9 +521,9 @@ const decodeNotebookEnvironmentLock = (value: string): EnvironmentLockDecodeResu
   try {
     const candidate: unknown = JSON.parse(value)
     const version = recordValue(candidate)?.schemaVersion
-    if (Number.isSafeInteger(version) && Number(version) > 2)
+    if (Number.isSafeInteger(version) && Number(version) > 3)
       return { status: 'unsupported', version: Number(version) }
-    if (version !== 1 && version !== 2) return { status: 'corrupt' }
+    if (version !== 1 && version !== 2 && version !== 3) return { status: 'corrupt' }
     const lock = environmentLockValue(candidate)
     return lock ? { status: 'valid', version, value: lock } : { status: 'corrupt' }
   } catch {
@@ -934,6 +956,7 @@ const assessEnvironmentLock = (
 
 class EnvironmentLockCaptureOwner {
   private readonly cache = new Map<string, EnvironmentLockCacheEntry>()
+  private readonly verifiedSnapshots = new Set<string>()
 
   private async captureExternal(
     target: EnvironmentLockTarget,
@@ -1021,6 +1044,98 @@ class EnvironmentLockCaptureOwner {
   }
 
   async capture(
+    target: EnvironmentLockTarget,
+    manifest: NotebookEnvironmentManifest,
+    options: CaptureNotebookEnvironmentLockOptions
+  ): Promise<EnvironmentLockCaptureResult> {
+    const packageLock = await this.capturePackageLock(target, manifest, options)
+    if (
+      (packageLock.state === 'captured' && packageLock.captureStatus === 'complete') ||
+      target.runtimeSource !== 'managed' ||
+      target.language !== 'python' ||
+      !target.condaPrefix ||
+      !manifest.runtimeVersion ||
+      !manifest.platform ||
+      !manifest.architecture ||
+      !options.snapshotStorage
+    )
+      return packageLock
+    let lease: EnvironmentSnapshotLease | undefined
+    let captureError: unknown
+    let snapshotLock: NotebookEnvironmentLock | undefined
+    try {
+      const captured = await captureEnvironmentSnapshot(
+        target.condaPrefix,
+        options.snapshotStorage.store,
+        manifest
+      )
+      const lock: NotebookEnvironmentLock = {
+        schemaVersion: 3,
+        format: 'environment-lock-bundle',
+        kernelKind: 'python',
+        environmentName: target.environmentName,
+        platform: manifest.platform,
+        architecture: manifest.architecture,
+        components: packageLock.state === 'captured' ? packageLock.lock.components : [],
+        snapshot: { checksum: captured.checksum }
+      }
+      if (!environmentLockValue(lock)) throw new Error('Environment snapshot lock is invalid.')
+      snapshotLock = lock
+      // Capture hashes every installed file again. Reuse verification only for identical bytes
+      // and runtime observations, never merely an unchanged package-manager inventory.
+      if (!this.verifiedSnapshots.has(captured.checksum)) {
+        if (!options.verifySnapshotRuntime)
+          throw new Error('Isolated snapshot verification is unavailable.')
+        lease = await createEnvironmentSnapshotLease(
+          join(dirname(options.snapshotStorage.restoreRoot), 'runtime'),
+          options.snapshotStorage.restoreRoot,
+          's-'
+        )
+        await restoreEnvironmentSnapshot(
+          options.snapshotStorage.store,
+          captured.checksum,
+          join(lease.root, 'e'),
+          (argv) => options.verifySnapshotRuntime!(join(lease!.root, 'e'), argv, lease)
+        )
+        if (this.verifiedSnapshots.size >= 64) this.verifiedSnapshots.clear()
+        this.verifiedSnapshots.add(captured.checksum)
+      }
+      return {
+        state: 'captured',
+        lock,
+        captureStatus:
+          manifest.complete && manifest.captureStatus === 'complete' ? 'complete' : 'partial',
+        ...(!manifest.complete || manifest.captureStatus !== 'complete'
+          ? {
+              partialReasons: [
+                'environment-manifest-partial'
+              ] as NotebookEnvironmentLockPartialReason[]
+            }
+          : {})
+      }
+    } catch (error) {
+      captureError = error
+      createLogger('notebook:environment-lock').warn(
+        'environment snapshot capture or verification failed',
+        diagnosticErrorFields(error)
+      )
+      return snapshotLock
+        ? {
+            state: 'captured',
+            lock: snapshotLock,
+            captureStatus: 'partial',
+            partialReasons: ['environment-snapshot-unverified'],
+            ...(packageLock.state === 'captured' && packageLock.diagnostics
+              ? { diagnostics: packageLock.diagnostics }
+              : {})
+          }
+        : packageLock
+    } finally {
+      await lease?.release(captureError)
+    }
+  }
+
+  private async capturePackageLock(
     target: EnvironmentLockTarget,
     manifest: NotebookEnvironmentManifest,
     options: CaptureNotebookEnvironmentLockOptions

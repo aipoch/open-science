@@ -1,3 +1,4 @@
+import type { EnvironmentSnapshotProcessObserver } from './environment-snapshot-lifecycle'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -156,6 +157,11 @@ type EnvironmentStateTrackerOptions = {
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
   execFile?: EnvironmentExecFile
   resolveMicromamba?: () => Promise<string | undefined>
+  verifySnapshotRuntime?: (
+    prefix: string,
+    argv: string[],
+    observer?: EnvironmentSnapshotProcessObserver
+  ) => Promise<string>
   now?: () => Date
   platform?: NodeJS.Platform
   logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
@@ -304,6 +310,17 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
         ]
       : [])
   ].join('\0')
+
+const samePackageVersion = (
+  left: NotebookEnvironmentPackage,
+  right: NotebookEnvironmentPackage
+): boolean =>
+  left.version === right.version ||
+  (left.ecosystem === 'python' &&
+    right.ecosystem === 'python' &&
+    Boolean(
+      left.version && right.version && packageVersionsMatch('python', left.version, right.version)
+    ))
 
 const packageSourceKey = (pkg: NotebookEnvironmentPackage): string => {
   const source = pkg.source
@@ -579,15 +596,64 @@ const packageChangesForOperation = ({
       .map((pkg) => toChange(pkg, 'requested', 'observed', undefined, pkg.version))
   }
 
-  const beforeByIdentity = new Map(before.map((pkg) => [packageIdentityKey(pkg), pkg]))
-  const afterByIdentity = new Map(after.map((pkg) => [packageIdentityKey(pkg), pkg]))
+  const groupByIdentity = (
+    packages: NotebookEnvironmentPackage[]
+  ): Map<string, NotebookEnvironmentPackage[]> => {
+    const groups = new Map<string, NotebookEnvironmentPackage[]>()
+    for (const pkg of packages) {
+      const key = packageIdentityKey(pkg)
+      const candidates = groups.get(key) ?? []
+      candidates.push(pkg)
+      groups.set(key, candidates)
+    }
+    for (const candidates of groups.values())
+      candidates.sort(
+        (a, b) =>
+          (a.version ?? '').localeCompare(b.version ?? '') ||
+          packageSourceKey(a).localeCompare(packageSourceKey(b))
+      )
+    return groups
+  }
+  const beforeByIdentity = groupByIdentity(before)
+  const afterByIdentity = groupByIdentity(after)
   const identities = [...new Set([...beforeByIdentity.keys(), ...afterByIdentity.keys()])].sort(
     comparePackageKeys
   )
-  const changes: NotebookEnvironmentPackageChange[] = []
+  const pairs: Array<
+    [NotebookEnvironmentPackage | undefined, NotebookEnvironmentPackage | undefined]
+  > = []
   for (const identity of identities) {
-    const previous = beforeByIdentity.get(identity)
-    const current = afterByIdentity.get(identity)
+    const previous = beforeByIdentity.get(identity) ?? []
+    const remaining = [...(afterByIdentity.get(identity) ?? [])]
+    const removed = [...previous]
+    // Preserve every exact surviving spelling before matching equivalent Python versions:
+    // 1.0 must not steal the surviving 1.0.0 when both were installed before the operation.
+    for (const allowEquivalent of [false, true]) {
+      for (const candidate of [...removed]) {
+        const match = remaining.findIndex(
+          (pkg) =>
+            (allowEquivalent
+              ? samePackageVersion(candidate, pkg)
+              : candidate.version === pkg.version) &&
+            candidate.versionStatus === pkg.versionStatus &&
+            packageSourceKey(candidate) === packageSourceKey(pkg)
+        )
+        if (match >= 0) {
+          pairs.push([candidate, remaining.splice(match, 1)[0]!])
+          removed.splice(removed.indexOf(candidate), 1)
+        }
+      }
+    }
+    // Only one unmatched copy on each side establishes an unambiguous update. Otherwise retain
+    // every observed removal/installation without inventing correspondences between versions.
+    if (removed.length === 1 && remaining.length === 1) pairs.push([removed[0], remaining[0]])
+    else {
+      for (const pkg of removed) pairs.push([pkg, undefined])
+      for (const pkg of remaining) pairs.push([undefined, pkg])
+    }
+  }
+  const changes: NotebookEnvironmentPackageChange[] = []
+  for (const [previous, current] of pairs) {
     const pkg = current ?? previous
     if (!pkg) continue
     const relationship = relationshipFor(pkg)
@@ -601,7 +667,7 @@ const packageChangesForOperation = ({
     }
     if (!previous || !current) continue
     const versionChanged =
-      previous.version !== current.version ||
+      !samePackageVersion(previous, current) ||
       previous.versionStatus !== current.versionStatus ||
       packageSourceKey(previous) !== packageSourceKey(current)
     if (versionChanged) {
@@ -647,24 +713,24 @@ const mergePackages = (
   live: NotebookEnvironmentPackage[]
 ): NotebookEnvironmentPackage[] => {
   const merged = new Map<string, NotebookEnvironmentPackage>()
+  const observedKey = (pkg: NotebookEnvironmentPackage): string =>
+    packageIdentityKey(pkg) + (pkg.ecosystem === 'python' ? `\0version:${pkg.version ?? ''}` : '')
   for (const pkg of installed) {
-    merged.set(packageIdentityKey(pkg), { ...pkg, loadedState: 'installed-only' })
+    // Residual dist-info directories are real captured state, even when another version
+    // wins import resolution. Do not erase them by keying only on the distribution name.
+    merged.set(observedKey(pkg), { ...pkg, loadedState: 'installed-only' })
   }
   for (const pkg of live) {
-    let key = packageIdentityKey(pkg)
-    let existing = merged.get(key)
-    // Multiple copies can be observed after sys.path changes while an older module is still
-    // loaded. Preserve both live versions so observation order cannot erase required evidence.
-    if (
-      pkg.ecosystem === 'python' &&
-      pkg.version &&
-      existing?.version &&
-      !packageVersionsMatch('python', pkg.version, existing.version) &&
-      existing.evidenceSources.includes('python-kernel-modules')
-    ) {
-      key += `\0version:${pkg.version}`
-      existing = merged.get(key)
+    let key = observedKey(pkg)
+    if (pkg.ecosystem === 'python' && !merged.has(key)) {
+      key =
+        [...merged].find(
+          ([, candidate]) =>
+            packageIdentityKey(candidate) === packageIdentityKey(pkg) &&
+            samePackageVersion(candidate, pkg)
+        )?.[0] ?? key
     }
+    let existing = merged.get(key)
     // A cell can prepend its own .libPaths(). Equal ranks in the live and inspection
     // interpreters then refer to different libraries; do not inherit the default copy's evidence.
     if (
@@ -679,7 +745,12 @@ const mergePackages = (
     merged.set(key, {
       ...existing,
       ...pkg,
-      version: pkg.version ?? existing?.version,
+      // Keep the exact inventory spelling for installed evidence; loaded numeric release
+      // spellings can be equivalent (e.g. 2026.07.22 and 2026.7.22).
+      version:
+        pkg.ecosystem === 'python'
+          ? (existing?.version ?? pkg.version)
+          : (pkg.version ?? existing?.version),
       versionStatus:
         pkg.versionStatus === 'known' || existing?.versionStatus === 'known'
           ? 'known'
@@ -1232,6 +1303,12 @@ class EnvironmentStateTracker {
       })
       const lockCapture = await this.environmentLockCapture.capture(target, manifest, {
         micromamba,
+        verifySnapshotRuntime: this.options.verifySnapshotRuntime,
+        snapshotStorage: {
+          store: join(this.options.dataRoot, 'runtime', 'provenance', 'environment-snapshots'),
+          // .e/s-XXXXXX/e stays shorter than runtime/envs/a, even for the shortest name.
+          restoreRoot: join(this.options.dataRoot, '.e')
+        },
         ...(endFingerprint ? { environmentFingerprint: endFingerprint } : {}),
         ...(lockWorkspace ? { workspace: lockWorkspace } : {}),
         execute: async (argv) => {

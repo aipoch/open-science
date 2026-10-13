@@ -7347,6 +7347,19 @@
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Prüfen Sie den von Open-Science verwendeten Proxy. Eine funktionierende Browserverbindung kann andere Proxy-Einstellungen verwenden.",
     "Reconnect the backend, then check again.": "Verbinden Sie das Backend erneut und prüfen Sie dann noch einmal.",
     "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "System verwendet die für das Backend verfügbare Proxy-Konfiguration. Die Einstellungen von Browser und Betriebssystem können abweichen. Wählen Sie Manuell, um einen festen Proxy festzulegen.",
-    "Backend defaults": "Backend-Standard"
+    "Backend defaults": "Backend-Standard",
+    "Environment snapshot": "Umgebungs-Snapshot",
+    "The environment files were captured, but isolated restoration could not be verified.": "Die Umgebungsdateien wurden erfasst, aber die isolierte Wiederherstellung konnte nicht verifiziert werden.",
+    "Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.": "Die erfassten Umgebungsdateien werden für lokale Reproduzierbarkeitsprüfungen verwendet. Der Export von Paketsperrdateien und wiederverwendbare Umgebungen sind für diesen Snapshot nicht verfügbar.",
+    "This code uses file or external state whose dependencies are not fully confirmed.": "Dieser Code verwendet Dateien oder externen Zustand, deren Abhängigkeiten nicht vollständig bestätigt sind.",
+    "Some calls may read or change values that the analyzer cannot identify.": "Einige Aufrufe können Werte lesen oder ändern, die die Analyse nicht identifizieren kann.",
+    "Dynamic names or custom objects prevent complete variable tracking.": "Dynamische Namen oder benutzerdefinierte Objekte verhindern eine vollständige Variablenverfolgung.",
+    "Not all branch or loop effects could be determined.": "Nicht alle Auswirkungen von Verzweigungen oder Schleifen konnten ermittelt werden.",
+    "The captured environment is not yet verified for isolated restoration.": "Die erfasste Umgebung wurde noch nicht für die isolierte Wiederherstellung verifiziert.",
+    "No environment lock was captured for one or more required runs.": "Für mindestens einen erforderlichen Lauf wurde keine Umgebungssperrdatei erfasst.",
+    "The complete set of input files was not captured.": "Die vollständige Menge der Eingabedateien wurde nicht erfasst.",
+    "Some output files could not be attributed to a single run.": "Einige Ausgabedateien konnten keinem einzelnen Lauf zugeordnet werden.",
+    "Some dependencies on earlier cells could not be determined.": "Einige Abhängigkeiten von früheren Zellen konnten nicht ermittelt werden.",
+    "Required earlier runs are missing from the captured history.": "Erforderliche frühere Läufe fehlen im erfassten Verlauf."
   }
 }

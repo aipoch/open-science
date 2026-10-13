@@ -25,6 +25,10 @@ import {
   prepareNotebookWorkloadCache,
   pythonBin,
   restoreNativeEnvironmentLock,
+  restoreEnvironmentSnapshot,
+  createEnvironmentSnapshotLease,
+  EnvironmentSnapshotInUseError,
+  type EnvironmentSnapshotLease,
   rScriptBin,
   runtimeRoot,
   selectMicromambaCache,
@@ -38,7 +42,7 @@ import { runMicromamba, verifyExecutable } from './environment-process'
 import { NotebookHelperModuleHost } from './helper-module-host'
 import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { sandboxedPackageSpawn, verifySnapshotRuntime } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { resolveLoopScriptPaths } from './runtime-service'
 import type { NotebookSessionExecutor } from './session-aggregate'
@@ -65,6 +69,7 @@ type RestoredEnvironment = {
   environmentName: string
   prefix: string
   command: string
+  snapshotLease?: EnvironmentSnapshotLease
 }
 
 type HelperEpoch = {
@@ -142,6 +147,7 @@ const loadEnvironmentLock = async (
     throw new Error(`Reproducibility Environment lock targets another platform.`)
   }
   const conda = lock.components.find((component) => component.ecosystem === 'conda')
+  if (lock.schemaVersion === 3 && lock.snapshot) return lock
   if (!conda || conda.format !== 'conda-explicit-md5') {
     throw new Error(`Reproducibility Environment lock has no exact Conda component.`)
   }
@@ -159,6 +165,8 @@ const loadEnvironmentLock = async (
 // a larger native lock preserves the earlier environment. Pip declaration order can differ;
 // other native lock formats must have identical payloads before they can share a runtime.
 const restoreIdentity = (lock: NotebookEnvironmentLock): string => {
+  if (lock.schemaVersion === 3 && lock.snapshot)
+    return JSON.stringify(['snapshot', lock.snapshot.checksum])
   const state = nativeLockRestoreState(lock)
   const component = state.state === 'ready' ? state.plan.component : undefined
   let pip: Map<string, string> | undefined
@@ -207,6 +215,49 @@ const restoreEnvironment = async (
       stage
     })
   const platform = dependencies.platform ?? process.platform
+  if (lock.schemaVersion === 3 && lock.snapshot) {
+    // Match capture's short private prefix, including one-character managed names.
+    const scratch = join(input.storageRoot, '.e')
+    const snapshotLease = await createEnvironmentSnapshotLease(
+      join(input.storageRoot, 'runtime'),
+      scratch,
+      'r-'
+    )
+    const snapshotRoot = snapshotLease.root
+    const prefix = join(snapshotRoot, 'e')
+    const command = pythonBin(prefix, platform)
+    try {
+      progress('restoring-packages')
+      await restoreEnvironmentSnapshot(
+        join(input.storageRoot, 'runtime', 'provenance', 'environment-snapshots'),
+        lock.snapshot.checksum,
+        prefix,
+        async ([executable, ...args]) => {
+          input.signal?.throwIfAborted()
+          progress('verifying-runtime')
+          return verifySnapshotRuntime(
+            input.processSandbox,
+            prefix,
+            [executable!, ...args],
+            input.signal,
+            snapshotLease
+          )
+        }
+      )
+      input.signal?.throwIfAborted()
+      await snapshotLease.activate()
+      progress('completed')
+      return {
+        environmentName: `repro-${requirement.lockChecksum.slice(0, 12)}`,
+        prefix,
+        command,
+        snapshotLease
+      }
+    } catch (error) {
+      await snapshotLease.release(error)
+      throw error
+    }
+  }
   const conda = lock.components.find((component) => component.ecosystem === 'conda')!
 
   const mm =
@@ -376,39 +427,57 @@ const createNotebookReproductionRuntime = async (
     })
   }
   const restoredByIdentity = new Map<string, RestoredEnvironment>()
-  for (const [index, { requirement, lock, identity }] of captured.entries()) {
-    input.signal?.throwIfAborted()
-    // Publish validated entries in restoration order; a preflight over all locks must not
-    // make the visible environment number jump backwards before restoration begins.
-    input.onEnvironmentProgress?.({
-      requirementId: requirement.requirementId,
-      kernelKind: requirement.kernelKind,
-      index,
-      total: input.requirements.length,
-      stage: 'validating-lock'
-    })
-    let environment = restoredByIdentity.get(identity)
-    if (!environment) {
-      environment = await restoreEnvironment(requirement, lock, input, dependencies, index)
-      restoredByIdentity.set(identity, environment)
-    } else {
+  const releaseSnapshotRoots = async (error?: unknown): Promise<void> => {
+    await Promise.all(
+      [...restoredByIdentity.values()].map((environment) =>
+        environment.snapshotLease?.release(error)
+      )
+    )
+  }
+  try {
+    for (const [index, { requirement, lock, identity }] of captured.entries()) {
+      input.signal?.throwIfAborted()
+      // Publish validated entries in restoration order; a preflight over all locks must not
+      // make the visible environment number jump backwards before restoration begins.
       input.onEnvironmentProgress?.({
         requirementId: requirement.requirementId,
         kernelKind: requirement.kernelKind,
         index,
         total: input.requirements.length,
-        stage: 'completed'
+        stage: 'validating-lock'
       })
+      let environment = restoredByIdentity.get(identity)
+      if (!environment) {
+        environment = await restoreEnvironment(requirement, lock, input, dependencies, index)
+        restoredByIdentity.set(identity, environment)
+      } else {
+        input.onEnvironmentProgress?.({
+          requirementId: requirement.requirementId,
+          kernelKind: requirement.kernelKind,
+          index,
+          total: input.requirements.length,
+          stage: 'completed'
+        })
+      }
+      restored.set(requirement.requirementId, environment)
     }
-    restored.set(requirement.requirementId, environment)
+    input.signal?.throwIfAborted()
+  } catch (error) {
+    await releaseSnapshotRoots()
+    throw error
   }
-  input.signal?.throwIfAborted()
   const executorOptions: NotebookKernelExecutorOptions = {
     ...resolveLoopScriptPaths(),
     processSandbox: input.processSandbox
   }
-  const executor =
-    dependencies.createExecutor?.(executorOptions) ?? new NotebookKernelExecutor(executorOptions)
+  let executor: NotebookSessionExecutor
+  try {
+    executor =
+      dependencies.createExecutor?.(executorOptions) ?? new NotebookKernelExecutor(executorOptions)
+  } catch (error) {
+    await releaseSnapshotRoots()
+    throw error
+  }
   const helperEpochs = new Map<string, HelperEpoch>()
   const environmentNames = new Map<string, string>()
   const epochPrefixes = new Map<string, string>()
@@ -513,7 +582,22 @@ const createNotebookReproductionRuntime = async (
       }
       return result
     },
-    shutdown: () => executor.shutdown()
+    shutdown: async () => {
+      const retain = (cause?: unknown): Promise<void> =>
+        releaseSnapshotRoots(
+          new EnvironmentSnapshotInUseError(cause, async () => (await executor.shutdown()).reaped)
+        )
+      let result: Awaited<ReturnType<NotebookSessionExecutor['shutdown']>>
+      try {
+        result = await executor.shutdown()
+      } catch (error) {
+        await retain(error)
+        throw error
+      }
+      if (result.reaped) await releaseSnapshotRoots()
+      else await retain()
+      return result
+    }
   }
 }
 

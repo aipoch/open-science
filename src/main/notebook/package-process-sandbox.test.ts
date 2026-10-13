@@ -4,7 +4,8 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { EnvironmentSnapshotInUseError } from '@aipoch/environment'
+import { sandboxedPackageSpawn, verifySnapshotRuntime } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
@@ -17,6 +18,115 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
+  it.each(['networkClosed', 'temporaryResourcesRemoved'] as const)(
+    'retains snapshot verification until %s cleanup completes',
+    async (field) => {
+      const root = mkdtempSync(join(tmpdir(), 'snapshot-cleanup-'))
+      temporaryDirectories.push(root)
+      const complete = {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+      const cleanup = vi.fn(async () => ({ ...complete, [field]: false }))
+      const wrap = vi.fn(async () => ({
+        executable: process.execPath,
+        args: ['-e', 'console.log("OPEN_SCIENCE_SNAPSHOT_VERIFIED")'],
+        env: process.env,
+        annotateStderr: (text: string) => text,
+        cleanup
+      }))
+      const error = await verifySnapshotRuntime({ wrap }, join(root, 'e'), ['python']).catch(
+        (error: unknown) => error
+      )
+      expect(error).toBeInstanceOf(EnvironmentSnapshotInUseError)
+      if (!(error instanceof EnvironmentSnapshotInUseError)) throw error
+      expect(await error.retryTermination!()).toBe(false)
+      cleanup.mockResolvedValue(complete)
+      expect(await error.retryTermination!()).toBe(true)
+      expect(cleanup).toHaveBeenCalledTimes(3)
+      expect(wrap).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each(['incomplete', 'throw'])(
+    'retries %s cleanup after cancellation prevents spawning without an owner termination API',
+    async (failure) => {
+      const root = mkdtempSync(join(tmpdir(), 'snapshot-cleanup-cancel-'))
+      temporaryDirectories.push(root)
+      const controller = new AbortController()
+      const complete = {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+      const cleanup = vi.fn(async () => ({ ...complete, temporaryResourcesRemoved: false }))
+      if (failure === 'throw') cleanup.mockRejectedValueOnce(new Error('temporary cleanup failed'))
+      const wrap = vi.fn(async () => {
+        controller.abort()
+        return {
+          executable: process.execPath,
+          args: ['-e', ''],
+          env: process.env,
+          annotateStderr: (text: string) => text,
+          cleanup
+        }
+      })
+      const childStarted = vi.fn()
+      const error = await verifySnapshotRuntime(
+        { wrap },
+        join(root, 'e'),
+        ['python'],
+        controller.signal,
+        { beforeSpawn: vi.fn(), childStarted }
+      ).catch((error: unknown) => error)
+      expect(childStarted).not.toHaveBeenCalled()
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
+      expect(error).toBeInstanceOf(EnvironmentSnapshotInUseError)
+      if (!(error instanceof EnvironmentSnapshotInUseError)) throw error
+      expect(await error.retryTermination!()).toBe(false)
+      cleanup.mockResolvedValue(complete)
+      expect(await error.retryTermination!()).toBe(true)
+    }
+  )
+
+  it('retries verification cleanup through the same launch-bound sandbox owner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'snapshot-verifier-owner-'))
+    temporaryDirectories.push(root)
+    const requestProcessTreeTermination = vi.fn(async () => false)
+    const cleanup = vi
+      .fn(async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      .mockRejectedValueOnce(new Error('termination unconfirmed'))
+    const wrap = vi.fn(async () => ({
+      executable: process.execPath,
+      args: ['-e', 'console.log("OPEN_SCIENCE_SNAPSHOT_VERIFIED")'],
+      env: process.env,
+      annotateStderr: (text: string) => text,
+      requestProcessTreeTermination,
+      cleanup
+    }))
+    const result = await verifySnapshotRuntime({ wrap }, join(root, 'e'), ['python']).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(result).toBeInstanceOf(EnvironmentSnapshotInUseError)
+    if (!(result instanceof EnvironmentSnapshotInUseError)) throw result
+    expect(await result.retryTermination!()).toBe(false)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    requestProcessTreeTermination.mockResolvedValue(true)
+    expect(await result.retryTermination!()).toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(cleanup).toHaveBeenLastCalledWith('exit', { processesTerminated: true })
+    expect(wrap).toHaveBeenCalledTimes(1)
+  })
+
   it('passes GUI-authorized roots to the package sandbox with their access mode', async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-package-grants-'))
     const runtimeRoot = join(storageRoot, 'runtime')

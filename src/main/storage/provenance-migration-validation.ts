@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { lstat, readFile, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
-import { parseNotebookEnvironmentLock } from '@aipoch/environment'
+import {
+  parseNotebookEnvironmentLock,
+  readEnvironmentSnapshot,
+  reconcileEnvironmentSnapshotOperations
+} from '@aipoch/environment'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -97,6 +101,7 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
 // runtime after switchover.
 const assertNoRuntimeOperations = async (root: string): Promise<void> => {
   const runtimeRoot = join(root, 'runtime')
+  await reconcileEnvironmentSnapshotOperations(runtimeRoot)
   const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
   const state = await journal.readState()
   if (state === 'corrupt') {
@@ -184,10 +189,32 @@ const validateEnvironmentLockReference = async (
   if ((await sha256File(lockPath)) !== checksum) {
     throw new Error(`Environment lock checksum mismatch: ${checksum}`)
   }
+  let lock
   try {
-    parseNotebookEnvironmentLock(await readFile(lockPath, 'utf8'))
+    lock = parseNotebookEnvironmentLock(await readFile(lockPath, 'utf8'))
   } catch {
     throw new Error(`Environment lock is invalid: ${checksum}`)
+  }
+  if (lock.snapshot) {
+    const store = join(root, 'runtime', 'provenance', 'environment-snapshots')
+    const snapshot = await readEnvironmentSnapshot(store, lock.snapshot.checksum)
+    const checked = new Map<string, number>()
+    for (const entry of snapshot.entries) {
+      if (entry.kind !== 'file') continue
+      if (!checked.has(entry.checksum)) {
+        const path = join(store, 'objects', entry.checksum)
+        const metadata = await lstat(path)
+        if (
+          !metadata.isFile() ||
+          metadata.isSymbolicLink() ||
+          (await sha256File(path)) !== entry.checksum
+        )
+          throw new Error('Environment snapshot object integrity is invalid.')
+        checked.set(entry.checksum, metadata.size)
+      }
+      if (checked.get(entry.checksum) !== entry.size)
+        throw new Error('Environment snapshot object size is invalid.')
+    }
   }
   validated.add(checksum)
 }

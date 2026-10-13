@@ -172,3 +172,17 @@ export { createFetchBundleAdapter } from './language-pack-fetch'
 export { chainFetchBundle, createLocalBundleAdapter } from './bundle-local'
 export { packageCacheCleanArgv } from './micromamba-cache-maintenance'
 export type { EnvironmentProcessHost, ProcessTreeKillResult } from './process-host'
+export {
+  EnvironmentSnapshotInUseError,
+  readEnvironmentSnapshot,
+  removeEnvironmentSnapshot,
+  restoreEnvironmentSnapshot,
+  verifyEnvironmentSnapshot
+} from './environment-snapshot'
+
+export {
+  createEnvironmentSnapshotLease,
+  reconcileEnvironmentSnapshotOperations,
+  type EnvironmentSnapshotLease,
+  type EnvironmentSnapshotProcessObserver
+} from './environment-snapshot-lifecycle'

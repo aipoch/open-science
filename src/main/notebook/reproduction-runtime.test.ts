@@ -1,7 +1,7 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -73,6 +73,7 @@ const sha256 = async (value: string): Promise<string> => {
 describe('Notebook reproduction runtime', () => {
   const replayRoots: string[] = []
   afterEach(async () => {
+    vi.useRealTimers()
     await Promise.all(
       replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
     )
@@ -181,6 +182,138 @@ describe('Notebook reproduction runtime', () => {
       })
     return { replay, runMicromamba, execute, environmentProgress, requirements }
   }
+
+  it.each([
+    'reaped',
+    'running',
+    'shutdown-threw',
+    'verification-failed',
+    'verification-unreaped',
+    'executor-failed'
+  ] as const)(
+    'restores snapshot bytes through the sandbox and handles %s cleanup',
+    async (outcome) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'snapshot-runtime-'))
+      replayRoots.push(storageRoot)
+      const sourcePrefix = join(await realpath(storageRoot), 'runtime', 'envs', 'a')
+      const payload = 'captured interpreter fixture'
+      const payloadChecksum = await sha256(payload)
+      const executablePath = process.platform === 'win32' ? 'python.exe' : 'bin/python'
+      const snapshot = JSON.stringify({
+        schemaVersion: 1,
+        sourcePrefix,
+        observation: { runtimeVersion: '3.12.14', packages: [] },
+        entries: [
+          ...(process.platform === 'win32'
+            ? []
+            : [{ path: 'bin', kind: 'directory', mode: 0o755 }]),
+          {
+            path: executablePath,
+            kind: 'file',
+            mode: 0o755,
+            checksum: payloadChecksum,
+            size: payload.length
+          }
+        ]
+      })
+      const snapshotChecksum = await sha256(snapshot)
+      const objects = join(storageRoot, 'runtime/provenance/environment-snapshots/objects')
+      await mkdir(objects, { recursive: true })
+      await writeFile(join(objects, payloadChecksum), payload)
+      await writeFile(join(objects, snapshotChecksum), snapshot)
+      const lock = JSON.stringify({
+        schemaVersion: 3,
+        format: 'environment-lock-bundle',
+        kernelKind: 'python',
+        environmentName: 'default-python',
+        platform: process.platform,
+        architecture: process.arch,
+        components: [],
+        snapshot: { checksum: snapshotChecksum }
+      })
+      const lockChecksum = await sha256(lock)
+      const locks = join(storageRoot, 'runtime/provenance/environment-locks')
+      await mkdir(locks, { recursive: true })
+      await writeFile(join(locks, `${lockChecksum}.json`), lock)
+      const wrap = vi.fn(async (invocation) => ({
+        // Exercise actual process lifetime and sandbox handoff; Python probing itself is
+        // covered by the environment snapshot integration test.
+        executable: process.execPath,
+        args: [
+          '-e',
+          outcome === 'verification-failed'
+            ? 'process.exit(1)'
+            : 'console.log("OPEN_SCIENCE_SNAPSHOT_VERIFIED")'
+        ],
+        env: invocation.env,
+        annotateStderr: (text: string) => text,
+        cleanup: vi.fn(async () => {
+          if (outcome === 'verification-unreaped')
+            throw new Error('Sandbox lost process termination evidence')
+          return { processesTerminated: true, networkClosed: true, temporaryResourcesRemoved: true }
+        })
+      }))
+      const shutdown = vi.fn(async () => {
+        if (outcome === 'shutdown-threw') throw new Error('shutdown failed')
+        return { reaped: outcome !== 'running' }
+      })
+      const createExecutor = vi.fn(() => {
+        if (outcome === 'executor-failed') throw new Error('executor initialization failed')
+        return { execute: vi.fn(), shutdown }
+      })
+      const creating = createNotebookReproductionRuntime(
+        {
+          requirements: [
+            {
+              requirementId: `environment-lock:${lockChecksum}`,
+              kernelKind: 'python',
+              environmentName: 'default-python',
+              lockChecksum,
+              lockState: 'available'
+            }
+          ],
+          storageRoot,
+          attemptRoot: join(storageRoot, 'attempt'),
+          processSandbox: { wrap },
+          projectId: 'project',
+          sessionId: 'session'
+        },
+        { createExecutor }
+      )
+      const scratch = join(storageRoot, '.e')
+      if (outcome === 'verification-unreaped') {
+        await expect(creating).rejects.toThrow('termination is unconfirmed')
+        expect(createExecutor).not.toHaveBeenCalled()
+        expect(await readdir(scratch)).toHaveLength(1)
+      } else if (outcome === 'verification-failed' || outcome === 'executor-failed') {
+        await expect(creating).rejects.toThrow(
+          outcome === 'verification-failed' ? 'verification failed' : 'initialization failed'
+        )
+        expect(await readdir(scratch)).toEqual([])
+      } else {
+        const runtime = await creating
+        expect(await readdir(scratch)).toHaveLength(1)
+        const executable = wrap.mock.calls[0]![0].executable
+        const prefix =
+          process.platform === 'win32' ? dirname(executable) : dirname(dirname(executable))
+        expect(Buffer.byteLength(await realpath(prefix))).toBeLessThanOrEqual(
+          Buffer.byteLength(sourcePrefix)
+        )
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        if (outcome === 'shutdown-threw')
+          await expect(runtime.shutdown()).rejects.toThrow('shutdown failed')
+        else await expect(runtime.shutdown()).resolves.toEqual({ reaped: outcome === 'reaped' })
+        expect(await readdir(scratch)).toHaveLength(outcome === 'reaped' ? 0 : 1)
+        if (outcome !== 'reaped') {
+          shutdown.mockResolvedValue({ reaped: true })
+          await vi.advanceTimersByTimeAsync(30_000)
+          await vi.waitFor(async () => expect(await readdir(scratch)).toEqual([]))
+          expect(shutdown).toHaveBeenCalledTimes(2)
+        }
+      }
+      expect((await lstat(join(objects, payloadChecksum))).isFile()).toBe(true)
+    }
+  )
 
   it('restores the captured state at each R runtime step', async () => {
     const lock: NotebookEnvironmentLock = JSON.parse(serializeLock(process.platform, 'r'))

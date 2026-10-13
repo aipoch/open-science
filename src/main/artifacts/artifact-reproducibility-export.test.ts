@@ -631,6 +631,51 @@ describe('Artifact reproducibility verification export', () => {
 })
 
 describe('Artifact Environment lock export', () => {
+  it('describes verified snapshots but prevents package-only export and reusable environments', async () => {
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 3,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      platform: process.platform,
+      architecture: process.arch,
+      snapshot: { checksum: 'a'.repeat(64) },
+      components: []
+    }
+    const contents = JSON.stringify(lock),
+      checksum = sha256(contents)
+    const execution = structuredClone(environmentLockExecution)
+    execution.reproducibilityRecipe!.environmentRequirements[0]!.lockChecksum = checksum
+    execution.runs[0]!.environmentLock = {
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: checksum
+    }
+    const showSaveDialog = vi.fn(),
+      createEnvironmentFromLock = vi.fn()
+    const exporter = createArtifactReproducibilityReceiptExporter({
+      downloadsDirectory: () => '/downloads',
+      readReceipt: vi.fn(),
+      readExecution: vi.fn(async () => execution),
+      readEnvironmentLock: vi.fn(async () => contents),
+      showSaveDialog,
+      createEnvironmentFromLock
+    })
+    const request = { ...environmentLockRequest, lockChecksum: checksum }
+    await expect(exporter.describeEnvironmentLock(request)).resolves.toMatchObject({
+      snapshot: true,
+      lockState: 'available'
+    })
+    await expect(exporter.exportEnvironmentLock(undefined, request)).rejects.toThrow(
+      'snapshot files'
+    )
+    await expect(exporter.createEnvironmentFromLock(request)).rejects.toThrow(
+      'isolated reproducibility checks'
+    )
+    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(createEnvironmentFromLock).not.toHaveBeenCalled()
+  })
+
   it('exports a conditional runner without a fabricated Conda restore command', () => {
     const content = JSON.stringify({
       R: { Version: '4.4.3' },

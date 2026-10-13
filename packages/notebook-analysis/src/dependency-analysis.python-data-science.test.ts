@@ -26,6 +26,150 @@ const run = (script: string, index = 0): NotebookRunRecord => ({
   workingFiles: []
 })
 
+describe('DOCX document dependency tracking', () => {
+  it('tracks document construction and formatting through paragraph and run aliases', async () => {
+    const scripts = [
+      'from docx import Document\nfrom docx.shared import Pt\ndoc = Document()\np = doc.add_heading("Results", level=1)\nr = p.add_run("Measured")\nr.font.size = Pt(12)',
+      'doc.save("report.docx")'
+    ]
+    const before = await projectPythonScripts(scripts)
+    expect(before.stalenessByRunId['run-2']?.state).toBe('clear')
+    const after = await projectPythonScripts([...scripts, 'r.text = "Updated"'])
+    expect(after.stalenessByRunId['run-2']?.state).not.toBe('clear')
+  })
+  it('does not certify readers after an attached OXML node is mutated', async () => {
+    const result = await projectPythonScripts([
+      'from docx import Document\nfrom docx.oxml import OxmlElement\ndoc = Document()\nr = doc.add_paragraph().add_run("Text")\npr = r._element.get_or_add_rPr()\nfonts = OxmlElement("w:rFonts")\npr.append(fonts)',
+      'doc.save("report.docx")',
+      'fonts.set("hello", "world")'
+    ])
+    expect(result.stalenessByRunId['run-2']?.state).not.toBe('clear')
+  })
+  it('retains custom arithmetic effects in DOCX length conversion', async () => {
+    const result = await projectPythonScripts([
+      'from docx.shared import Pt\nvalues = []\nclass Size:\n    def __mul__(self, scale):\n        values.append(scale)\n        return 1\nsize = Size()',
+      'before = len(values)',
+      'value = Pt(size)'
+    ])
+    expect(result.stalenessByRunId['run-2']?.state).not.toBe('clear')
+  })
+  it('keeps unregistered OXML calls conservative', async () => {
+    const [facts] = await analyzePythonSources([
+      'from docx.oxml import OxmlElement\nelement = OxmlElement("w:rFonts")\nelement.custom_load("remote.xml")'
+    ])
+    expect(facts.state).toBe('unknown')
+  })
+})
+
+describe('literal mapping iteration', () => {
+  it('keeps chained JSON lookups conservative when the intermediate default type is unavailable', async () => {
+    const projection = await projectPythonScripts([
+      'import json\nrecords = json.loads(\'{"sample":{"class":"control"}}\')\nvalue = records.get("sample", {}).get("class", "")'
+    ])
+    expect(projection.stalenessByRunId['run-1']?.state).toBe('unknown')
+  })
+
+  it('does not discard the identity of a mutable get default', async () => {
+    const [facts] = await analyzePythonSources([
+      'fallback = []\nrecords = {}\nvalue = records.get("missing", fallback)\nvalue.append(1)'
+    ])
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    [
+      'class Reader:\n    def read(self):\n        values.append(1)\n        return "{}"\nreader = Reader()',
+      'record = json.load(reader)'
+    ],
+    [
+      'class Key:\n    def __hash__(self): return 1\n    def __eq__(self, other):\n        values.append(1)\n        return True\nrecords = {Key(): {}}',
+      'value = records.get(1)'
+    ]
+  ])('retains custom input effects: %s', async (setup, call) => {
+    const projection = await projectPythonScripts([
+      `import json\nvalues = []\n${setup}`,
+      'before = len(values)',
+      call
+    ])
+    expect(projection.stalenessByRunId['run-2']?.state).not.toBe('clear')
+    expect(projection.stalenessByRunId['run-3']?.state).toBe('unknown')
+  })
+  it('tracks default JSON mapping values across cells', async () => {
+    const projection = await projectPythonScripts([
+      'import json\nrecords = json.loads(\'{"sample":{"class":"control"}}\')',
+      'classes = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")'
+    ])
+    expect(projection.stalenessByRunId['run-2']?.state).toBe('clear')
+  })
+
+  it.each(['records["sample"] = custom', 'alias = records\nalias["sample"] = custom'])(
+    'invalidates JSON element types across a later write: %s',
+    async (mutation) => {
+      const projection = await projectPythonScripts([
+        'import json\nrecords = json.loads(\'{"sample":{"class":"control"}}\')',
+        mutation,
+        'classes = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")'
+      ])
+      expect(projection.stalenessByRunId['run-3']?.state).toBe('unknown')
+    }
+  )
+
+  it('keeps custom JSON decoder results conservative', async () => {
+    const [facts] = await analyzePythonSources([
+      'import json\nrecords = json.loads("{}", object_hook=custom)\nclasses = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")'
+    ])
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('revokes safe literal keys when an escaped loop mapping receives a custom key', async () => {
+    const projection = await projectPythonScripts([
+      'values = []\nclass Key:\n    def __hash__(self): return 1\n    def __eq__(self, other):\n        values.append(other)\n        return True\nkey = Key()\nrecords = {"a": {}}\nfor name, record in records.items():\n    result = record.get("x")',
+      'record[key] = 1',
+      'before = len(values)',
+      'result = record.get(1)'
+    ])
+    expect(projection.stalenessByRunId['run-4']?.state).toBe('unknown')
+  })
+
+  it('does not trust a file handle after replacing its read method', async () => {
+    const [facts] = await analyzePythonSources([
+      'import json\nwith open("input.json") as handle:\n    handle.read = custom\n    value = json.load(handle)'
+    ])
+    expect(facts.state).toBe('unknown')
+    expect(facts.reasons).toContain('opaque-call')
+  })
+
+  it.each(['records["x"] = custom', 'alias = records\nalias["x"] = custom'])(
+    'revokes prior JSON types before a chained call in the writing cell: %s',
+    async (mutation) => {
+      const projection = await projectPythonScripts([
+        'import json\nvalues = []\nclass Custom:\n    def get(self, key):\n        values.append(key)\n        return 1\ncustom = Custom()\nrecords = json.loads("{}")',
+        'before = len(values)',
+        `${mutation}\nvalue = records.get("x", {}).get("y")`
+      ])
+      expect(projection.stalenessByRunId['run-2']?.state).not.toBe('clear')
+      expect(projection.stalenessByRunId['run-3']?.state).toBe('unknown')
+    }
+  )
+
+  it('tracks a read from a literal mapping value inside an items loop', async () => {
+    const [facts] = await analyzePythonSources([
+      'records = {"sample": {"class": "control"}}\nclasses = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")'
+    ])
+    expect(facts.state).toBe('available')
+  })
+
+  it.each([
+    'records = {"sample": custom}\nvalue = records["sample"].get("class", "")',
+    'records = {"sample": custom}\nclasses = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")',
+    'records = {"sample": {"class": "control"}}\nchange(records)\nclasses = {}\nfor name, record in records.items():\n    classes[name] = record.get("class", "")',
+    'records = {"sample": {"class": "control"}}\nclasses = {}\nfor name, record in records.items():\n    record = custom\n    classes[name] = record.get("class", "")',
+    'records = {"a": {}, "b": {}}\nclasses = {}\nfor name, record in records.items():\n    records["b"] = custom\n    classes[name] = record.get("class", "")'
+  ])('does not certify an unproven mapping receiver: %s', async (script) => {
+    const [facts] = await analyzePythonSources([script])
+    expect(facts.state).toBe('unknown')
+  })
+})
+
 describe('nested definition header scope isolation', () => {
   it.each([
     'def inner(scale=[helper for helper in [1, 2]]):\n        return 0',

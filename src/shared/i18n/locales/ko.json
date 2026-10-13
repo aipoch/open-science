@@ -7185,6 +7185,19 @@
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Open-Science가 사용하는 프록시를 확인하세요. 정상 작동하는 브라우저 연결은 다른 프록시 설정을 사용할 수 있습니다.",
     "Reconnect the backend, then check again.": "백엔드에 다시 연결한 후 다시 확인하세요.",
     "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "시스템 모드는 백엔드에서 사용 가능한 프록시 설정을 사용합니다. 브라우저 및 운영 체제 설정과 다를 수 있습니다. 고정 프록시를 설정하려면 수동을 선택하세요.",
-    "Backend defaults": "백엔드 기본값"
+    "Backend defaults": "백엔드 기본값",
+    "Environment snapshot": "환경 스냅샷",
+    "The environment files were captured, but isolated restoration could not be verified.": "환경 파일을 캡처했지만 격리된 복원을 검증하지 못했습니다.",
+    "Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.": "캡처한 환경 파일은 로컬 재현성 검사에 사용됩니다. 이 스냅샷에서는 패키지 잠금 내보내기와 재사용 가능한 환경 생성을 사용할 수 없습니다.",
+    "This code uses file or external state whose dependencies are not fully confirmed.": "이 코드는 종속성이 완전히 확인되지 않은 파일이나 외부 상태를 사용합니다.",
+    "Some calls may read or change values that the analyzer cannot identify.": "일부 호출은 분석기가 식별할 수 없는 값을 읽거나 변경할 수 있습니다.",
+    "Dynamic names or custom objects prevent complete variable tracking.": "동적 이름이나 사용자 지정 객체로 인해 변수를 완전히 추적할 수 없습니다.",
+    "Not all branch or loop effects could be determined.": "일부 분기나 반복문의 영향을 확인할 수 없습니다.",
+    "The captured environment is not yet verified for isolated restoration.": "캡처한 환경의 격리 복원이 아직 검증되지 않았습니다.",
+    "No environment lock was captured for one or more required runs.": "필요한 실행 중 하나 이상에서 환경 잠금이 캡처되지 않았습니다.",
+    "The complete set of input files was not captured.": "전체 입력 파일 집합이 캡처되지 않았습니다.",
+    "Some output files could not be attributed to a single run.": "일부 출력 파일을 단일 실행에 연결할 수 없습니다.",
+    "Some dependencies on earlier cells could not be determined.": "이전 셀에 대한 일부 종속성을 확인할 수 없습니다.",
+    "Required earlier runs are missing from the captured history.": "캡처한 기록에 필요한 이전 실행이 없습니다."
   }
 }

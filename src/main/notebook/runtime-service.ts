@@ -126,7 +126,7 @@ import {
   type InspectPackagesRequest,
   type InspectPackagesResult
 } from './package-operations'
-import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { sandboxedPackageSpawn, verifySnapshotRuntime } from './package-process-sandbox'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
@@ -948,6 +948,12 @@ class NotebookRuntimeService {
       new EnvironmentStateTracker({
         dataRoot: options.dataRoot,
         platform: options.platform,
+        ...(options.processSandbox
+          ? {
+              verifySnapshotRuntime: (prefix, argv, observer) =>
+                verifySnapshotRuntime(options.processSandbox!, prefix, argv, undefined, observer)
+            }
+          : {}),
         resolveMicromamba: async () =>
           options.micromambaRunner
             ? options.micromambaRunner.resolve()

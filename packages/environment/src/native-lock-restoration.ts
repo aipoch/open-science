@@ -258,6 +258,9 @@ const nativeLockRestoreState = (
   lock: NotebookEnvironmentLock,
   observedPackages?: readonly NotebookEnvironmentPackage[]
 ): NativeLockRestoreState => {
+  // A file snapshot must use its own materialization and verification owner. Its package
+  // components describe the original conflict and must never drive a package-only restore.
+  if (lock.schemaVersion === 3) return { state: 'unsupported' }
   const required = (lock.untrackedPackages ?? []).map((identity) => {
     const separator = identity.indexOf(':')
     return separator > 0

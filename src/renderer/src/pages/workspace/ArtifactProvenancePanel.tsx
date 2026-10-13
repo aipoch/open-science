@@ -195,6 +195,10 @@ const partialEnvironmentLockSummary = (
       details.add(t('A native package lock was captured on a best-effort basis.'))
     } else if (reason === 'native-lock-file-rejected') {
       details.add(t('A native package lock was rejected because it was unsafe or invalid.'))
+    } else if (reason === 'environment-snapshot-unverified') {
+      details.add(
+        t('The environment files were captured, but isolated restoration could not be verified.')
+      )
     }
   }
   return [
@@ -2102,7 +2106,6 @@ const ArtifactProvenancePanel = ({
               {capturedEnvironmentLocks.length > 0 ? (
                 <ul className="divide-y divide-border-300/50 overflow-hidden rounded-md border border-border-300/60">
                   {capturedEnvironmentLocks.map((lock) => {
-                    const lockName = lock.kernelKind === 'python' ? t('Python lock') : t('R lock')
                     const exporting = exportingEnvironmentLockChecksum === lock.lockChecksum
                     const entry = environmentLockEntries.get(environmentLockKey(lockRequest(lock)))
                     const creating = entry?.creation?.status === 'pending'
@@ -2110,6 +2113,11 @@ const ArtifactProvenancePanel = ({
                       entry?.creation?.status === 'ready' ? entry.creation.value : undefined
                     const details =
                       entry?.details?.status === 'ready' ? entry.details.value : undefined
+                    const lockName = details?.snapshot
+                      ? t('Environment snapshot')
+                      : lock.kernelKind === 'python'
+                        ? t('Python lock')
+                        : t('R lock')
                     return (
                       <li key={lock.lockChecksum} className="min-w-0 space-y-3 p-3">
                         <div className="min-w-0 flex-1">
@@ -2157,7 +2165,8 @@ const ArtifactProvenancePanel = ({
                               className="max-w-full whitespace-nowrap text-xs"
                               disabled={
                                 exportingEnvironmentLockChecksum !== undefined ||
-                                details === undefined
+                                details === undefined ||
+                                details.snapshot === true
                               }
                               aria-label={t('Download {{name}}', { name: lockName })}
                               onClick={() => void downloadEnvironmentLock(lock)}
@@ -2187,6 +2196,7 @@ const ArtifactProvenancePanel = ({
                               disabled={
                                 creatingEnvironment ||
                                 details === undefined ||
+                                details.snapshot === true ||
                                 importedSession ||
                                 exportingSession
                               }
@@ -2244,9 +2254,13 @@ const ArtifactProvenancePanel = ({
                               sha256-{lock.lockChecksum}
                             </p>
                             <p>
-                              {t(
-                                'Downloads include Open-Science metadata and tool-native lock files.'
-                              )}
+                              {details?.snapshot
+                                ? t(
+                                    'Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.'
+                                  )
+                                : t(
+                                    'Downloads include Open-Science metadata and tool-native lock files.'
+                                  )}
                             </p>
                           </div>
                         </details>
