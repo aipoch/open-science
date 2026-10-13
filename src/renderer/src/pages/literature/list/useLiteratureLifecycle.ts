@@ -1,5 +1,5 @@
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   parseLiteratureDeletionError,
@@ -93,6 +93,16 @@ export function useLiteratureLifecycle({
     setPermanentDeleteResult(undefined)
   }
   const [lifecycleFailure, setLifecycleFailure] = useState<LifecycleFailure>()
+  // A query key can recur after navigating away and back. Completion authority belongs to the
+  // original visit, not just a matching key; retained commands also lose authority on unmount.
+  const lifecycleContext = useMemo(() => ({ entriesKey }), [entriesKey])
+  const currentLifecycleContext = useRef<typeof lifecycleContext | undefined>(lifecycleContext)
+  useLayoutEffect(() => {
+    currentLifecycleContext.current = lifecycleContext
+    return () => {
+      currentLifecycleContext.current = undefined
+    }
+  }, [lifecycleContext])
   const previewRestoreSelection = async (): Promise<void> => {
     if (isBatching) return
     const scopeKey = entriesKey
@@ -141,6 +151,7 @@ export function useLiteratureLifecycle({
     setLifecycleFailure(undefined)
     let resolvedIds: readonly string[] = []
     let completed = 0
+    const isCurrent = (): boolean => currentLifecycleContext.current === lifecycleContext
     try {
       resolvedIds = itemIds ?? (await resolveSelectedItemIds())
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
@@ -148,14 +159,16 @@ export function useLiteratureLifecycle({
         await window.api.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
         completed += batch.length
       }
-      clearSelection()
+      if (isCurrent()) clearSelection()
     } catch {
-      if (resolvedIds.length) {
-        const remaining = resolvedIds.slice(completed)
-        selectionStore.replace(remaining)
-        setLifecycleFailure({ itemIds: remaining, state, completed })
-      } else {
-        setError(t('Literature could not be updated.'))
+      if (isCurrent()) {
+        if (resolvedIds.length) {
+          const remaining = resolvedIds.slice(completed)
+          selectionStore.replace(remaining)
+          setLifecycleFailure({ itemIds: remaining, state, completed })
+        } else {
+          setError(t('Literature could not be updated.'))
+        }
       }
     } finally {
       if (resolvedIds.length) {
@@ -165,7 +178,7 @@ export function useLiteratureLifecycle({
           loadCollections(),
           loadProjectCounts()
         ])
-        if (refreshed.some((result) => result.status === 'rejected')) {
+        if (isCurrent() && refreshed.some((result) => result.status === 'rejected')) {
           setError(t('Literature could not be loaded.'))
         }
       }

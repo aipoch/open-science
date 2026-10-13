@@ -9777,6 +9777,104 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it.each(['failure', 'success', 'return-to-source'] as const)(
+    'keeps the current selection and recovery UI when an earlier lifecycle visit settles: %s',
+    async (settlement) => {
+      let sourceItems = Array.from({ length: 201 }, (_, index) => ({
+        ...createLibraryItem(index),
+        collectionIds: ['source']
+      }))
+      const targetItem = { ...createLibraryItem(202), collectionIds: ['target'] }
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return Promise.resolve({
+            entries: [
+              {
+                id: 'source',
+                name: 'Source',
+                description: '',
+                itemCount: sourceItems.length,
+                createdAt: 1,
+                updatedAt: 1
+              },
+              {
+                id: 'target',
+                name: 'Target',
+                description: '',
+                itemCount: 1,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          })
+        if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+        const items = request.collectionId === 'source' ? sourceItems : [targetItem]
+        const offset = request.offset ?? 0
+        const limit = request.limit ?? 100
+        return Promise.resolve({
+          entries: items.slice(offset, offset + limit),
+          totalCount: items.length,
+          nextOffset: offset + limit < items.length ? offset + limit : undefined
+        })
+      })
+      let finish!: (receipt: LiteratureCatalogReceipt) => void
+      let reject!: (error: Error) => void
+      transact
+        .mockImplementationOnce(async (command) => {
+          sourceItems = sourceItems.filter(({ id }) => !command.itemIds.includes(id))
+          return { kind: 'item', id: command.itemIds[0], state: 'deleted' }
+        })
+        .mockImplementationOnce(
+          () =>
+            new Promise<LiteratureCatalogReceipt>((resolve, fail) => {
+              finish = resolve
+              reject = fail
+            })
+        )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'source' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Reference 0')
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
+      const toolbar = document.querySelector<HTMLElement>(
+        '[data-slot="literature-selection-toolbar"]'
+      )!
+      await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Move to Trash' }))
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+      expect(sourceItems).toHaveLength(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+      await screen.findByText('Reference 202')
+      await act(async () => {})
+      if (settlement === 'return-to-source') {
+        fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+        // Returning can show the cached first page. Select a visible row in this new visit,
+        // distinct from the failed remainder, rather than requiring an unrelated cache refresh.
+        await screen.findByText('Reference 0')
+        await act(async () => {})
+      }
+      const selectedTitle = settlement === 'return-to-source' ? 'Reference 0' : 'Reference 202'
+      fireEvent.click(screen.getByLabelText(`Select ${selectedTitle}`))
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      await act(async () => {
+        if (settlement === 'success') {
+          sourceItems = []
+          finish({ kind: 'item', id: 'item-200', state: 'deleted' })
+        } else reject(new Error('Second lifecycle batch unavailable'))
+      })
+      expect(transact).toHaveBeenCalledTimes(2)
+      expect((screen.getByLabelText(`Select ${selectedTitle}`) as HTMLInputElement).checked).toBe(
+        true
+      )
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      expect(screen.queryByText('Updated: 200. Not updated: 1.')).toBeNull()
+      expect(screen.queryByText('Literature could not be updated.')).toBeNull()
+      expect(screen.queryByText('Literature could not be loaded.')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    }
+  )
+
   it('refreshes committed references when a later lifecycle batch fails', async () => {
     let items = Array.from({ length: 201 }, (_, index) => createLibraryItem(index))
     search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
