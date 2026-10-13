@@ -39,7 +39,7 @@ import { type SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import { createPersistedClaudeReplayPreparer } from '../session-persistence/claude-replay'
 import type { SessionPersistenceCommands } from '../session-persistence/coordinator'
 import { createDefaultSessionRepository } from '../session-persistence/ipc'
-import { clearUnanchoredAttachmentRecovery } from '../session-persistence/runtime-attachment-recovery'
+import { completeRuntimeAttachmentRecovery } from '../session-persistence/runtime-attachment-recovery'
 import { SettingsService } from '../settings/service'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { SpecialistService } from '../specialist/service'
@@ -216,12 +216,10 @@ export async function composeAgentWorkflows({
       loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
       prepareRuntimeResume: (projectId, sessionId) =>
         sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId),
-      completeRuntimeAttachment: async (projectId, sessionId) => {
-        const current = await sessionRepository.loadSession(projectId, sessionId)
-        if (!current || clearUnanchoredAttachmentRecovery(current) === current) return
+      completeRuntimeAttachment: async (projectId, sessionId, attached) => {
         await sessionPersistenceCoordinator.mutateRuntimeSession(
           { projectId, sessionId },
-          clearUnanchoredAttachmentRecovery
+          (current) => completeRuntimeAttachmentRecovery(current, attached)
         )
       }
     },

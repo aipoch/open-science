@@ -435,6 +435,9 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      onProviderPromptAccepted: (sessionId) => {
+        this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+      },
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
         prepareContinuationReplay: async (request) => {
@@ -915,7 +918,6 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
       const resumed = await this.providerSessionResumer.resume(request)
       if (resumed.contextReset) {
         const contextResetSessionIds =
@@ -927,7 +929,11 @@ class AcpRuntime {
         this.sessionEnvironment.projectId(request.sessionId),
         request.sessionId
       )
-      return resumed
+      // Attachment persistence can fail after adoption. Retrying that same attachment must still
+      // replay history until a prompt actually consumes the fresh provider context.
+      return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
+        ? { ...resumed, contextReset: true }
+        : resumed
     })
   }
 

@@ -146,6 +146,11 @@
   },
   "renderer": {
     "Select one or more options": "하나 이상의 옵션 선택",
+    "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
+    "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",
+    "The selected agent could not be attached to this conversation. Try Resume again.": "선택한 에이전트를 이 대화에 연결할 수 없습니다. 다시 재개해 보세요.",
+    "Could not resume this conversation": "이 대화를 재개할 수 없습니다",
+    "Could not copy details. Select the text and copy it manually.": "세부 정보를 복사할 수 없습니다. 텍스트를 선택하여 직접 복사하세요.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
     "Query miRNA target evidence.": "miRNA 표적 근거 조회.",
     "Query RNA–RNA interaction evidence.": "RNA–RNA 상호작용 근거 조회.",

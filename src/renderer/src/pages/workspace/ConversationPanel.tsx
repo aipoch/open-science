@@ -1,3 +1,4 @@
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
   PackageOperationIndicator
@@ -471,28 +472,33 @@ type ConversationPanelProps = {
   submissions: ConversationSubmissions
 }
 
+const renderConversationError = (
+  children: React.ReactNode,
+  onDismiss: () => void,
+  dismissLabel: string
+): React.JSX.Element => (
+  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label={dismissLabel}
+      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
+    >
+      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+    </button>
+    {children}
+  </div>
+)
+
 const DismissibleConversationError = ({
   children
 }: {
-  children: React.ReactNode
+  children: (onDismiss: () => void) => React.ReactNode
 }): React.JSX.Element | null => {
-  const { t } = useTranslation()
   const [dismissed, setDismissed] = useState(false)
   if (dismissed) return null
-
-  return (
-    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
-        aria-label={t('Dismiss error')}
-        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-      >
-        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-      </button>
-      {children}
-    </div>
-  )
+  const onDismiss = (): void => setDismissed(true)
+  return <>{children(onDismiss)}</>
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -975,6 +981,11 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const operationDiagnostic = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.diagnostics[activeSession.id] : undefined
+  )
+  const resumeDiagnostic =
+    operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
   const resolvedActionError =
     (isClaudeCliCompatibilityError(actionError ?? '')
       ? t(
@@ -984,6 +995,22 @@ const ConversationPanel = ({
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError
+  let resumeErrorDescription = resolvedActionError
+  if (resumeDiagnostic && resolvedActionError) {
+    if (/timed out/i.test(resumeDiagnostic.detail)) {
+      resumeErrorDescription = t(
+        'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
+      )
+    } else if (
+      /Runtime Segment does not match the adopted Agent context/i.test(resumeDiagnostic.detail)
+    ) {
+      resumeErrorDescription = t(
+        'The selected agent could not be attached to this conversation. Try Resume again.'
+      )
+    } else if (isReportableRunFailure(actionError)) {
+      resumeErrorDescription = t('Your conversation is preserved. Try Resume again.')
+    }
+  }
   const errorKey = JSON.stringify([
     activeSession?.id,
     legacyDisplayState?.status === 'error' ? legacyDisplayState.error : null,
@@ -1690,46 +1717,95 @@ const ConversationPanel = ({
                   </div>
                 ) : resolvedActionError || showLegacyRunErrorRow ? (
                   <DismissibleConversationError key={errorKey}>
-                    {/* Transient action errors and a run failure can coexist; show each on its own row
-                        so the run's report affordance is never suppressed by a transient error. */}
-                    {resolvedActionError ? (
-                      <span className="min-w-0 break-words pr-6">{resolvedActionError}</span>
-                    ) : null}
-                    {showLegacyRunErrorRow ? (
-                      <div className="flex flex-col items-stretch gap-2">
-                        <span className="min-w-0 break-words pr-6">{resolvedRunError}</span>
-                        {/* Actions stay with the run's own error, so the shown and reported text are
+                    {(onDismiss) => (
+                      <>
+                        {resolvedActionError && resumeDiagnostic ? (
+                          <ErrorNotice
+                            dismissButton={{ label: t('Dismiss error'), onClick: onDismiss }}
+                            data-testid="resume-operation-error"
+                            className="mb-2"
+                            title={t('Could not resume this conversation')}
+                            description={resumeErrorDescription ?? undefined}
+                            secondaryButton={
+                              activeSession && sessionTools.exportDiagnostics
+                                ? {
+                                    label: t('Export diagnostics…'),
+                                    onClick: () => sessionTools.exportDiagnostics?.(activeSession)
+                                  }
+                                : undefined
+                            }
+                          >
+                            <DiagnosticDetails
+                              key={resumeDiagnostic.detail}
+                              detail={resumeDiagnostic.detail}
+                              copyable
+                            />
+                          </ErrorNotice>
+                        ) : null}
+                        {(resolvedActionError && !resumeDiagnostic) ||
+                        showLegacyRunErrorRow ||
+                        showVisionModelSettings ||
+                        showCodexSettings
+                          ? renderConversationError(
+                              <>
+                                {/* Keep a coexisting run failure and its report affordance visible. */}
+                                {resolvedActionError && !resumeDiagnostic ? (
+                                  <span className="min-w-0 break-words pr-6">
+                                    {resolvedActionError}
+                                  </span>
+                                ) : null}
+                                {showLegacyRunErrorRow ? (
+                                  <div className="flex flex-col items-stretch gap-2">
+                                    <span className="min-w-0 break-words pr-6">
+                                      {resolvedRunError}
+                                    </span>
+                                    {/* Actions stay with the run's own error, so the shown and reported text are
                             always the same error. Shown only for an unknown failure — a recognized one
                             (app guidance or a known provider error) keeps its message but is not a bug
                             worth a GitHub issue. */}
-                        {isRunErrorReportable ? (
-                          <div className="flex flex-wrap items-center justify-end gap-1 self-end">
-                            <button
-                              type="button"
-                              onClick={() => openReportDialog()}
-                              className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                              aria-label={t('Report this error')}
-                            >
-                              <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                              {t('Report error')}
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {showVisionModelSettings || showCodexSettings ? (
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openSettingsToPanel(showVisionModelSettings ? 'model' : 'agent')
-                          }
-                          className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                        >
-                          {showVisionModelSettings ? t('Model settings') : t('Agent settings')}
-                        </button>
-                      </div>
-                    ) : null}
+                                    {isRunErrorReportable ? (
+                                      <div className="flex flex-wrap items-center justify-end gap-1 self-end">
+                                        <button
+                                          type="button"
+                                          onClick={() => openReportDialog()}
+                                          className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                          aria-label={t('Report this error')}
+                                        >
+                                          <Flag
+                                            className="size-3"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                          {t('Report error')}
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {showVisionModelSettings || showCodexSettings ? (
+                                  <div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openSettingsToPanel(
+                                          showVisionModelSettings ? 'model' : 'agent'
+                                        )
+                                      }
+                                      className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                    >
+                                      {showVisionModelSettings
+                                        ? t('Model settings')
+                                        : t('Agent settings')}
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </>,
+                              onDismiss,
+                              t('Dismiss error')
+                            )
+                          : null}
+                      </>
+                    )}
                   </DismissibleConversationError>
                 ) : null}
 

@@ -339,7 +339,10 @@ const resumeInterruptedWorkspaceSession = async (
         useSessionStore.getState().markResumed(sessionId)
       }
     } catch (error) {
-      reportWorkspaceOperationError(sessionId, resumeOperationMessage(error))
+      reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
+        operation: 'resume',
+        rawError: error
+      })
     }
     return
   }
@@ -416,7 +419,10 @@ const resumeInterruptedWorkspaceSession = async (
       )
     }
   } catch (error) {
-    reportWorkspaceOperationError(sessionId, resumeOperationMessage(error))
+    reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
+      operation: 'resume',
+      rawError: error
+    })
   }
 }
 

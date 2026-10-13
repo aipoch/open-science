@@ -1,3 +1,5 @@
+import { createAcpHandlerWorkflows } from '../../../../main/acp/handler-workflows'
+import { completeRuntimeAttachmentRecovery } from '../../../../main/session-persistence/runtime-attachment-recovery'
 import { visibleProjectSessions } from '../../pages/workspace/visible-project-sessions'
 import { sanitizeRendererSaveSessionOptions } from '../../../../main/session-persistence/renderer-save-options'
 import { LiteratureDocumentReader } from '../../../../main/literature/document-reader'
@@ -16,6 +18,8 @@ import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
 import { extractPdfText, inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
 import type {
+  AcpContinueInterruptedTurnRequest,
+  AcpPromptRequest,
   AcpPermissionRequest,
   AcpRuntimeEvent,
   AcpStateSnapshot
@@ -8881,6 +8885,151 @@ describe('resuming an interrupted session on demand', () => {
     expect(useWorkspaceOperationErrors.getState().errors['session-1']).toEqual(expect.any(String))
   })
 
+  it.each([
+    ['claude-code', 'codex', 'codex-response', false],
+    ['codex', 'claude-code', 'claude-code', false],
+    ['claude-code', 'codex', 'codex-response', true]
+  ] as const)(
+    'persists attachment identity before renderer continuation: %s to %s (%s, retry=%s)',
+    async (from, to, target, failFirstAttachmentSave) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Continue the original research',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        permissionProfile: 'ask',
+        agentTarget: { frameworkId: from, providerId: from, reasoningEffort: 'default' }
+      })
+      useSessionStore.getState().markDisconnected('session-1')
+      resetSessionConversationIntentsForTests()
+      let durable = {
+        ...toPersistedSession(useSessionStore.getState().sessions[0]),
+        agentFrameworkId: from,
+        runtimeTranscriptOwner: 'main' as const
+      }
+      useSessionStore.getState().hydrateSessions([durable])
+      const originalPrompt = structuredClone(durable.conversationGraph!.messages[0])
+      let rejectAttachmentSave = false
+      let attachmentSaveFailed = false
+      const persistence = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({
+            status: 'found',
+            session: structuredClone(durable)
+          }),
+          saveSession: async (candidate) => {
+            if (rejectAttachmentSave) {
+              rejectAttachmentSave = false
+              attachmentSaveFailed = true
+              throw new Error('Attachment repository save failed')
+            }
+            durable = {
+              ...structuredClone(candidate),
+              revision: (durable.revision ?? 0) + 1
+            } as typeof durable
+            return structuredClone(durable)
+          }
+        },
+        fileIndex: { syncSession: vi.fn(async () => []) },
+        assertMutable: vi.fn(),
+        notifyFilesChanged: vi.fn(),
+        notifyRuntimeContextSessionUpdated: vi.fn(),
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const saveSession = (
+        candidate: PersistedChatSession,
+        options?: SaveSessionOptions
+      ): ReturnType<typeof persistence.saveSession> =>
+        persistence.saveSession(candidate, sanitizeRendererSaveSessionOptions(options, candidate))
+      vi.stubGlobal('window', {
+        api: { sessions: { saveSession, loadOne: async () => structuredClone(durable) } }
+      })
+      const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+      const workflows = createAcpHandlerWorkflows(
+        {
+          getState: () => createSnapshot(['session-1']),
+          hasLiveSession: () => false,
+          resumeSession: async () => ({
+            sessionId: 'session-1',
+            frameworkId: to,
+            providerSessionId: 'adopted-provider',
+            contextReset: true
+          }),
+          getLatestUserPrompt: () => undefined,
+          startContinuation
+        } as never,
+        { create: vi.fn() } as never,
+        undefined,
+        undefined,
+        {
+          loadSession: async () => structuredClone(durable),
+          completeRuntimeAttachment: async (projectId, sessionId, attached) => {
+            rejectAttachmentSave = failFirstAttachmentSave && !attachmentSaveFailed
+            await persistence.mutateRuntimeSession({ projectId, sessionId }, (current) =>
+              completeRuntimeAttachmentRecovery(current, attached)
+            )
+          }
+        }
+      )
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn(),
+        resumeSession: vi.fn(() =>
+          workflows.resumeSession({
+            sessionId: 'session-1',
+            projectId: durable.projectId,
+            cwd: durable.cwd!,
+            agentTarget: { frameworkId: to, providerId: to, reasoningEffort: 'default' }
+          })
+        ),
+        continueInterruptedTurn: vi.fn((request: AcpContinueInterruptedTurnRequest) =>
+          workflows.continueInterruptedTurn(request)
+        )
+      }
+      const resume = (): Promise<void> =>
+        resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+          agentTarget: { frameworkId: to, providerId: to, reasoningEffort: 'default' },
+          historyReplayDescriptor: { target },
+          flushPersistence: async () => {
+            const candidate = toPersistedSession(useSessionStore.getState().sessions[0])
+            await saveSession(candidate, {
+              conversationCommands: pendingSessionConversationCommands(candidate.id)
+            })
+          }
+        })
+      await resume()
+      if (failFirstAttachmentSave) {
+        expect(attachmentSaveFailed).toBe(true)
+        expect(startContinuation).not.toHaveBeenCalled()
+        expect(durable.agentFrameworkId).toBe(from)
+        expect(useWorkspaceOperationErrors.getState().errors['session-1']).toContain(
+          'Attachment repository save failed'
+        )
+        await resume()
+      }
+      expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+      expect(startContinuation).toHaveBeenCalledOnce()
+      expect(durable.agentFrameworkId).toBe(to)
+      expect(durable.providerSessionId).toBe('adopted-provider')
+      const sent = startContinuation.mock.calls[0]?.[0] as unknown as {
+        provenanceContext: { runtimeSegmentId: string }
+      }
+      expect(
+        durable.conversationGraph?.runtimeSegments.find(
+          (segment) => segment.id === sent.provenanceContext.runtimeSegmentId
+        )?.frameworkId
+      ).toBe(to)
+      expect(durable.messages[0].agentTarget).toEqual(originalPrompt.agentTarget)
+      expect(
+        durable.conversationGraph!.messages.find((message) => message.id === originalPrompt.id)
+          ?.runtimeSegmentId
+      ).toBe(originalPrompt.runtimeSegmentId)
+      expect(durable.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    }
+  )
+
   it('reconnects and continues the interrupted turn without duplicating its user message', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -9102,6 +9251,45 @@ describe('resuming an interrupted session on demand', () => {
       'Agent session resume failed: provider rejected continuation'
     )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('coalesces repeated Resume clicks while preserving the originally selected target', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Resume once',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+    const gate = createDeferred<{ sessionId: string; frameworkId: 'codex'; contextReset: true }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      resumeSession: vi.fn(() => gate.promise),
+      sendPrompt: vi.fn(),
+      continueInterruptedTurn: vi.fn(acceptTestMainContinuation)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const target = {
+      frameworkId: 'codex' as const,
+      providerId: 'codex',
+      reasoningEffort: 'default' as const
+    }
+    const first = owner.resume(runtime, 'session-1', async () => {}, {
+      agentTarget: target,
+      flushPersistence: async () => {}
+    })
+    const duplicate = owner.resume(runtime, 'session-1', async () => {}, {
+      agentTarget: { ...target, frameworkId: 'claude-code' }
+    })
+    expect(first).toBe(duplicate)
+    gate.resolve({ sessionId: 'session-1', frameworkId: 'codex', contextReset: true })
+    await first
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].agentFrameworkId).toBe('codex')
   })
 
   it('does not recreate an interrupted session deleted while reconnecting', async () => {

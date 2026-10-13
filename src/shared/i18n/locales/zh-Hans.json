@@ -146,6 +146,11 @@
   },
   "renderer": {
     "Select one or more options": "选择一个或多个选项",
+    "Your conversation is preserved. Try Resume again.": "您的会话已保留。请再次尝试恢复。",
+    "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能体未能及时响应。您的会话已保留。请再次尝试恢复。",
+    "The selected agent could not be attached to this conversation. Try Resume again.": "无法将所选智能体连接到此会话。请再次尝试恢复。",
+    "Could not resume this conversation": "无法恢复此会话",
+    "Could not copy details. Select the text and copy it manually.": "无法复制详情。请选择文本并手动复制。",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、调控证据与批量数据集。",
     "Query miRNA target evidence.": "查询 miRNA 靶标证据。",
     "Query RNA–RNA interaction evidence.": "查询 RNA–RNA 互作证据。",

@@ -64,6 +64,7 @@ const states: Record<string, readonly string[]> = {
   toolDisposition: ['declined', 'permission-closed'],
   agentFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
   frameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
+  previousFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
   reasoningEffort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   runtimeTranscriptOwner: ['main'],
   delegationPolicy: ['allow', 'deny'],

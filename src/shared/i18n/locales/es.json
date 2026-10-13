@@ -148,6 +148,11 @@
   },
   "renderer": {
     "Select one or more options": "Seleccionar una o varias opciones",
+    "Your conversation is preserved. Try Resume again.": "Su conversación se conserva. Intente reanudarla de nuevo.",
+    "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "El agente no respondió a tiempo. Su conversación se conserva. Intente reanudarla de nuevo.",
+    "The selected agent could not be attached to this conversation. Try Resume again.": "No se pudo conectar el agente seleccionado a esta conversación. Intente reanudarla de nuevo.",
+    "Could not resume this conversation": "No se pudo reanudar esta conversación",
+    "Could not copy details. Select the text and copy it manually.": "No se pudieron copiar los detalles. Seleccione el texto y cópielo manualmente.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Interacciones de ARN, evidencia reguladora y conjuntos de datos masivos de ENCORI.",
     "Query miRNA target evidence.": "Consultar evidencia de dianas de miRNA.",
     "Query RNA–RNA interaction evidence.": "Consultar evidencia de interacciones ARN–ARN.",
