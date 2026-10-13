@@ -2451,11 +2451,14 @@ export const PdfPreviewContent = ({
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
   const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
-  const [pendingNewTranslation, setPendingNewTranslation] = useState<{
-    key: string
-    document: PdfDocument
-    options: PdfTranslationOptions
-  }>()
+  const pendingNewTranslation = useRef<
+    | {
+        key: string
+        document: PdfDocument
+        options: PdfTranslationOptions
+      }
+    | undefined
+  >(undefined)
   const translationToggleRef = useRef<HTMLButtonElement>(null)
   const translationCloseRef = useRef<HTMLButtonElement>(null)
   const translationPanelId = useId()
@@ -2877,30 +2880,24 @@ export const PdfPreviewContent = ({
     recoveryCheckpoint
   )
   useEffect(() => {
-    if (!pendingNewTranslation) return
+    const pending = pendingNewTranslation.current
+    if (!pending) return
     if (
-      pendingNewTranslation.key !== resourceRequestKey ||
-      pendingNewTranslation.document !== document ||
+      pending.key !== resourceRequestKey ||
+      pending.document !== document ||
       preparation.state.status === 'error' ||
       preparation.state.status === 'cancelled'
     ) {
-      setPendingNewTranslation(undefined)
+      pendingNewTranslation.current = undefined
       return
     }
     if (preparation.state.status === 'idle') prepareFullText()
     else if (preparation.state.status === 'ready') {
       // Start only after React has installed the freshly extracted source in the job owner.
-      setPendingNewTranslation(undefined)
-      translationJob.restart(pendingNewTranslation.options)
+      pendingNewTranslation.current = undefined
+      translationJob.restart(pending.options)
     }
-  }, [
-    pendingNewTranslation,
-    resourceRequestKey,
-    document,
-    preparation.state.status,
-    prepareFullText,
-    translationJob
-  ])
+  }, [resourceRequestKey, document, preparation.state.status, prepareFullText, translationJob])
   const {
     status: translationStatus,
     done: translatedCount,
@@ -3752,7 +3749,7 @@ export const PdfPreviewContent = ({
         setSuppressedRecoveryKey(resourceRequestKey)
         translationJob.reset()
         preparation.reset()
-        setPendingNewTranslation({
+        pendingNewTranslation.current = {
           key: resourceRequestKey,
           document,
           options: {
@@ -3760,7 +3757,7 @@ export const PdfPreviewContent = ({
             ...(attachmentVersionId ? { attachmentVersionId } : {}),
             ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
           }
-        })
+        }
         setTranslationQuery('')
         setSelectedTranslation(undefined)
         setShowParagraphMarkers(false)
