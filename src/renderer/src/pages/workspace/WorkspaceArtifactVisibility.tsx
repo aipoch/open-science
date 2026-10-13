@@ -269,7 +269,11 @@ const useWorkspaceArtifactVisibility = (
     [messages]
   )
   const historicalArtifacts = useHistoricalArtifactDescriptors(
-    sessionId,
+    // New branches bind before their first save; an acknowledged revision proves durable ownership.
+    activeSession?.isPending ||
+      (activeSession?.delegationPolicyAuthorityPending && activeSession.revision === undefined)
+      ? undefined
+      : sessionId,
     projectId,
     messages,
     scopedArtifacts,
