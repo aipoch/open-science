@@ -655,6 +655,31 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it('attaches live evidence to an exact installed version before an equivalent spelling', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'python-exact-installed-version-'))
+    const packages: NotebookEnvironmentPackage[] = ['1.0', '1.0.0'].map((version) => ({
+      name: 'demo',
+      version,
+      versionStatus: 'known',
+      ecosystem: 'python',
+      evidenceSources: ['python-importlib-metadata']
+    }))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      captureFingerprint: async () => 'stable',
+      inspectInstalled: async () => ({ packages })
+    })
+    const captured = await tracker.captureCompletedRun(target, {
+      packages: [
+        { ...packages[1]!, loadedState: 'loaded', evidenceSources: ['python-kernel-modules'] }
+      ]
+    })
+    expect(captured.manifest.packages).toEqual([
+      expect.objectContaining({ version: '1.0', loadedState: 'installed-only' }),
+      expect.objectContaining({ version: '1.0.0', loadedState: 'loaded' })
+    ])
+  })
+
   it('merges equivalent live Python release spellings', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'python-equivalent-version-'))
     const tracker = new EnvironmentStateTracker({
@@ -1601,6 +1626,113 @@ describe('EnvironmentStateTracker', () => {
       expect(
         (await tracker.inspectPackages(rTarget, ['tidyverse/ggplot2@main'])).packages[0]?.status
       ).toBe('missing')
+    }
+  )
+
+  it.each(
+    [
+      {
+        before: ['1.0', '2.0'],
+        after: ['2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'removed', beforeVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['2.0'],
+        after: ['1.0', '2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'installed', afterVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['1.0', '2.0'],
+        after: ['2.0', '3.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'updated', beforeVersion: '1.0', afterVersion: '3.0' }
+        ]
+      },
+      {
+        before: ['1.0', '2.0'],
+        after: ['3.0', '4.0'],
+        changes: [
+          { change: 'removed', beforeVersion: '1.0' },
+          { change: 'removed', beforeVersion: '2.0' },
+          { change: 'installed', afterVersion: '3.0' },
+          { change: 'installed', afterVersion: '4.0' }
+        ]
+      },
+      {
+        before: ['1.0', '1.0.0'],
+        after: ['1.0.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '1.0.0', afterVersion: '1.0.0' },
+          { change: 'removed', beforeVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['1.0.0'],
+        after: ['1.0', '1.0.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '1.0.0', afterVersion: '1.0.0' },
+          { change: 'installed', afterVersion: '1.0' }
+        ]
+      },
+      {
+        before: ['2026.07.22', '2.0'],
+        after: ['2026.7.22', '2.0'],
+        changes: [
+          { change: 'unchanged', beforeVersion: '2.0', afterVersion: '2.0' },
+          { change: 'unchanged', beforeVersion: '2026.07.22', afterVersion: '2026.7.22' }
+        ]
+      }
+    ].flatMap((scenario) => [false, true].map((reverse) => ({ ...scenario, reverse })))
+  )(
+    'preserves same-name Python changes $before -> $after (reverse=$reverse)',
+    async ({ before, after, changes, reverse }) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'environment-multiple-versions-'))
+      const inventory = (versions: string[]): NotebookEnvironmentPackage[] =>
+        (reverse ? [...versions].reverse() : versions).map((version) => ({
+          name: 'Demo_pkg',
+          version,
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-importlib-metadata']
+        }))
+      const installed = { runtimeVersion: '3.12.14', packages: inventory(after) }
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        inspectInstalled: vi
+          .fn()
+          .mockResolvedValueOnce({ runtimeVersion: '3.12.14', packages: inventory(before) })
+          .mockResolvedValue(installed),
+        captureFingerprint: async () => 'stable'
+      })
+      const operation = {
+        operationId: 'duplicate-version-change',
+        operation: 'install' as const,
+        packages: ['demo-pkg']
+      }
+      await tracker.markPackageMutationDirty(target, operation)
+      const verification = await tracker.refreshAfterPackageMutation(target, {
+        ...operation,
+        result: 'success'
+      })
+      expect(verification.packageChanges).toEqual(
+        changes.map((change) => ({
+          name: 'Demo_pkg',
+          ecosystem: 'python',
+          relationship: 'requested',
+          ...change
+        }))
+      )
+      const captured = await tracker.captureCompletedRun(target, installed)
+      expect(captured.manifest.operationLog?.[0]?.packageChanges).toEqual(
+        verification.packageChanges
+      )
     }
   )
 

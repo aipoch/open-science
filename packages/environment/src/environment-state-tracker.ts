@@ -311,6 +311,17 @@ const packageIdentityKey = (pkg: NotebookEnvironmentPackage): string =>
       : [])
   ].join('\0')
 
+const samePackageVersion = (
+  left: NotebookEnvironmentPackage,
+  right: NotebookEnvironmentPackage
+): boolean =>
+  left.version === right.version ||
+  (left.ecosystem === 'python' &&
+    right.ecosystem === 'python' &&
+    Boolean(
+      left.version && right.version && packageVersionsMatch('python', left.version, right.version)
+    ))
+
 const packageSourceKey = (pkg: NotebookEnvironmentPackage): string => {
   const source = pkg.source
   if (!source) return ''
@@ -585,15 +596,64 @@ const packageChangesForOperation = ({
       .map((pkg) => toChange(pkg, 'requested', 'observed', undefined, pkg.version))
   }
 
-  const beforeByIdentity = new Map(before.map((pkg) => [packageIdentityKey(pkg), pkg]))
-  const afterByIdentity = new Map(after.map((pkg) => [packageIdentityKey(pkg), pkg]))
+  const groupByIdentity = (
+    packages: NotebookEnvironmentPackage[]
+  ): Map<string, NotebookEnvironmentPackage[]> => {
+    const groups = new Map<string, NotebookEnvironmentPackage[]>()
+    for (const pkg of packages) {
+      const key = packageIdentityKey(pkg)
+      const candidates = groups.get(key) ?? []
+      candidates.push(pkg)
+      groups.set(key, candidates)
+    }
+    for (const candidates of groups.values())
+      candidates.sort(
+        (a, b) =>
+          (a.version ?? '').localeCompare(b.version ?? '') ||
+          packageSourceKey(a).localeCompare(packageSourceKey(b))
+      )
+    return groups
+  }
+  const beforeByIdentity = groupByIdentity(before)
+  const afterByIdentity = groupByIdentity(after)
   const identities = [...new Set([...beforeByIdentity.keys(), ...afterByIdentity.keys()])].sort(
     comparePackageKeys
   )
-  const changes: NotebookEnvironmentPackageChange[] = []
+  const pairs: Array<
+    [NotebookEnvironmentPackage | undefined, NotebookEnvironmentPackage | undefined]
+  > = []
   for (const identity of identities) {
-    const previous = beforeByIdentity.get(identity)
-    const current = afterByIdentity.get(identity)
+    const previous = beforeByIdentity.get(identity) ?? []
+    const remaining = [...(afterByIdentity.get(identity) ?? [])]
+    const removed = [...previous]
+    // Preserve every exact surviving spelling before matching equivalent Python versions:
+    // 1.0 must not steal the surviving 1.0.0 when both were installed before the operation.
+    for (const allowEquivalent of [false, true]) {
+      for (const candidate of [...removed]) {
+        const match = remaining.findIndex(
+          (pkg) =>
+            (allowEquivalent
+              ? samePackageVersion(candidate, pkg)
+              : candidate.version === pkg.version) &&
+            candidate.versionStatus === pkg.versionStatus &&
+            packageSourceKey(candidate) === packageSourceKey(pkg)
+        )
+        if (match >= 0) {
+          pairs.push([candidate, remaining.splice(match, 1)[0]!])
+          removed.splice(removed.indexOf(candidate), 1)
+        }
+      }
+    }
+    // Only one unmatched copy on each side establishes an unambiguous update. Otherwise retain
+    // every observed removal/installation without inventing correspondences between versions.
+    if (removed.length === 1 && remaining.length === 1) pairs.push([removed[0], remaining[0]])
+    else {
+      for (const pkg of removed) pairs.push([pkg, undefined])
+      for (const pkg of remaining) pairs.push([undefined, pkg])
+    }
+  }
+  const changes: NotebookEnvironmentPackageChange[] = []
+  for (const [previous, current] of pairs) {
     const pkg = current ?? previous
     if (!pkg) continue
     const relationship = relationshipFor(pkg)
@@ -607,7 +667,7 @@ const packageChangesForOperation = ({
     }
     if (!previous || !current) continue
     const versionChanged =
-      previous.version !== current.version ||
+      !samePackageVersion(previous, current) ||
       previous.versionStatus !== current.versionStatus ||
       packageSourceKey(previous) !== packageSourceKey(current)
     if (versionChanged) {
@@ -662,17 +722,12 @@ const mergePackages = (
   }
   for (const pkg of live) {
     let key = observedKey(pkg)
-    if (pkg.ecosystem === 'python') {
+    if (pkg.ecosystem === 'python' && !merged.has(key)) {
       key =
         [...merged].find(
           ([, candidate]) =>
             packageIdentityKey(candidate) === packageIdentityKey(pkg) &&
-            (candidate.version === pkg.version ||
-              Boolean(
-                candidate.version &&
-                pkg.version &&
-                packageVersionsMatch('python', pkg.version, candidate.version)
-              ))
+            samePackageVersion(candidate, pkg)
         )?.[0] ?? key
     }
     let existing = merged.get(key)
