@@ -950,8 +950,8 @@ class NotebookRuntimeService {
         platform: options.platform,
         ...(options.processSandbox
           ? {
-              verifySnapshotRuntime: (prefix, argv) =>
-                verifySnapshotRuntime(options.processSandbox!, prefix, argv)
+              verifySnapshotRuntime: (prefix, argv, observer) =>
+                verifySnapshotRuntime(options.processSandbox!, prefix, argv, undefined, observer)
             }
           : {}),
         resolveMicromamba: async () =>

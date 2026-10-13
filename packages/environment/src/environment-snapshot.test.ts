@@ -1,3 +1,4 @@
+import * as fs from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import {
   chmod,
@@ -12,7 +13,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   captureEnvironmentSnapshot,
   EnvironmentSnapshotInUseError,
@@ -22,6 +23,11 @@ import {
   readEnvironmentSnapshot,
   removeEnvironmentSnapshot
 } from './environment-snapshot'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, statfs: vi.fn(actual.statfs), open: vi.fn(actual.open) }
+})
 
 const roots: string[] = []
 const fixture = async (): Promise<{ root: string; prefix: string; store: string }> => {
@@ -38,10 +44,120 @@ const fixture = async (): Promise<{ root: string; prefix: string; store: string 
   return { root, prefix, store }
 }
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('environment file snapshots', () => {
+  it('streams text prefixes across read boundaries without changing source bytes', async () => {
+    const { root, prefix, store } = await fixture()
+    const source = await fs.realpath(prefix)
+    const text = `${'a'.repeat(64 * 1024 - 3)}${source}/lib/α\n`.repeat(16)
+    await writeFile(join(prefix, 'large.txt'), text)
+    const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+    const destination = join(root, 'r')
+    const snapshot = await materializeEnvironmentSnapshot(store, checksum, destination)
+    await relocateEnvironmentSnapshot(snapshot, destination)
+    expect(await readFile(join(destination, 'large.txt'), 'utf8')).toBe(
+      text.replaceAll(source, await fs.realpath(destination))
+    )
+    expect(await readFile(join(prefix, 'large.txt'), 'utf8')).toBe(text)
+  })
+
+  it('reuses existing file objects without reserving a second full capture', async () => {
+    const { prefix, store } = await fixture()
+    await writeFile(join(prefix, 'large.dat'), Buffer.alloc(2 * 1024 * 1024, 42))
+    const captured = await captureEnvironmentSnapshot(prefix, store)
+    const disk = await fs.statfs(prefix)
+    vi.mocked(fs.statfs).mockResolvedValue({ ...disk, bsize: 1, bavail: 512 * 1024 * 1024 + 4096 })
+    try {
+      expect(await captureEnvironmentSnapshot(prefix, store)).toEqual(captured)
+    } finally {
+      vi.mocked(fs.statfs).mockReset().mockResolvedValue(disk)
+    }
+  })
+
+  it('streams padded binary prefixes across chunks while batching large zero regions', async () => {
+    const { root, prefix, store } = await fixture()
+    const source = await fs.realpath(prefix)
+    const header = Buffer.concat([Buffer.from('7f454c46', 'hex'), Buffer.alloc(65529, 65)])
+    const body = Buffer.from(`${source}/lib:${source}/share`)
+    const zeros = Buffer.alloc(2 * 1024 * 1024)
+    const original = Buffer.concat([header, body, zeros, Buffer.from('tail')])
+    await writeFile(join(prefix, 'lib', 'native'), original)
+    await writeFile(
+      join(prefix, 'conda-meta', 'native.json'),
+      JSON.stringify({
+        paths_data: {
+          paths: [
+            {
+              _path: 'lib/native',
+              sha256_in_prefix: createHash('sha256').update(original).digest('hex')
+            }
+          ]
+        }
+      })
+    )
+    const { checksum, snapshot } = await captureEnvironmentSnapshot(prefix, store)
+    const destination = join(root, 'r')
+    await materializeEnvironmentSnapshot(store, checksum, destination)
+    const open = vi.mocked(fs.open).getMockImplementation()!
+    const writes: Array<() => number> = []
+    vi.mocked(fs.open).mockImplementation(async (...args) => {
+      const handle = await open(...args)
+      if (String(args[0]).includes('.relocating-')) {
+        const spy = vi.spyOn(handle, 'write')
+        writes.push(() => spy.mock.calls.length)
+      }
+      return handle
+    })
+    try {
+      await relocateEnvironmentSnapshot(snapshot, destination)
+      const restored = await fs.realpath(destination)
+      expect(await readFile(join(destination, 'lib', 'native'))).toEqual(
+        Buffer.concat([
+          header,
+          Buffer.from(`${restored}/lib:${restored}/share`),
+          Buffer.alloc(2 * (Buffer.byteLength(source) - Buffer.byteLength(restored))),
+          zeros,
+          Buffer.from('tail')
+        ])
+      )
+      expect(writes.reduce((sum, count) => sum + count(), 0)).toBeLessThan(200)
+      expect(await readFile(join(prefix, 'lib', 'native'))).toEqual(original)
+    } finally {
+      vi.mocked(fs.open).mockImplementation(open)
+    }
+  })
+
+  it('rejects oversized manifests before reading them into memory', async () => {
+    const { prefix, store } = await fixture()
+    const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+    await fs.truncate(join(store, 'objects', checksum), 64 * 1024 * 1024 + 1)
+    await expect(readEnvironmentSnapshot(store, checksum)).rejects.toThrow('too large')
+  })
+
+  it('rejects insufficient capture space before publishing any object', async () => {
+    const { prefix, store } = await fixture()
+    const disk = await fs.statfs(prefix)
+    vi.mocked(fs.statfs).mockResolvedValueOnce({ ...disk, bavail: 0 })
+    await expect(captureEnvironmentSnapshot(prefix, store)).rejects.toThrow('free space')
+    expect(await readdir(join(store, 'objects'))).toEqual([])
+    expect(await readFile(join(prefix, 'lib', 'package.py'), 'utf8')).toContain('VERSION')
+  })
+
+  it('rejects insufficient restore space before creating a clone', async () => {
+    const { root, prefix, store } = await fixture()
+    const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+    const disk = await fs.statfs(prefix)
+    vi.mocked(fs.statfs).mockResolvedValueOnce({ ...disk, bavail: 0 })
+    const destination = join(root, 'r')
+    await expect(materializeEnvironmentSnapshot(store, checksum, destination)).rejects.toThrow(
+      'free space'
+    )
+    await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('retains a restored prefix when verification process termination is unconfirmed', async () => {
     const { root, prefix, store } = await fixture()
     const { checksum } = await captureEnvironmentSnapshot(prefix, store, {
@@ -248,7 +364,7 @@ describe('environment file snapshots', () => {
     await writeFile(join(store, 'objects', file.checksum), 'damaged')
     const restored = join(root, 'restored')
     await expect(materializeEnvironmentSnapshot(store, capture.checksum, restored)).rejects.toThrow(
-      'checksum'
+      /checksum|size/
     )
     await expect(lstat(restored)).rejects.toMatchObject({ code: 'ENOENT' })
   })

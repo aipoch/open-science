@@ -107,11 +107,13 @@ export const reconcileInterruptedOperations = async (
       //   - neither                     -> the op never reached the spawn stage (no sidecar); there is no
       //                                    child, so it is safe to reconcile ('dead').
       const liveness =
-        record.childPid !== undefined
-          ? await deps.operationChildLiveness(record)
-          : record.spawnAttempted
-            ? 'unknown'
-            : 'dead'
+        record.kind === 'snapshot-restore'
+          ? 'dead' // Its cleanup owner requires whole-tree proof, not just leader PID absence.
+          : record.childPid !== undefined
+            ? await deps.operationChildLiveness(record)
+            : record.spawnAttempted
+              ? 'unknown'
+              : 'dead'
       if (liveness === 'unknown') {
         // We could not PROVE the recorded child died (its pid is still live and its identity can't be
         // strictly confirmed, or the probe was unavailable). A survivor might still be writing staging or
@@ -191,6 +193,7 @@ const runReconcileAction = async (
   deps: OperationRecoveryDeps
 ): Promise<void> => {
   switch (record.kind) {
+    case 'snapshot-restore':
     case 'download':
       await deps.cleanStaging(record)
       deps.onReconciled?.(record, 'clean-staging')

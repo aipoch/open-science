@@ -8,15 +8,19 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readFile,
   readdir,
   readlink,
   realpath,
   rm,
   symlink,
+  statfs,
+  rename,
   writeFile
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import type { FileHandle } from 'node:fs/promises'
 import type { NotebookEnvironmentManifest } from './contracts'
 import { pythonBin } from './runtime-paths'
 
@@ -47,7 +51,10 @@ export type EnvironmentSnapshot = {
 const hash = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex')
 const digestPattern = /^[a-f0-9]{64}$/u
 export class EnvironmentSnapshotInUseError extends Error {
-  constructor(cause: unknown) {
+  constructor(
+    cause: unknown,
+    readonly retryTermination?: () => Promise<boolean>
+  ) {
     super('Environment snapshot verification process termination is unconfirmed.', { cause })
   }
 }
@@ -80,12 +87,116 @@ const objectPath = (store: string, checksum: string): string => {
   return join(store, 'objects', checksum)
 }
 
+const MAX_ENTRIES = 500_000
+const MAX_METADATA_BYTES = 64 * 1024 * 1024
+const DISK_RESERVE_BYTES = 512 * 1024 * 1024
+const CHUNK_BYTES = 64 * 1024
+
+const directoryNames = async (path: string, limit = MAX_ENTRIES): Promise<string[]> => {
+  const names: string[] = []
+  for await (const entry of await opendir(path)) {
+    if (names.length >= limit) throw new Error('Environment snapshot has too many entries.')
+    names.push(entry.name)
+  }
+  return names.sort()
+}
+
+const requireDiskSpace = async (path: string, bytes: number): Promise<void> => {
+  const disk = await statfs(path)
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    bytes + DISK_RESERVE_BYTES > disk.bavail * disk.bsize
+  )
+    throw new Error('Insufficient free space for environment snapshot and restoration.')
+}
+
+const writeChunk = async (handle: FileHandle, bytes: Buffer): Promise<void> => {
+  let offset = 0
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset)
+    if (!bytesWritten) throw new Error('Environment snapshot write made no progress.')
+    offset += bytesWritten
+  }
+}
+
+// Hash and consume the same no-follow descriptor in bounded chunks, including on restore.
+const streamFile = async (
+  path: string,
+  consume?: (bytes: Buffer) => Promise<void> | void,
+  expectedSize?: number
+): Promise<string> => {
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const before = await handle.stat()
+    if (!before.isFile() || (expectedSize !== undefined && before.size !== expectedSize))
+      throw new Error('Environment snapshot file size or type changed.')
+    const digest = createHash('sha256')
+    let size = 0
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: CHUNK_BYTES
+    })) {
+      const bytes = chunk as Buffer
+      size += bytes.length
+      if (size > before.size) throw new Error('Environment changed during capture.')
+      digest.update(bytes)
+      await consume?.(bytes)
+    }
+    const after = await handle.stat()
+    if (
+      size !== before.size ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    )
+      throw new Error('Environment changed during capture.')
+    return digest.digest('hex')
+  } finally {
+    await handle.close()
+  }
+}
+
+const writeFileObject = async (store: string, path: string, size: number): Promise<string> => {
+  const expected = await streamFile(path, undefined, size)
+  const existing = objectPath(store, expected)
+  try {
+    if ((await streamFile(existing, undefined, size)) !== expected)
+      throw new Error('Environment snapshot object failed integrity verification.')
+    return expected
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  await requireDiskSpace(store, size)
+  const temporary = join(store, 'objects', `.incoming-${randomUUID()}`)
+  const target = await open(temporary, 'wx', 0o600)
+  try {
+    const checksum = await streamFile(path, (bytes) => writeChunk(target, bytes), size)
+    if (checksum !== expected) throw new Error('Environment changed during capture.')
+    await target.close()
+    const destination = objectPath(store, checksum)
+    try {
+      await link(temporary, destination)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    if ((await streamFile(destination, undefined, size)) !== checksum)
+      throw new Error('Environment snapshot object failed integrity verification.')
+    return checksum
+  } finally {
+    await target.close()
+    await rm(temporary, { force: true })
+  }
+}
+
 const writeObject = async (store: string, bytes: Buffer): Promise<string> => {
+  if (bytes.length > MAX_METADATA_BYTES)
+    throw new Error('Environment snapshot metadata is too large.')
   const checksum = hash(bytes)
   const destination = objectPath(store, checksum)
   try {
     const saved = await lstat(destination)
-    if (!saved.isFile() || saved.isSymbolicLink() || hash(await readFile(destination)) !== checksum)
+    if (!saved.isFile() || saved.isSymbolicLink() || (await streamFile(destination)) !== checksum)
       throw new Error('Environment snapshot object failed integrity verification.')
     return checksum
   } catch (error) {
@@ -93,6 +204,7 @@ const writeObject = async (store: string, bytes: Buffer): Promise<string> => {
   }
   const temporary = join(store, 'objects', `.incoming-${randomUUID()}`)
   await mkdir(dirname(destination), { recursive: true })
+  await requireDiskSpace(store, bytes.length)
   try {
     await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
     try {
@@ -101,7 +213,7 @@ const writeObject = async (store: string, bytes: Buffer): Promise<string> => {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
     const saved = await lstat(destination)
-    if (!saved.isFile() || saved.isSymbolicLink() || hash(await readFile(destination)) !== checksum)
+    if (!saved.isFile() || saved.isSymbolicLink() || (await streamFile(destination)) !== checksum)
       throw new Error('Environment snapshot object failed integrity verification.')
     return checksum
   } finally {
@@ -114,8 +226,18 @@ const readObject = async (store: string, checksum: string): Promise<Buffer> => {
   const metadata = await lstat(path)
   if (!metadata.isFile() || metadata.isSymbolicLink())
     throw new Error('Environment snapshot object is not a regular file.')
-  const bytes = await readFile(path)
-  if (hash(bytes) !== checksum) throw new Error('Environment snapshot object checksum changed.')
+  if (metadata.size > MAX_METADATA_BYTES)
+    throw new Error('Environment snapshot metadata is too large.')
+  const chunks: Buffer[] = []
+  const digest = await streamFile(
+    path,
+    (bytes) => {
+      chunks.push(bytes)
+    },
+    metadata.size
+  )
+  const bytes = Buffer.concat(chunks)
+  if (digest !== checksum) throw new Error('Environment snapshot object checksum changed.')
   return bytes
 }
 
@@ -141,13 +263,15 @@ export const removeEnvironmentSnapshot = async (destination: string): Promise<vo
 export const captureEnvironmentSnapshot = async (
   prefix: string,
   store: string,
-  manifest?: NotebookEnvironmentManifest
+  manifest?: Pick<NotebookEnvironmentManifest, 'runtimeVersion' | 'packages'>
 ): Promise<{ checksum: string; snapshot: EnvironmentSnapshot }> => {
   const sourcePrefix = await realpath(prefix)
   if (contained(sourcePrefix, await canonicalDestination(store)))
     throw new Error('Environment snapshot storage must be outside the source environment.')
   const entries: EnvironmentSnapshotEntry[] = []
   const observed = new Map<string, string>()
+  let totalBytes = 0
+  let metadataBytes = 0
   const stamp = (metadata: Awaited<ReturnType<typeof lstat>>): string =>
     [
       metadata.dev,
@@ -158,10 +282,15 @@ export const captureEnvironmentSnapshot = async (
       metadata.ctimeMs
     ].join(':')
   const walk = async (directory: string): Promise<void> => {
-    for (const name of (await readdir(directory)).sort()) {
+    for (const name of await directoryNames(directory, MAX_ENTRIES - entries.length)) {
       const path = join(directory, name)
       const key = relative(sourcePrefix, path).split(sep).join('/')
       if (!portablePath(key)) throw new Error('Environment contains a nonportable snapshot path.')
+      if (entries.length >= MAX_ENTRIES)
+        throw new Error('Environment snapshot has too many entries.')
+      metadataBytes += Buffer.byteLength(key) + 512
+      if (metadataBytes > MAX_METADATA_BYTES)
+        throw new Error('Environment snapshot metadata is too large.')
       const metadata = await lstat(path)
       observed.set(key, stamp(metadata))
       if (metadata.isSymbolicLink()) {
@@ -177,31 +306,34 @@ export const captureEnvironmentSnapshot = async (
         entries.push({ path: key, kind: 'directory', mode: metadata.mode & 0o777 })
         await walk(path)
       } else if (metadata.isFile()) {
-        const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-        try {
-          const before = await handle.stat()
-          if (stamp(before) !== stamp(metadata))
-            throw new Error('Environment changed during capture.')
-          const bytes = await handle.readFile()
-          if (stamp(await handle.stat()) !== stamp(before))
-            throw new Error('Environment changed during capture.')
-          entries.push({
-            path: key,
-            kind: 'file',
-            mode: metadata.mode & 0o777,
-            checksum: await writeObject(store, bytes),
-            size: bytes.length
-          })
-        } finally {
-          await handle.close()
-        }
+        totalBytes += metadata.size
+        if (!Number.isSafeInteger(totalBytes))
+          throw new Error('Environment snapshot size is invalid.')
+        entries.push({
+          path: key,
+          kind: 'file',
+          mode: metadata.mode & 0o777,
+          checksum: '',
+          size: metadata.size
+        })
       } else throw new Error('Environment contains an unsupported filesystem entry.')
     }
   }
   await walk(sourcePrefix)
+  await mkdir(join(store, 'objects'), { recursive: true })
+  // Existing content needs no second disk allocation. Missing objects and restoration each
+  // reserve their actual allocation while retaining headroom for ordinary application writes.
+  await requireDiskSpace(store, 0)
+  for (const entry of entries) {
+    if (entry.kind !== 'file') continue
+    const path = join(sourcePrefix, entry.path)
+    if (stamp(await lstat(path)) !== observed.get(entry.path))
+      throw new Error('Environment changed during capture.')
+    entry.checksum = await writeFileObject(store, path, entry.size)
+  }
   // Package operations are serialized by the caller; detect unrelated writes as well.
   const check = async (directory: string): Promise<void> => {
-    for (const name of await readdir(directory)) {
+    for (const name of await directoryNames(directory)) {
       const path = join(directory, name)
       const key = relative(sourcePrefix, path).split(sep).join('/')
       const metadata = await lstat(path)
@@ -293,7 +425,7 @@ export const readEnvironmentSnapshot = async (
     value.sourcePrefix.includes('\0') ||
     !isAbsolute(value.sourcePrefix) ||
     !Array.isArray(value.entries) ||
-    value.entries.length > 500_000
+    value.entries.length > MAX_ENTRIES
   )
     throw new Error('Invalid environment snapshot manifest.')
   const paths = new Map<string, EnvironmentSnapshotEntry['kind']>()
@@ -432,6 +564,14 @@ export const materializeEnvironmentSnapshot = async (
   destination = await canonicalDestination(destination)
   if (contained(snapshot.sourcePrefix, destination))
     throw new Error('Cannot restore over the source environment.')
+  await requireDiskSpace(
+    dirname(destination),
+    snapshot.entries.reduce((sum, entry) => sum + (entry.kind === 'file' ? entry.size : 0), 0) +
+      snapshot.entries.reduce(
+        (largest, entry) => Math.max(largest, entry.kind === 'file' ? entry.size : 0),
+        0
+      )
+  )
   await mkdir(destination, { recursive: false })
   try {
     for (const entry of snapshot.entries) {
@@ -445,10 +585,18 @@ export const materializeEnvironmentSnapshot = async (
       const results = await Promise.allSettled(
         files.slice(offset, offset + 8).map(async (entry) => {
           const path = join(destination, ...entry.path.split('/'))
-          const bytes = await readObject(store, entry.checksum)
-          if (bytes.length !== entry.size)
-            throw new Error('Environment snapshot file size changed.')
-          await writeFile(path, bytes, { flag: 'wx', mode: entry.mode })
+          const target = await open(path, 'wx', entry.mode)
+          try {
+            const checksum = await streamFile(
+              objectPath(store, entry.checksum),
+              (bytes) => writeChunk(target, bytes),
+              entry.size
+            )
+            if (checksum !== entry.checksum)
+              throw new Error('Environment snapshot object checksum changed.')
+          } finally {
+            await target.close()
+          }
           await chmod(path, entry.mode)
         })
       )
@@ -482,27 +630,58 @@ export const materializeEnvironmentSnapshot = async (
 // to native ELF/Mach-O files or Conda-declared binary prefix files; arbitrary serialization
 // without that declaration is never rewritten this way.
 // A shorter destination preserves every subsequent binary offset and its original allocation.
-const replaceBinaryPrefix = (bytes: Buffer, source: Buffer, destination: Buffer): Buffer => {
-  if (destination.length > source.length)
+const relocateFile = async (
+  path: string,
+  temporary: string,
+  source: Buffer,
+  destination: Buffer,
+  binary: boolean
+): Promise<string> => {
+  if (binary && destination.length > source.length)
     throw new Error('Environment snapshot requires a shorter restoration path.')
-  const result = Buffer.from(bytes)
-  let cursor = 0
-  while ((cursor = bytes.indexOf(source, cursor)) !== -1) {
-    const end = bytes.indexOf(0, cursor)
-    if (end === -1) throw new Error('Environment binary prefix has no null terminator.')
-    const pieces: Buffer[] = []
-    let offset = cursor
-    for (let match = cursor; match !== -1 && match < end; match = bytes.indexOf(source, offset)) {
-      pieces.push(bytes.subarray(offset, match), destination)
-      offset = match + source.length
-    }
-    pieces.push(bytes.subarray(offset, end))
-    const replacement = Buffer.concat(pieces)
-    result.fill(0, cursor, end)
-    replacement.copy(result, cursor)
-    cursor = end + 1
+  const target = await open(temporary, 'wx', 0o600)
+  let carry = Buffer.alloc(0)
+  let padding = 0
+  let needsTerminator = false
+  try {
+    const checksum = await streamFile(path, async (chunk) => {
+      let bytes = Buffer.concat([carry, chunk])
+      while (bytes.length) {
+        const match = bytes.indexOf(source)
+        const terminator = binary && needsTerminator ? bytes.indexOf(0) : -1
+        if (terminator !== -1 && (match === -1 || terminator < match)) {
+          await writeChunk(target, bytes.subarray(0, terminator))
+          while (padding) {
+            const count = Math.min(padding, CHUNK_BYTES)
+            await writeChunk(target, Buffer.alloc(count))
+            padding -= count
+          }
+          await writeChunk(target, bytes.subarray(terminator, terminator + 1))
+          needsTerminator = false
+          bytes = bytes.subarray(terminator + 1)
+        } else if (match !== -1) {
+          await writeChunk(target, bytes.subarray(0, match))
+          await writeChunk(target, destination)
+          if (binary) {
+            padding += source.length - destination.length
+            needsTerminator = true
+          }
+          bytes = bytes.subarray(match + source.length)
+        } else {
+          const end = Math.max(0, bytes.length - source.length + 1)
+          await writeChunk(target, bytes.subarray(0, end))
+          bytes = bytes.subarray(end)
+          break
+        }
+      }
+      carry = Buffer.from(bytes)
+    })
+    if (needsTerminator) throw new Error('Environment binary prefix has no null terminator.')
+    await writeChunk(target, carry)
+    return checksum
+  } finally {
+    await target.close()
   }
-  return result
 }
 
 export const relocateEnvironmentSnapshot = async (
@@ -515,7 +694,18 @@ export const relocateEnvironmentSnapshot = async (
   const binaryEvidence = new Map<string, Set<string>>()
   for (const entry of snapshot.entries) {
     if (entry.kind !== 'file' || !/^conda-meta\/[^/]+\.json$/u.test(entry.path)) continue
-    const record = JSON.parse(await readFile(join(destination, entry.path), 'utf8'))
+    if (entry.size > MAX_METADATA_BYTES)
+      throw new Error('Environment snapshot metadata is too large.')
+    const chunks: Buffer[] = []
+    const checksum = await streamFile(
+      join(destination, entry.path),
+      (bytes) => {
+        chunks.push(bytes)
+      },
+      entry.size
+    )
+    if (checksum !== entry.checksum) throw new Error('Environment changed before relocation.')
+    const record = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     for (const item of record.paths_data?.paths ?? []) {
       if (!portablePath(item._path) || !digestPattern.test(item.sha256_in_prefix ?? '')) continue
       const hashes = binaryEvidence.get(item._path) ?? new Set<string>()
@@ -528,20 +718,43 @@ export const relocateEnvironmentSnapshot = async (
   for (const entry of snapshot.entries) {
     if (entry.kind !== 'file') continue
     const path = join(destination, entry.path)
-    const bytes = await readFile(path)
-    if (hash(bytes) !== entry.checksum) throw new Error('Environment changed before relocation.')
-    if (!bytes.includes(source)) continue
-    // Like conda-pack, retain Python bytecode. Its code-object filenames refer to the original
-    // source; altering marshal strings as padded C strings would corrupt executable bytecode.
-    if (entry.path.endsWith('.pyc')) continue
-    let relocated: Buffer
-    if (!bytes.includes(0)) {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-      relocated = Buffer.from(text.replaceAll(snapshot.sourcePrefix, destination))
-    } else {
-      const magic = bytes.subarray(0, 4).toString('hex')
-      if (
-        !binaryEvidence.get(entry.path)?.has(entry.checksum) ||
+    let tail = Buffer.alloc(0),
+      magic = ''
+    let hasPrefix = false,
+      binary = false,
+      utf8 = true
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const checksum = await streamFile(
+      path,
+      (bytes) => {
+        if (!magic) magic = bytes.subarray(0, 4).toString('hex')
+        const joined = Buffer.concat([tail, bytes])
+        hasPrefix ||= joined.includes(source)
+        tail = Buffer.from(joined.subarray(Math.max(0, joined.length - source.length + 1)))
+        binary ||= bytes.includes(0)
+        if (utf8) {
+          try {
+            decoder.decode(bytes, { stream: true })
+          } catch {
+            utf8 = false
+          }
+        }
+      },
+      entry.size
+    )
+    if (checksum !== entry.checksum) throw new Error('Environment changed before relocation.')
+    if (!hasPrefix || entry.path.endsWith('.pyc')) continue
+    if (utf8) {
+      try {
+        decoder.decode()
+      } catch {
+        utf8 = false
+      }
+    }
+    if (!binary && !utf8) throw new Error('Environment prefix text is not valid UTF-8.')
+    if (
+      binary &&
+      (!binaryEvidence.get(entry.path)?.has(entry.checksum) ||
         (!entry.condaBinaryPrefix &&
           ![
             '7f454c46',
@@ -551,28 +764,35 @@ export const relocateEnvironmentSnapshot = async (
             'feedface',
             'cafebabe',
             'bebafeca'
-          ].includes(magic))
-      )
-        throw new Error(`Environment binary relocation evidence is unavailable: ${entry.path}`)
-      relocated = replaceBinaryPrefix(bytes, source, target)
-    }
+          ].includes(magic)))
+    )
+      throw new Error(`Environment binary relocation evidence is unavailable: ${entry.path}`)
+    const temporary = join(destination, `.relocating-${randomUUID()}`)
+    const parentMode = (await lstat(dirname(path))).mode & 0o777
     // Package files can be read-only. Temporarily enable writes on this isolated copy only.
-    await chmod(path, entry.mode | 0o200)
     try {
-      await writeFile(path, relocated)
+      await requireDiskSpace(
+        destination,
+        Math.ceil(entry.size * Math.max(1, target.length / source.length))
+      )
+      if ((await relocateFile(path, temporary, source, target, binary)) !== entry.checksum)
+        throw new Error('Environment changed before relocation.')
+      await chmod(dirname(path), parentMode | 0o700)
+      await chmod(path, entry.mode | 0o200)
+      await rename(temporary, path)
       // Apple Silicon rejects modified Mach-O signatures. Sign only the isolated copy.
       if (
         process.platform === 'darwin' &&
         process.arch === 'arm64' &&
-        ['cffaedfe', 'cefaedfe', 'feedfacf', 'feedface', 'cafebabe', 'bebafeca'].includes(
-          bytes.subarray(0, 4).toString('hex')
-        )
+        ['cffaedfe', 'cefaedfe', 'feedfacf', 'feedface', 'cafebabe', 'bebafeca'].includes(magic)
       )
         await promisify(execFile)('/usr/bin/codesign', ['--force', '--sign', '-', path], {
           timeout: 30_000
         })
     } finally {
+      await rm(temporary, { force: true })
       await chmod(path, entry.mode)
+      await chmod(dirname(path), parentMode)
     }
   }
 }

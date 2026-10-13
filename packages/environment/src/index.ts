@@ -179,3 +179,10 @@ export {
   restoreEnvironmentSnapshot,
   verifyEnvironmentSnapshot
 } from './environment-snapshot'
+
+export {
+  createEnvironmentSnapshotLease,
+  reconcileEnvironmentSnapshotOperations,
+  type EnvironmentSnapshotLease,
+  type EnvironmentSnapshotProcessObserver
+} from './environment-snapshot-lifecycle'

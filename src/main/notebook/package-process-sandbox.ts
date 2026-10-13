@@ -34,6 +34,7 @@ import {
   buildNotebookKernelEnvironment,
   condaActivatedPath,
   EnvironmentSnapshotInUseError,
+  type EnvironmentSnapshotProcessObserver,
   PIP_TRANSPORT_ENV_KEYS
 } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -56,7 +57,8 @@ export const verifySnapshotRuntime = async (
   processSandbox: NotebookProcessSandbox,
   prefix: string,
   argv: string[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  observer?: EnvironmentSnapshotProcessObserver
 ): Promise<string> => {
   const root = join(dirname(prefix), 'verification')
   const home = join(root, 'home')
@@ -66,10 +68,28 @@ export const verifySnapshotRuntime = async (
   env.TMPDIR = env.TEMP = env.TMP = root
   const [command, ...args] = argv
   if (!command) throw new Error('Snapshot interpreter command is missing.')
+  let retryTermination: (() => Promise<boolean>) | undefined
+  let wrapped: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
+  const retryVerificationCleanup = async (): Promise<boolean> => {
+    if (!wrapped) return false
+    const reaped = wrapped.requestProcessTreeTermination
+      ? await wrapped.requestProcessTreeTermination()
+      : wrapped.confirmProcessTreeTermination
+        ? await wrapped.confirmProcessTreeTermination()
+        : await retryTermination?.()
+    if (!reaped) return false
+    const result = await wrapped.cleanup('exit', {
+      processesTerminated: true,
+      ...(wrapped.confirmProcessTreeTermination
+        ? { confirmTermination: wrapped.confirmProcessTreeTermination }
+        : {})
+    })
+    return result.processesTerminated
+  }
   const spawn = sandboxedPackageSpawn({
     processSandbox: {
-      wrap: (invocation) =>
-        processSandbox.wrap({
+      wrap: async (invocation) => {
+        wrapped = await processSandbox.wrap({
           ...invocation,
           restrictToDeclaredRoots: true,
           filesystem: {
@@ -79,21 +99,28 @@ export const verifySnapshotRuntime = async (
             deniedWriteRoots: [prefix]
           }
         })
+        return wrapped
+      }
     },
     request: { language: 'python', packages: [], workspaceCwd: root },
     runtimeRoot: root,
     storageRoot: root,
-    interpreter: { command, condaPrefix: prefix }
+    interpreter: { command, condaPrefix: prefix },
+    terminateTree: async (child) => {
+      retryTermination = async () => (await terminateProcessTree(child)).reaped
+      return terminateProcessTree(child)
+    }
   })
   let started = false
   const result = await spawn(
     command,
     args,
     env,
-    () => {
+    (pid) => {
       started = true
+      observer?.childStarted(pid)
     },
-    undefined,
+    () => observer?.beforeSpawn(),
     false,
     root,
     {
@@ -102,10 +129,11 @@ export const verifySnapshotRuntime = async (
     }
   ).catch((error) => {
     if (started && !packageProcessTreeTerminated(error))
-      throw new EnvironmentSnapshotInUseError(error)
+      throw new EnvironmentSnapshotInUseError(error, retryVerificationCleanup)
     throw error
   })
-  if (result.processesTerminated === false) throw new EnvironmentSnapshotInUseError(undefined)
+  if (result.processesTerminated === false)
+    throw new EnvironmentSnapshotInUseError(undefined, retryVerificationCleanup)
   if (result.code !== 0 || result.stdoutDroppedBytes)
     throw new Error('Environment snapshot verification failed.')
   return result.stdout

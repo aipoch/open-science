@@ -1,3 +1,4 @@
+import type { EnvironmentSnapshotProcessObserver } from './environment-snapshot-lifecycle'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -156,7 +157,11 @@ type EnvironmentStateTrackerOptions = {
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
   execFile?: EnvironmentExecFile
   resolveMicromamba?: () => Promise<string | undefined>
-  verifySnapshotRuntime?: (prefix: string, argv: string[]) => Promise<string>
+  verifySnapshotRuntime?: (
+    prefix: string,
+    argv: string[],
+    observer?: EnvironmentSnapshotProcessObserver
+  ) => Promise<string>
   now?: () => Date
   platform?: NodeJS.Platform
   logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>

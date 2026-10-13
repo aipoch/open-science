@@ -1,3 +1,4 @@
+import { cleanEnvironmentSnapshotOperation } from './environment-snapshot-lifecycle'
 import { existsSync } from 'node:fs'
 import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
@@ -254,6 +255,8 @@ export class NotebookRecoveryCoordinator {
         return { ...record, ...state }
       },
       cleanStaging: async (record) => {
+        if (record.kind === 'snapshot-restore')
+          return cleanEnvironmentSnapshotOperation(this.runtimeRoot, record)
         if (record.targetPath) await rm(record.targetPath, { recursive: true, force: true })
       },
       verifyOrRebuildEnv: async (record) => {

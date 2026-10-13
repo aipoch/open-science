@@ -73,6 +73,7 @@ const sha256 = async (value: string): Promise<string> => {
 describe('Notebook reproduction runtime', () => {
   const replayRoots: string[] = []
   afterEach(async () => {
+    vi.useRealTimers()
     await Promise.all(
       replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
     )
@@ -185,6 +186,7 @@ describe('Notebook reproduction runtime', () => {
   it.each([
     'reaped',
     'running',
+    'shutdown-threw',
     'verification-failed',
     'verification-unreaped',
     'executor-failed'
@@ -251,7 +253,10 @@ describe('Notebook reproduction runtime', () => {
           return { processesTerminated: true, networkClosed: true, temporaryResourcesRemoved: true }
         })
       }))
-      const shutdown = vi.fn(async () => ({ reaped: outcome !== 'running' }))
+      const shutdown = vi.fn(async () => {
+        if (outcome === 'shutdown-threw') throw new Error('shutdown failed')
+        return { reaped: outcome !== 'running' }
+      })
       const createExecutor = vi.fn(() => {
         if (outcome === 'executor-failed') throw new Error('executor initialization failed')
         return { execute: vi.fn(), shutdown }
@@ -294,8 +299,17 @@ describe('Notebook reproduction runtime', () => {
         expect(Buffer.byteLength(await realpath(prefix))).toBeLessThanOrEqual(
           Buffer.byteLength(sourcePrefix)
         )
-        await expect(runtime.shutdown()).resolves.toEqual({ reaped: outcome === 'reaped' })
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        if (outcome === 'shutdown-threw')
+          await expect(runtime.shutdown()).rejects.toThrow('shutdown failed')
+        else await expect(runtime.shutdown()).resolves.toEqual({ reaped: outcome === 'reaped' })
         expect(await readdir(scratch)).toHaveLength(outcome === 'reaped' ? 0 : 1)
+        if (outcome !== 'reaped') {
+          shutdown.mockResolvedValue({ reaped: true })
+          await vi.advanceTimersByTimeAsync(30_000)
+          await vi.waitFor(async () => expect(await readdir(scratch)).toEqual([]))
+          expect(shutdown).toHaveBeenCalledTimes(2)
+        }
       }
       expect((await lstat(join(objects, payloadChecksum))).isFile()).toBe(true)
     }

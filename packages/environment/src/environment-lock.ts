@@ -1,7 +1,12 @@
+import {
+  createEnvironmentSnapshotLease,
+  type EnvironmentSnapshotLease,
+  type EnvironmentSnapshotProcessObserver
+} from './environment-snapshot-lifecycle'
 import { packageVersionsMatch } from './package-version-comparison'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises'
-import { join, posix, relative, resolve, sep } from 'node:path'
+import { lstat, readFile, realpath } from 'node:fs/promises'
+import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookEnvironmentLock,
@@ -20,12 +25,7 @@ import { lockedPackageVersions } from './native-lock-restoration'
 import { nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
 import { normalizeRuntimeArchitecture, rLibraryDir, rScriptBin } from './runtime-paths'
-import {
-  captureEnvironmentSnapshot,
-  EnvironmentSnapshotInUseError,
-  removeEnvironmentSnapshot,
-  restoreEnvironmentSnapshot
-} from './environment-snapshot'
+import { captureEnvironmentSnapshot, restoreEnvironmentSnapshot } from './environment-snapshot'
 type EnvironmentLockDecodeResult =
   | { status: 'valid'; version: number; value: NotebookEnvironmentLock }
   | { status: 'unsupported'; version: number }
@@ -54,7 +54,11 @@ type CaptureNotebookEnvironmentLockOptions = {
   environmentFingerprint?: string
   workspace?: EnvironmentLockWorkspace
   snapshotStorage?: { store: string; restoreRoot: string }
-  verifySnapshotRuntime?: (prefix: string, argv: string[]) => Promise<string>
+  verifySnapshotRuntime?: (
+    prefix: string,
+    argv: string[],
+    observer?: EnvironmentSnapshotProcessObserver
+  ) => Promise<string>
 }
 
 type EnvironmentLockCaptureResult =
@@ -1056,8 +1060,8 @@ class EnvironmentLockCaptureOwner {
       !options.snapshotStorage
     )
       return packageLock
-    let temporary: string | undefined
-    let snapshotInUse = false
+    let lease: EnvironmentSnapshotLease | undefined
+    let captureError: unknown
     let snapshotLock: NotebookEnvironmentLock | undefined
     try {
       const captured = await captureEnvironmentSnapshot(
@@ -1082,13 +1086,16 @@ class EnvironmentLockCaptureOwner {
       if (!this.verifiedSnapshots.has(captured.checksum)) {
         if (!options.verifySnapshotRuntime)
           throw new Error('Isolated snapshot verification is unavailable.')
-        await mkdir(options.snapshotStorage.restoreRoot, { recursive: true, mode: 0o700 })
-        temporary = await mkdtemp(join(options.snapshotStorage.restoreRoot, 's-'))
+        lease = await createEnvironmentSnapshotLease(
+          join(dirname(options.snapshotStorage.restoreRoot), 'runtime'),
+          options.snapshotStorage.restoreRoot,
+          's-'
+        )
         await restoreEnvironmentSnapshot(
           options.snapshotStorage.store,
           captured.checksum,
-          join(temporary, 'e'),
-          (argv) => options.verifySnapshotRuntime!(join(temporary!, 'e'), argv)
+          join(lease.root, 'e'),
+          (argv) => options.verifySnapshotRuntime!(join(lease!.root, 'e'), argv, lease)
         )
         if (this.verifiedSnapshots.size >= 64) this.verifiedSnapshots.clear()
         this.verifiedSnapshots.add(captured.checksum)
@@ -1107,7 +1114,7 @@ class EnvironmentLockCaptureOwner {
           : {})
       }
     } catch (error) {
-      snapshotInUse = error instanceof EnvironmentSnapshotInUseError
+      captureError = error
       createLogger('notebook:environment-lock').warn(
         'environment snapshot capture or verification failed',
         diagnosticErrorFields(error)
@@ -1124,7 +1131,7 @@ class EnvironmentLockCaptureOwner {
           }
         : packageLock
     } finally {
-      if (temporary && !snapshotInUse) await removeEnvironmentSnapshot(temporary)
+      await lease?.release(captureError)
     }
   }
 

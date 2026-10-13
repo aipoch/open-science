@@ -4,7 +4,8 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { sandboxedPackageSpawn } from './package-process-sandbox'
+import { EnvironmentSnapshotInUseError } from '@aipoch/environment'
+import { sandboxedPackageSpawn, verifySnapshotRuntime } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
@@ -17,6 +18,40 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
+  it('retries verification cleanup through the same launch-bound sandbox owner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'snapshot-verifier-owner-'))
+    temporaryDirectories.push(root)
+    const requestProcessTreeTermination = vi.fn(async () => false)
+    const cleanup = vi
+      .fn(async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      .mockRejectedValueOnce(new Error('termination unconfirmed'))
+    const wrap = vi.fn(async () => ({
+      executable: process.execPath,
+      args: ['-e', 'console.log("OPEN_SCIENCE_SNAPSHOT_VERIFIED")'],
+      env: process.env,
+      annotateStderr: (text: string) => text,
+      requestProcessTreeTermination,
+      cleanup
+    }))
+    const result = await verifySnapshotRuntime({ wrap }, join(root, 'e'), ['python']).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(result).toBeInstanceOf(EnvironmentSnapshotInUseError)
+    if (!(result instanceof EnvironmentSnapshotInUseError)) throw result
+    expect(await result.retryTermination!()).toBe(false)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    requestProcessTreeTermination.mockResolvedValue(true)
+    expect(await result.retryTermination!()).toBe(true)
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(cleanup).toHaveBeenLastCalledWith('exit', { processesTerminated: true })
+    expect(wrap).toHaveBeenCalledTimes(1)
+  })
+
   it('passes GUI-authorized roots to the package sandbox with their access mode', async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-package-grants-'))
     const runtimeRoot = join(storageRoot, 'runtime')

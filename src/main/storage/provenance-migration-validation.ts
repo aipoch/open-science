@@ -7,7 +7,11 @@ import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
-import { parseNotebookEnvironmentLock, readEnvironmentSnapshot } from '@aipoch/environment'
+import {
+  parseNotebookEnvironmentLock,
+  readEnvironmentSnapshot,
+  reconcileEnvironmentSnapshotOperations
+} from '@aipoch/environment'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -97,6 +101,7 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
 // runtime after switchover.
 const assertNoRuntimeOperations = async (root: string): Promise<void> => {
   const runtimeRoot = join(root, 'runtime')
+  await reconcileEnvironmentSnapshotOperations(runtimeRoot)
   const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
   const state = await journal.readState()
   if (state === 'corrupt') {

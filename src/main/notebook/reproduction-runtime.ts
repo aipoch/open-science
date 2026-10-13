@@ -8,7 +8,7 @@ import type {
 import { restoreRRandomState, validatePythonRandomState } from '@aipoch/reproducibility'
 import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
 import type { NotebookSessionExecutionResult } from './session-aggregate'
@@ -26,8 +26,9 @@ import {
   pythonBin,
   restoreNativeEnvironmentLock,
   restoreEnvironmentSnapshot,
-  removeEnvironmentSnapshot,
+  createEnvironmentSnapshotLease,
   EnvironmentSnapshotInUseError,
+  type EnvironmentSnapshotLease,
   rScriptBin,
   runtimeRoot,
   selectMicromambaCache,
@@ -68,7 +69,7 @@ type RestoredEnvironment = {
   environmentName: string
   prefix: string
   command: string
-  snapshotRoot?: string
+  snapshotLease?: EnvironmentSnapshotLease
 }
 
 type HelperEpoch = {
@@ -217,8 +218,12 @@ const restoreEnvironment = async (
   if (lock.schemaVersion === 3 && lock.snapshot) {
     // Match capture's short private prefix, including one-character managed names.
     const scratch = join(input.storageRoot, '.e')
-    await mkdir(scratch, { recursive: true, mode: 0o700 })
-    const snapshotRoot = await mkdtemp(join(scratch, 'r-'))
+    const snapshotLease = await createEnvironmentSnapshotLease(
+      join(input.storageRoot, 'runtime'),
+      scratch,
+      'r-'
+    )
+    const snapshotRoot = snapshotLease.root
     const prefix = join(snapshotRoot, 'e')
     const command = pythonBin(prefix, platform)
     try {
@@ -234,21 +239,22 @@ const restoreEnvironment = async (
             input.processSandbox,
             prefix,
             [executable!, ...args],
-            input.signal
+            input.signal,
+            snapshotLease
           )
         }
       )
       input.signal?.throwIfAborted()
+      await snapshotLease.activate()
       progress('completed')
       return {
         environmentName: `repro-${requirement.lockChecksum.slice(0, 12)}`,
         prefix,
         command,
-        snapshotRoot
+        snapshotLease
       }
     } catch (error) {
-      if (!(error instanceof EnvironmentSnapshotInUseError))
-        await removeEnvironmentSnapshot(snapshotRoot)
+      await snapshotLease.release(error)
       throw error
     }
   }
@@ -421,10 +427,10 @@ const createNotebookReproductionRuntime = async (
     })
   }
   const restoredByIdentity = new Map<string, RestoredEnvironment>()
-  const removeSnapshotRoots = async (): Promise<void> => {
+  const releaseSnapshotRoots = async (error?: unknown): Promise<void> => {
     await Promise.all(
       [...restoredByIdentity.values()].map((environment) =>
-        environment.snapshotRoot ? removeEnvironmentSnapshot(environment.snapshotRoot) : undefined
+        environment.snapshotLease?.release(error)
       )
     )
   }
@@ -457,7 +463,7 @@ const createNotebookReproductionRuntime = async (
     }
     input.signal?.throwIfAborted()
   } catch (error) {
-    await removeSnapshotRoots()
+    await releaseSnapshotRoots()
     throw error
   }
   const executorOptions: NotebookKernelExecutorOptions = {
@@ -469,7 +475,7 @@ const createNotebookReproductionRuntime = async (
     executor =
       dependencies.createExecutor?.(executorOptions) ?? new NotebookKernelExecutor(executorOptions)
   } catch (error) {
-    await removeSnapshotRoots()
+    await releaseSnapshotRoots()
     throw error
   }
   const helperEpochs = new Map<string, HelperEpoch>()
@@ -577,8 +583,19 @@ const createNotebookReproductionRuntime = async (
       return result
     },
     shutdown: async () => {
-      const result = await executor.shutdown()
-      if (result.reaped) await removeSnapshotRoots()
+      const retain = (cause?: unknown): Promise<void> =>
+        releaseSnapshotRoots(
+          new EnvironmentSnapshotInUseError(cause, async () => (await executor.shutdown()).reaped)
+        )
+      let result: Awaited<ReturnType<NotebookSessionExecutor['shutdown']>>
+      try {
+        result = await executor.shutdown()
+      } catch (error) {
+        await retain(error)
+        throw error
+      }
+      if (result.reaped) await releaseSnapshotRoots()
+      else await retain()
       return result
     }
   }

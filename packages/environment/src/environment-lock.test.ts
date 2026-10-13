@@ -93,7 +93,7 @@ describe('captureNotebookEnvironmentLock', () => {
           execute: async () => {
             throw new Error('No package lock')
           },
-          snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+          snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, '.e') },
           verifySnapshotRuntime: async () => {
             throw new EnvironmentSnapshotInUseError(new Error('timeout'))
           }
@@ -104,9 +104,9 @@ describe('captureNotebookEnvironmentLock', () => {
         captureStatus: 'partial',
         partialReasons: ['environment-snapshot-unverified']
       })
-      const retained = await readdir(join(root, 'r'))
+      const retained = await readdir(join(root, '.e'))
       expect(retained).toHaveLength(1)
-      expect(await readFile(join(root, 'r', retained[0]!, 'e', 'package.py'), 'utf8')).toBe(
+      expect(await readFile(join(root, '.e', retained[0]!, 'e', 'package.py'), 'utf8')).toBe(
         'version = 1'
       )
     } finally {
@@ -135,7 +135,7 @@ describe('captureNotebookEnvironmentLock', () => {
             execute: async () => {
               throw new Error('Package lock unavailable')
             },
-            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, '.e') },
             verifySnapshotRuntime
           }
         )
@@ -146,7 +146,7 @@ describe('captureNotebookEnvironmentLock', () => {
       await writeFile(join(prefix, 'package.py'), 'version = 2')
       expect(await capture()).not.toEqual(first)
       expect(verifySnapshotRuntime).toHaveBeenCalledTimes(2)
-      expect(await readdir(join(root, 'r'))).toEqual([])
+      expect(await readdir(join(root, '.e'))).toEqual([])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -164,7 +164,7 @@ describe('captureNotebookEnvironmentLock', () => {
         const execute = vi.fn(async (argv: string[]) => {
           if (argv[0] === 'micromamba')
             return JSON.stringify(
-              JSON.parse(condaInventory('python', 'numpy')).map((pkg) => ({
+              JSON.parse(condaInventory('python', 'numpy')).map((pkg: Record<string, unknown>) => ({
                 ...pkg,
                 version: '1.0'
               }))
@@ -185,7 +185,7 @@ describe('captureNotebookEnvironmentLock', () => {
           {
             micromamba: 'micromamba',
             execute,
-            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, '.e') },
             verifySnapshotRuntime: (_prefix, argv) => execute(argv)
           }
         )
@@ -201,7 +201,7 @@ describe('captureNotebookEnvironmentLock', () => {
           'numpy-new.json',
           'numpy-old.json'
         ])
-        expect(await readdir(join(root, 'r'))).toEqual([])
+        expect(await readdir(join(root, '.e'))).toEqual([])
       } finally {
         await rm(root, { recursive: true, force: true })
       }

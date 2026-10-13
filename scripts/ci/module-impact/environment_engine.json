@@ -86,7 +86,9 @@
     "packages/environment/src/package-version-comparison.ts",
     "packages/environment/src/environment-lock.ts",
     "packages/environment/src/environment-snapshot.ts",
-    "packages/environment/src/external-environment-lock.test.ts"
+    "packages/environment/src/external-environment-lock.test.ts",
+    "packages/environment/src/environment-snapshot-lifecycle.ts",
+    "packages/environment/src/environment-snapshot-lifecycle.test.ts"
   ],
   "interfacePaths": ["packages/environment/src/index.ts"],
   "consumerModules": [
@@ -145,7 +147,8 @@
       "packages/environment/src/environment-lease-manager.test.ts",
       "packages/environment/src/runtime-relocation.test.ts",
       "packages/environment/src/provisioner.startup.test.ts",
-      "packages/environment/src/external-environment-lock.test.ts"
+      "packages/environment/src/external-environment-lock.test.ts",
+      "packages/environment/src/environment-snapshot-lifecycle.test.ts"
     ],
     "contract": [],
     "consumer": [

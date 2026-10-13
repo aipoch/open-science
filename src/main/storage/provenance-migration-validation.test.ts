@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
 import {
   restoreEnvironmentSnapshot,
+  createEnvironmentSnapshotLease,
+  EnvironmentSnapshotInUseError,
   operationJournalPath,
   RuntimeOperationJournal
 } from '@aipoch/environment'
@@ -179,6 +181,22 @@ describe('validateProvenanceMigrationState', () => {
     )
 
     await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+  })
+
+  it('reconciles a retained snapshot only after its owned process tree is confirmed gone', async () => {
+    const runtimeRoot = join(root, 'runtime')
+    const lease = await createEnvironmentSnapshotLease(runtimeRoot, join(root, '.e'), 's-')
+    let reaped = false
+    await lease.release(new EnvironmentSnapshotInUseError(undefined, async () => reaped))
+    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
+      'Unfinished Runtime operation'
+    )
+    reaped = true
+    await validateProvenanceMigrationState(root)
+    expect(
+      await RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
+    ).toEqual([])
+    await expect(readFile(join(lease.root, 'anything'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('refuses a pending runtime operation from the authoritative recovery journal', async () => {
