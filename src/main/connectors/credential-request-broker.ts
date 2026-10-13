@@ -25,6 +25,8 @@ type PendingCredentialRequest = {
 // public request metadata; plaintext is submitted through the credential owner's settings command.
 export class CredentialRequestBroker {
   private readonly pending = new Map<string, PendingCredentialRequest>()
+  // Explicit refusal lasts for this runtime; undefined identifies the sessionless dialog group.
+  private readonly declinedSessionIds = new Set<string | undefined>()
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
@@ -37,6 +39,7 @@ export class CredentialRequestBroker {
 
   request(info: ConnectorCredentialRequestInfo, signal?: AbortSignal): Promise<boolean> {
     signal?.throwIfAborted()
+    if (this.declinedSessionIds.has(info.sessionId)) return Promise.resolve(false)
     const id = this.deps.generateId()
     const request = { id, ...info }
 
@@ -76,10 +79,11 @@ export class CredentialRequestBroker {
   respond(id: string, configured: boolean): void {
     const entry = this.pending.get(id)
     if (!entry) return
+    if (!configured) this.declinedSessionIds.add(entry.request.sessionId)
 
     // Saving satisfies every caller; declining only dismisses the current Session's group (or the
     // sessionless fallback group). Settle queued calls so Not now cannot reveal the next identical
-    // prompt. Later calls remain eligible to request the credential again.
+    // prompt. Later calls in that group skip credential collection.
     const matchingIds = [...this.pending.entries()]
       .filter(
         ([, candidate]) =>

@@ -8,9 +8,10 @@ describe('CredentialRequestBroker', () => {
     async (sessionId) => {
       let sequence = 0
       const replay = vi.fn()
+      const broadcast = vi.fn()
       const broker = new CredentialRequestBroker({
         generateId: () => `credential-${++sequence}`,
-        broadcast: vi.fn(),
+        broadcast,
         replay
       })
       const info = {
@@ -27,13 +28,18 @@ describe('CredentialRequestBroker', () => {
         broker.replayPending()
         expect(replay).not.toHaveBeenCalled()
         await expect(second).resolves.toBe(false)
+        await expect(broker.request({ ...info, method: 'openalex_get_author' })).resolves.toBe(
+          false
+        )
+        expect(broadcast).toHaveBeenCalledTimes(2)
+        expect(sequence).toBe(2)
       } finally {
         broker.cancelAll()
       }
     }
   )
 
-  it('keeps other sessions waiting and allows a later request after declining a group', async () => {
+  it('keeps other sessions eligible after declining a group', async () => {
     let sequence = 0
     const onSettled = vi.fn()
     const broker = new CredentialRequestBroker({
@@ -62,7 +68,8 @@ describe('CredentialRequestBroker', () => {
       expect(controller.signal.aborted).toBe(false)
       expect(broker.getPending('credential-3')).not.toBeNull()
       expect(broker.getPending('credential-4')).not.toBeNull()
-      calls.push(broker.request({ ...info, sessionId: 'session-1' }))
+      await expect(broker.request({ ...info, sessionId: 'session-1' })).resolves.toBe(false)
+      calls.push(broker.request({ ...info, sessionId: 'session-3' }))
       expect(broker.getPending('credential-5')).not.toBeNull()
       controller.abort()
       broker.respond('credential-1', false)
@@ -70,6 +77,74 @@ describe('CredentialRequestBroker', () => {
     } finally {
       broker.cancelAll()
       await Promise.all(calls)
+    }
+  })
+
+  it.each(['abort', 'timeout', 'teardown'] as const)(
+    'does not remember %s or a stale response as a user refusal',
+    async (reason) => {
+      let sequence = 0
+      const timers: Array<() => void> = []
+      const broadcast = vi.fn()
+      const broker = new CredentialRequestBroker({
+        generateId: () => `credential-${++sequence}`,
+        broadcast,
+        setTimer: (callback) => {
+          timers.push(callback)
+          return timers.length as unknown as ReturnType<typeof setTimeout>
+        },
+        clearTimer: vi.fn()
+      })
+      const info = {
+        credentialId: 'openalex' as const,
+        connector: 'literature',
+        method: 'openalex_search_works',
+        sessionId: 'session-1'
+      }
+      const controller = new AbortController()
+      const first = broker.request(info, controller.signal)
+      if (reason === 'abort') controller.abort()
+      else if (reason === 'timeout') timers[0]()
+      else broker.cancelAll()
+      await expect(first).resolves.toBe(false)
+      broker.respond('credential-1', false)
+
+      const second = broker.request(info)
+      try {
+        expect(broadcast).toHaveBeenCalledTimes(2)
+        expect(broker.getPending('credential-2')).not.toBeNull()
+        broker.respond('credential-2', true)
+        await expect(second).resolves.toBe(true)
+      } finally {
+        broker.cancelAll()
+      }
+    }
+  )
+
+  it('starts fresh with a new broker and still honors cancellation in a declined session', async () => {
+    const create = (): CredentialRequestBroker =>
+      new CredentialRequestBroker({ generateId: () => 'credential-1', broadcast: vi.fn() })
+    const info = {
+      credentialId: 'openalex' as const,
+      connector: 'literature',
+      method: 'openalex_search_works',
+      sessionId: 'session-1'
+    }
+    const broker = create()
+    const first = broker.request(info)
+    broker.respond('credential-1', false)
+    await first
+    const reason = new Error('cancelled call')
+    expect(() => broker.request(info, AbortSignal.abort(reason))).toThrow(reason)
+
+    const restarted = create()
+    const next = restarted.request(info)
+    try {
+      expect(restarted.getPending('credential-1')).not.toBeNull()
+      restarted.respond('credential-1', true)
+      await expect(next).resolves.toBe(true)
+    } finally {
+      restarted.cancelAll()
     }
   })
 
