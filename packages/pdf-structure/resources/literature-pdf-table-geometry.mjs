@@ -525,7 +525,6 @@ export function trimTableCaptionCrop({
       !rect(caption.rect) ||
       !Number.isFinite(scale) ||
       scale <= 0 ||
-      caption.rect[3] <= contentRect[1] ||
       table.unassigned.length ||
       table.clipped?.length ||
       !pageFontItems.length ||
