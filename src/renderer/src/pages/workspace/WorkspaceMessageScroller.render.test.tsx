@@ -215,6 +215,7 @@ const renderScroller = async (
     credentialPending?: boolean
     isResumingSession?: boolean
     optimisticMessage?: ChatMessage
+    researchTitle?: string
     turnOutcomeActions?: TurnOutcomeActions
   } = {}
 ): Promise<string> => {
@@ -227,6 +228,7 @@ const renderScroller = async (
       credentialPending={props.credentialPending}
       isResumingSession={props.isResumingSession}
       optimisticMessage={props.optimisticMessage}
+      researchTitle={props.researchTitle}
       turnOutcomeActions={props.turnOutcomeActions}
       onSendEditedMessage={vi.fn()}
     />
@@ -286,6 +288,17 @@ describe('WorkspaceMessageScroller Run Marks render', () => {
 })
 
 describe('WorkspaceMessageScroller empty conversation banner', () => {
+  it('distinguishes imported records from empty discussions using their existing identity', async () => {
+    const original = await renderScroller(
+      createSession({ importedResearch: { importId: 'import' } }),
+      { researchTitle: 'Research' }
+    )
+    expect(original).toContain('No conversation history')
+    const discussion = await renderScroller(createSession({}), { researchTitle: 'Research' })
+    expect(discussion).toContain('Ask about this research')
+    expect(discussion).not.toContain('No conversation history')
+  })
+
   it('shows the banner for a new conversation with no messages', async () => {
     const html = await renderScroller(createSession({}))
 

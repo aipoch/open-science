@@ -6915,15 +6915,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "すべてのプロジェクトで共有する PDF のノートと注釈を読み取り専用スナップショットとして含める",
     "Read-only snapshot": "読み取り専用スナップショット",
     "Discuss the entire research": "研究全体について話し合う",
-    "Discussing {{title}}": "{{title}}についてのディスカッション",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "リプレイを見ながら、記録された研究について質問できます。ディスカッションは別に保存され、元の研究は変更されません。",
     "Summarize this research and its main findings.": "この研究と主な発見を要約してください。",
     "What evidence supports the conclusions?": "結論を裏付ける証拠は何ですか？",
     "What has not been verified yet?": "まだ検証されていないことは何ですか？",
     "Summarize research": "研究を要約",
     "Examine the evidence": "根拠を確認",
     "Identify limitations": "限界を確認",
-    "Question scope": "質問の範囲",
     "Discuss this research": "この研究について話し合う",
     "Add to another conversation…": "別の会話に追加…",
     "Could not open the research discussion. Please retry.": "研究のディスカッションを開けませんでした。再試行してください。",
@@ -7372,7 +7369,6 @@
     "More source files remain to be checked. This list may be incomplete.": "未確認のソースファイルが残っています。この一覧は不完全な可能性があります。",
     "Check more files": "さらにファイルを確認",
     "Ask about this research": "この研究について質問する",
-    "Sending your question creates a discussion. The original record stays unchanged.": "質問を送信するとディスカッションが作成されます。元の記録は変更されません。",
     "End-to-end study": "研究の全工程",
     "Downstream steps only": "後続の手順のみ",
     "Alternative conditions": "代替条件",
@@ -7638,6 +7634,12 @@
     "Show all panes": "すべてのペインを表示",
     "Visible panes": "表示するペイン",
     "Reset replay layout": "レイアウトをリセット",
-    "Resize {{left}} and {{right}}": "{{left}}と{{right}}の幅を調整"
+    "Resize {{left}} and {{right}}": "{{left}}と{{right}}の幅を調整",
+    "No conversation history": "会話履歴はありません",
+    "Review the research materials or ask a question below.": "研究資料を確認するか、下の入力欄から質問してください。",
+    "View referenced evidence": "参照したエビデンスを表示",
+    "Send to start a discussion. The original record stays unchanged.": "送信するとディスカッションが始まります。元の記録は変更されません。",
+    "Loading recording…": "録画を読み込み中…",
+    "Loading recorded footage…": "録画映像を読み込み中…"
   }
 }

@@ -6913,15 +6913,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "모든 프로젝트의 공유 PDF 노트와 주석을 읽기 전용 스냅샷으로 포함",
     "Read-only snapshot": "읽기 전용 스냅샷",
     "Discuss the entire research": "전체 연구에 대해 토론",
-    "Discussing {{title}}": "{{title}}에 대한 토론",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "리플레이를 보면서 기록된 연구에 대해 질문하세요. 토론은 별도로 저장되며 원본 연구는 변경되지 않습니다.",
     "Summarize this research and its main findings.": "이 연구와 주요 발견을 요약해 주세요.",
     "What evidence supports the conclusions?": "결론을 뒷받침하는 근거는 무엇인가요?",
     "What has not been verified yet?": "아직 검증되지 않은 것은 무엇인가요?",
     "Summarize research": "연구 요약",
     "Examine the evidence": "근거 검토",
     "Identify limitations": "한계 파악",
-    "Question scope": "질문 범위",
     "Discuss this research": "이 연구에 대해 토론",
     "Add to another conversation…": "다른 대화에 추가…",
     "Could not open the research discussion. Please retry.": "연구 토론을 열 수 없습니다. 다시 시도하세요.",
@@ -7370,7 +7367,6 @@
     "More source files remain to be checked. This list may be incomplete.": "아직 확인하지 않은 원본 파일이 있습니다. 이 목록이 불완전할 수 있습니다.",
     "Check more files": "더 많은 파일 확인",
     "Ask about this research": "이 연구에 대해 질문하기",
-    "Sending your question creates a discussion. The original record stays unchanged.": "질문을 보내면 토론이 생성됩니다. 원본 기록은 그대로 유지됩니다.",
     "End-to-end study": "전체 연구 과정",
     "Downstream steps only": "후속 단계만",
     "Alternative conditions": "대체 조건",
@@ -7636,6 +7632,12 @@
     "Show all panes": "모든 패널 표시",
     "Visible panes": "표시할 패널",
     "Reset replay layout": "레이아웃 초기화",
-    "Resize {{left}} and {{right}}": "{{left}} 및 {{right}} 너비 조절"
+    "Resize {{left}} and {{right}}": "{{left}} 및 {{right}} 너비 조절",
+    "No conversation history": "대화 기록이 없습니다",
+    "Review the research materials or ask a question below.": "연구 자료를 살펴보거나 아래에서 질문하세요.",
+    "View referenced evidence": "참조한 근거 보기",
+    "Send to start a discussion. The original record stays unchanged.": "전송하면 토론이 시작됩니다. 원본 기록은 변경되지 않습니다.",
+    "Loading recording…": "녹화 불러오는 중…",
+    "Loading recorded footage…": "녹화 영상 불러오는 중…"
   }
 }

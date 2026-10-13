@@ -8759,7 +8759,10 @@ it('shows the original transcript beside a new question composer without giving 
   expect(container.querySelector('[data-testid="ordinary-composer-form"]')).not.toBeNull()
   expect(
     container.querySelector('[data-testid="research-question-context"]')?.textContent
-  ).toContain('Sending your question creates a discussion. The original record stays unchanged.')
+  ).toContain('Send to start a discussion. The original record stays unchanged.')
+  expect(
+    container.querySelector('[data-testid="research-question-context"]')?.textContent
+  ).not.toContain('Ask about this research')
   expect(container.textContent).toContain('Original record · Read-only')
   expect(send).not.toHaveBeenCalled()
   const sendButton = container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!

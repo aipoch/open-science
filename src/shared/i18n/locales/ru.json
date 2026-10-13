@@ -7382,15 +7382,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Включить общие заметки и аннотации PDF из всех проектов в снимок только для чтения",
     "Read-only snapshot": "Снимок только для чтения",
     "Discuss the entire research": "Обсудить исследование целиком",
-    "Discussing {{title}}": "Обсуждение: {{title}}",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "Задавайте вопросы о записанном исследовании во время просмотра его повтора. Обсуждение сохраняется отдельно; исходное исследование остаётся без изменений.",
     "Summarize this research and its main findings.": "Подведите итоги этого исследования и его основных результатов.",
     "What evidence supports the conclusions?": "Какие данные подтверждают выводы?",
     "What has not been verified yet?": "Что ещё не было проверено?",
     "Summarize research": "Подвести итоги исследования",
     "Examine the evidence": "Изучить подтверждающие данные",
     "Identify limitations": "Выявить ограничения",
-    "Question scope": "Область вопроса",
     "Discuss this research": "Обсудить это исследование",
     "Add to another conversation…": "Добавить в другой диалог…",
     "Could not open the research discussion. Please retry.": "Не удалось открыть обсуждение исследования. Повторите попытку.",
@@ -7838,7 +7835,6 @@
     "Looking for saved run recordings…": "Поиск сохранённых записей запусков…",
     "More source files remain to be checked. This list may be incomplete.": "Остались непроверенные исходные файлы. Этот список может быть неполным.",
     "Check more files": "Проверить другие файлы",
-    "Sending your question creates a discussion. The original record stays unchanged.": "После отправки вопроса будет создано обсуждение. Исходная запись останется без изменений.",
     "End-to-end study": "Исследование от начала до конца",
     "Downstream steps only": "Только последующие этапы",
     "Alternative conditions": "Альтернативные условия",
@@ -8105,6 +8101,12 @@
     "Visible panes": "Видимые панели",
     "Reset replay layout": "Сбросить макет",
     "Resize {{left}} and {{right}}": "Изменить ширину {{left}} и {{right}}",
-    "Ask about this research": "Задать вопрос об исследовании"
+    "Ask about this research": "Задать вопрос об исследовании",
+    "No conversation history": "Нет истории диалога",
+    "Review the research materials or ask a question below.": "Просмотрите материалы исследования или задайте вопрос ниже.",
+    "View referenced evidence": "Посмотреть использованные свидетельства",
+    "Send to start a discussion. The original record stays unchanged.": "Отправьте вопрос, чтобы начать обсуждение. Исходная запись останется без изменений.",
+    "Loading recording…": "Загрузка записи…",
+    "Loading recorded footage…": "Загрузка записанного видео…"
   }
 }

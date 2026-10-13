@@ -530,7 +530,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
   expect(compared!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(2)
   await page
     .getByTestId('session-discussion-source')
-    .getByRole('button', { name: 'Question scope', exact: true })
+    .getByRole('button', { name: 'View referenced evidence', exact: true })
     .click()
   const choices = page.getByRole('dialog').filter({ hasText: 'Selected steps' })
   await choices.getByRole('button', { name: /The archived result is forty-two/ }).click()

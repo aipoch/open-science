@@ -6915,15 +6915,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "將所有專案共用的 PDF 筆記和註解作為唯讀快照匯出",
     "Read-only snapshot": "唯讀快照",
     "Discuss the entire research": "討論整個研究",
-    "Discussing {{title}}": "正在討論：{{title}}",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "觀看重播時，可以就已記錄的研究提問。討論會單獨儲存，原始研究保持不變。",
     "Summarize this research and its main findings.": "總結這項研究及其主要發現。",
     "What evidence supports the conclusions?": "有哪些證據支持這些結論？",
     "What has not been verified yet?": "還有哪些內容尚未驗證？",
     "Summarize research": "總結研究",
     "Examine the evidence": "查看證據",
     "Identify limitations": "瞭解侷限",
-    "Question scope": "提問範圍",
     "Discuss this research": "討論這項研究",
     "Add to another conversation…": "新增至其他對話…",
     "Could not open the research discussion. Please retry.": "無法開啟研究討論，請重試。",
@@ -7372,7 +7369,6 @@
     "More source files remain to be checked. This list may be incomplete.": "還有來源檔案尚未檢查，此清單可能不完整。",
     "Check more files": "檢查更多檔案",
     "Ask about this research": "針對這項研究提問",
-    "Sending your question creates a discussion. The original record stays unchanged.": "傳送問題後會建立討論，原始記錄保持不變。",
     "End-to-end study": "完整研究流程",
     "Downstream steps only": "僅後續步驟",
     "Alternative conditions": "替代條件",
@@ -7638,6 +7634,12 @@
     "Show all panes": "顯示所有欄位",
     "Visible panes": "顯示的欄位",
     "Reset replay layout": "恢復預設版面",
-    "Resize {{left}} and {{right}}": "調整{{left}}和{{right}}的寬度"
+    "Resize {{left}} and {{right}}": "調整{{left}}和{{right}}的寬度",
+    "No conversation history": "無對話記錄",
+    "Review the research materials or ask a question below.": "查看研究資料，或在下方提問。",
+    "View referenced evidence": "檢視引用證據",
+    "Send to start a discussion. The original record stays unchanged.": "傳送後開始討論，原始記錄保持不變。",
+    "Loading recording…": "正在載入錄製內容…",
+    "Loading recorded footage…": "正在載入錄製畫面…"
   }
 }

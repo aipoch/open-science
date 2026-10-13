@@ -7243,15 +7243,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Inclure les notes et annotations PDF partagées de tous les projets dans un instantané en lecture seule",
     "Read-only snapshot": "Instantané en lecture seule",
     "Discuss the entire research": "Discuter de l’ensemble de la recherche",
-    "Discussing {{title}}": "Discussion sur {{title}}",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "Posez des questions sur la recherche enregistrée tout en regardant sa relecture. Votre discussion est enregistrée séparément ; la recherche d’origine reste inchangée.",
     "Summarize this research and its main findings.": "Résumez cette recherche et ses principaux résultats.",
     "What evidence supports the conclusions?": "Quels éléments étayent les conclusions ?",
     "What has not been verified yet?": "Quels points n’ont pas encore été vérifiés ?",
     "Summarize research": "Résumer la recherche",
     "Examine the evidence": "Examiner les éléments probants",
     "Identify limitations": "Identifier les limites",
-    "Question scope": "Portée de la question",
     "Discuss this research": "Discuter de cette recherche",
     "Add to another conversation…": "Ajouter à une autre conversation…",
     "Could not open the research discussion. Please retry.": "Impossible d’ouvrir la discussion sur la recherche. Veuillez réessayer.",
@@ -7699,7 +7696,6 @@
     "Looking for saved run recordings…": "Recherche d’enregistrements d’exécution sauvegardés…",
     "More source files remain to be checked. This list may be incomplete.": "D’autres fichiers source restent à vérifier. Cette liste peut être incomplète.",
     "Check more files": "Vérifier d’autres fichiers",
-    "Sending your question creates a discussion. The original record stays unchanged.": "L’envoi de votre question crée une discussion. L’enregistrement d’origine reste inchangé.",
     "End-to-end study": "Étude de bout en bout",
     "Downstream steps only": "Étapes en aval uniquement",
     "Alternative conditions": "Conditions alternatives",
@@ -7966,6 +7962,12 @@
     "Visible panes": "Panneaux visibles",
     "Reset replay layout": "Réinitialiser la disposition",
     "Resize {{left}} and {{right}}": "Redimensionner {{left}} et {{right}}",
-    "Ask about this research": "Poser une question sur cette recherche"
+    "Ask about this research": "Poser une question sur cette recherche",
+    "No conversation history": "Aucun historique de conversation",
+    "Review the research materials or ask a question below.": "Consultez les documents de recherche ou posez une question ci-dessous.",
+    "View referenced evidence": "Voir les éléments de preuve référencés",
+    "Send to start a discussion. The original record stays unchanged.": "Envoyez une question pour commencer une discussion. Le dossier original reste inchangé.",
+    "Loading recording…": "Chargement de l’enregistrement…",
+    "Loading recorded footage…": "Chargement des images enregistrées…"
   }
 }

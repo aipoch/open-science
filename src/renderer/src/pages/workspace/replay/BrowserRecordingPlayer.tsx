@@ -881,7 +881,7 @@ const BrowserRecordingPlayerContent = ({
                   : 'pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground'
               }
             >
-              {t('Loading…')}
+              {t('Loading recorded footage…')}
             </div>
           ) : null}
         </RecordedMediaViewport>

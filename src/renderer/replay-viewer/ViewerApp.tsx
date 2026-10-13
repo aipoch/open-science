@@ -242,7 +242,9 @@ export const ViewerApp = ({
           role="status"
           title={
             context?.mode === 'recorded'
-              ? t('Loading archived observation…')
+              ? context.format === 'web-recording' || context.format === 'project-recording'
+                ? t('Loading recording…')
+                : t('Loading archived observation…')
               : t('Connecting to the research run…')
           }
           description={

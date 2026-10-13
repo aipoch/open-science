@@ -6915,15 +6915,12 @@
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "将所有项目共享的 PDF 笔记和批注作为只读快照导出",
     "Read-only snapshot": "只读快照",
     "Discuss the entire research": "讨论整个研究",
-    "Discussing {{title}}": "正在讨论：{{title}}",
-    "Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.": "观看回放时，可以就已记录的研究提问。讨论会单独保存，原始研究保持不变。",
     "Summarize this research and its main findings.": "总结这项研究及其主要发现。",
     "What evidence supports the conclusions?": "有哪些证据支持这些结论？",
     "What has not been verified yet?": "还有哪些内容尚未验证？",
     "Summarize research": "总结研究",
     "Examine the evidence": "查看证据",
     "Identify limitations": "了解局限",
-    "Question scope": "提问范围",
     "Discuss this research": "讨论这项研究",
     "Add to another conversation…": "添加到其他对话…",
     "Could not open the research discussion. Please retry.": "无法打开研究讨论，请重试。",
@@ -7372,7 +7369,6 @@
     "More source files remain to be checked. This list may be incomplete.": "还有来源文件尚未检查，此列表可能不完整。",
     "Check more files": "检查更多文件",
     "Ask about this research": "对此研究提问",
-    "Sending your question creates a discussion. The original record stays unchanged.": "发送问题后会创建讨论，原始记录保持不变。",
     "End-to-end study": "完整研究流程",
     "Downstream steps only": "仅后续步骤",
     "Alternative conditions": "替代条件",
@@ -7638,6 +7634,12 @@
     "Show all panes": "显示所有栏目",
     "Visible panes": "显示的栏目",
     "Reset replay layout": "恢复默认布局",
-    "Resize {{left}} and {{right}}": "调整{{left}}和{{right}}的宽度"
+    "Resize {{left}} and {{right}}": "调整{{left}}和{{right}}的宽度",
+    "No conversation history": "无对话记录",
+    "Review the research materials or ask a question below.": "查看研究材料，或在下方提问。",
+    "View referenced evidence": "查看引用证据",
+    "Send to start a discussion. The original record stays unchanged.": "发送后开始讨论，原始记录保持不变。",
+    "Loading recording…": "正在加载录制…",
+    "Loading recorded footage…": "正在加载录制画面…"
   }
 }

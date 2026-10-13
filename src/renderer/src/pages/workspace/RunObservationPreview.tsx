@@ -584,7 +584,9 @@ const RunObservationPreviewContent = (props: RunObservationPreviewProps): React.
       ) : (
         <p role="status" className="p-4 text-sm text-muted-foreground">
           {props.mode === 'recorded'
-            ? t('Loading archived observation…')
+            ? props.format === 'web-recording' || props.format === 'project-recording'
+              ? t('Loading recording…')
+              : t('Loading archived observation…')
             : t('Connecting to the research run…')}
         </p>
       )}

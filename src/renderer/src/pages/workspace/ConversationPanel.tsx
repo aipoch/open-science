@@ -2244,12 +2244,9 @@ const ConversationPanel = ({
                                 }
                               />
                             ) : null}
-                            <p className="text-xs font-medium text-text-100">
-                              {t('Ask about this research')}
-                            </p>
                             <p className="text-xs leading-5 text-text-300">
                               {t(
-                                'Sending your question creates a discussion. The original record stays unchanged.'
+                                'Send to start a discussion. The original record stays unchanged.'
                               )}
                             </p>
                             {researchSourceSession.packageOrigin ? (

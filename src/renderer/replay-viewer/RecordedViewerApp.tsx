@@ -253,7 +253,6 @@ const RecordedBrowserViewerApp = ({
           <h1 className="text-sm font-medium">
             {payload.recording.title ?? t('Project recording')}
           </h1>
-          <p className="mt-1 text-xs text-text-300">{t('Read-only research history')}</p>
         </header>
       ) : null}
       {selection && !researchPresentation ? (

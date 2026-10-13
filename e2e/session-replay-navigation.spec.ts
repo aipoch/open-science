@@ -431,18 +431,23 @@ test('replaces the discussion Session without replacing the draft or changing so
     await expect(stepChip).toContainText(source.title)
     await expect(stepChip.locator('.lucide-messages-square')).toBeVisible()
     await expect(page.locator('[data-session-discussion-source]')).toHaveCount(1)
-    await expect(page.getByRole('button', { name: 'Question scope', exact: true })).toBeVisible()
-    await expect(stepChip).not.toContainText('Question scope')
+    await expect(
+      page.getByRole('button', { name: 'View referenced evidence', exact: true })
+    ).toBeVisible()
+    await expect(stepChip).not.toContainText('View referenced evidence')
     const discussion = page.getByTestId('session-discussion-draft')
     for (const width of [240, 320, 480]) {
       await discussion.evaluate((node, width) => {
         ;(node as HTMLElement).style.width = `${width}px`
       }, width)
       const actionBox = await discussion
-        .getByRole('button', { name: 'Question scope', exact: true })
+        .getByRole('button', { name: 'View referenced evidence', exact: true })
         .boundingBox()
       const sourceBox = await stepChip.boundingBox()
-      expect(sourceBox!.x).toBeGreaterThan(actionBox!.x + actionBox!.width)
+      expect(
+        sourceBox!.x >= actionBox!.x + actionBox!.width ||
+          sourceBox!.y >= actionBox!.y + actionBox!.height
+      ).toBe(true)
       expect(await discussion.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
       const remove = stepChip.getByRole('button', { name: 'Remove annotation', exact: true })
       await expect(remove).toBeVisible()
