@@ -189,8 +189,10 @@ export async function composeAgentRuntime({
         if (projectId && owner) await owner.withSessionStopped(projectId, sessionId, operation)
         else await operation()
       },
-      afterSessionDelete: (sessionId, retained) =>
-        computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
+      afterSessionDelete: (sessionId, retained) => {
+        if (!retained) credentialRequestBroker.clearSession(sessionId)
+        computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained)
+      },
       initializationBarrier: initialConnectorSkillsReady,
       specialistService,
       sessionPersistenceCoordinator,

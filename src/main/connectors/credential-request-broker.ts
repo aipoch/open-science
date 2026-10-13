@@ -25,7 +25,7 @@ type PendingCredentialRequest = {
 // public request metadata; plaintext is submitted through the credential owner's settings command.
 export class CredentialRequestBroker {
   private readonly pending = new Map<string, PendingCredentialRequest>()
-  // Explicit refusal lasts for this runtime; undefined identifies the sessionless dialog group.
+  // Refusal lasts until Session deletion or app restart; undefined is the sessionless dialog group.
   private readonly declinedSessionIds = new Set<string | undefined>()
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -92,6 +92,13 @@ export class CredentialRequestBroker {
       )
       .map(([pendingId]) => pendingId)
     for (const pendingId of matchingIds) this.settle(pendingId, configured)
+  }
+
+  clearSession(sessionId: string): void {
+    for (const [id, entry] of [...this.pending]) {
+      if (entry.request.sessionId === sessionId) this.settle(id, false)
+    }
+    this.declinedSessionIds.delete(sessionId)
   }
 
   cancelAll(): void {

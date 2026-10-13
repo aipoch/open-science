@@ -80,6 +80,69 @@ describe('CredentialRequestBroker', () => {
     }
   })
 
+  it('forgets a deleted Session without resetting other refusals', async () => {
+    let sequence = 0
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast: vi.fn()
+    })
+    const info = {
+      credentialId: 'openalex' as const,
+      connector: 'literature',
+      method: 'openalex_search_works'
+    }
+    for (const sessionId of ['session-1', 'session-2', undefined]) {
+      const pending = broker.request({ ...info, sessionId })
+      broker.respond(`credential-${sequence}`, false)
+      await pending
+    }
+
+    broker.clearSession('session-1')
+    broker.clearSession('session-1')
+    broker.clearSession('unknown')
+    const next = broker.request({ ...info, sessionId: 'session-1' })
+    try {
+      expect(broker.hasPendingForSession('session-1')).toBe(true)
+      await expect(broker.request({ ...info, sessionId: 'session-2' })).resolves.toBe(false)
+      await expect(broker.request(info)).resolves.toBe(false)
+      expect(sequence).toBe(4)
+      broker.respond('credential-4', true)
+      await expect(next).resolves.toBe(true)
+    } finally {
+      broker.cancelAll()
+    }
+  })
+
+  it('settles only the deleted Session and ignores its late refusal', async () => {
+    let sequence = 0
+    const onSettled = vi.fn()
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast: vi.fn(),
+      onSettled
+    })
+    const info = {
+      credentialId: 'openalex' as const,
+      connector: 'literature',
+      method: 'openalex_search_works'
+    }
+    const first = broker.request({ ...info, sessionId: 'session-1' })
+    const other = broker.request({ ...info, sessionId: 'session-2' })
+    broker.clearSession('session-1')
+    await expect(first).resolves.toBe(false)
+    broker.respond('credential-1', false)
+    const next = broker.request({ ...info, sessionId: 'session-1' })
+    try {
+      expect(broker.hasPendingForSession('session-1')).toBe(true)
+      expect(broker.hasPendingForSession('session-2')).toBe(true)
+      expect(onSettled.mock.calls).toEqual([['credential-1', false]])
+      expect(sequence).toBe(3)
+    } finally {
+      broker.cancelAll()
+      await Promise.all([other, next])
+    }
+  })
+
   it.each(['abort', 'timeout', 'teardown'] as const)(
     'does not remember %s or a stale response as a user refusal',
     async (reason) => {
