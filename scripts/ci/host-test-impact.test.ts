@@ -203,6 +203,7 @@ it('keeps dynamic and opaque expansion evidence in the queue', () => {
 
 it.each(['pr', 'queue'])('documentation does not widen the %s CLI boundary', async (tier) => {
   const f = fixture()
+  f.put(owner, 'export const value = 3')
   f.put('docs/example.md', 'Updated documentation')
   const head = f.commit()
   const spawn = vi.fn(() => ({ status: 0 }))
