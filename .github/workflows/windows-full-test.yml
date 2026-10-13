@@ -225,6 +225,10 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}
         run: >-
           npm test --
+          src/main/session-package/fork.test.ts
+          src/main/agents/completion-gate.execute-control.integration.test.ts
+          src/main/database/agent-memory-project-scope-migration.test.ts
+          src/main/database/migration-service.test.ts
           src/main/managed-file-versions/version-file-operator.test.ts
           src/main/settings/service.test.ts
           src/main/compute/concurrency-integration.test.ts
