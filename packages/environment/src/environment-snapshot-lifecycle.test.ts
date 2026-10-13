@@ -159,6 +159,65 @@ describe('snapshot restore ownership', () => {
     }
   )
 
+  it('recovers only unowned empty scratch directories after a pre-journal crash', async () => {
+    const { runtime, scratch } = await fixture()
+    const empty = join(scratch, 's-abcdef'),
+      nonempty = join(scratch, 'r-abcdef')
+    await mkdir(empty, { recursive: true })
+    await mkdir(nonempty)
+    await writeFile(join(nonempty, 'keep'), 'unowned data')
+    await mkdir(join(scratch, 'unrelated'))
+    const recovery = new NotebookRecoveryCoordinator(runtime, undefined, {
+      verifyExecutable: async () => undefined
+    })
+    await recovery.recover()
+    await expect(lstat(empty)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(nonempty, 'keep'), 'utf8')).toBe('unowned data')
+    expect((await lstat(join(scratch, 'unrelated'))).isDirectory()).toBe(true)
+  })
+
+  it.each(['before', 'after'])(
+    'does not reap an allocation paused %s journal publication',
+    async (phase) => {
+      const { runtime, scratch, journal } = await fixture()
+      let proceed!: () => void
+      let entered!: () => void
+      const gate = new Promise<void>((resolve) => {
+        proceed = resolve
+      })
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const begin = journal.begin.bind(journal)
+      const spy = vi.spyOn(journal, 'begin').mockImplementationOnce(async (record) => {
+        if (phase === 'after') await begin(record)
+        entered()
+        await gate
+        if (phase === 'before') await begin(record)
+      })
+      const creating = createEnvironmentSnapshotLease(runtime, scratch, 'r-')
+      try {
+        await started
+        if (phase === 'after') {
+          const [record] = await journal.pending()
+          await expect(cleanEnvironmentSnapshotOperation(runtime, record)).rejects.toThrow(
+            'still in use'
+          )
+          expect((await lstat(record.targetPath!)).isDirectory()).toBe(true)
+        }
+        const recovering = reconcileEnvironmentSnapshotOperations(runtime)
+        proceed()
+        const lease = await creating
+        await recovering
+        expect((await lstat(lease.root)).isDirectory()).toBe(true)
+        await lease.release()
+      } finally {
+        proceed()
+        spy.mockRestore()
+      }
+    }
+  )
+
   it('refuses a replaced scratch directory without deleting its new contents', async () => {
     const { root, runtime, scratch, journal } = await fixture()
     const lease = await createEnvironmentSnapshotLease(runtime, scratch, 's-')

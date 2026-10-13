@@ -1,4 +1,7 @@
-import { cleanEnvironmentSnapshotOperation } from './environment-snapshot-lifecycle'
+import {
+  cleanEnvironmentSnapshotOperation,
+  cleanEmptyEnvironmentSnapshotDirectories
+} from './environment-snapshot-lifecycle'
 import { existsSync } from 'node:fs'
 import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
@@ -235,6 +238,7 @@ export class NotebookRecoveryCoordinator {
       return
     }
 
+    await cleanEmptyEnvironmentSnapshotDirectories(this.runtimeRoot)
     this.startupOperationIds ??= new Set(startupState.records.map((record) => record.operationId))
     this.retainedOperations = []
     const reconciled = await reconcileInterruptedOperations(journal, {

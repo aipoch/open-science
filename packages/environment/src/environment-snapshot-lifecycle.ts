@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, realpath } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, realpath, opendir, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import {
   bootTokenProvesReboot,
@@ -12,6 +12,7 @@ import {
   RuntimeOperationJournal,
   type RuntimeOperationRecord
 } from './operation-journal'
+import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import { readProcessStartToken } from './operation-recovery'
 import { EnvironmentSnapshotInUseError, removeEnvironmentSnapshot } from './environment-snapshot'
 
@@ -117,6 +118,39 @@ export const cleanEnvironmentSnapshotOperation = (
   return task
 }
 
+// Before journal.begin, mkdtemp can leave only an empty directory: no copy/child is allowed yet.
+// Use atomic rmdir, never recursive deletion, and the same allocation lock as lease creation.
+export const cleanEmptyEnvironmentSnapshotDirectories = async (
+  runtimeRoot: string
+): Promise<void> => {
+  const canonical = await realpath(runtimeRoot).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (!canonical) return
+  const scratch = join(dirname(canonical), '.e')
+  const metadata = await lstat(scratch).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (!metadata) return
+  if (!metadata.isDirectory() || metadata.isSymbolicLink() || (await realpath(scratch)) !== scratch)
+    throw new Error('Invalid environment snapshot scratch root.')
+  await withExclusiveCacheLock(`snapshot-scratch:${canonical}`, async () => {
+    const state = await RuntimeOperationJournal.forPath(operationJournalPath(canonical)).readState()
+    if (state === 'corrupt') throw new Error('Runtime operation journal is corrupt.')
+    const owned = new Set(state.records.map((record) => record.targetPath))
+    for await (const entry of await opendir(scratch)) {
+      const path = join(scratch, entry.name)
+      if (!entry.isDirectory() || !/^[sr]-[A-Za-z0-9]{6}$/.test(entry.name) || owned.has(path))
+        continue
+      await rmdir(path).catch((error: NodeJS.ErrnoException) => {
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'ENOTDIR'].includes(error.code ?? '')) throw error
+      })
+    }
+  })
+}
+
 export const reconcileEnvironmentSnapshotOperations = async (
   runtimeRoot: string
 ): Promise<void> => {
@@ -133,6 +167,7 @@ export const reconcileEnvironmentSnapshotOperations = async (
       if (!(error instanceof EnvironmentSnapshotInUseError)) throw error
     }
   }
+  await cleanEmptyEnvironmentSnapshotDirectories(runtimeRoot)
 }
 
 export const createEnvironmentSnapshotLease = async (
@@ -147,74 +182,77 @@ export const createEnvironmentSnapshotLease = async (
   await mkdir(scratchRoot, { recursive: true, mode: 0o700 })
   if ((await realpath(scratchRoot)) !== scratch)
     throw new Error('Invalid environment snapshot scratch root.')
-  const root = await mkdtemp(join(scratch, prefix))
-  const identity = await lstat(root)
-  const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-  const record: RuntimeOperationRecord = {
-    operationId: randomUUID(),
-    kind: 'snapshot-restore',
-    runtimeId: `snapshot:${basename(root)}`,
-    phase: 'preparing',
-    startedAt: Date.now(),
-    targetPath: root,
-    snapshotIdentity: {
-      dev: identity.dev,
-      ino: identity.ino,
-      birthtimeMs: identity.birthtimeMs,
-      bootToken: readBootToken()
-    }
-  }
-  try {
-    await journal.begin(record)
-  } catch (error) {
-    await removeEnvironmentSnapshot(root)
-    throw error
-  }
-  active.add(record.operationId)
-  const beforeSpawn = (): void => recordSpawnIntentSync(runtimeRoot, record.operationId)
-  const release = async (error?: unknown): Promise<void> => {
-    if (error instanceof EnvironmentSnapshotInUseError) {
-      // An injected verifier may not have supplied a PID. The active phase still forbids deletion.
-      await journal.update(record.operationId, { phase: 'active' })
-      record.phase = 'active'
-      active.delete(record.operationId)
-      if (error.retryTermination && !retained.has(record.operationId)) {
-        const retry = {
-          retry: error.retryTermination,
-          timer: undefined as NodeJS.Timeout | undefined
-        }
-        retained.set(record.operationId, retry)
-        const attempt = (): void => {
-          retry.timer = setTimeout(() => {
-            void cleanEnvironmentSnapshotOperation(runtimeRoot, record).catch(attempt)
-          }, 30_000)
-          retry.timer.unref()
-        }
-        attempt()
+  return withExclusiveCacheLock(`snapshot-scratch:${runtimeRoot}`, async () => {
+    const root = await mkdtemp(join(scratch, prefix))
+    const identity = await lstat(root)
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    const record: RuntimeOperationRecord = {
+      operationId: randomUUID(),
+      kind: 'snapshot-restore',
+      runtimeId: `snapshot:${basename(root)}`,
+      phase: 'preparing',
+      startedAt: Date.now(),
+      targetPath: root,
+      snapshotIdentity: {
+        dev: identity.dev,
+        ino: identity.ino,
+        birthtimeMs: identity.birthtimeMs,
+        bootToken: readBootToken()
       }
-      return
     }
-    // This call is allowed only after the caller confirms all verification/replay children are reaped.
-    await journal.update(record.operationId, { phase: 'reaped' })
-    record.phase = 'reaped'
-    removeOperationChildSync(runtimeRoot, record.operationId)
-    active.delete(record.operationId)
-    await cleanEnvironmentSnapshotOperation(runtimeRoot, record)
-  }
-  return {
-    root,
-    beforeSpawn,
-    childStarted: (pid) =>
-      recordOperationChildSync(runtimeRoot, record.operationId, {
-        childPid: pid,
-        childStartedAt: Date.now(),
-        childStartToken: readProcessStartToken(pid)
-      }),
-    activate: async () => {
-      await journal.update(record.operationId, { phase: 'active' })
-      record.phase = 'active'
-      beforeSpawn()
-    },
-    release
-  }
+    active.add(record.operationId)
+    try {
+      await journal.begin(record)
+    } catch (error) {
+      active.delete(record.operationId)
+      await removeEnvironmentSnapshot(root)
+      throw error
+    }
+    const beforeSpawn = (): void => recordSpawnIntentSync(runtimeRoot, record.operationId)
+    const release = async (error?: unknown): Promise<void> => {
+      if (error instanceof EnvironmentSnapshotInUseError) {
+        // An injected verifier may not have supplied a PID. The active phase still forbids deletion.
+        await journal.update(record.operationId, { phase: 'active' })
+        record.phase = 'active'
+        active.delete(record.operationId)
+        if (error.retryTermination && !retained.has(record.operationId)) {
+          const retry = {
+            retry: error.retryTermination,
+            timer: undefined as NodeJS.Timeout | undefined
+          }
+          retained.set(record.operationId, retry)
+          const attempt = (): void => {
+            retry.timer = setTimeout(() => {
+              void cleanEnvironmentSnapshotOperation(runtimeRoot, record).catch(attempt)
+            }, 30_000)
+            retry.timer.unref()
+          }
+          attempt()
+        }
+        return
+      }
+      // This call is allowed only after the caller confirms all verification/replay children are reaped.
+      await journal.update(record.operationId, { phase: 'reaped' })
+      record.phase = 'reaped'
+      removeOperationChildSync(runtimeRoot, record.operationId)
+      active.delete(record.operationId)
+      await cleanEnvironmentSnapshotOperation(runtimeRoot, record)
+    }
+    return {
+      root,
+      beforeSpawn,
+      childStarted: (pid) =>
+        recordOperationChildSync(runtimeRoot, record.operationId, {
+          childPid: pid,
+          childStartedAt: Date.now(),
+          childStartToken: readProcessStartToken(pid)
+        }),
+      activate: async () => {
+        await journal.update(record.operationId, { phase: 'active' })
+        record.phase = 'active'
+        beforeSpawn()
+      },
+      release
+    }
+  })
 }

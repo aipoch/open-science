@@ -23,6 +23,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { FileHandle } from 'node:fs/promises'
 import type { NotebookEnvironmentManifest } from './contracts'
 import { pythonBin } from './runtime-paths'
+import { withExclusiveCacheLock } from './pkgs-cache-lock'
 
 // A snapshot describes installed bytes, including conflicting metadata and residual files.
 // Capturing these files does not by itself establish that the environment is relocatable.
@@ -157,7 +158,12 @@ const streamFile = async (
   }
 }
 
-const writeFileObject = async (store: string, path: string, size: number): Promise<string> => {
+const writeFileObject = async (
+  store: string,
+  path: string,
+  size: number,
+  created: Set<string>
+): Promise<string> => {
   const expected = await streamFile(path, undefined, size)
   const existing = objectPath(store, expected)
   try {
@@ -177,6 +183,7 @@ const writeFileObject = async (store: string, path: string, size: number): Promi
     const destination = objectPath(store, checksum)
     try {
       await link(temporary, destination)
+      created.add(checksum)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
@@ -189,7 +196,7 @@ const writeFileObject = async (store: string, path: string, size: number): Promi
   }
 }
 
-const writeObject = async (store: string, bytes: Buffer): Promise<string> => {
+const writeObject = async (store: string, bytes: Buffer, created: Set<string>): Promise<string> => {
   if (bytes.length > MAX_METADATA_BYTES)
     throw new Error('Environment snapshot metadata is too large.')
   const checksum = hash(bytes)
@@ -209,6 +216,7 @@ const writeObject = async (store: string, bytes: Buffer): Promise<string> => {
     await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 })
     try {
       await link(temporary, destination)
+      created.add(checksum)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
@@ -260,10 +268,11 @@ export const removeEnvironmentSnapshot = async (destination: string): Promise<vo
   await rm(destination, { recursive: true, force: true })
 }
 
-export const captureEnvironmentSnapshot = async (
+const captureSnapshot = async (
   prefix: string,
   store: string,
-  manifest?: Pick<NotebookEnvironmentManifest, 'runtimeVersion' | 'packages'>
+  manifest: Pick<NotebookEnvironmentManifest, 'runtimeVersion' | 'packages'> | undefined,
+  created: Set<string>
 ): Promise<{ checksum: string; snapshot: EnvironmentSnapshot }> => {
   const sourcePrefix = await realpath(prefix)
   if (contained(sourcePrefix, await canonicalDestination(store)))
@@ -329,7 +338,7 @@ export const captureEnvironmentSnapshot = async (
     const path = join(sourcePrefix, entry.path)
     if (stamp(await lstat(path)) !== observed.get(entry.path))
       throw new Error('Environment changed during capture.')
-    entry.checksum = await writeFileObject(store, path, entry.size)
+    entry.checksum = await writeFileObject(store, path, entry.size, created)
   }
   // Package operations are serialized by the caller; detect unrelated writes as well.
   const check = async (directory: string): Promise<void> => {
@@ -409,7 +418,41 @@ export const captureEnvironmentSnapshot = async (
       ? { observation: { runtimeVersion: manifest.runtimeVersion, packages: manifest.packages } }
       : {})
   }
-  return { checksum: await writeObject(store, Buffer.from(JSON.stringify(snapshot))), snapshot }
+  return {
+    checksum: await writeObject(store, Buffer.from(JSON.stringify(snapshot)), created),
+    snapshot
+  }
+}
+
+// Serialize publication/rollback for this CAS: another capture cannot adopt an object while
+// its creator may still roll it back. Pre-existing objects always belong to earlier captures.
+export const captureEnvironmentSnapshot = async (
+  prefix: string,
+  store: string,
+  manifest?: Pick<NotebookEnvironmentManifest, 'runtimeVersion' | 'packages'>
+): Promise<{ checksum: string; snapshot: EnvironmentSnapshot }> => {
+  store = await canonicalDestination(store)
+  return withExclusiveCacheLock(`snapshot-capture:${store}`, async () => {
+    const created = new Set<string>()
+    try {
+      return await captureSnapshot(prefix, store, manifest, created)
+    } catch (error) {
+      let cleanupError: unknown
+      for (const checksum of created) {
+        try {
+          await rm(objectPath(store, checksum), { force: true })
+        } catch (failure) {
+          cleanupError ??= failure
+        }
+      }
+      if (cleanupError)
+        throw new AggregateError(
+          [error, cleanupError],
+          'Environment snapshot capture and rollback failed.'
+        )
+      throw error
+    }
+  })
 }
 
 export const readEnvironmentSnapshot = async (

@@ -26,7 +26,13 @@ import {
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, statfs: vi.fn(actual.statfs), open: vi.fn(actual.open) }
+  return {
+    ...actual,
+    statfs: vi.fn(actual.statfs),
+    open: vi.fn(actual.open),
+    link: vi.fn(actual.link),
+    writeFile: vi.fn(actual.writeFile)
+  }
 })
 
 const roots: string[] = []
@@ -127,6 +133,89 @@ describe('environment file snapshots', () => {
       expect(await readFile(join(prefix, 'lib', 'native'))).toEqual(original)
     } finally {
       vi.mocked(fs.open).mockImplementation(open)
+    }
+  })
+
+  it.each(['changed', 'manifest'] as const)(
+    'rolls back only new objects after %s capture failure',
+    async (failure) => {
+      const { root, prefix, store } = await fixture()
+      const baseline = await captureEnvironmentSnapshot(prefix, store)
+      const baselineObjects = (await readdir(join(store, 'objects'))).sort()
+      await writeFile(join(prefix, 'lib', 'package.py'), 'new unpublished package bytes')
+      const link = vi.mocked(fs.link).getMockImplementation()!
+      const write = vi.mocked(fs.writeFile).getMockImplementation()!
+      let changed = false
+      vi.mocked(fs.link).mockImplementation(async (...args) => {
+        await link(...args)
+        if (failure === 'changed' && !changed) {
+          changed = true
+          await write(join(prefix, 'lib', 'package.py'), 'changed during capture')
+        }
+      })
+      vi.mocked(fs.writeFile).mockImplementation(async (...args) => {
+        if (
+          failure === 'manifest' &&
+          Buffer.isBuffer(args[1]) &&
+          args[1].includes(Buffer.from('"schemaVersion":1'))
+        )
+          throw new Error('manifest publication failed')
+        return write(...args)
+      })
+      try {
+        await expect(captureEnvironmentSnapshot(prefix, store)).rejects.toThrow(
+          failure === 'changed' ? 'changed during capture' : 'manifest publication failed'
+        )
+        expect((await readdir(join(store, 'objects'))).sort()).toEqual(baselineObjects)
+        const destination = join(root, 'r')
+        await materializeEnvironmentSnapshot(store, baseline.checksum, destination)
+        expect(await readFile(join(destination, 'lib', 'package.py'), 'utf8')).toBe(
+          'VERSION = "2"\n'
+        )
+      } finally {
+        vi.mocked(fs.link).mockImplementation(link)
+        vi.mocked(fs.writeFile).mockImplementation(write)
+      }
+    }
+  )
+
+  it('serializes rollback against a concurrent capture adopting the same objects', async () => {
+    const { root, prefix, store } = await fixture()
+    let proceed!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      proceed = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const link = vi.mocked(fs.link).getMockImplementation()!
+    let paused = false
+    vi.mocked(fs.link).mockImplementation(async (...args) => {
+      await link(...args)
+      if (!paused) {
+        paused = true
+        entered()
+        await gate
+        await writeFile(join(prefix, 'lib', 'package.py'), 'changed during first capture')
+      }
+    })
+    const first = captureEnvironmentSnapshot(prefix, store)
+    const firstResult = expect(first).rejects.toThrow('changed during capture')
+    try {
+      await started
+      const second = captureEnvironmentSnapshot(prefix, store)
+      proceed()
+      await firstResult
+      const captured = await second
+      const destination = join(root, 'r')
+      await materializeEnvironmentSnapshot(store, captured.checksum, destination)
+      expect(await readFile(join(destination, 'lib', 'package.py'), 'utf8')).toBe(
+        'changed during first capture'
+      )
+    } finally {
+      proceed()
+      vi.mocked(fs.link).mockImplementation(link)
     }
   })
 
