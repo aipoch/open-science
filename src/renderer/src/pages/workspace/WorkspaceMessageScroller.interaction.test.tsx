@@ -3264,6 +3264,67 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
   })
 
+  it.each(['temporary', 'bound'])(
+    'defers copied artifact lookup until branch ownership is durable (%s identity)',
+    async (identity) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const resolveVersionDescriptors = vi
+        .fn()
+        .mockRejectedValue(new Error('Session does not belong to the requested Project.'))
+      window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+      const session = createSession({
+        id: identity === 'temporary' ? 'pending-session-123-1' : 'durable-session',
+        isPending: identity === 'temporary',
+        delegationPolicyAuthorityPending: true,
+        status: 'idle',
+        branchSource: { sessionId: 'source-session' },
+        messages: [
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Created the chart',
+            artifactIds: ['artifact-version-1']
+          })
+        ]
+      })
+
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+
+      expect(resolveVersionDescriptors).not.toHaveBeenCalled()
+      expect(flushSessionPersistenceMock).not.toHaveBeenCalled()
+
+      resolveVersionDescriptors.mockResolvedValue([])
+      flushSessionPersistenceMock.mockRejectedValue(
+        new Error('Unrelated Session persistence failed')
+      )
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={{
+              ...session,
+              id: 'durable-session',
+              isPending: false,
+              // A save acknowledgement can arrive before the policy acknowledgement.
+              revision: 1
+            }}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+      expect(resolveVersionDescriptors).toHaveBeenCalledExactlyOnceWith({
+        projectId: 'default',
+        appSessionId: 'durable-session',
+        versionIds: ['artifact-version-1']
+      })
+      expect(flushSessionPersistenceMock).not.toHaveBeenCalled()
+    }
+  )
+
   it('retries copied generated Version metadata after pending Session persistence settles', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
