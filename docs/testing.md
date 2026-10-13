@@ -39,6 +39,37 @@ Module's curated owner, contract, and representative consumer tests; it is not c
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
 
+### Dependency boundaries and explainable convergence
+
+`test:affected` refines a declared selection against immutable merge-base, head and actual checkout
+sources. Documentation and validated additive registrations retain their own evidence without
+turning an otherwise homogeneous source change into a mixed boundary. Policy changes, deletions,
+unknown ownership, dirty checkouts and unavailable evidence keep the conservative selection.
+
+Both PR and queue tiers may exclude a host test reached only through module expansion when a
+complete dependency traversal proves it cannot reach the actual changed files in **all three**
+snapshots. Selecting a consumer module never makes its other sources new change seeds: two owners
+wired into one composition do not automatically affect each other's independent tests. Changed
+owners' direct declarations, contracts, changed tests, graph evidence and new registration evidence
+are protected. Runtime-only traversal excludes erased type imports; typechecks and structural
+architecture checks still cover those relationships. Mixed imports, schemas, side effects, mocks
+and registered dynamic contracts remain runtime dependencies.
+
+PR additionally keeps the existing direct-consumer/one-adapter boundary and defers farther consumers
+to blocking merge queue. That distance rule is **not** proof of independence. Queue retains real
+multi-hop consumers. Opaque IPC, event, filesystem, native or unresolved imports cannot establish
+independence and retain tests. `test:affected:explain -- --base <base> --head <head> --tier pr` shows
+exclusions, retained boundary reasons, deferrals, capabilities and fallback reasons.
+
+`node scripts/ci/module-relationships.mjs <revision>` exports all registered modules with file-role
+layers, public interfaces, test counts, unresolved runtime files and file evidence for each edge.
+Runtime imports, type imports and explicit dynamic contracts point **consumer → dependency**;
+`test-routing` points **changed owner → consumer evidence**. These graphs must not be conflated.
+Layers describe file roles; a mixed legacy module can occupy several roles. The architecture guard
+prevents foundation dependencies, shared-to-host/presentation imports, owner-to-composition imports
+and private imports across the PDF/isolated-helper public boundaries. It does not claim complete
+encapsulation of every existing domain.
+
 ### Full fallback
 
 Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:

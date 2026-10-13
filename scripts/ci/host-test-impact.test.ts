@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { refineHostTests } from './package-host-test-impact.mjs'
 import { runModuleTestCli } from './module-test-impact.mjs'
+import { moduleRelationships } from './module-relationships.mjs'
 
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
@@ -96,12 +97,14 @@ function fixture() {
 it('defers only distant evidence in PR while retaining the complete queue plan and capability scope', () => {
   const f = fixture()
   const result = f.refine()
-  expect(result.deferredTestFiles).toEqual([distant, unrelated])
+  expect(result.deferredTestFiles).toEqual([distant])
   expect(result.testFiles).toEqual([own, direct, adapter, historic, opaque, contract])
   expect(result.capabilityOverlays).toEqual(f.plan.capabilityOverlays)
   expect(result.modules).toEqual(f.plan.modules)
-  expect(f.refine({ tier: 'queue' })).toBe(f.plan)
-  expect(refineHostTests(f.plan, f.changes, f.manifest)).toBe(f.plan)
+  expect(f.refine({ tier: 'queue' }).testFiles).toEqual(
+    f.plan.testFiles.filter((test) => test !== unrelated)
+  )
+  expect(f.refine({ tier: 'queue' }).testFiles).toContain(distant)
 })
 
 it('protects CodeGraph and unioned explicit runtime dependencies', () => {
@@ -176,3 +179,115 @@ it.each(['pr', 'queue'])(
     }
   }
 )
+
+it('does not reseed a composed sibling and retains real multi-hop consumers in queue', () => {
+  const f = fixture()
+  f.put('src/main/sibling.ts', 'export const value = 1')
+  f.put(unrelated, "import './sibling'")
+  f.put('src/main/adapter.ts', "import './owner'; import './sibling'")
+  const head = f.commit()
+  const queue = f.refine({ head, tier: 'queue' })
+  expect(queue.testFiles).not.toContain(unrelated)
+  expect(queue.testFiles).toContain(adapter)
+  expect(queue.testFiles).toContain(distant)
+  // Reversing the relation creates a real path, which both tiers must preserve.
+  f.put('src/main/sibling.ts', "export * from './owner'")
+  expect(f.refine({ head: f.commit(), tier: 'queue' }).testFiles).toContain(unrelated)
+})
+
+it('keeps dynamic and opaque expansion evidence in the queue', () => {
+  const f = fixture()
+  f.put(unrelated, "window.api.invoke('identity:read')")
+  expect(f.refine({ head: f.commit(), tier: 'queue' }).testFiles).toContain(unrelated)
+})
+
+it.each(['pr', 'queue'])('documentation does not widen the %s CLI boundary', async (tier) => {
+  const f = fixture()
+  f.put('docs/example.md', 'Updated documentation')
+  const head = f.commit()
+  const spawn = vi.fn(() => ({ status: 0 }))
+  const options = {
+    cwd: f.cwd,
+    manifest: f.manifest,
+    spawn,
+    execute: (command: string, args: string[]) => {
+      if (command === 'codegraph') throw Error('No graph')
+      return execFileSync(command, args, { cwd: f.cwd, encoding: 'utf8' })
+    },
+    environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+  }
+  await runModuleTestCli(['affected', '--base', f.base, '--head', head, '--tier', tier], options)
+  expect(spawn.mock.calls[0]?.[1]).not.toContain(unrelated)
+  expect(spawn.mock.calls[0]?.[1]).toContain(direct)
+  if (tier === 'pr') expect(spawn.mock.calls[0]?.[1]).not.toContain(distant)
+  else expect(spawn.mock.calls[0]?.[1]).toContain(distant)
+})
+
+it.each(['pr', 'queue'])(
+  'protects additive registration evidence beside source changes in %s',
+  async (tier) => {
+    const f = fixture()
+    f.put('scripts/ci/module-impact.json', JSON.stringify({ schemaVersion: 1 }))
+    for (const [id, module] of Object.entries(f.manifest.modules))
+      f.put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(module))
+    const base = f.commit()
+    const trusted = structuredClone(f.manifest)
+    f.put(owner, 'export const value = 3')
+    f.manifest.modules.owner.testFiles.consumer.push(unrelated)
+    f.put('scripts/ci/module-impact/owner.json', JSON.stringify(f.manifest.modules.owner))
+    const head = f.commit()
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      await runModuleTestCli(['affected', '--base', base, '--head', head, '--tier', tier], {
+        cwd: f.cwd,
+        manifest: trusted,
+        spawn,
+        execute: (command: string, args: string[]) => {
+          if (command === 'codegraph') throw Error('No graph')
+          return execFileSync(command, args, { cwd: f.cwd, encoding: 'utf8' })
+        },
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+      })
+      expect(spawn.mock.calls[0]?.[1]).toContain(unrelated)
+      expect(spawn.mock.calls[0]?.[1]).toContain(direct)
+      if (tier === 'pr') expect(spawn.mock.calls[0]?.[1]).not.toContain(distant)
+      else expect(spawn.mock.calls[0]?.[1]).toContain(distant)
+      expect(write.mock.calls.map(([text]) => text).join('')).toContain('Mode: selective')
+    } finally {
+      write.mockRestore()
+    }
+  }
+)
+
+it('exports immutable, separately directed dependency and test-routing evidence', () => {
+  const f = fixture()
+  const before = moduleRelationships(f.head, f.cwd)
+  expect(before.relations).toContainEqual(
+    expect.objectContaining({ kind: 'runtime-import', from: 'downstream', to: 'owner' })
+  )
+  expect(before.relations).toContainEqual(
+    expect.objectContaining({ kind: 'test-routing', from: 'owner', to: 'downstream' })
+  )
+  f.put('src/main/adapter.ts', "import type { Value } from './owner'")
+  f.put(
+    'scripts/ci/module-runtime-consumers.json',
+    JSON.stringify({ [owner]: ['src/main/far.ts'] })
+  )
+  const after = moduleRelationships(f.commit(), f.cwd)
+  expect(after.relations).toContainEqual(
+    expect.objectContaining({
+      kind: 'type-import',
+      from: 'downstream',
+      to: 'owner',
+      paths: [['src/main/adapter.ts', owner]]
+    })
+  )
+  expect(after.relations).toContainEqual(
+    expect.objectContaining({ kind: 'dynamic-contract', from: 'downstream', to: 'owner' })
+  )
+  expect(after.relations.some(({ kind }: { kind: string }) => kind === 'runtime-import')).toBe(
+    false
+  )
+  expect(moduleRelationships(f.head, f.cwd)).toEqual(before)
+})
