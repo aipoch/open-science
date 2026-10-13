@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../../stores/desktop-runtime-recovery-store'
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -66,6 +67,7 @@ describe('useManagedPreviewResource', () => {
   let root: Root
 
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
@@ -80,6 +82,26 @@ describe('useManagedPreviewResource', () => {
   afterEach(async () => {
     await act(async () => root?.unmount())
     container.remove()
+  })
+
+  it('reacquires a mounted desktop preview after its previous capability is revoked', async () => {
+    let resource = 0
+    vi.mocked(window.api.previewResources.acquire).mockImplementation(async () => ({
+      id: `resource-${++resource}`,
+      url: '/preview',
+      size: 3,
+      mimeType: 'application/pdf',
+      version: 1
+    }))
+    root = createRoot(container)
+    await act(async () => root.render(<Probe item={firstItem} />))
+    expect(container.textContent).toBe('resource-1')
+    await act(async () =>
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    )
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 2 }))
+    expect(container.textContent).toBe('resource-2')
+    expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
   })
 
   it('W01 reads from a fresh capability after replay while the preview stays mounted', async () => {

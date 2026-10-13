@@ -3,19 +3,17 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 
 it('keeps SDK observation DTOs and project-view launch types compatible with application contracts', () => {
-  const path = resolve('packages/open-science/run-observation-contract.fixture.ts')
-    .split(sep)
-    .join('/')
+  const path = resolve('cli/run-observation-contract.fixture.ts').split(sep).join('/')
   const source = `
-    import type * as SDK from './index'
-    import type * as Shared from '../../src/shared/run-observation'
-    import type * as Recorded from '../../src/shared/run-observation-recorded'
-    import type * as Archive from '../../src/shared/run-observation-archive'
-    import type * as ProjectRecording from '../../src/shared/project-recording'
-    import type * as BrowserRecording from '../../src/shared/browser-recording'
-    import type * as Capture from '../../src/shared/run-observation-capture'
-    import type { RunObservationRecordingStatus } from '../../src/shared/run-observation-recording-status'
-    import type { RuntimeViewLaunch } from '../../src/shared/runtime-view'
+    import type * as SDK from '../packages/open-science/index'
+    import type * as Shared from '../src/shared/run-observation'
+    import type * as Recorded from '../src/shared/run-observation-recorded'
+    import type * as Archive from '../src/shared/run-observation-archive'
+    import type * as ProjectRecording from '../src/shared/project-recording'
+    import type * as BrowserRecording from '../src/shared/browser-recording'
+    import type * as Capture from '../src/shared/run-observation-capture'
+    import type { RunObservationRecordingStatus } from '../src/shared/run-observation-recording-status'
+    import type { RuntimeViewLaunch } from '../src/shared/runtime-view'
     type Assert<T extends true> = T
     type Compatible<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false
     type RecordingFormat = Assert<Compatible<SDK.RecordedEvidenceFormat, Recorded.RecordedEvidenceFormat>>

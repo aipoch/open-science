@@ -1,9 +1,6 @@
-import type { SecureStorageCipher } from '../secure-storage'
-import {
-  CredentialIdentityError,
-  type CredentialIdentity,
-  type IdentityProbeResult
-} from './selection'
+import type { SecureStorageCipher } from './cipher-contract'
+import type { IdentityProbeResult } from './probe-contract'
+import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 export interface CredentialAccess extends SecureStorageCipher {
   assertAccessAllowed(): void
@@ -21,19 +18,22 @@ export const createCredentialAccess = (options: {
   let checked = false
   let written = false
   let failure: CredentialIdentityError | undefined
-  const fail = (reason: string, probe?: IdentityProbeResult): never => {
+  const fail = (reason: string | CredentialIdentityError, probe?: IdentityProbeResult): never => {
     if (!failure) {
-      failure = new CredentialIdentityError(
-        reason,
-        options.identity.backend === 'mac-keychain' && probe
-          ? {
-              appName: options.identity.appName,
-              status: probe.status,
-              ...(probe.reason !== undefined ? { reason: probe.reason } : {}),
-              ...(probe.osStatus !== undefined ? { osStatus: probe.osStatus } : {})
-            }
-          : undefined
-      )
+      failure =
+        reason instanceof CredentialIdentityError
+          ? reason
+          : new CredentialIdentityError(
+              reason,
+              options.identity.backend === 'mac-keychain' && probe
+                ? {
+                    appName: options.identity.appName,
+                    status: probe.status,
+                    ...(probe.reason !== undefined ? { reason: probe.reason } : {}),
+                    ...(probe.osStatus !== undefined ? { osStatus: probe.osStatus } : {})
+                  }
+                : undefined
+            )
       options.recover(failure)
     }
     throw failure
@@ -88,8 +88,10 @@ export const createCredentialAccess = (options: {
         // the key in use; repeating them only turns a transient keyring error into a fatal one.
         checked = true
         return true
-      } catch {
-        return fail('credential-access-unavailable')
+      } catch (error) {
+        return fail(
+          error instanceof CredentialIdentityError ? error : 'credential-access-unavailable'
+        )
       }
     },
     getSelectedStorageBackend: () => options.cipher.getSelectedStorageBackend?.() ?? 'unknown',
@@ -101,8 +103,8 @@ export const createCredentialAccess = (options: {
         written = true
         checked = true
         return encrypted
-      } catch {
-        return fail('credential-write-failed')
+      } catch (error) {
+        return fail(error instanceof CredentialIdentityError ? error : 'credential-write-failed')
       }
     },
     ...(options.cipher.validateEncryptedCookie
@@ -129,8 +131,8 @@ export const createCredentialAccess = (options: {
         const plaintext = options.cipher.decryptString(value)
         checked = true
         return plaintext
-      } catch {
-        return fail('decryption-failed')
+      } catch (error) {
+        return fail(error instanceof CredentialIdentityError ? error : 'decryption-failed')
       }
     }
   }

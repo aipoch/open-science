@@ -87,7 +87,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
         <SettingsRow
           label={t('Mode')}
           description={t(
-            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open-Science started with; choose Manual to give them a fixed proxy.'
+            'System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.'
           )}
           className="pt-0"
         >

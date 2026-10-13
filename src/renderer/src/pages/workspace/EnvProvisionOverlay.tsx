@@ -2,7 +2,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
-import type { ProvisionUiState } from './provisioning-view'
+import type { ProvisionUiState } from '@/lib/notebook-provisioning'
 import { provisionProgressText } from './provision-progress-text'
 
 // Reusable provisioning progress surface. Rendered as a greyed overlay over the notebook pane, and

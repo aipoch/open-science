@@ -4,14 +4,11 @@ import type {
   AcpRuntimeState,
   AcpStateSnapshot
 } from '../../shared/acp'
+import { getAcpRuntimeEventImage, MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
+import { MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp-image-contract'
 import {
-  getAcpRuntimeEventImage,
-  MAX_ACP_RUNTIME_EVENTS,
-  MAX_ACP_SESSION_IMAGE_BYTES
-} from '../../shared/acp'
-import {
-  sanitizeRawToolPayload,
   sanitizeNotebookCodeReviewPayload,
+  sanitizeRawToolPayload,
   sanitizeToolContent,
   sanitizeToolDetailText
 } from '../../shared/tool-detail-sanitizer'

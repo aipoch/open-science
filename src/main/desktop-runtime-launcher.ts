@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto'
+import {
+  backendStartupStatusSchema,
+  DesktopBackendStartupError,
+  type BackendStartupStatus
+} from './backend-startup'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { access, mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -114,6 +120,7 @@ export async function startOrAttachDesktopBackend(options: {
   packaged: boolean
   args?: readonly string[]
   timeoutMs?: number
+  onStatus?: (status: BackendStartupStatus & { elapsedMs: number }) => void
 }): Promise<DesktopBackendLaunch> {
   const existing = await discoverDesktopBackend(options.configRoot, options.version)
   if (existing) return { endpoint: existing }
@@ -126,14 +133,29 @@ export async function startOrAttachDesktopBackend(options: {
     0o600
   )
   // The explicit config root must not make Node select a different credential profile.
+  const attemptId = randomUUID()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPEN_SCIENCE_CONFIG_ROOT: options.configRoot,
-    OPEN_SCIENCE_USER_DATA: options.profilePath
+    OPEN_SCIENCE_USER_DATA: options.profilePath,
+    OPEN_SCIENCE_STARTUP_ATTEMPT: attemptId
   }
   delete env.ELECTRON_RUN_AS_NODE
   let child: ChildProcess
   let failure: Error | undefined
+  let status: BackendStartupStatus | undefined
+  const startedAt = Date.now()
+  const onMessage = (message: unknown): void => {
+    const result = backendStartupStatusSchema.safeParse(message)
+    if (result.success && result.data.attemptId === attemptId && status?.kind !== 'failed') {
+      status = result.data
+      try {
+        options.onStatus?.({ ...status, elapsedMs: Date.now() - startedAt })
+      } catch {
+        /* Diagnostics must not change the launch outcome. */
+      }
+    }
+  }
   const onError = (error: Error): void => {
     failure = error
   }
@@ -151,34 +173,43 @@ export async function startOrAttachDesktopBackend(options: {
         env,
         detached: true,
         windowsHide: true,
-        stdio: ['ignore', file.fd, file.fd]
+        stdio: ['ignore', file.fd, file.fd, 'ipc']
       }
     )
     // Spawn errors can fire before the asynchronous descriptor close settles.
     child.on('error', onError)
+    child.on('message', onMessage)
   } finally {
     await file.close()
   }
   child.unref()
-  const deadline = Date.now() + (options.timeoutMs ?? 60_000)
+  child.channel?.unref()
+  const deadline = startedAt + (options.timeoutMs ?? 60_000)
   try {
     while (Date.now() < deadline) {
       if (failure) throw failure
-      if (
-        child.signalCode ||
-        (child.exitCode !== null && child.exitCode !== 0 && child.exitCode !== 75)
-      )
-        throw new Error(
-          `Node backend exited during startup (${child.signalCode ?? child.exitCode}). See ${logs}.`
+      if (child.signalCode || (child.exitCode !== null && child.exitCode !== 75))
+        throw new DesktopBackendStartupError(
+          `Node backend exited during startup (${child.signalCode ?? child.exitCode}). See ${logs}.`,
+          status?.stage ?? 'bootstrap',
+          true,
+          logs,
+          status
         )
       const endpoint = await discoverDesktopBackend(options.configRoot, options.version)
-      if (endpoint) return { endpoint, startedProcess: child }
+      if (endpoint && status?.kind !== 'failed') return { endpoint, startedProcess: child }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
-    throw new Error(
-      `Node backend startup timed out. See ${logs}. A surviving server is not terminated automatically.`
+    throw new DesktopBackendStartupError(
+      `Node backend startup timed out. See ${logs}. A surviving server is not terminated automatically.`,
+      status?.stage ?? 'bootstrap',
+      false,
+      logs,
+      status
     )
   } finally {
+    child.off('message', onMessage)
+    if (child.connected) child.disconnect()
     child.off('error', onError)
   }
 }

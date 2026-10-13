@@ -228,7 +228,8 @@ export const verifyCredentialCiphertexts = (
         cipher.validateEncryptedCookie(entry.value, entry)
       } else cipher.decryptString(entry.value)
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialIdentityError) throw error
     throw new CredentialIdentityError('decryption-failed')
   }
 }

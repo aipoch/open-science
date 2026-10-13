@@ -1,32 +1,18 @@
-import { z } from 'zod'
-import { createHash } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
+import { createHash } from 'node:crypto'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import {
-  pdfAnnotationSchema,
   pdfNativeImportReceiptSchema,
   type ListPdfAnnotationsRequest,
   type PdfAnnotationSource
 } from '../../shared/pdf-annotations'
 import { tagViewSchema } from '../../shared/tags'
 import { createUploadVersionReference } from '../../shared/uploads'
-import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { readAnnotations } from '../pdf-annotations/repository'
-import type { PackageRecords } from './native-snapshot'
-
-// Optional, inert package data. Import never writes these records to the user's shared notebook.
-export const packagePdfNotesSchema = z
-  .array(
-    z
-      .object({
-        versionId: z.string().min(1).max(1024),
-        annotations: z.array(pdfAnnotationSchema).max(10000),
-        tags: z.array(tagViewSchema).max(10000),
-        nativeImport: pdfNativeImportReceiptSchema.optional()
-      })
-      .strict()
-  )
-  .max(1000)
-export type PackagePdfNotes = z.infer<typeof packagePdfNotesSchema>
+import type { PackagePdfNotes } from './pdf-notes-contract'
+import { packagePdfNotesSchema } from './pdf-notes-contract'
+import type { PackageRecords } from './records-contract'
+export { packagePdfNotesSchema, type PackagePdfNotes } from './pdf-notes-contract'
 
 // Resolve from restored package versions even when every snapshot annotation was deleted.
 export const readPackagePdfSource = async (

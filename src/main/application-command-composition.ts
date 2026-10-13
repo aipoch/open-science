@@ -1,39 +1,3 @@
-import { researchRunCommandGroup, registerResearchRunCommands } from './research-runs/ipc'
-import type { ResearchRunInspectionPort } from './research-runs/inspection'
-import { researchDemoCommandGroup, registerResearchDemoCommands } from './research-demos/ipc'
-import type { ResearchDemoOwner } from './research-demos/owner'
-import { runObservationCommandGroup, registerRunObservationCommands } from './run-observation/ipc'
-import type { RunObservationExternalPort } from './run-observation-external-port'
-import {
-  browserRecordingCommandGroup,
-  registerBrowserRecordingCommands
-} from './browser-recordings/ipc'
-import type { BrowserRecordingExternalPort } from './browser-recordings/external-port'
-import {
-  researchExecutionProfileCommandGroup,
-  registerResearchExecutionProfileCommands,
-  type ResearchExecutionProfileCommands
-} from './research-execution-profiles/ipc'
-import {
-  pdfTranslationApplicationCommandGroup,
-  registerPdfTranslationApplicationCommands
-} from './literature/pdf-translation/application-commands'
-import type { PdfTranslationOwner } from './literature/pdf-translation/index'
-import { specialistDesktopCommandGroup } from './specialist/desktop-commands'
-import {
-  sideChatApplicationCommandGroup,
-  registerSideChatApplicationCommands
-} from './side-chat/application-commands'
-import type { SideChatCommandOwner } from './side-chat/command-owner'
-import {
-  bootstrapApplicationCommandGroup,
-  registerBootstrapApplicationCommands
-} from './settings/bootstrap-application-commands'
-import {
-  specialistApplicationCommandGroup,
-  registerSpecialistApplicationCommands,
-  type SpecialistApplicationOwner
-} from './specialist/application-commands'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
@@ -44,15 +8,30 @@ import {
   registerAcpCommands,
   type AcpApplicationCommandDependencies
 } from './acp/application-commands'
+import type {
+  ApplicationCommandByNameDispatcher,
+  ApplicationCommandComposition,
+  RemoteAccessOwner,
+  RemoteWebApplicationCommandDispatcher
+} from './application-command-composition-contract'
 import {
   createApplicationCommandRouter,
   type ApplicationCommand,
   type ApplicationCommandDiagnostic,
   type ApplicationCommandGroup,
   type ApplicationCommandInstallation,
-  type ApplicationInvocation,
   type ApplicationCommandRegistrar
 } from './application-command-router'
+import {
+  bookmarkApplicationCommandGroup,
+  registerBookmarkApplicationCommands,
+  type BookmarkCommandOwner
+} from './bookmarks/application-commands'
+import type { BrowserRecordingExternalPort } from './browser-recordings/external-port'
+import {
+  browserRecordingCommandGroup,
+  registerBrowserRecordingCommands
+} from './browser-recordings/ipc'
 import {
   computeApplicationCommandGroup,
   registerComputeApplicationCommands,
@@ -69,6 +48,21 @@ import {
   type HostApplicationCommandDependencies
 } from './host-application-commands'
 import {
+  literatureApplicationCommandGroup,
+  registerLiteratureApplicationCommands,
+  type LiteratureCommandOwner
+} from './literature/application-commands'
+import {
+  pdfTranslationApplicationCommandGroup,
+  registerPdfTranslationApplicationCommands
+} from './literature/pdf-translation/application-commands'
+import type { PdfTranslationOwner } from './literature/pdf-translation/index'
+import {
+  memoryApplicationCommandGroup,
+  registerMemoryApplicationCommands,
+  type MemoryCommandOwner
+} from './memory/application-commands'
+import {
   installNotebookApplicationCommands,
   notebookApplicationCommands,
   type NotebookApplicationCommandDependencies
@@ -83,14 +77,39 @@ import {
   type RuntimeApplicationCommandDependencies
 } from './notebook/runtime-application-commands'
 import {
+  pdfAnnotationApplicationCommandGroup,
+  registerPdfAnnotationApplicationCommands,
+  type PdfAnnotationCommandOwner
+} from './pdf-annotations/application-commands'
+import {
   permissionGrantApplicationCommandGroup,
   registerPermissionGrantApplicationCommands
 } from './permission-grants/application-commands'
+import { registerResearchDemoCommands, researchDemoCommandGroup } from './research-demos/ipc'
+import type { ResearchDemoOwner } from './research-demos/owner'
+import {
+  registerResearchExecutionProfileCommands,
+  researchExecutionProfileCommandGroup,
+  type ResearchExecutionProfileCommands
+} from './research-execution-profiles/ipc'
+import type { ResearchRunInspectionPort } from './research-runs/inspection'
+import { registerResearchRunCommands, researchRunCommandGroup } from './research-runs/ipc'
+import type { RunObservationExternalPort } from './run-observation-external-port'
+import { registerRunObservationCommands, runObservationCommandGroup } from './run-observation/ipc'
+import {
+  registerSessionReplayCommands,
+  sessionReplayCommandGroup,
+  type SessionReplayCommandOwner
+} from './session-replay/application-commands'
 import {
   registerCoreSettingsApplicationCommands,
   settingsCoreApplicationCommandGroup,
   type CoreSettingsApplicationCommandDependencies
 } from './settings/application-commands'
+import {
+  bootstrapApplicationCommandGroup,
+  registerBootstrapApplicationCommands
+} from './settings/bootstrap-application-commands'
 import {
   registerIntegrationSettingsApplicationCommands,
   settingsApprovalApplicationCommandGroup,
@@ -104,35 +123,21 @@ import {
   type RuntimeSettingsApplicationCommandDependencies
 } from './settings/runtime-application-commands'
 import {
+  registerSideChatApplicationCommands,
+  sideChatApplicationCommandGroup
+} from './side-chat/application-commands'
+import type { SideChatCommandOwner } from './side-chat/command-owner'
+import {
+  registerSpecialistApplicationCommands,
+  specialistApplicationCommandGroup,
+  type SpecialistApplicationOwner
+} from './specialist/application-commands'
+import { specialistDesktopCommandGroup } from './specialist/desktop-commands'
+import {
   registerTagApplicationCommands,
   tagApplicationCommandGroup,
   type TagCommandOwner
 } from './tags/application-commands'
-import {
-  memoryApplicationCommandGroup,
-  registerMemoryApplicationCommands,
-  type MemoryCommandOwner
-} from './memory/application-commands'
-import {
-  literatureApplicationCommandGroup,
-  registerLiteratureApplicationCommands,
-  type LiteratureCommandOwner
-} from './literature/application-commands'
-import {
-  pdfAnnotationApplicationCommandGroup,
-  registerPdfAnnotationApplicationCommands,
-  type PdfAnnotationCommandOwner
-} from './pdf-annotations/application-commands'
-import {
-  bookmarkApplicationCommandGroup,
-  registerBookmarkApplicationCommands,
-  type BookmarkCommandOwner
-} from './bookmarks/application-commands'
-import {
-  sessionReplayCommandGroup,
-  registerSessionReplayCommands,
-  type SessionReplayCommandOwner
-} from './session-replay/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -140,18 +145,6 @@ type NotebookEnvironmentDependencies = Parameters<
   typeof installNotebookEnvironmentApplicationCommands
 >[1]
 type PermissionGrantDependencies = Parameters<typeof registerPermissionGrantApplicationCommands>[1]
-type RemoteAccessOwner = HostApplicationCommandDependencies['remoteAccess']
-
-type ApplicationCommandByNameDispatcher = Readonly<{
-  invoke: (
-    commandName: string,
-    invocation: ApplicationInvocation<readonly unknown[]>
-  ) => Promise<unknown>
-  commandNames: () => readonly string[]
-}>
-
-type RemoteWebApplicationCommandDispatcher = ApplicationCommandByNameDispatcher &
-  Readonly<{ rejectedCommandNames: () => readonly string[] }>
 
 type ApplicationCommandModuleDescriptor = Readonly<{
   groups: readonly AnyApplicationCommandGroup[]
@@ -184,16 +177,6 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   pdfAnnotations: PdfAnnotationCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
-}>
-
-type ApplicationCommandComposition = Readonly<{
-  desktop: ApplicationCommandByNameDispatcher
-  electron: ApplicationCommandByNameDispatcher
-  localWeb: ApplicationCommandByNameDispatcher
-  remoteWeb: RemoteWebApplicationCommandDispatcher
-  task: ApplicationCommandByNameDispatcher
-  bindRemoteAccess: (owner: RemoteAccessOwner) => void
-  dispose: () => void
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([

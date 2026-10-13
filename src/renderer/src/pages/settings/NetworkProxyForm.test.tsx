@@ -104,11 +104,13 @@ describe('NetworkProxyForm', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(expected)
   })
 
-  it('renders System as the historical default and explains process lifecycle', () => {
+  it('renders System as the historical default and explains the backend proxy source', () => {
     act(() => root.render(<NetworkProxyForm onDone={vi.fn()} />))
 
     expect(container.textContent).toContain('System')
-    expect(container.textContent).toContain('Agent processes inherit only the proxy environment')
+    expect(container.textContent).toContain(
+      'Browser and operating-system proxy settings may differ'
+    )
     expect(container.textContent).toContain('Existing agent sessions')
     expect(container.textContent).toContain('New requests and processes use the saved setting.')
   })

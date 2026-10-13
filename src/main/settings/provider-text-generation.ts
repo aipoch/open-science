@@ -1,21 +1,22 @@
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
+import { sanitizeAcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import { customProviderRequiresKey } from '../../shared/provider-base-url'
 import {
   providerErrorDetails,
   providerHttpFailure,
   type ProviderTextGenerationFailure
 } from '../../shared/provider-text-generation-failure'
-import { createHash } from 'node:crypto'
-import { z } from 'zod'
-import { customProviderRequiresKey } from '../../shared/provider-base-url'
-import { fetchProviderRequest } from './provider-fetch'
-import { netFetchStandard } from '../network-fetch'
-import type { ResolvedProvider } from './provider-env'
-import { anthropicMessagesUrl, openAiChatCompletionsUrl, openAiResponsesUrl } from './base-url'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import { resolveChatReasoningTransport } from './reasoning-transport'
+import { netFetchStandard } from '../network-fetch'
+import { isRecord } from '../value-guards'
+import { anthropicMessagesUrl, openAiChatCompletionsUrl, openAiResponsesUrl } from './base-url'
 import { readBoundedResponseText, ResponseBodyLimitError } from './bounded-response'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
-import { sanitizeAcpTurnTokenUsage, type AcpTurnTokenUsage } from '../../shared/acp'
-import { isRecord } from '../value-guards'
+import type { ResolvedProvider } from './provider-env'
+import { fetchProviderRequest } from './provider-fetch'
+import { resolveChatReasoningTransport } from './reasoning-transport'
 
 export type ProviderTextGenerationTarget = Readonly<{
   providerId: string

@@ -2,16 +2,16 @@ import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientpr
 
 import type { ElicitationAnswer, ElicitationProjection } from '../../../shared/acp'
 import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
-import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { PersistedActivityGroup } from '../../../shared/session-persistence'
-import { createSortIndex } from './session-store-message-graph-owner'
-import { inferSessionInteractionState } from './session-store-interaction-state'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type {
   ChatSession,
   SessionStatus,
   ToolActivity,
   ToolActivityStatus
-} from './session-store-persistence-owner'
+} from './session-store-contract'
+import { inferSessionInteractionState } from './session-store-interaction-state'
+import { createSortIndex } from './session-store-message-graph-owner'
 
 export type UpsertToolActivityInput = {
   sessionId: string

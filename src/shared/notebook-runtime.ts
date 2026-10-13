@@ -1,5 +1,5 @@
-import type { EnvProvenance, DiscoveredInterpreter } from '@aipoch/environment/contracts'
-import type { NotebookLanguage } from './notebook'
+import type { DiscoveredInterpreter, EnvProvenance } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from './notebook-language-contract'
 
 // Renderer-safe wire shapes for the notebook Runtime Registry (managed + external environments).
 // RuntimeEnablement owns global admission while NotebookRuntimeBindings own each Session's selected

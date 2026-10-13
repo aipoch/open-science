@@ -1,24 +1,50 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
-import {
-  managedExecutionCallSchema,
-  managedExecutionProvenanceSchema,
-  type ManagedExecutionPort,
-  type ManagedExecutionTurnContext
-} from './managed-execution-port'
-import { executionRecoveryContext } from './execution-recovery'
 import {
   NotebookExecutionStopError,
   isNotebookKernelStopResolved,
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
+import { executionRecoveryContext } from './execution-recovery'
+import {
+  managedExecutionCallSchema,
+  managedExecutionProvenanceSchema,
+  type ManagedExecutionPort,
+  type ManagedExecutionTurnContext
+} from './managed-execution-port'
+import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
 import { computeProbeSnapshot, type ComputeHost, type ComputeHostDetails } from '@aipoch/compute'
 import { type AgentComputeHostSummary } from '../../shared/compute'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import {
+  stripAgentsReservedParams,
+  type TrustedCallingSession,
+  type TrustedControlInvocationIdentity
+} from '../../shared/agents-contract'
+import type {
+  ArtifactRpcCapabilityBinding,
+  ArtifactRpcMethod,
+  ArtifactVersionFile,
+  ArtifactWriteReservation,
+  ArtifactWriteSourceScope,
+  CreateArtifactVersionRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReplayArtifactVersionRequest,
+  ReserveArtifactWriteRequest,
+  SaveArtifactVersionRequest
+} from '../../shared/artifact-provenance'
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../shared/artifact-provenance'
+import {
+  sanitizeAgentUserChoiceRequest,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult
+} from '../../shared/elicitation'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
@@ -26,54 +52,28 @@ import {
   type NotebookRunProvenanceContext
 } from '../../shared/notebook'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
-import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
-import {
-  createArtifactVersionLocator,
-  parseArtifactVersionLocator
-} from '../../shared/artifact-provenance'
 import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
-import type { NotebookRpcConnection } from './mcp-server'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
+import type {
+  ConversationSkillImportRequest,
+  ConversationSkillImporter
+} from '../skills/conversation-import'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
-import {
-  NOTEBOOK_LOCAL_RPC_METHODS,
-  isNotebookLocalRpcMethod,
-  opensNotebookInputRun,
-  resolveNotebookLocalRpcHandler,
-  markRuntimeBindingHostAdmission,
-  type NotebookLocalRpcCapability
-} from './local-rpc-notebook-adapter'
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
   PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest
 } from './input-registry'
-import type {
-  ConversationSkillImporter,
-  ConversationSkillImportRequest
-} from '../skills/conversation-import'
-import type {
-  ArtifactRpcCapabilityBinding,
-  SaveArtifactVersionRequest,
-  ArtifactWriteSourceScope,
-  ArtifactRpcMethod,
-  ArtifactWriteReservation,
-  ArtifactVersionFile,
-  CreateArtifactVersionRequest,
-  ReleaseArtifactWriteReservationRequest,
-  ReserveArtifactWriteRequest,
-  ReplayArtifactVersionRequest
-} from '../../shared/artifact-provenance'
 import {
-  sanitizeAgentUserChoiceRequest,
-  type AgentUserChoiceRequest,
-  type AgentUserChoiceResult
-} from '../../shared/elicitation'
-import {
-  stripAgentsReservedParams,
-  type TrustedCallingSession,
-  type TrustedControlInvocationIdentity
-} from '../../shared/agents-contract'
+  NOTEBOOK_LOCAL_RPC_METHODS,
+  isNotebookLocalRpcMethod,
+  markRuntimeBindingHostAdmission,
+  opensNotebookInputRun,
+  resolveNotebookLocalRpcHandler,
+  type NotebookLocalRpcCapability
+} from './local-rpc-notebook-adapter'
+import type { NotebookRpcConnection } from './mcp-server'
 
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 
@@ -98,16 +98,14 @@ import type {
   WslSetupStatus,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
+import type { AuthenticatedDelegateCaller } from '../delegation/authenticated-delegate-caller'
+import type { DurableDelegateRequest } from '../delegation/delegate-request-contract'
 import {
   DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
   assertDelegateInputShape,
   assertDelegateRequestShape
 } from '../delegation/delegated-work-admission'
-import type {
-  AuthenticatedDelegateCaller,
-  DurableDelegateRequest,
-  DurableDelegatedWork
-} from '../delegation/durable-delegated-work'
+import type { DurableDelegatedWork } from '../delegation/durable-delegated-work-contract'
 import { StructuredOutputError } from '../delegation/structured-output'
 import {
   projectHostCapabilities,

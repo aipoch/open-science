@@ -1,5 +1,5 @@
+import type { MessageQueueItem } from './composer-contract'
 import { docToArtifactRefs, docToMessageParts } from './composer/composer-doc'
-import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   isQueueLiveTurn,
   queueErrorMessage,
@@ -10,10 +10,10 @@ import {
   queuedAdmissionFailure,
   queuedItemHasPayload
 } from './workspace-message-queue-admission'
+import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   WorkspaceMessageQueueOwner,
   type MessageQueueDispatch,
-  type MessageQueueItem,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 

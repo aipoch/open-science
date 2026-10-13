@@ -20,12 +20,14 @@
     "src/renderer/src/stores/settings-store.test.ts",
     "src/renderer/src/stores/settings-store.ts",
     "src/renderer/src/stores/settings-write-coordinator.test.ts",
-    "src/renderer/src/stores/settings-write-coordinator.ts"
+    "src/renderer/src/stores/settings-write-coordinator.ts",
+    "src/renderer/src/lib/read-with-deadline.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/runtime-settings-store.ts",
     "src/renderer/src/stores/settings-return-focus.ts",
-    "src/renderer/src/stores/settings-store.ts"
+    "src/renderer/src/stores/settings-store.ts",
+    "src/renderer/src/lib/read-with-deadline.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -261,6 +263,7 @@
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",

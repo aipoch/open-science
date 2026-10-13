@@ -131,6 +131,72 @@ const createCodexDeps = (
 })
 
 describe('AgentRuntimeManager', () => {
+  it.each(['detectCodex', 'bootstrapCodex', 'checkEnvironment'] as const)(
+    'upgrades the installed adapter before %s starts its nested process',
+    async (operation) => {
+      const { ensureManagedCodexContextUsage, managedCodexBinary } = await import('./managed-codex')
+      await mkdir(dirname(managedAdapterPath), { recursive: true })
+      await writeFile(
+        managedAdapterPath,
+        await readFile(
+          new URL('./fixtures/codex-acp-1.6.2-error-handler.txt', import.meta.url),
+          'utf8'
+        )
+      )
+      await ensureManagedCodexContextUsage(managedAdapterPath)
+      const current = await readFile(managedAdapterPath, 'utf8')
+      await writeFile(
+        join(dirname(managedAdapterPath), 'package.json'),
+        JSON.stringify({ type: 'module' })
+      )
+      await writeFile(
+        managedAdapterPath,
+        current.replaceAll('env: spawnEnv, windowsHide: true }', 'env: spawnEnv }') +
+          '\nif (process.argv.includes("--version")) { console.log("codex-acp 1.6.2"); process.exit(0) }'
+      )
+      inventory.opencode.set(managedAdapterPath, 'codex-acp 1.6.2')
+      inventory.opencode.set(managedCodexBinary(storageRoot), 'codex-cli 0.157.1')
+      const nestedSpawn = vi.fn<(...args: unknown[]) => { pid: number }>(() => ({ pid: 1 }))
+      const smokeInitialize = vi.fn(async (adapterPath: string) => {
+        const source = await readFile(adapterPath, 'utf8')
+        const startup = source.slice(source.indexOf('function startCodexConnection('))
+        const body = startup.slice(0, startup.indexOf('\n}') + 2)
+        const start = Function(
+          'spawn',
+          'process',
+          'createRequire',
+          'importMetaUrl',
+          `${body.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+        )(
+          nestedSpawn,
+          { platform: 'win32', execPath: 'node.exe', env: {} },
+          () => ({ resolve: () => 'bundled.js' }),
+          'file:///adapter.js'
+        )
+        start('C:\\Program Files\\Codex\\codex.exe', {})
+        return true
+      })
+      vi.spyOn(await import('./codex-detect'), 'runAcpInitializeSmoke').mockReturnValue(
+        smokeInitialize
+      )
+      manager = createManager({ codexDetectDeps: undefined })
+      if (operation === 'bootstrapCodex') {
+        await repository.setCodexInfo({
+          resolvedPath: managedAdapterPath,
+          version: '1.6.2',
+          nativePath: managedCodexBinary(storageRoot),
+          nativeVersion: '0.157.1'
+        })
+        await manager.bootstrapCodex(vi.fn())
+      } else {
+        await manager[operation]()
+      }
+      expect(smokeInitialize).toHaveBeenCalledOnce()
+      expect(nestedSpawn).toHaveBeenCalledOnce()
+      expect(nestedSpawn.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true })
+    }
+  )
+
   it.each(['0.153.4', '0.157.0', '0.157.1-alpha.1', undefined])(
     'rejects a cached native CLI %s before starting a session',
     async (nativeVersion) => {

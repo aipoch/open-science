@@ -3388,6 +3388,53 @@ export function populateTableCellText({
   // Small raised/lowered fragments may straddle a predicted row boundary. Attach only to an
   // adjacent larger source token with an assigned cell in the same column, never by text content.
   const anchors = new Map()
+  // Some math fonts use a five-sixths em exponent. Its exact touching
+  // advance and unique already-owned base prove a script without changing
+  // the generic small-fragment threshold or moving it across a model cell.
+  const touchingRaisedDigits = new Map()
+  const validScriptBox = (item) =>
+    item?.horizontal &&
+    Number.isFinite(item.height) &&
+    item.height > 0 &&
+    Number.isFinite(item.baseline) &&
+    item.rect?.length === 4 &&
+    item.rect.every(Number.isFinite) &&
+    item.rect[2] > item.rect[0] &&
+    item.rect[3] > item.rect[1] &&
+    Math.abs(item.rect[3] - item.baseline) < 0.02 &&
+    Math.abs(item.rect[3] - item.rect[1] - item.height) < 0.02
+  for (const item of items) {
+    const cell = assignments.get(item)
+    if (!cell || !validScriptBox(item) || !/^\d+$/u.test(item.text)) continue
+    const candidates = items.filter(
+      (anchor) =>
+        anchor !== item &&
+        validScriptBox(anchor) &&
+        assignments.get(anchor) === cell &&
+        item.height >= anchor.height * 0.8 &&
+        item.height < anchor.height * 0.9 &&
+        anchor.baseline - item.baseline > anchor.height * 0.35 &&
+        anchor.baseline - item.baseline < anchor.height * 0.5 &&
+        Math.abs(item.rect[0] - anchor.rect[2]) < anchor.height * 0.02 &&
+        cell.rect?.length === 4 &&
+        cell.rect.every(Number.isFinite) &&
+        cell.rect[3] > cell.rect[1] &&
+        [item, anchor].every(
+          (i) => i.rect[0] >= cell.rect[0] && i.rect[2] <= cell.rect[2] && i.rect[3] <= bottom
+        ) &&
+        !rules.some(
+          (r) =>
+            r?.length !== 4 ||
+            !r.every(Number.isFinite) ||
+            (r[0] === r[2] &&
+              r[0] >= anchor.rect[2] - anchor.height * 0.02 &&
+              r[0] <= item.rect[0] + anchor.height * 0.02 &&
+              r[1] < anchor.baseline &&
+              r[3] > item.rect[1])
+        )
+    )
+    if (candidates.length === 1) touchingRaisedDigits.set(item, candidates[0])
+  }
   // A predicted boundary may cut through a header or a footnoted body label.
   // Tight native adjacency can override that boundary, never a source rule.
   const crossesScriptBoundary = (item, anchor, cell) =>
@@ -3478,6 +3525,7 @@ export function populateTableCellText({
           anchor.horizontal &&
           (isRaisedNoteMarker(item, anchor, cell) ||
             isRepeatedRaisedSymbol(item, anchor, cell) ||
+            touchingRaisedDigits.get(item) === anchor ||
             isAdjacentTableScript(item, anchor)) &&
           (item.rect[0] + item.rect[2]) / 2 >= cell.rect[0] &&
           ((item.rect[0] + item.rect[2]) / 2 <= cell.rect[2] ||
@@ -4242,6 +4290,7 @@ export function populateTableCellText({
           anchor &&
             (item.height < anchor.height * 0.8 ||
               (/^[a-z]$/.test(item.text) && item.height < anchor.height * 0.9) ||
+              touchingRaisedDigits.get(item) === anchor ||
               raisedNoteMarkers.has(item))
             ? item.baseline < anchor.baseline
               ? 'superscript'

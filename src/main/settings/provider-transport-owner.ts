@@ -1,12 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
 } from './provider-failure-observation'
-import { randomUUID } from 'node:crypto'
 
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
-import { netFetchStandard } from '../network-fetch'
+import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentModelCatalogEntry,
@@ -15,41 +14,41 @@ import {
 } from '../agent-framework'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
+import { netFetchStandard } from '../network-fetch'
+import {
+  AnthropicProviderBridge,
+  type AnthropicProviderBridgeTarget
+} from './anthropic-provider-bridge'
+import type { BackendRoutePlan } from './backend-route-planner'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
   openAiCompletionsBase
 } from './base-url'
 import {
-  AnthropicProviderBridge,
-  type AnthropicProviderBridgeTarget
-} from './anthropic-provider-bridge'
-import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
-import {
   ChatProviderCompatibilityBridge,
   type ChatProviderCompatibilityTarget
 } from './chat-provider-compatibility'
-import type { ProviderRuntimeTarget } from './provider-accounts'
-import type { BackendRoutePlan } from './backend-route-planner'
-import {
-  ResponsesBridge,
-  type ResponsesBridgeOptions,
-  type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeTarget
-} from './responses-bridge'
-import {
-  NativeResponsesCompatibilityProxy,
-  type NativeResponsesCompatibilityTarget
-} from './native-responses-compatibility'
-import { loopbackProxyBypassEnvironment } from './system-proxy'
-import { xaiNativeResponsesTargetFields } from './xai-protocol'
-import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
+import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
 import {
   createCodeBuddySkillSelectorTransport,
   type ProviderResponsesBridgePort
 } from './codebuddy-skill-selector-transport'
-import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
+import {
+  NativeResponsesCompatibilityProxy,
+  type NativeResponsesCompatibilityTarget
+} from './native-responses-compatibility'
+import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import type { ProviderRuntimeTarget } from './provider-accounts'
+import {
+  ResponsesBridge,
+  type ResponsesBridgeNamespacedTool,
+  type ResponsesBridgeOptions
+} from './responses-bridge'
+import type { ResponsesBridgeConnection, ResponsesBridgeTarget } from './responses-bridge-contract'
+import { loopbackProxyBypassEnvironment } from './system-proxy'
+import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
+import { xaiNativeResponsesTargetFields } from './xai-protocol'
 type AnthropicProviderBridgePort = Pick<
   AnthropicProviderBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'

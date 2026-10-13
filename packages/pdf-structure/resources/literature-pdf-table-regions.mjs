@@ -1344,6 +1344,308 @@ function recoverBelowCaptionTwoLeafGrid(items, rules, captions, pageNumber, capt
   }
 }
 
+// Open outer sides are permitted only with complete native booktabs paint,
+// continuing leaf fences and a complete scalar record in every body band.
+// The two header faces follow the actual partial divider and parent fences.
+function recoverBelowCaptionBooktabs(items, rules, captions, pageNumber, caption, paint, runs) {
+  const rect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const axis = (r) =>
+    Array.isArray(r) &&
+    r.length === 4 &&
+    r.every(Number.isFinite) &&
+    ((r[0] === r[2] && r[3] > r[1]) || (r[1] === r[3] && r[2] > r[0]))
+  if (
+    !(paint instanceof Map) ||
+    !Array.isArray(runs) ||
+    !runs.length ||
+    !rect(caption.rect) ||
+    caption.page !== pageNumber ||
+    rules.some((r) => !axis(r)) ||
+    items.some((i) => i.text?.trim() && !rect(i.rect))
+  )
+    return
+  const native = [...new Map(rules.map((r) => [r.join(','), r])).values()],
+    hs = native.filter((r) => r[1] === r[3] && r[1] < caption.rect[1]),
+    vs = native.filter((r) => r[0] === r[2]),
+    maxHeight = Math.max(...items.filter((i) => i.text?.trim()).map((i) => i.height)),
+    found = []
+  const painted = (r) => {
+    const p = paint.get(r.join(','))
+    return rect(p) && p[0] <= r[0] && p[1] <= r[1] && p[2] >= r[2] && p[3] >= r[3] ? p : undefined
+  }
+  for (const closing of hs.filter(
+    (r) =>
+      caption.rect[1] - r[1] > 0 &&
+      caption.rect[1] - r[1] < maxHeight * 2 &&
+      Math.abs((r[0] + r[2] - caption.rect[0] - caption.rect[2]) / 2) < maxHeight * 0.25
+  )) {
+    const edges = hs
+      .filter(
+        (r) =>
+          r[1] <= closing[1] &&
+          Math.abs(r[0] - closing[0]) < 0.02 &&
+          Math.abs(r[2] - closing[2]) < 0.02
+      )
+      .sort((a, b) => a[1] - b[1])
+      .slice(-3)
+    if (edges.length !== 3) continue
+    const [opening, floor] = edges,
+      frame = [opening[0], opening[1], opening[2], closing[1]],
+      partials = hs.filter(
+        (r) =>
+          r[1] > opening[1] &&
+          r[1] < floor[1] &&
+          r[0] > frame[0] &&
+          Math.abs(r[2] - frame[2]) < 0.02
+      ),
+      sides = vs.filter(
+        (r) => r[0] > frame[0] && r[0] < frame[2] && r[1] < frame[3] && r[3] > frame[1]
+      )
+    if (partials.length !== 1) continue
+    const partial = partials[0],
+      xs = [...new Set(sides.map((r) => r[0]))].sort((a, b) => a - b),
+      used = [...edges, partial, ...sides],
+      bounds = used.map(painted)
+    if (
+      xs.length < 2 ||
+      xs.length > 10 ||
+      bounds.some((p) => !p) ||
+      sides.some((r) => r[1] < frame[1] - 0.02 || r[3] > frame[3] + 0.02) ||
+      native.some(
+        (r) =>
+          Math.max(r[0], frame[0]) <= Math.min(r[2], frame[2]) &&
+          Math.max(r[1], frame[1]) <= Math.min(r[3], frame[3]) &&
+          !used.includes(r)
+      )
+    )
+      continue
+    const [op, fp, cp, pp] = bounds,
+      covered = (x, top, bottom) => {
+        let reached = top
+        const segments = [
+          ...sides.filter((r) => r[0] === x).map(painted),
+          ...[op, fp, cp, pp].filter((p) => p[0] <= x && p[2] >= x)
+        ]
+        for (const p of segments
+          .filter((p) => p[3] > top && p[1] < bottom)
+          .sort((a, b) => a[1] - b[1])) {
+          if (p[1] > reached + 0.02) return false
+          reached = Math.max(reached, p[3])
+        }
+        return reached >= bottom - 0.02
+      }
+    if (Math.abs(pp[0] - xs[0]) > maxHeight * 0.1 || !xs.every((x) => covered(x, pp[3], cp[1])))
+      continue
+    const parentCuts = xs.filter((x) => covered(x, op[3], pp[1]))
+    if (
+      parentCuts.length < 2 ||
+      parentCuts[0] !== xs[0] ||
+      xs.some(
+        (x) => !parentCuts.includes(x) && sides.some((r) => r[0] === x && r[1] < pp[1] - 0.02)
+      )
+    )
+      continue
+    const cuts = [frame[0], ...xs, frame[2]],
+      parentEdges = [...parentCuts, frame[2]],
+      fonts = items.filter((i) => i.text?.trim() && intersect(i.rect, frame) > 0),
+      height = Math.max(...fonts.map((i) => i.height))
+    if (
+      !fonts.length ||
+      !Number.isFinite(height) ||
+      height <= 0 ||
+      bounds.some(
+        (p, n) => (used[n][0] === used[n][2] ? p[2] - p[0] : p[3] - p[1]) > height * 0.2
+      ) ||
+      fonts.some(
+        (i) =>
+          !i.horizontal ||
+          !Number.isFinite(i.height) ||
+          i.height <= 0 ||
+          !Number.isFinite(i.baseline) ||
+          Math.abs(i.rect[3] - i.baseline) > 0.02 ||
+          Math.abs(i.rect[3] - i.rect[1] - i.height) > 0.02 ||
+          i.rect[0] < frame[0] ||
+          i.rect[2] > frame[2] ||
+          i.rect[1] < frame[1] ||
+          i.rect[3] > frame[3] ||
+          Math.abs(i.height - height) > 0.02
+      ) ||
+      new Set(fonts.map((i) => i.rect.join(',') + '|' + i.text)).size !== fonts.length ||
+      fonts.some((i, n) =>
+        fonts
+          .slice(n + 1)
+          .some(
+            (j) =>
+              Math.min(i.rect[2], j.rect[2]) - Math.max(i.rect[0], j.rect[0]) > 0.02 &&
+              Math.min(i.rect[3], j.rect[3]) - Math.max(i.rect[1], j.rect[1]) > 0.02
+          )
+      )
+    )
+      continue
+    // Every complete source string must have all of its original literal glyph
+    // observations. No token is cut at a rule or inferred by its center.
+    const complete = fonts.every((i) => {
+      const observations = runs.filter(
+        (r) =>
+          r.text === i.text &&
+          rect(r.rect) &&
+          r.rect.every((v, n) => Math.abs(v - i.rect[n]) < 0.02)
+      )
+      if (observations.length !== 1) return false
+      const r = observations[0],
+        chars = [...i.text.replace(/\s/gu, '')]
+      return (
+        Number.isFinite(r.height) &&
+        Math.abs(r.height - i.height) < 0.02 &&
+        Number.isFinite(r.baseline) &&
+        Math.abs(r.baseline - i.baseline) < 0.02 &&
+        Array.isArray(r.literalGlyphs) &&
+        r.literalGlyphs.join('') === chars.join('') &&
+        Array.isArray(r.glyphRuns) &&
+        r.glyphRuns.length === chars.length &&
+        r.glyphRuns.every((n) => Number.isInteger(n) && n >= 0)
+      )
+    })
+    if (!complete) continue
+    const lane = (i) =>
+        cuts.slice(1).flatMap((x, c) => (i.rect[0] >= cuts[c] && i.rect[2] <= x ? [c] : [])),
+      header = fonts.filter((i) => i.baseline < floor[1]),
+      body = fonts.filter((i) => i.baseline > floor[1]),
+      records = []
+    for (const i of [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+      const last = records.at(-1)
+      if (last && Math.abs(last[0].baseline - i.baseline) < 0.02) last.push(i)
+      else records.push([i])
+    }
+    if (
+      records.length < 2 ||
+      records.length > 40 ||
+      header.length + body.length !== fonts.length ||
+      records.some(
+        (g) =>
+          g.some((i) => lane(i).length !== 1) ||
+          cuts.slice(1).some((_, c) => {
+            const cell = g.filter((i) => lane(i)[0] === c),
+              text = cell
+                .map((i) => i.text)
+                .join('')
+                .replace(/\s/gu, '')
+            return (
+              !cell.length || (c > 0 && (cell.length !== 1 || !/^[-+−]?\d+(?:\.\d+)?$/u.test(text)))
+            )
+          })
+      )
+    )
+      continue
+    const stub = header.filter((i) => lane(i)[0] === 0),
+      leaves = cuts
+        .slice(2)
+        .map((_, c) => header.filter((i) => lane(i)[0] === c + 1 && i.baseline > partial[1])),
+      parents = parentEdges
+        .slice(1)
+        .map((x, c) =>
+          header.filter(
+            (i) => i.rect[0] >= parentEdges[c] && i.rect[2] <= x && i.baseline < partial[1]
+          )
+        )
+    const assigned = [...stub, ...leaves.flat(), ...parents.flat()]
+    if (
+      !stub.length ||
+      leaves.some((g) => !g.length) ||
+      parents.some((g) => !g.length) ||
+      assigned.length !== header.length ||
+      new Set(assigned).size !== header.length
+    )
+      continue
+    const firstSplit = Math.min(partial[1], ...leaves.flat().map((i) => i.rect[1])),
+      secondSplit = Math.min(floor[1], ...records[0].map((i) => i.rect[1]))
+    if (
+      parents.flat().some((i) => i.rect[3] >= firstSplit) ||
+      leaves.flat().some((i) => i.rect[3] >= secondSplit) ||
+      stub.some((i) => i.rect[3] > secondSplit)
+    )
+      continue
+    const rowEdges = [frame[1], firstSplit, secondSplit]
+    let separated = true
+    for (let n = 1; n < records.length; n++) {
+      const a = Math.max(...records[n - 1].map((i) => i.rect[3])),
+        b = Math.min(...records[n].map((i) => i.rect[1]))
+      if (a >= b) {
+        separated = false
+        break
+      }
+      rowEdges.push((a + b) / 2)
+    }
+    if (!separated) continue
+    rowEdges.push(frame[3])
+    const crop = bounds.reduce(
+        (a, p) => [
+          Math.min(a[0], p[0]),
+          Math.min(a[1], p[1]),
+          Math.max(a[2], p[2]),
+          Math.max(a[3], p[3])
+        ],
+        [...bounds[0]]
+      ),
+      corridor = [crop[0], crop[3], crop[2], caption.rect[1]]
+    if (
+      !rect(corridor) ||
+      items.some(
+        (i) =>
+          i.text?.trim() &&
+          ((intersect(i.rect, crop) > 0 && !fonts.includes(i)) || intersect(i.rect, corridor) > 0)
+      ) ||
+      captions.some(
+        (c) =>
+          c !== caption &&
+          c.page === pageNumber &&
+          (intersect(c.rect, crop) > 0 ||
+            intersect(c.rect, corridor) > 0 ||
+            (captionKind(c.lines?.[0]) === 'table' &&
+              rect(c.rect) &&
+              c.rect[1] > crop[3] &&
+              c.rect[1] - crop[3] < height * 2 &&
+              Math.abs((c.rect[0] + c.rect[2] - frame[0] - frame[2]) / 2) < height * 0.25))
+      )
+    )
+      continue
+    found.push({ crop, cuts, rowEdges, parentEdges, headerBottom: secondSplit })
+  }
+  if (found.length !== 1) return
+  const { crop, cuts, rowEdges, parentEdges, headerBottom } = found[0],
+    local = (r) => r.map((v, i) => v - crop[i % 2])
+  return {
+    id: `page-${pageNumber}-table-1`,
+    recoveredGrid: true,
+    cropRect: crop,
+    structure: {
+      objects: [
+        ...rowEdges.slice(1).map((bottom, n) => ({
+          label: 'table row',
+          rect: local([crop[0], rowEdges[n], crop[2], bottom])
+        })),
+        ...cuts.slice(1).map((right, n) => ({
+          label: 'table column',
+          rect: local([cuts[n], crop[1], right, crop[3]])
+        })),
+        {
+          label: 'table column header',
+          rect: local([crop[0], rowEdges[0], crop[2], headerBottom])
+        },
+        {
+          label: 'table spanning cell',
+          rect: local([cuts[0], rowEdges[0], cuts[1], headerBottom])
+        },
+        ...parentEdges.slice(1).map((right, n) => ({
+          label: 'table spanning cell',
+          rect: local([parentEdges[n], rowEdges[0], right, rowEdges[1]])
+        }))
+      ]
+    }
+  }
+}
+
 // Use each explicit caption to bound a separate grid. Page frames and ordinary
 // forms cannot opt into recovery without a complete source-owned lattice.
 export function recoverCaptionedRuledTables(
@@ -1352,7 +1654,8 @@ export function recoverCaptionedRuledTables(
   captions,
   pageNumber,
   existing = [],
-  rulePaintBounds
+  rulePaintBounds,
+  runs = []
 ) {
   const tables = []
   const candidates = captions.filter((c) => captionKind(c.lines[0]) === 'table')
@@ -1390,14 +1693,24 @@ export function recoverCaptionedRuledTables(
     })
   }
   for (const [index, caption] of candidates.entries()) {
-    const closed = recoverBelowCaptionTwoLeafGrid(
-      items,
-      rules,
-      captions,
-      pageNumber,
-      caption,
-      rulePaintBounds
-    )
+    const closed =
+      recoverBelowCaptionTwoLeafGrid(
+        items,
+        rules,
+        captions,
+        pageNumber,
+        caption,
+        rulePaintBounds
+      ) ??
+      recoverBelowCaptionBooktabs(
+        items,
+        rules,
+        captions,
+        pageNumber,
+        caption,
+        rulePaintBounds,
+        runs
+      )
     if (closed) {
       if (
         ![...existing, ...tables].some(
@@ -1405,7 +1718,14 @@ export function recoverCaptionedRuledTables(
         )
       ) {
         closed.caption = caption
-        closed.id += `-${index}`
+        if (closed.id === `page-${pageNumber}-table-1`) {
+          const pattern = new RegExp(`^page-${pageNumber}-table-(\\d+)$`)
+          const numbers = [...existing, ...tables].map((table) =>
+            Number(pattern.exec(table.id)?.[1] ?? 0)
+          )
+          const number = Math.max(0, ...numbers) + 1
+          closed.id = `page-${pageNumber}-table-${number}`
+        } else closed.id += `-${index}`
         tables.push(closed)
       }
       continue

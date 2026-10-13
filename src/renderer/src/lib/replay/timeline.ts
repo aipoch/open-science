@@ -1,4 +1,3 @@
-import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
@@ -15,13 +14,12 @@ import {
   type ReplayRunIndex,
   type ReplayStep
 } from '../../../../shared/replay'
-import type {
-  PersistedChatSession,
-  PersistedToolActivity
-} from '../../../../shared/session-persistence'
-import { createReplayTranscript } from './transcript'
-import type { ReplaySourceData } from './source'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
+import type { PersistedToolActivity } from '../../../../shared/session-message-contract'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { indexReplayRun } from './run-index'
+import type { ReplaySourceData } from './source-contract'
+import { createReplayTranscript } from './transcript'
 
 const time = (value: number | undefined): number | undefined =>
   value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined

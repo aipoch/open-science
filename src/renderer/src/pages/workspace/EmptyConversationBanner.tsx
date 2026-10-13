@@ -20,7 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { importSessionPackage } from '@/lib/session-package-import'
 
 import { FlaskLogo } from '@/components/flask-logo'

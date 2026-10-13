@@ -27,6 +27,42 @@ describe('module ownership and test impact manifest', () => {
     ).toBe(manifest)
   })
 
+  it('checks existence for every occurrence of a repeated valid path', () => {
+    const manifest = readManifest()
+    const sharedPath = manifest.modules.artifact_storage.ownerPaths[0]
+    manifest.modules.artifact_storage.interfacePaths = [sharedPath]
+    let occurrences = 0
+    expect(() =>
+      validateModuleImpactManifest(manifest, {
+        pathExists: (path: string) => path !== sharedPath || ++occurrences === 1
+      })
+    ).toThrow(`artifact_storage.interfacePaths does not exist: ${sharedPath}`)
+    expect(occurrences).toBe(2)
+  })
+
+  it('revalidates mutations and existence on later invocations', () => {
+    const manifest = readManifest()
+    validateModuleImpactManifest(manifest)
+    expect(() => validateModuleImpactManifest(manifest, { pathExists: () => false })).toThrow(
+      'does not exist'
+    )
+    manifest.modules.artifact_storage.interfacePaths.push('../invalid.ts')
+    expect(() => validateModuleImpactManifest(manifest)).toThrow(
+      'artifact_storage.interfacePaths must be a portable repository-relative path'
+    )
+  })
+
+  it('still requires test-file syntax for an already validated source path', () => {
+    const manifest = readManifest()
+    const source = manifest.modules.artifact_storage.ownerPaths.find(
+      (path: string) => !/\.(test|spec)\./.test(path)
+    )!
+    manifest.modules.artifact_storage.testFiles.owner = [source]
+    expect(() => validateModuleImpactManifest(manifest)).toThrow(
+      `artifact_storage.testFiles must reference a test file: ${source}`
+    )
+  })
+
   it('rejects ambiguous module owners', () => {
     const manifest = readManifest()
     manifest.modules.workspace_runtime.ownerPaths = ['src/renderer/src/stores/session-store.ts']

@@ -2,13 +2,15 @@ import {
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  MAX_ACP_SESSION_IMAGE_BYTES,
   normalizeClaudeCodeRefusalText,
   sanitizeAcpContextWindowSample,
   type AcpRuntimeEvent
 } from './acp'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  MAX_ACP_SESSION_IMAGE_BYTES
+} from './acp-image-contract'
 import { getActivityGroupTitleFromToolEvent, isActivityGroupToolEvent } from './activity-groups'
 import { artifactCreatedAtMs, type ArtifactFile } from './artifacts'
 import {
@@ -17,23 +19,23 @@ import {
   resolveActiveConversationMessages,
   resolveMessageBranchPath,
   validateConversationGraph,
-  type PersistedBranchActivityGroup,
   type PersistedAgentFrame,
+  type PersistedBranchActivityGroup,
   type PersistedConversationGraph,
   type PersistedMessageBranch,
   type PersistedMessageNode
 } from './conversation-graph'
+import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
+import { createRuntimeAgentMessageId } from './runtime-message-identity'
 import {
-  legacySessionStateForOutcome,
-  type TurnOutcome,
   isInLatestTurn,
+  legacySessionStateForOutcome,
   retainRecentSessionEventIds,
   type PersistedArtifact,
   type PersistedChatSession,
-  type PersistedToolActivityStatus
+  type PersistedToolActivityStatus,
+  type TurnOutcome
 } from './session-persistence'
-import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
-import { createRuntimeAgentMessageId } from './runtime-message-identity'
 
 export type RuntimeSessionScope = {
   promptMessageId: string

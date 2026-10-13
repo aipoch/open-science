@@ -1,4 +1,4 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 import {
   projectConversationMessage,
   resolveMessageBranchPath,
@@ -253,8 +253,8 @@ const selectSubagentFrame = (
 
 export {
   hasAnswerableDelegatedQuestion,
-  projectInlineParentMessages,
   projectDelegatedQuestionQueue,
+  projectInlineParentMessages,
   projectSessionSubagents,
   resolveActiveRootMessageIds,
   selectSubagentFrame

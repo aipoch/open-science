@@ -243,3 +243,111 @@ it('keeps the complete triangular native array while removing the upper prose ba
   expect(r.rect[2]).toBeGreaterThanOrEqual(270)
   expect(r.rect[3]).toBeGreaterThanOrEqual(260)
 })
+
+const { nativeCompletedAxisPanels } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-complete-axis-ownership.mjs')).href
+)
+function axisPlate(triangle = false): Input {
+  const caption = triangle
+    ? { page: 1, lines: ['Figure 2. Related measurements.'], rect: [80, 390, 500, 402] }
+    : { page: 1, lines: ['Figure 2. Related measurements.'], rect: [420, 110, 550, 180] }
+  const faces = triangle
+    ? [
+        [230, 100, 350, 200],
+        [140, 250, 260, 350],
+        [320, 250, 440, 350]
+      ]
+    : [
+        [110, 110, 230, 210],
+        [270, 110, 390, 210]
+      ]
+  const page: Input = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      {
+        text: caption.lines[0],
+        x: caption.rect[0],
+        y: caption.rect[1],
+        width: caption.rect[2] - caption.rect[0],
+        height: 10,
+        fontSize: 10
+      }
+    ],
+    graphicsBounds: []
+  }
+  const rules: number[][] = [],
+    tokens: Input[] = []
+  for (const [x, y, r, b] of faces) {
+    rules.push([x, y, r, y], [x, b, r, b], [x, y, x, b], [r, y, r, b])
+    for (const rect of [
+      [x + 1, y + 1, r - 1, b - 1],
+      [x + 20, y + 20, x + 25, y + 25],
+      [x + 50, y + 40, x + 55, y + 45]
+    ])
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: rect.map((v, n) => v / (n % 2 ? 800 : 600))
+      })
+    for (let n = 0; n < 4; n++)
+      tokens.push({
+        text: String(n),
+        rect: [x - 12, y + 5 + n * 20, x - 5, y + 13 + n * 20],
+        height: 8,
+        baseline: y + 13 + n * 20,
+        horizontal: true
+      })
+    tokens.push({
+      text: 'Time',
+      rect: [x + 40, b + 5, x + 65, b + 13],
+      height: 8,
+      baseline: b + 13,
+      horizontal: true
+    })
+  }
+  return {
+    page,
+    caption,
+    captions: [caption],
+    tables: [],
+    rules,
+    tokens,
+    faces,
+    oldBounds: triangle ? [135, 245, 450, 368] : [265, 105, 395, 230]
+  }
+}
+const completePlate = (f: Input): Input =>
+  nativeCompletedAxisPanels(f.page, f.caption, f.captions, f.tables, f.rules, f.tokens, f.oldBounds)
+it('restores both closed axes beside a single side caption', () => {
+  const f = axisPlate(),
+    r = completePlate(f)
+  expect(r.rect[0]).toBeLessThanOrEqual(98)
+  expect(r.rect[2]).toBeGreaterThanOrEqual(390)
+})
+it('restores the top member of a triangular closed-axis plate', () => {
+  const f = axisPlate(true),
+    r = completePlate(f)
+  expect(r.rect[1]).toBeLessThanOrEqual(100)
+  expect(r.rect[0]).toBeLessThanOrEqual(128)
+  expect(r.rect[2]).toBeGreaterThanOrEqual(440)
+})
+it.each([
+  'open axis',
+  'intervening caption',
+  'table owner',
+  'empty panel',
+  'malformed label',
+  'malformed graphics'
+])('does not expand an axis plate with %s', (kind) => {
+  const f = axisPlate(true)
+  if (kind === 'open axis') f.rules.shift()
+  if (kind === 'intervening caption')
+    f.captions.push({ page: 1, lines: ['Figure 1. Separate plot.'], rect: [200, 210, 400, 222] })
+  if (kind === 'table owner') f.tables.push(f.faces[0])
+  if (kind === 'empty panel') f.page.graphicsBounds.splice(0, 3)
+  if (kind === 'malformed label') f.tokens[0].rect[2] = f.tokens[0].rect[0] - 1
+  if (kind === 'malformed graphics') f.page.graphicsBounds[0].normalizedRect = null
+  expect(completePlate(f)).toBeUndefined()
+})

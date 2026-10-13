@@ -1,15 +1,11 @@
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ProvisionProgress } from '@aipoch/environment/contracts'
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
-import type {
-  AcpAgentRuntimeUpdate,
-  AcpPermissionRequest,
-  AcpRuntimeEvent,
-  AcpStateUpdate
-} from '../shared/acp'
+import type { DownloadProgress } from '@aipoch/resilient-download'
+import type { AcpAgentRuntimeUpdate, AcpRuntimeEvent, AcpStateUpdate } from '../shared/acp'
+import type { AcpPermissionRequest } from '../shared/acp-permission-contract'
 import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
-import type { DownloadProgress } from '@aipoch/resilient-download'
 import type {
   Project,
   ProjectDeletedEvent,
@@ -49,7 +45,7 @@ import type { MigrationProgress } from '../shared/storage'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { UpdateStatus } from '../shared/update'
 import type { WslSetupStatus } from '../shared/wsl-setup'
-import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
+import type { CompletionGateLifecycleEvent } from './agents/completion-gate-contract'
 
 const log = createLogger('application-events')
 

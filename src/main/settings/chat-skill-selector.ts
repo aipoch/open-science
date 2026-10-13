@@ -1,18 +1,20 @@
-import { randomUUID } from 'node:crypto'
-import type { SkillSelectorUsageObservation } from '../agent-framework'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { randomUUID } from 'node:crypto'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
+import type { SkillSelectorUsageObservation } from '../agent-framework/types'
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
 import { fetchProviderRequest } from './provider-fetch'
 import { resolveChatReasoningTransport } from './reasoning-transport'
+import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 import {
   boundedSkillSelectorCatalog,
   renderSkillSelectorCatalog,
   resolveSelectedSkills,
   selectExplicitConnectorSkills
 } from './skill-selector-routing'
+export type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 
 // The selector deliberately accepts provider JSON without widening the rest of the settings layer.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,15 +27,6 @@ type ChatSkillSelectorTarget = {
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
 }
-
-export type ChatSkillSelectorCandidate = {
-  name: string
-  description: string
-  path: string
-  source?: 'connector'
-}
-
-export type ChatSkillSelectorInput = Pick<ChatSkillSelectorCandidate, 'name' | 'path'>
 
 const log = createLogger('acp-bridge')
 

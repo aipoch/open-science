@@ -44,6 +44,47 @@ it('unites a raster panel grid with the adjacent vector plots', () => {
   })
 })
 
+it('retains short panel markers and a crossing legend row for strict composite matches', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 4: Composite comparison.'],
+    rect: [54, 328, 562, 427]
+  }
+  const graphics = []
+  for (const y of [72, 133, 198, 263]) {
+    for (const x of [86, 158, 227, 296]) graphics.push(image([x, y, x + 48, y + 50]))
+  }
+  for (let i = 0; i < 24; i++) {
+    const x = 357 + (i % 6) * 30
+    const y = 60 + Math.floor(i / 6) * 50
+    graphics.push(path([x, y, x + 18, y + 20]))
+  }
+  const page = {
+    pageNumber: 1,
+    width: 612,
+    height: 792,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: '(a)', x: 76, y: 50, width: 14, height: 10, fontSize: 10 },
+      { text: '(b)', x: 357, y: 49, width: 14, height: 10, fontSize: 10 },
+      { text: caption.lines[0], x: 54, y: 328, width: 508, height: 9, fontSize: 9 },
+      {
+        text: 'Key one Key two Key three',
+        x: 90,
+        y: 308,
+        width: 150,
+        height: 8,
+        fontSize: 8
+      }
+    ],
+    graphicsBounds: graphics
+  }
+  expect(associateFigures(page, [caption])[0]).toMatchObject({
+    rect: [76, 49, 525, 316],
+    reason: 'native-raster-vector-composite-grid'
+  })
+})
+
 it.each([false, true])(
   'merges explicitly labelled horizontal panels using painted bounds: %s',
   (clipped) => {

@@ -1,20 +1,25 @@
-import {
-  type PersistedChatSession,
-  type SessionSummary,
-  type SaveSessionOptions,
-  delegationPolicySchema
-} from './session'
-import type { PersistedChatMessage, PersistedToolActivity, PersistedArtifact } from './message'
-import type { PersistedSessionManifest } from '../session-persistence-envelope'
 import { z } from 'zod'
-import { MAX_SESSION_PDF_CONTEXTS, type SessionRuntimeContext } from '../session-runtime-context'
 import {
   type RuntimeCodec,
   defineApplicationCommandContract,
   validationCodec
 } from '../application-command-contract'
+import { MAX_SESSION_PDF_CONTEXTS } from '../session-pdf-contract'
+import type { PersistedSessionManifest } from '../session-persistence-envelope'
+import { type SessionRuntimeContext } from '../session-runtime-context'
 import { persistedChatSessionCodec } from './file-codec'
+import type {
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedToolActivity
+} from '../session-message-contract'
 import { sanitizeSessionRuntimeContext } from './runtime-context'
+import {
+  type PersistedChatSession,
+  type SaveSessionOptions,
+  type SessionSummary,
+  delegationPolicySchema
+} from './session'
 
 // Internal Task admission command; not part of the persisted Session format.
 export type BindTaskSessionRequest = Readonly<{

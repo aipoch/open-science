@@ -1,62 +1,59 @@
-import { replayAnnotationTarget } from '../../../../shared/replay-reference'
-import { SessionDiscussionSource } from './SessionDiscussionSource'
-import { composerContextRowClassName } from './SessionDiscussionBar'
-import { SessionDiscussionButton } from './SessionDiscussionButton'
 import { ResearchWorkspaceHeader } from './ResearchWorkspaceHeader'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
 import { researchSourceFromSession } from './workspace-discussion-navigation'
 import { showSessionReplay } from './workspace-session-actions'
-import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
-import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
   PackageExportProgressButton,
   PackageOperationIndicator
 } from '@/components/SessionPackageOperation'
-import { SessionInfoPopover } from './SessionInfoPopover'
-import { SessionHeaderMenu } from './SessionHeaderMenu'
-import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import { composerContextRowClassName } from './SessionDiscussionBar'
+import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { SessionHeaderMenu } from './SessionHeaderMenu'
+import { SessionInfoPopover } from './SessionInfoPopover'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
-import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
+import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+import { NotificationBell } from '@/components/NotificationBell'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
+import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { ResizablePanel } from '@/components/ui/resizable'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
+import { cn } from '@/lib/utils'
+import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
+import {
+  createSessionPlanPreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+import {
+  projectSessionActionability,
+  useSessionStore,
+  type ChatSession
+} from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { TFunction } from 'i18next'
-import { useTranslation } from 'react-i18next'
-import type {
-  ConnectorCredentialRequest,
-  SessionAgentConfiguration
-} from '../../../../shared/settings'
-import type {
-  AcpPermissionGrant,
-  AcpPermissionRequest,
-  AcpContextUsage,
-  DelegatedWorkUnavailableReason,
-  ElicitationAnswer,
-  ElicitationProjection,
-  ElicitationResponse,
-  PendingElicitationRequest
-} from '../../../../shared/acp'
-import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
-import type { NotebookSessionReference } from '../../../../shared/notebook'
-import type { JobSummary } from '../../../../shared/compute'
-import type {
-  PermissionProfileId,
-  SessionPermissionProfileState
-} from '../../../../shared/permission-profiles'
-import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
-import {
-  MAX_SESSION_PDF_CONTEXTS,
-  latestOutcomePrompt,
-  resolvePreparationNoticeBaseline
-} from '../../../../shared/session-persistence'
-import {
-  isReportableRunFailure,
-  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
-  visionRunFailureMessage
-} from '../../../../shared/run-error-classification'
 import {
   AlertTriangle,
   ArrowUp,
@@ -69,14 +66,14 @@ import {
   FileText,
   Flag,
   GitBranch,
+  ListChecks,
   Loader2,
   LockKeyhole,
-  ListChecks,
   Menu,
   MessageCircleMore,
   PanelRight,
-  Plus,
   Play,
+  Plus,
   RotateCcw,
   ScanEye,
   Square,
@@ -84,105 +81,109 @@ import {
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { useTranslation } from 'react-i18next'
+import type {
+  DelegatedWorkUnavailableReason,
+  ElicitationAnswer,
+  ElicitationProjection,
+  ElicitationResponse,
+  PendingElicitationRequest
+} from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest
+} from '../../../../shared/acp-permission-contract'
+import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
+import type { TextAnnotation } from '../../../../shared/annotation-contract'
+import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
+import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
+import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import {
-  isUnsupportedCodexAcpVersionError,
-  isCodexCliCompatibilityError
+  isCodexCliCompatibilityError,
+  isUnsupportedCodexAcpVersionError
 } from '../../../../shared/codex-runtime'
+import type { JobSummary } from '../../../../shared/compute'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type {
+  PermissionProfileId,
+  SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 import {
-  validateAnnotations,
-  type AnnotationValidationError,
-  type TextAnnotation
-} from '../../../../shared/annotations'
-import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
-import { DiagnosticDetails } from '@/components/diagnostic-details'
-import { ErrorNotice } from '@/components/error-notice'
-import { Button } from '@/components/ui/button'
-import { ResizablePanel } from '@/components/ui/resizable'
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  isReportableRunFailure,
+  visionRunFailureMessage
+} from '../../../../shared/run-error-classification'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import { useSpecialistStore } from '@/stores/specialist-store'
-import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
-import { ComposerEditor } from './composer/ComposerEditor'
-import { FileTypeIcon } from './file-type-icon'
-import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
-import {
-  appendArtifactMention,
-  docToSkillIds,
-  docToText,
-  docFromText,
-  pastedTextAttachmentDomId,
-  pastedTextPreviewName,
-  type ComposerPastedTextNode
-} from './composer/composer-doc'
+  MAX_SESSION_PDF_CONTEXTS,
+  latestOutcomePrompt,
+  resolvePreparationNoticeBaseline
+} from '../../../../shared/session-persistence'
+import type {
+  ConnectorCredentialRequest,
+  SessionAgentConfiguration
+} from '../../../../shared/settings'
+import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
+import { getAvatarColor } from '../settings/specialist-icons'
+import { BackgroundTasksChip } from './BackgroundTasksChip'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
-import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
-import { BackgroundTasksChip } from './BackgroundTasksChip'
-import { SessionBackgroundActivity } from './SessionBackgroundActivity'
-import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
-import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerSpecialistPicker } from './ComposerSpecialistPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
+import { ContextWindowDialog } from './ContextWindowDialog'
+import { NewConversationStart, SessionPackageEntryRow } from './EmptyConversationBanner'
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { ReadingContextPicker } from './ReadingContextPicker'
-import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
-import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
+import { ResizableBottomPanel } from './ResizableBottomPanel'
+import { SessionBackgroundActivity } from './SessionBackgroundActivity'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
-import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
+import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
+import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
-import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
-import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
-import { NewConversationStart, SessionPackageEntryRow } from './EmptyConversationBanner'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
-import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
+import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
+import { BookmarksPopover } from './bookmarks/BookmarksPopover'
+import { useBookmarks } from './bookmarks/bookmark-context'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import { ComposerEditor } from './composer/ComposerEditor'
+import {
+  appendArtifactMention,
+  docFromText,
+  docToSkillIds,
+  docToText,
+  pastedTextAttachmentDomId,
+  pastedTextPreviewName,
+  type ComposerPastedTextNode
+} from './composer/composer-doc'
+import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
+import { FileTypeIcon } from './file-type-icon'
+import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
-import { projectDelegatedQuestionQueue } from './subagent-release-projection'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { isPlanProgressVisible } from './session-plan/plan-progress'
 import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
 import {
-  createSessionPlanPreviewItem,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
-import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
-import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
-import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
-import { projectSessionSubagents } from './subagent-release-projection'
-import { ResizableBottomPanel } from './ResizableBottomPanel'
+  projectDelegatedQuestionQueue,
+  projectSessionSubagents
+} from './subagent-release-projection'
+import type { ConversationSubmissions } from './use-conversation-submissions'
+import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
+import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
+import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { getAvatarColor } from '../settings/specialist-icons'
-import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
-import { BookmarksPopover } from './bookmarks/BookmarksPopover'
-import { useBookmarks } from './bookmarks/bookmark-context'
-import type { ConversationSubmissions } from './use-conversation-submissions'
+import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,

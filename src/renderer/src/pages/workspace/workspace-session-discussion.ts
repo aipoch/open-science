@@ -1,28 +1,28 @@
-import { toSessionDiscussionSnapshot } from './replay/replay-context'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useSessionStore } from '@/stores/session-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import type { ComposerDoc } from './composer/composer-doc'
-import type { Annotation, AnnotationValidationError } from '../../../../shared/annotations'
-import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { useSessionStore } from '@/stores/session-store'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../shared/annotations'
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import {
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation
 } from './annotations/annotation-reveal'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { requestComposerFocus } from './composer-focus-events'
+import type { ComposerDoc } from './composer/composer-doc'
+import { requestReplaySeek, toSessionDiscussionSnapshot } from './replay/replay-context'
+import { researchDraftKey, sameResearch } from './research-draft-identity'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget
 } from './session-discussion-annotation'
-import { requestReplaySeek } from './replay/replay-context'
-import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
-import type { ResearchMembership } from '../../../../shared/session-persistence'
-import { researchDraftKey, sameResearch } from './research-draft-identity'
 import { researchSourceFromSession } from './workspace-discussion-navigation'
-import { requestComposerFocus } from './composer-focus-events'
+import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
 
 type DiscussionComposer = {
   view: { doc: ComposerDoc; annotations: Annotation[] }

@@ -1,15 +1,18 @@
-import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { ArtifactFile } from '../../shared/artifacts'
 import type {
-  PersistedActivityGroup,
   DelegatedCallerSource,
+  ResolvedSubagentModelSnapshot
+} from '../../shared/delegated-work-contract'
+import type { AgentUserChoicePrompt } from '../../shared/elicitation'
+import type {
+  PersistedActivityGroup,
   PersistedMessageImage,
   PersistedToolActivity
-} from '../../shared/session-persistence'
-import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
-import type { AuthenticatedDelegateCaller, DurableDelegateRequest } from './durable-delegated-work'
+} from '../../shared/session-message-contract'
+import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
+import type { DurableDelegateRequest } from './delegate-request-contract'
 import type { JsonSchema, JsonValue, StructuredOutputEvidence } from './structured-output'
-import type { AgentUserChoicePrompt } from '../../shared/elicitation'
 
 type DurableResolvedAgent =
   | Readonly<{ kind: 'main' }>
@@ -371,25 +374,25 @@ type DelegatedWorkDurableRecords = Readonly<{
 }>
 
 export type {
+  DelegatedQuestionAnswer,
   DelegatedWorkDurableRecords,
   DurableAttempt,
   DurableChild,
   DurableChildSummary,
-  DurableDelegatedQuestionAdmission,
-  DurableDelegatedQuestionRequest,
-  DelegatedQuestionAnswer,
   DurableCollectOptions,
   DurableCollectSelector,
+  DurableDelegatedQuestionAdmission,
+  DurableDelegatedQuestionRequest,
   DurableDelegateObservation,
   DurableDelegateOutcome,
   DurableDelegateResult,
   DurableMessage,
   DurableMessageCommand,
   DurableMessageReceiptState,
-  MessageDirection,
-  MessageDisposition,
-  MessageEvidence,
   DurablePendingMessage,
   DurableResolvedAgent,
-  DurableSnapshot
+  DurableSnapshot,
+  MessageDirection,
+  MessageDisposition,
+  MessageEvidence
 }

@@ -1,8 +1,4 @@
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { NotebookEnvironmentOperations } from './environment-operations'
-import type { NotebookPackageAdmittedTarget } from './package-admission'
-import type { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { notebookLaneKey } from './lane-identity'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import {
   addRepairRequired,
   clearRepairRequired,
@@ -11,7 +7,11 @@ import {
   readRepairRequiredReason,
   resolveEnvName
 } from '@aipoch/environment'
-import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { NotebookEnvironmentOperations } from './environment-operations'
+import { notebookLaneKey } from './lane-identity'
+import type { NotebookPackageAdmittedTarget } from './package-admission'
+import type { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookSessionAggregate, NotebookSessionRuntimeBinding } from './session-aggregate'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'

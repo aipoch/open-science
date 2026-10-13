@@ -9,6 +9,7 @@ import type { PersistedChatSession } from '../src/shared/session-persistence'
 import type { SessionDiscussionSnapshot } from '../src/shared/session-replay'
 import { createProject } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test.use({ windowMode: 'normal' })
 
@@ -75,10 +76,7 @@ test('asks immediately after seeking recorded artifact and upload steps without 
   await expect(
     page.getByRole('button', { name: `Remove attachment ${uploadName}`, exact: true })
   ).toBeVisible()
-  await page
-    .getByRole('textbox', { name: 'Ask anything', exact: true })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({ timeout: 90_000 })

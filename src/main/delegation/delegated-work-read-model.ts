@@ -1,19 +1,19 @@
-import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
+import { DelegatedWorkProjectionOwner } from './delegated-work-projection'
 import {
   currentAttempt,
   isDelegatedAttemptSettled,
   sameSession
 } from './delegated-work-record-invariants'
-import { DelegatedWorkProjectionOwner } from './delegated-work-projection'
 import type {
-  AuthenticatedDelegateCaller,
   DelegatedWorkDurableRecords,
   DurableChildSummary,
   DurableCollectOptions,
   DurableCollectSelector,
   DurableDelegateObservation,
   DurableSnapshot
-} from './durable-delegated-work'
+} from './delegated-work-record-types'
+import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 
 type DurableChild = DurableSnapshot['records'][number]
 

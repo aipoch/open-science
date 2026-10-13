@@ -1,3 +1,6 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { CredentialIdentityError } from '../credential-identity/selection'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { SettingsSnapshot } from '../../shared/settings'
 import type { ApplicationEventPublisher } from '../application-events'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -37,8 +40,30 @@ class SettingsSnapshotCommitOwner {
     return result
   }
 
-  readCurrentSnapshot(): Promise<SettingsSnapshot> {
-    return this.enqueueCurrentSnapshot(false)
+  async readCurrentSnapshot(): Promise<SettingsSnapshot> {
+    const operation = startDiagnosticOperation(log, { operation: 'settings-snapshot-read' })
+    try {
+      const snapshot = await this.enqueueCurrentSnapshot(false)
+      operation.complete({ revision: snapshot.revision })
+      return snapshot
+    } catch (error) {
+      operation.fail(error)
+      if (error instanceof ApplicationCommandError) throw error
+      const cause = error instanceof Error && error.cause ? error.cause : error
+      const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
+      throw new ApplicationCommandError(
+        error instanceof CredentialIdentityError
+          ? 'settings-credential-unavailable'
+          : ['EACCES', 'EPERM', 'EIO', 'ENOENT', 'ENOSPC', 'EROFS', 'EMFILE', 'ENFILE'].includes(
+                String(code)
+              )
+            ? 'settings-storage-unavailable'
+            : error instanceof Error && error.name === 'SettingsDocumentReadError'
+              ? 'settings-invalid'
+              : 'command-failed',
+        'Open-Science could not load settings. Retry to continue.'
+      )
+    }
   }
 
   private enqueueCurrentSnapshot(publish: boolean): Promise<SettingsSnapshot> {

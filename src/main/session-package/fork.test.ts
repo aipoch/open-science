@@ -1066,20 +1066,25 @@ const setupImportPublication = async (
   await service.exportTo({ projectId: 'source', sessionId: 'source-session' }, archive)
   const select = async (destination: 'new' | 'existing'): Promise<void> => {
     desktop.enqueueFile(archive)
-    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'), {
+      timeout: 10_000
+    })
     desktop.respond({
       action: 'select-project',
       operationId: desktop.operations.snapshot!.id,
       target: destination === 'new' ? { projectName: 'Imported project' } : { projectId: 'source' }
     })
-    await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined(), {
+      timeout: 10_000
+    })
     expect(await fixture.client.project.count()).toBe(1)
     expect(await fixture.client.session.count()).toBe(1)
     expect(publications).toEqual([])
   }
   const confirm = async (): Promise<void> => {
     desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-    await vi.waitFor(() => expect(desktop.operations.active).toBe(false))
+    // Real import validation and cleanup can exceed the default 1s wait on Windows.
+    await vi.waitFor(() => expect(desktop.operations.active).toBe(false), { timeout: 10_000 })
   }
   return {
     fixture,

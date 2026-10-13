@@ -5,6 +5,10 @@ import { join } from 'node:path'
 import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
 import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
+import { openAllReferences } from './fixtures/library'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 test('imports external notes, preserves provenance through undo, and persists an empty annotated export', async ({
   app
@@ -52,8 +56,7 @@ test('imports external notes, preserves provenance through undo, and persists an
       title: 'Native annotation regression'
     })
   )
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(page)
   await page.getByText('Native annotation regression', { exact: true }).click()
   await page.locator('input[aria-label="Add PDF"]').setInputFiles(file)
   await expect(
@@ -227,12 +230,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Close preview of native-notes.pdf', exact: true }).click()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Tags', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Tags')
   const taggedPdf = settings
     .locator('[data-slot="tag-resource-row"]')
     .filter({ hasText: 'native-notes.pdf' })
@@ -425,17 +423,13 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await projectDialog.getByLabel('Name').fill('Shared PDF project')
-  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Shared PDF project')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'shared-paper.pdf',
     mimeType: 'application/pdf',
     buffer: createTestPdf()
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read the attached paper.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Read the attached paper.')
   await expect(
     page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
   ).toBeVisible()
@@ -503,8 +497,7 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
   const other = await app.openAdditionalRenderer()
-  await other.getByRole('button', { name: 'Library', exact: true }).click()
-  await other.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(other)
   await other.getByText('Shared PDF reference', { exact: true }).click()
   await other.getByRole('button', { name: 'Preview shared-paper.pdf', exact: true }).click()
   await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
@@ -605,13 +598,9 @@ test('shares independently imported native notes without duplication or resurrec
   await writeFile(path, bytes)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await projectDialog.getByLabel('Name').fill('Independent native notes')
-  await projectDialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Independent native notes')
   await page.locator('input[type="file"][multiple]').setInputFiles(path)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read this annotated PDF.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Read this annotated PDF.')
   await expect(
     page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
   ).toBeVisible()
@@ -632,8 +621,7 @@ test('shares independently imported native notes without duplication or resurrec
     })
   )
   const other = await app.openAdditionalRenderer()
-  await other.getByRole('button', { name: 'Library', exact: true }).click()
-  await other.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(other)
   await other.getByText('Independent native reference', { exact: true }).click()
   await other.locator('input[aria-label="Add PDF"]').setInputFiles(path)
   await expect(other.getByRole('button', { name: 'Preview native.pdf', exact: true })).toBeEnabled()

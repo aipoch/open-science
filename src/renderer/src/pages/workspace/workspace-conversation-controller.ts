@@ -1,30 +1,30 @@
-import { useSessionReplayStore } from '@/stores/session-replay-store'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { i18next } from '@/i18n'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import {
-  normalizeDelegationPolicy,
-  type DelegationPolicy,
-  type ResearchMembership
-} from '../../../../shared/session-persistence'
-import {
-  annotationRequiresImageInput,
-  sideChatAnnotationText,
-  type Annotation
-} from '../../../../shared/annotations'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import { imageAttachmentMimeType } from '../../../../shared/uploads'
+import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   projectSessionActionability,
   type ChatMessage,
   type ChatSession,
   type SessionActionabilityProjection
 } from '@/stores/session-store'
+import {
+  annotationRequiresImageInput,
+  sideChatAnnotationText,
+  type Annotation
+} from '../../../../shared/annotations'
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import {
+  normalizeDelegationPolicy,
+  type DelegationPolicy,
+  type ResearchMembership
+} from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import { imageAttachmentMimeType } from '../../../../shared/uploads'
 
 import {
   docIsEmpty,
@@ -34,8 +34,10 @@ import {
   docToText,
   type ComposerDoc
 } from './composer/composer-doc'
+import { researchDraftKey, sameResearch } from './research-draft-identity'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
+import { sideChatBlock } from './side-chat-availability'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { EditedMessageSendResult } from './workspace-edited-message'
 import {
@@ -44,8 +46,6 @@ import {
 } from './workspace-message-queue-controller'
 import { isWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { sideChatBlock } from './side-chat-availability'
-import { researchDraftKey, sameResearch } from './research-draft-identity'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,

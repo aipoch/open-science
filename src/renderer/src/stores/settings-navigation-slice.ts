@@ -4,7 +4,7 @@ import {
   settingsPanelRoute,
   type SettingsPanelId,
   type SettingsRoute
-} from '../pages/settings/settings-navigation'
+} from '@/lib/settings-navigation'
 import { rememberSettingsReturnFocusTarget } from './settings-return-focus'
 
 export type SettingsNavigationIntent = Readonly<{

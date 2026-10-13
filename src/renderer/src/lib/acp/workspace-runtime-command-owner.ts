@@ -1,5 +1,60 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
+import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
+import * as annotationProtocol from '../../../../shared/annotations'
+import type { FileReference } from '../../../../shared/artifacts'
+import {
+  getActiveConversationContext,
+  rebindConversationGraphSessionId
+} from '../../../../shared/conversation-graph'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../../../shared/permission-profiles'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import {
+  withPdfContext as withPdf,
+  type PdfReadingPositionSource
+} from '../../../../shared/session-pdf-context'
+import {
+  collectSessionReferences,
+  isSessionSizeLimitError,
+  materializeSessionConversationGraph,
+  MAX_SESSION_PDF_CONTEXTS,
+  type DelegationPolicy,
+  type MessageAttribution,
+  type MessagePart,
+  type MessagePdfContextSnapshot,
+  type PdfReadingPosition,
+  type PersistedMessageAgentTarget,
+  type SessionPdfContextSource,
+  type SessionReference,
+  type SessionRuntimeContext
+} from '../../../../shared/session-persistence'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
+import {
+  DEFAULT_UPLOAD_PROJECT_ID,
+  toPersistedUploadedAttachment,
+  toRuntimeUploadedAttachment,
+  type UploadedAttachment
+} from '../../../../shared/uploads'
+import { i18next } from '../../i18n'
+import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
 import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
 import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
+import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
+import {
+  confirmPendingDelegationPolicyAuthority,
+  deleteSession,
+  flushSessionPersistence,
+  isSessionPersistenceDeferredError,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
+import {
+  buildWorkspaceHistoryReplay,
+  resolveHistoryReplayTarget,
+  type HistoryReplayDescriptor
+} from './history-preamble'
+import type { useAcpRuntime } from './useAcpRuntime'
 import {
   clearWorkspaceOperationError,
   reportWorkspaceOperationError
@@ -14,58 +69,10 @@ import {
   rollbackWorkspacePrompt,
   type WorkspacePromptPreparation
 } from './workspace-prompt-preparation'
-import { i18next } from '../../i18n'
-import type { AcpMessageImage } from '../../../../shared/acp'
-import type { FileReference } from '../../../../shared/artifacts'
-import * as annotationProtocol from '../../../../shared/annotations'
 import {
-  type PdfReadingPositionSource,
-  withPdfContext as withPdf
-} from '../../../../shared/session-pdf-context'
-import {
-  collectSessionReferences,
-  materializeSessionConversationGraph,
-  isSessionSizeLimitError,
-  MAX_SESSION_PDF_CONTEXTS,
-  type DelegationPolicy,
-  type MessageAttribution,
-  type MessagePdfContextSnapshot,
-  type MessagePart,
-  type ResearchMembership,
-  type PersistedMessageAgentTarget,
-  type PdfReadingPosition,
-  type SessionPdfContextSource,
-  type SessionRuntimeContext,
-  type SessionReference
-} from '../../../../shared/session-persistence'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId
-} from '../../../../shared/permission-profiles'
-import {
-  DEFAULT_UPLOAD_PROJECT_ID,
-  toPersistedUploadedAttachment,
-  toRuntimeUploadedAttachment,
-  type UploadedAttachment
-} from '../../../../shared/uploads'
-import {
-  getActiveConversationContext,
-  rebindConversationGraphSessionId
-} from '../../../../shared/conversation-graph'
-import {
-  confirmPendingDelegationPolicyAuthority,
-  deleteSession,
-  flushSessionPersistence,
-  isSessionPersistenceDeferredError,
-  saveSessionInOrder
-} from '../session-persistence/session-persistence'
-import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
-import {
-  buildWorkspaceHistoryReplay,
-  resolveHistoryReplayTarget,
-  type HistoryReplayDescriptor
-} from './history-preamble'
+  finalizeWorkspaceAttachments,
+  partitionWorkspacePromptAttachments
+} from './workspace-runtime-attachment-owner'
 import {
   canAdmitExistingWorkspacePrompt,
   consumePendingSessionRetry,
@@ -77,13 +84,6 @@ import {
   branchWorkspaceSessionFromMessage,
   reconcileBranchedAttachments
 } from './workspace-runtime-session-branch-owner'
-import {
-  finalizeWorkspaceAttachments,
-  partitionWorkspacePromptAttachments
-} from './workspace-runtime-attachment-owner'
-import type { useAcpRuntime } from './useAcpRuntime'
-import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 type SendWorkspaceMessageIntent = {
   expectedFrameworkId?: AgentFrameworkId
   sessionId?: string

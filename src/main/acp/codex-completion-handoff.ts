@@ -10,7 +10,7 @@ import type {
   CompletionGateRuntime,
   ToolCompletionEnvelope,
   TrustedToolCompletionContext
-} from '../agents/completion-gate'
+} from '../agents/completion-gate-contract'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 
 type CodexCompletionHandoffOptions = {

@@ -1,3 +1,7 @@
+import {
+  expectBoundaryPaths,
+  expectBoundaryOwnerTests
+} from '../../../test/module-boundary-assertions'
 import { extname, relative, resolve } from 'node:path'
 
 import {
@@ -121,13 +125,11 @@ describe('Provider runtime projection ownership', () => {
     ])
     const manifest = loadModuleImpactManifest(manifestPath)
     // The complete inventory is guarded by settings-backend.architecture.test.ts.
-    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual(
-      expect.arrayContaining([
-        'src/main/settings/provider-accounts.ts',
-        'src/main/settings/provider-runtime-projection.ts'
-      ])
-    )
-    expect(manifest.modules.settings_provider_accounts.testFiles.owner).toEqual([
+    expectBoundaryPaths(manifest, 'settings_provider_accounts', [
+      'src/main/settings/provider-accounts.ts',
+      'src/main/settings/provider-runtime-projection.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'settings_provider_accounts', [
       'src/main/settings/settings-backend.architecture.test.ts',
       'src/main/settings/provider-accounts.test.ts',
       'src/main/settings/provider-auth-lifecycle.test.ts',

@@ -14,6 +14,7 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
   )
     return
   let changed = false
+  let recoveredBottom = caption.rect[3]
   const covered = new Set(),
     result = []
   for (const row of ownedLines) {
@@ -31,6 +32,52 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
     if (!bases.length) {
       result.push(row.text)
       continue
+    }
+    // A sheared mathematical face can report a slightly larger font norm
+    // than adjacent upright prose although both have identical native boxes.
+    // An already accepted single-letter base proves that physical baseline;
+    // admit only complete, nonoverlapping upright fragments on the same row.
+    const projected = bases.filter(
+      (b) =>
+        /^\p{L}$/u.test(b.text.trim()) &&
+        b.width > 0 &&
+        b.height > 0 &&
+        b.fontSize > b.height &&
+        b.fontSize <= b.height * 1.02
+    )
+    let sharedNativeBaseline = false
+    if (
+      projected.length &&
+      page.lines.every((l) => l.width > 0 && l.height > 0 && l.fontSize > 0)
+    ) {
+      const sameHeight = page.lines.filter(
+        (l) =>
+          !bases.includes(l) &&
+          l.text.trim() &&
+          row.text.replace(/\s/gu, '').includes(l.text.replace(/\s/gu, '')) &&
+          Math.abs(l.fontSize - l.height) < 0.02 &&
+          l.x >= row.x &&
+          l.x + l.width <= row.right &&
+          projected.some(
+            (b) => Math.abs(l.y - b.y) < 0.02 && Math.abs(l.height - b.height) < 0.02
+          ) &&
+          ownedLines.filter((r) => Math.abs(l.y - r.y) < Math.max(2, em * 0.15)).length === 1
+      )
+      const all = [...bases, ...sameHeight]
+      if (
+        sameHeight.length &&
+        all.every((l, i) =>
+          all
+            .slice(i + 1)
+            .every(
+              (other) =>
+                Math.min(l.x + l.width, other.x + other.width) - Math.max(l.x, other.x) <= em * 0.01
+            )
+        )
+      ) {
+        bases.push(...sameHeight)
+        sharedNativeBaseline = true
+      }
     }
     const scripts = page.lines
       .filter(
@@ -219,9 +266,20 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       return count > 0
     })
     if (conserves && text !== row.text && (bases.length > 1 || attached.size)) changed = true
+    if (sharedNativeBaseline && conserves && text !== row.text)
+      for (const scripts of attached.values())
+        for (const script of scripts)
+          recoveredBottom = Math.max(recoveredBottom, script.y + script.height)
     result.push(conserves ? text : row.text)
   }
-  return changed ? { lines: result } : undefined
+  return changed
+    ? {
+        lines: result,
+        ...(recoveredBottom > caption.rect[3]
+          ? { rect: [...caption.rect.slice(0, 3), recoveredBottom] }
+          : {})
+      }
+    : undefined
 }
 
 // Work only inside an existing multiline numbered caption. Native left-edge

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from 'playwright'
-import { openGeneralSettings } from '../fixtures/settings-preferences'
+import { selectLanguage } from '../fixtures/settings-preferences'
 import { localizedSettingsCases } from '../fixtures/localized-settings'
 
 let rendererErrors: string[] = []
@@ -29,15 +29,6 @@ const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
   )
 
   expect(clippedButtons).toEqual([])
-}
-
-const selectLanguage = async (page: Page, label: string): Promise<void> => {
-  const settings = await openGeneralSettings(page)
-  await settings.getByRole('combobox', { name: 'Interface language' }).click()
-  await page.getByRole('option', { name: label, exact: true }).click()
-  // The dialog name changes with the locale; use Escape rather than the old English close label.
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('dialog')).toBeHidden()
 }
 
 for (const localized of localizedSettingsCases) {

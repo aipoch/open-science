@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { parseSettingsSnapshot } from '../../shared/settings'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
 import {
   createApplicationCommandRouter,
@@ -16,10 +17,19 @@ import {
 } from './application-commands'
 import { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 
+const validSnapshot = (): ReturnType<typeof parseSettingsSnapshot> =>
+  parseSettingsSnapshot({
+    providers: [],
+    agentFrameworks: [],
+    agentFrameworkId: 'opencode',
+    claude: {},
+    opencode: {}
+  })
+
 const passThroughSnapshotCommits = {
   currentSnapshotAfter: (pending: Promise<unknown>) => pending,
   projectAfter: (pending: Promise<unknown>) => pending,
-  readCurrentSnapshot: () => Promise.resolve(undefined)
+  readCurrentSnapshot: () => Promise.resolve(validSnapshot())
 } as unknown as SettingsSnapshotCommitOwner
 
 const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
@@ -180,6 +190,37 @@ const createDependencies = (
 }
 
 describe('Settings core application commands', () => {
+  it('validates snapshot reads for local and remote callers without rewriting optional preferences', async () => {
+    const snapshot = validSnapshot()
+    const getSettingsView = vi.fn().mockResolvedValue(snapshot)
+    const events = { publish: vi.fn() }
+    const { dependencies } = createDependencies(
+      new SettingsSnapshotCommitOwner({ getSettingsView }, events)
+    )
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    for (const location of ['local', 'remote'] as const) {
+      const read = (args: readonly unknown[] = []): Promise<unknown> =>
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.getSettings,
+          invocation(args as readonly [], location)
+        )
+      await expect(read()).resolves.toBe(snapshot)
+      expect(snapshot).not.toHaveProperty('localePreference')
+      await expect(read(['unexpected'])).rejects.toMatchObject({
+        code: 'invalid-command-arguments'
+      })
+      getSettingsView.mockResolvedValueOnce({ ...snapshot, providers: null })
+      await expect(read()).rejects.toMatchObject({ code: 'invalid-command-result' })
+      getSettingsView.mockRejectedValueOnce(
+        Object.assign(new Error('private path'), { code: 'EACCES' })
+      )
+      await expect(read()).rejects.toMatchObject({ code: 'settings-storage-unavailable' })
+      await expect(read()).resolves.toBe(snapshot)
+    }
+    expect(events.publish).not.toHaveBeenCalled()
+  })
+
   it('returns validated-save outcomes intact through local and remote command serialization', async () => {
     const { dependencies } = createDependencies()
     const result = {

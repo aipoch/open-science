@@ -1,5 +1,5 @@
 import type { PackageMirror } from '../../shared/mirror'
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { SetPackageMirrorRequest } from '../../shared/settings'
 import type { NotebookRuntimeSettings, NotebookRuntimeSettingsSnapshot } from './capabilities'

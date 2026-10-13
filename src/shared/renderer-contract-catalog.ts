@@ -174,6 +174,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'cli',
   'compute',
   'database-startup',
+  'desktop-runtime',
   'diagnostics',
   'github',
   'handoff',

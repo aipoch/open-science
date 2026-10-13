@@ -1,10 +1,4 @@
-import {
-  ensureRuntimeWriter,
-  isRuntimeWriter,
-  runtimeWriterSaveOptions,
-  setRuntimeWriterActivation
-} from './runtime-writer-client'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
@@ -12,22 +6,30 @@ import {
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   MAX_ACP_RUNTIME_EVENTS,
   isDurableAgentUserChoiceRequest,
-  type AcpContextUsage,
-  type AcpPermissionRequest,
   type AcpRuntimeEvent,
   type AcpSessionAgentTarget,
   type AcpStateSnapshot,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
-import { useCallback, useEffect, useRef } from 'react'
-import type { HistoryReplayDescriptor } from '../../../../shared/history-preamble'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
+import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
+import type { HistoryReplayDescriptor } from '../../../../shared/history-replay-contract'
 import { useSessionStore } from '../../stores/session-store'
-import { loadPersistedSession } from '../session-persistence/session-persistence'
+import {
+  loadPersistedSession,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
+import { isBufferableAssistantTextEvent } from './chat-events'
 import {
   acceptAcpRuntimeSnapshotRevision,
   resetAcpRuntimeSnapshotRevision
 } from './runtime-snapshot-revision-owner'
-import { isBufferableAssistantTextEvent } from './chat-events'
+import {
+  ensureRuntimeWriter,
+  isRuntimeWriter,
+  runtimeWriterSaveOptions,
+  setRuntimeWriterActivation
+} from './runtime-writer-client'
 import { applyWorkspaceRuntimeEvent, applyWorkspaceRuntimeEventBatch } from './workspace-events'
 import {
   createWorkspaceRuntimePresentationBuffer,

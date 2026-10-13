@@ -9,6 +9,7 @@ import {
   readRawOutcomeSession,
   releaseOutcomeArtifact
 } from './fixtures/session-outcome-fault'
+import { submitPromptViaUi as submit } from './fixtures/conversation'
 
 // Exercises real Main/renderer surfaces; no seeded outcomes or renderer API substitutes.
 test.use({ windowMode: 'normal' })
@@ -18,11 +19,6 @@ const ARTIFACT_PROMPT = 'Create the turn outcome retry artifact.'
 const FAILURE = 'Synthetic turn outcome failure.'
 const SAVE_WARNING =
   'Open-Science could not save the latest conversation changes. Retry before closing the app.'
-
-const submit = async (page: Page, prompt: string): Promise<void> => {
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-}
 
 const sessionForPrompt = async (page: Page, prompt: string): Promise<PersistedChatSession> => {
   let session: PersistedChatSession | undefined

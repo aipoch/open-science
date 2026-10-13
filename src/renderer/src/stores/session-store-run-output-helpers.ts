@@ -1,29 +1,24 @@
-import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
+import { normalizeClaudeCodeRefusalText } from '../../../shared/acp'
+import type { AcpMessageImage } from '../../../shared/acp-image-contract'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
-  normalizeClaudeCodeRefusalText,
-  sanitizeAcpMessageImage,
-  type AcpMessageImage,
-  type AcpModelCallUsage,
-  type AcpTurnTokenUsage
-} from '../../../shared/acp'
+  sanitizeAcpMessageImage
+} from '../../../shared/acp-image-contract'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../../shared/acp-usage-contract'
+import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
 import {
   sanitizeMessageImages,
   type MessagePdfContextSnapshot,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
+import type { ChatArtifact, ChatMessage, ChatSession } from './session-store-contract'
+import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import {
   createPersistedUpload,
   synchronizeSessionGraph
 } from './session-store-message-graph-helpers'
-import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import { createSortIndex } from './session-store-message-graph-owner'
-import type {
-  ChatArtifact,
-  ChatMessage,
-  ChatSession,
-  StreamingMessageContentByMessageId
-} from './session-store-persistence-owner'
+import type { StreamingMessageContentByMessageId } from './session-store-persistence-owner'
 
 // A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
 // stream identity so both projections choose the same Artifact owner instead of local sequence ids.

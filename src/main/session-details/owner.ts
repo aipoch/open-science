@@ -1,7 +1,8 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { Buffer } from 'node:buffer'
 
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   findFirstSessionDetailsMessage,
   formatFallbackSessionDetails,
@@ -10,13 +11,13 @@ import {
 import {
   SESSION_DETAILS_DESCRIPTION_MAX_LENGTH,
   SESSION_DETAILS_TITLE_MAX_LENGTH,
+  SessionDetailsConflictError,
   type EditSessionDetailsRequest,
   type PersistedChatSession,
   type PersistedSessionDetailsGeneration,
-  SessionDetailsConflictError,
   type SessionDetailsAdmission
 } from '../../shared/session-persistence'
-import type { AgentFrameworkId, ReasoningEffort } from '../../shared/settings'
+import type { AgentFrameworkId } from '../../shared/settings'
 
 export const SESSION_DETAILS_TITLE_LIMIT = SESSION_DETAILS_TITLE_MAX_LENGTH
 export const SESSION_DETAILS_DESCRIPTION_LIMIT = SESSION_DETAILS_DESCRIPTION_MAX_LENGTH

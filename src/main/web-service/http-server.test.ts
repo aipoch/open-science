@@ -36,6 +36,7 @@ import {
   WEB_RPC_PROTOCOL_VERSION
 } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
+import { toAcpRuntimeEvent } from '../acp/runtime-events'
 import type { CallerContext } from '../caller-context'
 import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import {
@@ -1712,9 +1713,18 @@ describe('startWebHttpServer', () => {
     const staleSocketUrl = new URL(eventSocketUrl(0))
     staleSocketUrl.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION - 1))
     const staleSocket = new WebSocket(staleSocketUrl)
+    const upgradeFrames: unknown[] = []
+    staleSocket.on('message', (data) => upgradeFrames.push(JSON.parse(data.toString())))
     await expect(
       new Promise<number>((resolve) => staleSocket.once('close', (code) => resolve(code)))
     ).resolves.toBe(1002)
+    expect(upgradeFrames).toEqual([
+      {
+        kind: 'resync-required',
+        ...bootstrap.eventStream,
+        reason: 'stream-changed'
+      }
+    ])
 
     const firstSocket = new WebSocket(eventSocketUrl(0))
     const firstMessage = new Promise<unknown>((resolve) =>
@@ -5874,4 +5884,188 @@ describe('headless package HTTP API', () => {
       peer.mockRestore()
     }
   })
+})
+
+it.each(['legacy', 'replay'])(
+  'delivers a bounded ACP burst over a healthy %s Web event socket',
+  async (mode) => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: 'test',
+        configRoot: '/unused',
+        platform: process.platform,
+        versions: { node: process.versions.node }
+      }
+    })
+    servers.push(server)
+    const url = new URL(`ws://127.0.0.1:${server.port}/events?token=test-token&client=burst-test`)
+    if (mode === 'replay') {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/bootstrap?token=test-token`)
+      const bootstrap = (await response.json()) as {
+        eventStream: { streamId: string; latestSequence: number }
+      }
+      url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+      url.searchParams.set('stream', bootstrap.eventStream.streamId)
+      url.searchParams.set('after', String(bootstrap.eventStream.latestSequence))
+    }
+    const socket = new WebSocket(url)
+    const received: string[] = []
+    let markers = 0
+    socket.on('message', (data) => {
+      const event = JSON.parse(data.toString())
+      if (event.channel === 'runtime:policy-changed') markers++
+      if (event.channel === 'acp:event')
+        received.push(...event.payload.map((item: { id: string }) => item.id))
+    })
+    try {
+      await new Promise<void>((resolve) => socket.once('open', resolve))
+      applicationEvents.publish('runtime:policy-changed', undefined)
+      await vi.waitFor(() => expect(markers).toBe(1))
+      const result = new Promise<string>((resolve) => {
+        socket.once('close', (code) => resolve(`closed:${code}`))
+        socket.on('message', (data) => {
+          if (JSON.parse(data.toString()).channel === 'runtime:policy-changed') resolve('available')
+        })
+      })
+      const events = Array.from({ length: 130 }, (_, index) =>
+        toAcpRuntimeEvent(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'x'.repeat(64 * 1024) }
+            }
+          },
+          `event-${index}`,
+          index + 1
+        )
+      )
+      // Each batch is legal; only aggregate socket buffering exceeds the old 16 MiB guard.
+      for (let index = 0; index < events.length; index += 50) {
+        const batch = events.slice(index, index + 50)
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThan(8 * 1024 * 1024)
+        applicationEvents.publish('acp:event', batch)
+      }
+      applicationEvents.publish('runtime:policy-changed', undefined)
+      expect(await result).toBe('available')
+      expect(received).toEqual(events.map((event) => event.id))
+    } finally {
+      socket.terminate()
+    }
+  }
+)
+
+it('rechecks remote authorization before draining a queued Web event', async () => {
+  let authorized = true
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    rpc: { channels: () => [], invoke: vi.fn() },
+    externalAccess: {
+      authorizeHttp: async () => 'denied',
+      authorizeWebSocket: async () => ({
+        ...authorizedExternalAccess(),
+        isCurrent: () => authorized
+      })
+    },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: process.platform,
+      versions: { node: process.versions.node }
+    }
+  })
+  servers.push(server)
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=revoked-burst`)
+  const received: unknown[] = []
+  socket.on('message', (data) => received.push(JSON.parse(data.toString())))
+  let releaseWrite: (() => void) | undefined
+  try {
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    applicationEvents.publish('runtime:policy-changed', undefined)
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    received.length = 0
+    const send = WebSocket.prototype.send
+    // The real first write succeeds, but its completion is held so the second event queues.
+    const heldWrite = vi.spyOn(WebSocket.prototype, 'send').mockImplementationOnce(function (
+      this: WebSocket,
+      data,
+      callback
+    ) {
+      send.call(this, data, {}, (error?: Error) => {
+        releaseWrite = () => (callback as (error?: Error) => void)(error)
+      })
+    })
+    const closed = new Promise<number>((resolve) => socket.once('close', resolve))
+    applicationEvents.publish('runtime:policy-changed', undefined)
+    applicationEvents.publish('settings:connector-runtime-changed', undefined)
+    await vi.waitFor(() => {
+      expect(received).toHaveLength(1)
+      expect(releaseWrite).toBeTypeOf('function')
+    })
+    authorized = false
+    releaseWrite!()
+    expect(await closed).toBe(1008)
+    expect(received).toHaveLength(1)
+    expect(heldWrite).toHaveBeenCalledOnce()
+  } finally {
+    vi.restoreAllMocks()
+    socket.terminate()
+  }
+})
+
+it('preserves the existing Web single-frame framing allowance', async () => {
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    rpc: { channels: () => [], invoke: vi.fn() },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: process.platform,
+      versions: { node: process.versions.node }
+    }
+  })
+  servers.push(server)
+  const socket = new WebSocket(
+    `ws://127.0.0.1:${server.port}/events?token=test-token&client=frame-allowance`
+  )
+  try {
+    await new Promise<void>((resolve) => socket.once('open', resolve))
+    const result = new Promise<string>((resolve) => {
+      socket.once('close', (code) => resolve(`closed:${code}`))
+      socket.once('message', (data) => resolve(JSON.parse(data.toString()).payload[0].text))
+    })
+    const text = 'x'.repeat(16 * 1024 * 1024 + 32 * 1024)
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'allowance',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'session-1',
+        kind: 'message',
+        role: 'assistant',
+        text
+      }
+    ])
+    const actual = await result
+    expect(actual.length, actual.startsWith('closed:') ? actual : 'received text length').toBe(
+      text.length
+    )
+    expect(actual === text).toBe(true)
+  } finally {
+    socket.terminate()
+  }
 })

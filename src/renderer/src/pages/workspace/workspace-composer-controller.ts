@@ -1,15 +1,4 @@
-import type { SessionDiscussionCapture } from './replay/replay-context'
-import type { SessionReadingContext } from '../../../../shared/session-reading'
-import { replayAnnotationTarget } from '../../../../shared/replay-reference'
-import { useTranslation } from 'react-i18next'
-import {
-  composerDraftStorageFailed,
-  readComposerDraft,
-  writeComposerDraft,
-  registerComposerDraftWriter,
-  removeComposerDrafts
-} from './composer-draft-storage'
-import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import {
   useCallback,
   useEffect,
@@ -19,24 +8,20 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
+import { useTranslation } from 'react-i18next'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import type { SessionReadingContext } from '../../../../shared/session-reading'
+import type { ComposerSendSnapshot } from './composer-contract'
+import {
+  composerDraftStorageFailed,
+  readComposerDraft,
+  registerComposerDraftWriter,
+  removeComposerDrafts,
+  writeComposerDraft
+} from './composer-draft-storage'
+export { type ComposerSendSnapshot } from './composer-contract'
+export { useWorkspaceComposerController, type WorkspaceComposerController }
 
-import type { UploadedAttachment } from '../../../../shared/uploads'
-import {
-  validateAnnotations,
-  type Annotation,
-  type AnnotationValidationError
-} from '../../../../shared/annotations'
-import {
-  isSessionSizeLimitError,
-  MAX_SESSION_PDF_CONTEXTS,
-  type LiteratureReference,
-  type ResearchMembership,
-  type MessagePdfContextSnapshot,
-  type PdfReadingPosition,
-  type SessionPdfBinding,
-  type SessionPdfContext,
-  type SessionPdfContextSource
-} from '../../../../shared/session-persistence'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
@@ -44,8 +29,22 @@ import {
   pendingPdfContextSelections,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
+import type {
+  MessagePdfContextSnapshot,
+  SessionPdfBinding,
+  SessionPdfContext,
+  SessionPdfContextSource
+} from '../../../../shared/session-pdf-contract'
+import {
+  isSessionSizeLimitError,
+  MAX_SESSION_PDF_CONTEXTS
+} from '../../../../shared/session-persistence'
+import type { LiteratureReference } from '../../../../shared/session-message-contract'
+import type { UploadedAttachment } from '../../../../shared/uploads'
 
-import { useWorkspaceComposerDrafts } from './workspace-composer-drafts'
+import type { ComposerDraft } from './composer-contract'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   appendLiteratureMentions,
@@ -59,15 +58,15 @@ import {
 } from './composer/composer-doc'
 import { normalizeHistorySkills, type ComposerHistoryEntry } from './composer/composer-history'
 import {
-  useWorkspaceComposerUploadController,
-  type ComposerDraft,
-  type ComposerUploadApi
-} from './workspace-composer-upload-controller'
-import {
   createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import { getPreviewFormatForFile } from './preview-support'
+import { useWorkspaceComposerDrafts } from './workspace-composer-drafts'
+import {
+  useWorkspaceComposerUploadController,
+  type ComposerUploadApi
+} from './workspace-composer-upload-controller'
 
 type ComposerHistoryNavigation = {
   entries: ComposerHistoryEntry[]
@@ -134,29 +133,6 @@ const samePdfContextSources = (
 ): boolean =>
   left.length === right.length &&
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
-
-export type ComposerSendSnapshot = {
-  retrySessionOwner?: ComposerDraft['retrySessionOwner']
-  setupSessionToken?: string
-  queuedEdit?: ComposerDraft['queuedEdit']
-  draftKey: string
-  version: number
-  doc: ComposerDoc
-  annotations: Annotation[]
-  discussionFocus?: SessionDiscussionCapture
-  researchMembership?: ResearchMembership
-  attachments: UploadedAttachment[]
-  automaticReadingEnabled?: boolean
-  pdfContext?: MessagePdfContextSnapshot
-  pdfReadingPosition?: PdfReadingPosition
-  pdfReadingPositionSource?: PdfReadingPositionSource
-  pendingPdfContextAttachmentIds?: string[]
-  pendingPdfContextVersions?: Array<{
-    sourceKind: SessionPdfContextSource['sourceKind']
-    sourceFileId?: string
-    sourceVersionId: string
-  }>
-}
 
 type WorkspaceComposerControllerInput = {
   currentDraftKey: string
@@ -1760,4 +1736,3 @@ const useWorkspaceComposerController = ({
     }
   }
 }
-export { useWorkspaceComposerController, type WorkspaceComposerController }

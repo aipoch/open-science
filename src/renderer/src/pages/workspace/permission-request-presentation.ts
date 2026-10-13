@@ -1,10 +1,5 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 
-import {
-  matchNotebookControlTool,
-  resolveNotebookLanguage,
-  resolveNotebookRunToolName
-} from './notebook-tool-names'
 import {
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
@@ -12,6 +7,11 @@ import {
   isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool
 } from './literature-tool-presentation'
+import {
+  matchNotebookControlTool,
+  resolveNotebookLanguage,
+  resolveNotebookRunToolName
+} from './notebook-tool-names'
 
 type NotebookRuntime = 'python' | 'r' | 'js' | 'bash'
 

@@ -42,9 +42,9 @@ runs:
         args=()
         regression_timeout=1200000
         case "$INCLUDE_CAPACITY" in
-          # A scheduled macOS run reached 127 passing tests at 40 minutes with
-          # 20 still pending. Leave room for the remaining tests and teardown.
-          true) regression_timeout=3000000 ;;
+          # The 211-test scheduled suite reached only test 168 in 50 minutes.
+          # Allow 75 minutes for the complete serial suite and teardown.
+          true) regression_timeout=4500000 ;;
           false) args+=(--grep-invert '@capacity') ;;
           *) echo "Invalid capacity selection" >&2; exit 1 ;;
         esac

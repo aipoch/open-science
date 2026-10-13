@@ -1,4 +1,3 @@
-import type { ReviewWithChecks, ReviewSessionRequest } from '../../../../shared/reviewer'
 import type {
   ArtifactLineageProvenance,
   ArtifactVersionDescriptor,
@@ -20,14 +19,15 @@ import type {
   ReplayResource,
   ReplayRunIndex
 } from '../../../../shared/replay'
-import type {
-  LoadSessionRequest,
-  PersistedArtifact,
-  PersistedChatSession
-} from '../../../../shared/session-persistence'
+import type { ReviewSessionRequest, ReviewWithChecks } from '../../../../shared/reviewer'
+import type { LoadSessionRequest } from '../../../../shared/session-persistence'
+import type { PersistedArtifact } from '../../../../shared/session-message-contract'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createUploadVersionReference } from '../../../../shared/uploads'
-import { buildReplayDocument } from './timeline'
 import { indexReplayRun } from './run-index'
+import type { ReplaySourceData } from './source-contract'
+import { buildReplayDocument } from './timeline'
+export type { ReplaySourceData } from './source-contract'
 
 // Deliberately excludes execution, mutation, event subscriptions and global renderer stores.
 export type ReplayReaderApi = {
@@ -45,14 +45,6 @@ export type ReplayReaderApi = {
       request: GetArtifactLineageRequest
     ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   }
-}
-
-export type ReplaySourceData = {
-  session: PersistedChatSession
-  runs: ReplayRunIndex[]
-  reviews?: ReviewWithChecks[]
-  resources: ReplayResource[]
-  issues: ReplayIssue[]
 }
 
 export type ReplayLoadOptions = { signal?: AbortSignal }

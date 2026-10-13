@@ -92,6 +92,7 @@ describe('NetworkStatusIndicator', () => {
 
     await act(async () => {
       window.dispatchEvent(new Event('online'))
+      await useNetworkStore.getState().probeConnectivity()
     })
     expect(container.querySelector('button')).toBeNull()
   })

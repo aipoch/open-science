@@ -1,17 +1,6 @@
 import { platform } from 'node:os'
+import type { SecureStorageCipher } from './credential-identity/cipher-contract'
 import { credentialCipher } from './credential-identity/runtime'
-
-interface SecureStorageCipher {
-  isEncryptionAvailable(): boolean
-  getSelectedStorageBackend?(): string
-  encryptString(value: string): Buffer
-  decryptString(value: Buffer): string
-  // Startup-only binary cookie validation; application credentials remain strict UTF-8 strings.
-  validateEncryptedCookie?(
-    value: Buffer,
-    context: { hostKey: string; databaseVersion: number }
-  ): void
-}
 
 let selectedCipher: SecureStorageCipher | undefined
 

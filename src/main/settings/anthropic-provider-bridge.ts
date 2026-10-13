@@ -79,6 +79,8 @@ const requestHeaders = (
     const normalized = name.toLowerCase()
     if (
       HOP_BY_HOP_HEADERS.has(normalized) ||
+      // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
+      normalized === 'accept-encoding' ||
       normalized === 'authorization' ||
       normalized === 'x-api-key' ||
       normalized.startsWith('sec-fetch-') ||

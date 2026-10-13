@@ -1,7 +1,6 @@
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
@@ -9,37 +8,39 @@ import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpDeleteSessionRequest,
+  AcpHandoffFailure,
   AcpPermissionResponse,
-  ElicitationResponse,
   AcpPromptRequest,
-  AcpSteerFollowUpRequest,
-  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
   AcpRuntimeState,
-  AcpSetPermissionProfileRequest,
   AcpSessionAgentTarget,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot,
-  AcpStateUpdate
+  AcpStateUpdate,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
+  ElicitationResponse
 } from '../../shared/acp'
-import type { AcpHandoffFailure } from '../../shared/acp'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type { AgentFrameworkId } from '../../shared/settings'
-import type { MessageAttribution } from '../../shared/session-persistence'
-import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
-import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
-import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
+import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { MessageAttribution } from '../../shared/session-persistence'
+import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelChangeTarget } from '../agent-framework'
-import type { RootDelegatedWorkControl } from '../delegation/production-composition'
+import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
   DelegateMessageParkedError,
   DelegateMessagePreAcceptanceError,
   type DelegateMessageAcceptanceEvidence
 } from '../delegation/execution-port'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
+import { AcpRuntime } from './runtime'
+import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
