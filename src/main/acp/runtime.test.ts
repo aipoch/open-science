@@ -5334,6 +5334,39 @@ describe('ACP runtime session management', () => {
     }
   }
 
+  it.each(['sendPrompt', 'sendAppContinuation'] as const)(
+    'retains unconsumed replay until %s accepts the adopted attachment',
+    async (method) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['fresh-provider-session'], {
+        supportsResume: true,
+        resumeNotFound: true
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const request = {
+        sessionId: 'interrupted-session',
+        cwd: '/workspace',
+        previousFrameworkId: 'claude-code' as const
+      }
+      await expect(runtime.resumeSession(request)).resolves.toMatchObject({ contextReset: true })
+      await expect(runtime.resumeSession(request)).resolves.toMatchObject({
+        providerSessionId: 'fresh-provider-session',
+        contextReset: true
+      })
+      expect(fakeAgent.newSessions).toHaveLength(1)
+      await runtime[method]({
+        sessionId: request.sessionId,
+        text: 'Continue the interrupted research',
+        contextReset: true
+      })
+      expect(await runtime.resumeSession(request)).not.toHaveProperty('contextReset')
+    }
+  )
+
   it('dispatches one hidden queued Plan delivery after Session resume and clears it', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('queued')
 

@@ -147,6 +147,11 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés."
   },
   "renderer": {
+    "Your conversation is preserved. Try Resume again.": "Votre conversation est conservée. Réessayez de la reprendre.",
+    "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "L’agent n’a pas répondu à temps. Votre conversation est conservée. Réessayez de la reprendre.",
+    "The selected agent could not be attached to this conversation. Try Resume again.": "L’agent sélectionné n’a pas pu être rattaché à cette conversation. Réessayez de la reprendre.",
+    "Could not resume this conversation": "Impossible de reprendre cette conversation",
+    "Could not copy details. Select the text and copy it manually.": "Impossible de copier les détails. Sélectionnez le texte et copiez-le manuellement.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Interactions ARN, preuves de régulation et jeux de données en masse d’ENCORI.",
     "Query miRNA target evidence.": "Rechercher les preuves de cibles de miRNA.",
     "Query RNA–RNA interaction evidence.": "Rechercher les preuves d’interactions ARN–ARN.",

@@ -145,6 +145,11 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。"
   },
   "renderer": {
+    "Your conversation is preserved. Try Resume again.": "您的会话已保留。请再次尝试恢复。",
+    "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能体未能及时响应。您的会话已保留。请再次尝试恢复。",
+    "The selected agent could not be attached to this conversation. Try Resume again.": "无法将所选智能体连接到此会话。请再次尝试恢复。",
+    "Could not resume this conversation": "无法恢复此会话",
+    "Could not copy details. Select the text and copy it manually.": "无法复制详情。请选择文本并手动复制。",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、调控证据与批量数据集。",
     "Query miRNA target evidence.": "查询 miRNA 靶标证据。",
     "Query RNA–RNA interaction evidence.": "查询 RNA–RNA 互作证据。",
