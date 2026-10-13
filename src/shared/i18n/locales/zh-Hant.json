@@ -7604,6 +7604,7 @@
     "This recorded media file is not included.": "未包含這份錄製媒體檔案。",
     "Replay connection interrupted": "回放連線中斷",
     "Playback is paused. Reconnect to continue from the same position.": "播放已暫停。重新連線後可從目前位置繼續。",
+    "Reconnect to reopen the recorded material.": "重新連線以重新開啟錄製資料。",
     "Reference time": "引用時間",
     "Watching position": "觀看位置",
     "Web recording {{number}}": "網頁錄製 {{number}}",

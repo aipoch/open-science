@@ -1,5 +1,36 @@
 import { expect, test } from '@playwright/test'
 
+for (const width of [320, 720]) {
+  for (const height of [240, 800]) {
+    test(`recorded media errors stay readable and retryable at ${width}x${height}`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height })
+      await page.goto('/project-recording.html?mediaError')
+      const error = page.getByRole('heading', { name: 'Could not read the recorded material.' })
+      await expect(error).toBeVisible()
+      const notice = page.locator('[data-notice-inline]')
+      const bounds = (await notice.boundingBox())!
+      expect(bounds.width).toBeGreaterThan(200)
+      expect(bounds.x).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+      expect(await notice.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      const viewport = page.getByTestId('recorded-media-scroll')
+      // Overflowing guidance must start inside the scrollport, so its first line stays reachable.
+      expect(bounds.y).toBeGreaterThanOrEqual((await viewport.boundingBox())!.y)
+      await page.screenshot({ path: testInfo.outputPath('recorded-media-recovery.png') })
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
+      await expect(page.getByRole('img', { name: 'Recorded project image' })).toBeVisible()
+      await expect(error).toHaveCount(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+    })
+  }
+}
+
 test('project frames and exact static results work independently with no Notebook or execution', async ({
   page
 }, testInfo) => {

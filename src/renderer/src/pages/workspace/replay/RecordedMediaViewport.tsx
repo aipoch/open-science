@@ -115,8 +115,8 @@ export function RecordedMediaViewport({
           </div>
         </div>
         {status ? (
-          <div className="absolute inset-0 flex items-center justify-center overflow-auto bg-bg-100/80 p-4 text-sm text-muted-foreground">
-            {status}
+          <div className="absolute inset-0 flex flex-col items-center overflow-auto bg-bg-100/80 p-4 text-sm text-muted-foreground">
+            <div className="my-auto w-full min-w-0 max-w-md shrink-0">{status}</div>
           </div>
         ) : null}
       </div>

@@ -96,3 +96,74 @@ it('keeps a new destination as a draft until the package has been validated and 
   )
   expect(createProject).not.toHaveBeenCalled()
 })
+
+it('offers a deduplicated project retry instead of suggesting creation after an initial read failure', async () => {
+  let finish: () => void = () => undefined
+  const loadProjects = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      useProjectStore.setState({ isLoaded: true, loadError: 'Project read failed' })
+    })
+    .mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            useProjectStore.setState({ projects: [project], loadError: undefined })
+            resolve()
+          }
+        })
+    )
+  useProjectStore.setState({ projects: [], isLoaded: false, loadProjects })
+  const onCancel = vi.fn()
+  render(<PackageImportSelection operation={operation} onCancel={onCancel} onContinue={vi.fn()} />)
+
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  expect(screen.getByRole('alert').textContent).toContain(
+    'Open-Science could not load projects. Retry to continue.'
+  )
+  expect(screen.queryByText('Create a project to import this Session.')).toBeNull()
+  expect(screen.queryByText('No active projects')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'New project' })).toBeNull()
+  fireEvent.click(retry)
+  fireEvent.click(retry)
+  expect(loadProjects).toHaveBeenCalledTimes(2)
+  expect((retry as HTMLButtonElement).disabled).toBe(true)
+  expect(retry.getAttribute('aria-busy')).toBe('true')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(onCancel).toHaveBeenCalledOnce()
+
+  await act(async () => finish())
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByRole('radio', { name: 'Existing research' })).not.toBeNull()
+})
+
+it('retains the cached destination, search and new-project draft while retrying project reads', async () => {
+  const loadProjects = vi.fn(async () => undefined)
+  useProjectStore.setState({ loadProjects })
+  render(<PackageImportSelection operation={operation} onCancel={vi.fn()} onContinue={vi.fn()} />)
+  await waitFor(() => expect(loadProjects).toHaveBeenCalledOnce())
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search projects' }), {
+    target: { value: 'Existing' }
+  })
+  fireEvent.click(screen.getByRole('radio', { name: 'Existing research' }))
+  fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Project name' }), {
+    target: { value: 'Draft destination' }
+  })
+  act(() => useProjectStore.setState({ loadError: 'Project read failed' }))
+  loadProjects.mockImplementation(async () => {
+    useProjectStore.setState({ projects: [project], loadError: undefined })
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  expect((screen.getByRole('textbox', { name: 'Project name' }) as HTMLInputElement).value).toBe(
+    'Draft destination'
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(
+    (screen.getByRole('searchbox', { name: 'Search projects' }) as HTMLInputElement).value
+  ).toBe('Existing')
+  expect(
+    (screen.getByRole('radio', { name: 'Existing research' }) as HTMLInputElement).checked
+  ).toBe(true)
+})

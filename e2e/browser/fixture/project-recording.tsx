@@ -1,5 +1,5 @@
 import '@/assets/main.css'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { ProjectReplay } from '@/pages/workspace/replay/ProjectReplay'
@@ -134,6 +134,8 @@ const makePayload = async (revision: string): Promise<RecordedProjectPayload> =>
   })
 }
 export const App = ({ payloads }: { payloads: RecordedProjectPayload[] }): React.JSX.Element => {
+  const mediaError = new URLSearchParams(location.search).has('mediaError')
+  const failNextImage = useRef(mediaError)
   const [revision, setRevision] = useState(0)
   const [showProject, setShowProject] = useState(true)
   const [selected, setSelected] = useState<RecordedObservationFileSelection>()
@@ -175,6 +177,10 @@ export const App = ({ payloads }: { payloads: RecordedProjectPayload[] }): React
   const readImage = useMemo(
     () =>
       async (key: string, signal: AbortSignal): Promise<string | null> => {
+        if (failNextImage.current) {
+          failNextImage.current = false
+          throw Error('Recorded image temporarily unavailable')
+        }
         // Exercise a delayed replacement with identical recording and frame IDs.
         if (revision) await new Promise((resolve) => setTimeout(resolve, 600))
         const result = await read(recordedMediaResource(payload, key), signal)
@@ -187,13 +193,22 @@ export const App = ({ payloads }: { payloads: RecordedProjectPayload[] }): React
       <button onClick={() => setRevision((value) => 1 - value)}>Switch receiving source</button>
       <button onClick={() => setShowProject((value) => !value)}>Toggle project module</button>
       <output data-testid="receiving-source">{payload.receiving.projectId}</output>
-      <div style={{ display: 'flex', height: 650, gap: 16 }}>
+      <div style={{ display: 'flex', height: mediaError ? 'calc(100dvh - 80px)' : 650, gap: 16 }}>
         {showProject ? (
           <div style={{ flex: 1, minWidth: 0 }}>
-            <ProjectReplay track={track} readImage={readImage} />
+            <ProjectReplay
+              track={track}
+              readImage={readImage}
+              presentationMode={mediaError ? 'research' : undefined}
+              transport={
+                mediaError
+                  ? { recordedAt: track.startedAt, onSeekRecordedAt: () => undefined }
+                  : undefined
+              }
+            />
           </div>
         ) : null}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div hidden={mediaError} style={{ flex: 1, minWidth: 0 }}>
           <ResultsPanel
             entries={recordedResults(payload)}
             read={read}

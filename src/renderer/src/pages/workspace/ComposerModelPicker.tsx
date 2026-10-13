@@ -94,6 +94,7 @@ const ComposerModelPicker = ({
     (state) => state.claudeSubscriptionProviderId
   )
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -145,7 +146,7 @@ const ComposerModelPicker = ({
     return (
       <button
         type="button"
-        onClick={() => openSettings()}
+        onClick={() => openSettingsToPanel('model')}
         className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm text-status-warning-foreground transition-colors hover:bg-status-warning-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface"
         aria-label={t('No model available — open settings')}
       >

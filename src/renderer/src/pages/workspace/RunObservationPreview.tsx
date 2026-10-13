@@ -519,7 +519,9 @@ const RunObservationPreviewContent = (props: RunObservationPreviewProps): React.
                       )
                     : t('Open the recorded Session to ask about this step.')
                   : props.mode === 'recorded'
-                    ? t('Playback is paused. Reconnect to continue from the same position.')
+                    ? props.format === 'web-recording' && props.playback
+                      ? t('Playback is paused. Reconnect to continue from the same position.')
+                      : t('Reconnect to reopen the recorded material.')
                     : t('Return to this preview and select the step again.')
               }
               primaryButton={

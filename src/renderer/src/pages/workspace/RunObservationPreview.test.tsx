@@ -554,6 +554,60 @@ it('dispatches repeated recorded Ask actions by server selection identity, never
   expect(openRecorded).toHaveBeenCalledExactlyOnceWith({ target: receiving })
 })
 
+it('reopens a standalone recording without promising to preserve its local playhead', async () => {
+  const api = install()
+  const receiving = {
+    projectId: 'p',
+    sessionId: 'imported',
+    artifactId: 'recording',
+    versionId: 'fixed-version'
+  }
+  const openRecorded = vi.fn().mockImplementation(async () => ({
+    ...access(openRecorded.mock.calls.length === 1 ? 'first' : 'second'),
+    target: receiving,
+    mode: 'recorded',
+    format: 'web-recording'
+  }))
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      observations: { ...api, openRecorded },
+      projectRecordings: {
+        selection: vi.fn().mockImplementation(async ({ viewerId }) => {
+          if (viewerId === 'first') throw new Error('Viewer expired')
+          return null
+        })
+      }
+    }
+  })
+  render(
+    <RunObservationPreview
+      title="Standalone recording"
+      mode="recorded"
+      format="web-recording"
+      target={receiving}
+      isActive
+      onAskBrowserMoment={vi.fn()}
+    />
+  )
+  await screen.findByText('Reconnect to reopen the recorded material.')
+  expect(
+    screen.queryByText('Playback is paused. Reconnect to continue from the same position.')
+  ).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+  await waitFor(() =>
+    expect(screen.getByTitle('Standalone recording').getAttribute('src')).toContain(
+      'viewer-second.localhost'
+    )
+  )
+  expect(openRecorded.mock.calls.map(([request]) => request)).toEqual([
+    { target: receiving, format: 'web-recording' },
+    { target: receiving, format: 'web-recording' }
+  ])
+  expect(api.revoke).toHaveBeenCalledWith({ viewerId: 'first' })
+  expect(screen.queryByText('Reconnect to reopen the recorded material.')).toBeNull()
+})
+
 it('pauses a disconnected recorded viewer and reconnects the same Version without losing the playhead or draft', async () => {
   const api = install()
   const receiving = {

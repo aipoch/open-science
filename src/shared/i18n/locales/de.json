@@ -7763,6 +7763,7 @@
     "This recorded media file is not included.": "Diese aufgezeichnete Mediendatei ist nicht enthalten.",
     "Replay connection interrupted": "Verbindung zur Wiedergabe unterbrochen",
     "Playback is paused. Reconnect to continue from the same position.": "Die Wiedergabe ist angehalten. Stellen Sie die Verbindung wieder her, um an derselben Position fortzufahren.",
+    "Reconnect to reopen the recorded material.": "Stellen Sie die Verbindung wieder her, um das aufgezeichnete Material erneut zu öffnen.",
     "Reference time": "Referenzzeit",
     "Watching position": "Betrachtungsposition",
     "Web recording {{number}}": "Webaufzeichnung {{number}}",

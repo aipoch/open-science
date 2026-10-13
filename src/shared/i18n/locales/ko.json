@@ -7602,6 +7602,7 @@
     "This recorded media file is not included.": "이 녹화 미디어 파일은 포함되어 있지 않습니다.",
     "Replay connection interrupted": "리플레이 연결이 끊겼습니다",
     "Playback is paused. Reconnect to continue from the same position.": "재생이 일시 중지되었습니다. 다시 연결하면 같은 위치에서 계속할 수 있습니다.",
+    "Reconnect to reopen the recorded material.": "녹화 자료를 다시 열려면 다시 연결하세요.",
     "Reference time": "참조 시점",
     "Watching position": "시청 위치",
     "Web recording {{number}}": "웹 녹화 {{number}}",

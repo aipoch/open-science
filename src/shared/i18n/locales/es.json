@@ -7931,6 +7931,7 @@
     "This recorded media file is not included.": "Este archivo multimedia grabado no está incluido.",
     "Replay connection interrupted": "Conexión de reproducción interrumpida",
     "Playback is paused. Reconnect to continue from the same position.": "La reproducción está en pausa. Vuelva a conectar para continuar desde la misma posición.",
+    "Reconnect to reopen the recorded material.": "Vuelva a conectarse para abrir de nuevo el material grabado.",
     "Reference time": "Momento de la referencia",
     "Watching position": "Posición de visualización",
     "Web recording {{number}}": "Grabación web {{number}}",
