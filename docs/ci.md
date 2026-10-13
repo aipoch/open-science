@@ -155,6 +155,26 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Derived consumer evidence
+
+Module records retain explicit ownership and behavioral contracts. The generated
+`scripts/ci/module-derived-consumers.json` stores additional structurally reachable tests;
+module/affected selection unions both sources and labels derived evidence in its explanation.
+The generator reuses the repository dependency reader, including type/mock references and
+runtime-loading declarations. This does not infer executed code coverage or retire contracts.
+
+Regenerate with `npm run generate:module-consumers`; verify with `npm run check:module-consumers`.
+The index is protected CI data, outside the module-record exemption. Editing it retains full CI
+routing in this rollout. Lightweight preflight reads only trusted JSON. Blocking CI Integrity
+recomputes candidate evidence from immutable Git blobs using trusted code, without importing
+candidate application or checker code. Missing, stale, forged or nonregular indexes fail.
+Old revisions predating the index retain their legacy rules; an established index cannot be
+removed. Local selection also rejects a missing index rather than treating it as empty.
+
+Existing explicit consumer registrations are preserved. A future reviewed migration must land
+a trusted preservation rule before moving historical entries; structural reachability alone
+cannot establish that an old entry was not an intentional dynamic behavior contract.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have

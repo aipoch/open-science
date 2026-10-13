@@ -16,6 +16,8 @@
     "lint": "eslint --cache .",
     "pretest": "node scripts/check-prisma-client.mjs && npm run build:packages",
     "test": "vitest run",
+    "generate:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --write",
+    "check:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --check",
     "test:module": "npm run build:packages && node scripts/ci/module-test-impact.mjs module",
     "test:affected": "npm run build:packages && node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
