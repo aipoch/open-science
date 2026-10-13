@@ -120,7 +120,8 @@
     "check:durable-files-package": "node scripts/check-durable-files-package.mjs",
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
-    "check:test-impact-package": "node scripts/check-test-impact-package.mjs"
+    "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
+    "check:providers-package": "node scripts/check-providers-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -188,7 +189,8 @@
     "@aipoch/durable-files": "file:packages/durable-files",
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
-    "@aipoch/literature-reading": "file:packages/literature-reading"
+    "@aipoch/literature-reading": "file:packages/literature-reading",
+    "@aipoch/providers": "file:packages/providers"
   },
   "overrides": {
     "@huggingface/transformers": {

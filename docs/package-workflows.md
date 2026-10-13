@@ -64,7 +64,7 @@ suites through module-impact fixture routing. Unknown paths and incomplete trust
 the complete package baseline.
 
 The dispatcher reuses the Connector, Diagnostics, Environment, Compute, Notebook, Skills and
-PDF/Literature, Reproducibility, Resilient Download and Durable Files verifiers.
+PDF/Literature, Reproducibility, Providers, Resilient Download and Durable Files verifiers.
 Prerequisites need compilation; only selected packages need their own unit suites. Installed
 consumers retain public declarations, private-import rejection, browser entries, CJS/ESM identity
 where supported, actual execution and resource checks. PDF worker assets, Notebook grammars and
@@ -85,6 +85,12 @@ host consumers remain blocking in merge queue. `test:affected -- --tier pr` expl
 selection; the default remains the complete affected queue selection. Full portable Ubuntu regression
 runs in Source Regression, with a focused manual `portable` mode. Run
 `node scripts/ci/audit-package-consumers.mjs HEAD` for per-package host dependency evidence.
+
+The Providers verifier builds Diagnostics as a prerequisite without rerunning its unchanged unit
+suite when `--packages=providers` is selected. It builds and typechecks clean sources, packs both
+archives, then validates catalog browser bundling, public CJS/ESM types and identities, URL/protocol
+conversion and bounded direct text generation after removing source trees and pruning development
+dependencies. Provider/Bridge account, authentication and session ownership remain host contracts.
 
 ## Static impact diagnostic tool
 

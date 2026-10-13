@@ -1,9 +1,11 @@
-import { resolveVendorModelReasoningEffort, type OfficialVendorId } from './provider-registry'
 import {
+  resolveVendorModelReasoningEffort,
+  type OfficialVendorId,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
-} from './reasoning-effort'
+} from '@aipoch/providers/catalog'
+
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,

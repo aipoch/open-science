@@ -7,7 +7,6 @@
     "contract": [
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
-      "src/shared/provider-registry.test.ts",
       "src/shared/provider-reasoning-effort.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -572,8 +571,6 @@
       "src/main/settings/responses-bridge.skill-loading.test.ts",
       "src/main/settings/responses-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
-      "src/main/settings/responses-request-adapter.test.ts",
-      "src/main/settings/responses-response-adapter.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/settings/session-details-model-owner.test.ts",

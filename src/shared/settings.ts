@@ -10,8 +10,15 @@ import type {
   SkillReplacementPreview,
   SkillSource
 } from '@aipoch/skills/document'
-import type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
-export type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
+import {
+  type ChatApiEndpoint,
+  type ReasoningEffort,
+  customProviderRequiresKey,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport,
+  type ReasoningEffortPresetSetting
+} from '@aipoch/providers/catalog'
+export type { ChatApiEndpoint, ReasoningEffort } from '@aipoch/providers/catalog'
 
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
@@ -23,12 +30,7 @@ import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
 import type { NotebookNetworkSettings } from './notebook-network-settings'
 import type { PermissionProfileId } from './permission-profiles'
-import { customProviderRequiresKey } from './provider-base-url'
-import type { OfficialVendorId } from './provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from './reasoning-effort'
+
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor

@@ -1,9 +1,6 @@
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ModelReasoningEffort
-} from '../../shared/reasoning-effort'
+import type { OfficialVendorId } from './provider-registry'
+import type { CustomReasoningEffortTransport, ModelReasoningEffort } from './reasoning-effort'
 import { resolveChatReasoningTransport } from './reasoning-transport'
 import type {
   ResponsesBridgeNamespacedTool,

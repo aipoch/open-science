@@ -290,18 +290,12 @@ describe('Settings backend ownership architecture', () => {
     expect(exportInventoryFrom(settingsPaths.responsesBridge)).toEqual([
       'type:ResponsesBridgeConnection',
       'type:ResponsesBridgeModelTarget',
-      'type:ResponsesBridgeNamespacedTool',
       'type:ResponsesBridgeOptions',
       'type:ResponsesBridgeSkillCandidate',
       'type:ResponsesBridgeSkillInput',
       'type:ResponsesBridgeTarget',
       'value:ResponsesBridge',
-      'value:chatUrl',
-      'value:completionToResponse',
-      'value:inputToMessages',
-      'value:responsesToChatRequest',
-      'value:toolsToChat',
-      'value:upstreamErrorMessage'
+      'value:chatUrl'
     ])
     expect(exportInventoryFrom(settingsPaths.service)).toEqual([
       'type:AgentBackendResolutionContext',
@@ -884,11 +878,26 @@ describe('Settings backend ownership architecture', () => {
         ].filter((path) => !movedPaths.has(path))
       )
     )
+    expectBoundaryPaths(manifest, 'providers_package', [
+      'packages/providers/src/provider-registry.ts',
+      'packages/providers/src/reasoning-effort.ts',
+      'packages/providers/src/model-preference-contract.ts',
+      'packages/providers/src/provider-base-url.ts',
+      'packages/providers/src/provider-text-generation-failure.ts',
+      'packages/providers/src/base-url.ts',
+      'packages/providers/src/provider-fetch.ts',
+      'packages/providers/src/bounded-response.ts',
+      'packages/providers/src/openai-chat-usage.ts',
+      'packages/providers/src/reasoning-transport.ts',
+      'packages/providers/src/responses-request-adapter.ts',
+      'packages/providers/src/responses-response-adapter.ts',
+      'packages/providers/src/responses-protocol-types.ts',
+      'packages/providers/src/provider-text-generation.ts'
+    ])
     expectBoundaryPaths(
       manifest,
       'settings_provider_accounts',
       [
-        'src/main/settings/bounded-response.ts',
         'src/main/settings/provider-accounts.ts',
         'src/main/settings/provider-auth-lifecycle.ts',
         'src/main/settings/provider-draft-projection.ts',
@@ -917,16 +926,13 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/validate.test.ts',
         'src/main/settings/validate.ts',
         'src/main/settings/xai-oauth.test.ts',
-        'src/main/settings/xai-provider-account-owner.test.ts',
-        'src/main/settings/provider-text-generation.ts',
-        'src/main/settings/provider-text-generation.test.ts'
+        'src/main/settings/xai-provider-account-owner.test.ts'
       ].filter((path) => !movedPaths.has(path))
     )
     expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual(
       expect.arrayContaining(
         [
           'src/main/settings/provider-accounts.ts',
-          'src/main/settings/bounded-response.ts',
           'src/main/settings/claude-isolated-auth.ts',
           'src/main/settings/claude-shared-auth.ts',
           'src/main/settings/codex-auth.ts',
@@ -936,8 +942,7 @@ describe('Settings backend ownership architecture', () => {
           'src/main/settings/provider-env.ts',
           'src/main/settings/provider-resource-limits.ts',
           'src/main/settings/provider-runtime-projection.ts',
-          'src/main/settings/validate.ts',
-          'src/main/settings/provider-text-generation.ts'
+          'src/main/settings/validate.ts'
         ].filter((path) => !movedPaths.has(path))
       )
     )
@@ -965,9 +970,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/provider-runtime-health-owner.ts',
         'src/main/settings/responses-bridge.ts',
         'src/main/settings/responses-bridge.plan-tools.test.ts',
-        'src/main/settings/responses-protocol-types.ts',
-        'src/main/settings/responses-request-adapter.ts',
-        'src/main/settings/responses-response-adapter.ts',
         'src/main/settings/anthropic-provider-bridge.test.ts',
         'src/main/settings/backend-resolver.test.ts',
         'src/main/settings/backend-route-planner.architecture.test.ts',
@@ -989,9 +991,7 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/responses-bridge.test.ts',
         'src/main/settings/responses-reasoning-replay.test.ts',
         'src/main/settings/responses-request-adapter.architecture.test.ts',
-        'src/main/settings/responses-request-adapter.test.ts',
         'src/main/settings/responses-response-adapter.architecture.test.ts',
-        'src/main/settings/responses-response-adapter.test.ts',
         'src/main/settings/system-proxy.test.ts',
         'src/main/settings/xai-oauth-provider-bridge.test.ts',
         'src/main/settings/xai-protocol.test.ts',
@@ -1013,8 +1013,6 @@ describe('Settings backend ownership architecture', () => {
           'src/main/settings/provider-transport-owner.ts',
           'src/main/settings/provider-failure-observation.ts',
           'src/main/settings/provider-runtime-health-owner.ts',
-          'src/main/settings/responses-request-adapter.ts',
-          'src/main/settings/responses-response-adapter.ts',
           'src/main/settings/system-proxy.ts',
           'src/main/settings/xai-oauth-provider-bridge.ts',
           'src/main/settings/xai-protocol.ts',

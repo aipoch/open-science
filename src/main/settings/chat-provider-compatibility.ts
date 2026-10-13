@@ -4,14 +4,18 @@ import {
 } from './provider-failure-observation'
 import type { ServerResponse } from 'node:http'
 
-import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/protocol'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import { fetchProviderRequest } from './provider-fetch'
+
 import { chatToResponses, responsesToChat } from './xai-protocol'
 
 type Json = Record<string, unknown>

@@ -46,7 +46,7 @@ import {
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers/catalog'
 import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import type { MessageAttribution } from '../../shared/session-message-contract'
 import type {

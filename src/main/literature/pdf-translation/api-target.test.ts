@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { capturePdfTranslationApiTarget } from './api-target'
-import { ProviderTextGenerationService } from '../../settings/provider-text-generation'
+import { ProviderTextGenerationService } from '@aipoch/providers/client'
 vi.mock('electron', () => ({ net: {} }))
 import type { SettingsSnapshot, ProviderView } from '../../../shared/settings'
 
@@ -118,4 +118,45 @@ it('executes an official API model admitted by the translation picker', async ()
       headers: expect.objectContaining({ authorization: 'Bearer test-key' })
     })
   )
+})
+
+it('projects only direct API configuration and rejects a stale subscription resolution', async () => {
+  const settings = setup()
+  settings.resolveExplicitDirectProvider.mockResolvedValue({
+    providerId: 'api',
+    provider: {
+      type: 'custom',
+      model: 'two',
+      key: 'secret',
+      baseUrl: 'https://example.test',
+      apiEndpoints: ['openai'],
+      agentProviderId: 'runtime-only',
+      contextWindow: 32000
+    },
+    reasoningEffortProfile: { supported: true, slots: ['none', 'low', 'medium', 'high', 'max'] }
+  })
+  const target = await capturePdfTranslationApiTarget(settings, {
+    providerId: 'api',
+    modelId: 'two'
+  })
+  expect(target.reasoningEffort).toBe('none')
+  expect(target.provider).toEqual({
+    type: 'custom',
+    key: 'secret',
+    baseUrl: 'https://example.test',
+    openaiBaseUrl: undefined,
+    apiEndpoints: ['openai'],
+    vendorId: undefined,
+    reasoningEffortTransport: undefined,
+    maxOutputTokens: undefined
+  })
+  expect(target).not.toHaveProperty('reasoningEffortProfile')
+  settings.resolveExplicitDirectProvider.mockResolvedValue({
+    providerId: 'api',
+    provider: { type: 'codex-isolated' },
+    reasoningEffortProfile: { supported: false }
+  })
+  await expect(
+    capturePdfTranslationApiTarget(settings, { providerId: 'api', modelId: 'two' })
+  ).rejects.toThrow('[pdf-translation:unsupported-model]')
 })

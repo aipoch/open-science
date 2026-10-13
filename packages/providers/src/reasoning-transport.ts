@@ -1,8 +1,5 @@
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ModelReasoningEffort
-} from '../../shared/reasoning-effort'
+import type { OfficialVendorId } from './provider-registry'
+import type { CustomReasoningEffortTransport, ModelReasoningEffort } from './reasoning-effort'
 
 export type ChatReasoningTransport = {
   reasoningEffort?: ModelReasoningEffort

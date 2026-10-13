@@ -1120,7 +1120,6 @@
       "src/shared/acp.test.ts",
       "src/renderer/src/pages/workspace/ComposerContextUsage.render.test.tsx",
       "src/main/literature/pdf-translation/api-target.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/session-persistence/auxiliary-turn-usage.test.ts",
       "src/main/agents/claude-code-handoff.test.ts",
       "src/main/agents/completion-handoff-lifecycle.test.ts",

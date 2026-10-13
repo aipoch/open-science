@@ -244,7 +244,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       'packages/durable-files/src/publication.test.ts',
       'packages/durable-files/src/publication.architecture.test.ts',
       'packages/durable-files/src/publication.integration.test.ts',
-      'packages/resilient-download/src/transport.test.ts'
+      'packages/resilient-download/src/transport.test.ts',
+      'packages/providers/src/client.test.ts'
     ]) {
       const file = join(fixture, path)
       mkdirSync(join(file, '..'), { recursive: true })
@@ -261,6 +262,10 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
     writeFileSync(
       join(fixture, 'packages/resilient-download/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/resilient-download'))}, test: {name:'resilient-download',include:['src/**/*.test.ts']}}`
+    )
+    writeFileSync(
+      join(fixture, 'packages/providers/vitest.config.ts'),
+      `export default {root: ${JSON.stringify(join(fixture, 'packages/providers'))}, test: {name:'providers',include:['src/**/*.test.ts']}}`
     )
     const list = (portable: string, excluded = [core], scope = ''): Array<{ file: string }> =>
       JSON.parse(
@@ -293,7 +298,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         core,
         'packages/compute',
         'packages/durable-files',
-        'packages/resilient-download'
+        'packages/resilient-download',
+        'packages/providers'
       ]).map(({ file }) => normalize(file))
     ).toEqual([join(fixture, 'src/host.test.ts')])
     // A trusted baseline predating these standalone packages must still discover the new package, exactly once.
@@ -310,12 +316,13 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         'packages/durable-files/src/publication.test.ts',
         'packages/durable-files/src/publication.architecture.test.ts',
         'packages/durable-files/src/publication.integration.test.ts',
-        'packages/resilient-download/src/transport.test.ts'
+        'packages/resilient-download/src/transport.test.ts',
+        'packages/providers/src/client.test.ts'
       ]
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(11)
+    expect(list('0')).toHaveLength(12)
     // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
     for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
       const file = join(fixture, path)
@@ -337,8 +344,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
       expect([...host, ...packages].sort()).toEqual(baseline)
     }
-    expect(list('0', [], 'host')).toHaveLength(13)
-    expect(list('0', [], 'packages')).toHaveLength(13)
+    expect(list('0', [], 'host')).toHaveLength(14)
+    expect(list('0', [], 'packages')).toHaveLength(14)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
@@ -409,11 +416,23 @@ it.each([
   ['src/main/session-diagnostics/notebook.ts', []],
   [
     'packages/diagnostics/src/diagnostic-redaction.ts',
-    ['packages/diagnostics', 'packages/environment', 'packages/compute', 'packages/reproducibility']
+    [
+      'packages/diagnostics',
+      'packages/environment',
+      'packages/compute',
+      'packages/reproducibility',
+      'packages/providers'
+    ]
   ],
   [
     'packages/diagnostics/src/node.ts',
-    ['packages/diagnostics', 'packages/environment', 'packages/compute', 'packages/reproducibility']
+    [
+      'packages/diagnostics',
+      'packages/environment',
+      'packages/compute',
+      'packages/reproducibility',
+      'packages/providers'
+    ]
   ]
 ])('applies the real diagnostics registration to %s', (path, selected) => {
   const registered = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))

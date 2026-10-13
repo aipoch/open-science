@@ -1,5 +1,5 @@
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import { normalizeOpenAiChatModelStepUsage } from '../settings/openai-chat-usage'
+import { normalizeOpenAiChatModelStepUsage } from '@aipoch/providers/protocol'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,

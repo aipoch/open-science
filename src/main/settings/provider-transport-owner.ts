@@ -4,8 +4,11 @@ import type {
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import {
+  usesVendorAnthropicApiKeyHeader,
+  type ModelReasoningEffort
+} from '@aipoch/providers/catalog'
+
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentModelCatalogEntry,
@@ -23,8 +26,9 @@ import type { BackendRoutePlan } from './backend-route-planner'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
+  openAiCompletionsBase,
+  type ResponsesBridgeNamespacedTool
+} from '@aipoch/providers/protocol'
 import {
   ChatProviderCompatibilityBridge,
   type ChatProviderCompatibilityTarget
@@ -40,11 +44,8 @@ import {
 } from './native-responses-compatibility'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import type { ProviderRuntimeTarget } from './provider-accounts'
-import {
-  ResponsesBridge,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeOptions
-} from './responses-bridge'
+
+import { ResponsesBridge, type ResponsesBridgeOptions } from './responses-bridge'
 import type { ResponsesBridgeConnection, ResponsesBridgeTarget } from './responses-bridge-contract'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'

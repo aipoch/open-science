@@ -1,5 +1,5 @@
 import type { ConfiguredModelCatalogEntry } from './configured-model-catalog'
-import type { ReasoningEffort } from './model-preference-contract'
+import type { ReasoningEffort } from '@aipoch/providers/catalog'
 import { resolveProviderEffectiveModel } from './provider-reasoning-effort'
 import type { PersistedChatSession } from './session-persistence'
 import {

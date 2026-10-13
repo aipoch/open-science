@@ -1,10 +1,6 @@
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
 import {
-  resolveProviderEffectiveModel,
-  resolveProviderReasoningEffortProfile
-} from '../../shared/provider-reasoning-effort'
-import {
+  type ChatApiEndpoint,
+  getCustomProviderBaseUrlError,
   defaultVendorModel,
   getOfficialVendorModelIds,
   isModelBridgeSupported,
@@ -14,9 +10,15 @@ import {
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl,
-  resolveVendorResponsesBaseUrl
-} from '../../shared/provider-registry'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+  resolveVendorResponsesBaseUrl,
+  type ReasoningEffortProfile
+} from '@aipoch/providers/catalog'
+
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../shared/provider-reasoning-effort'
+
 import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
 import type { ProviderView } from '../../shared/settings'
 import {

@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { defaultVendorModel } from '../../shared/provider-registry'
+import { defaultVendorModel } from '@aipoch/providers/catalog'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,

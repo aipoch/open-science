@@ -1,15 +1,18 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
+import type {
+  ChatApiEndpoint,
+  OfficialVendorId,
+  CustomReasoningEffortTransport
+} from '@aipoch/providers/catalog'
+
 import type {
   CodexSubscriptionAuthMode,
   CodexSubscriptionTransport,
   ProviderType
 } from '../../shared/settings'
-import { normalizeAnthropicBaseUrl } from './base-url'
+import { normalizeAnthropicBaseUrl } from '@aipoch/providers/protocol'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
 // binary it spawns) read. Pure and free of Electron so the branch matrix stays unit-testable.

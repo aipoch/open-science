@@ -3,7 +3,7 @@ import type {
   RefreshProviderModelsResult
 } from '../../shared/settings'
 import { isXaiSubscriptionProvider } from '../../shared/settings'
-import { resolveVendorModelsUrl } from '../../shared/provider-registry'
+import { resolveVendorModelsUrl } from '@aipoch/providers/catalog'
 import { netFetchStandard } from '../network-fetch'
 import { listProviderModels } from './list-models'
 import type { ResolvedProvider } from './provider-env'

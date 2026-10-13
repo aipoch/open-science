@@ -14,9 +14,12 @@ import {
   DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
   readBoundedResponseBytes,
   readBoundedResponseText,
-  ResponseBodyLimitError
-} from './bounded-response'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+  ResponseBodyLimitError,
+  normalizeOpenAiChatModelStepUsage,
+  fetchProviderRequest,
+  type ResponsesBridgeNamespacedTool
+} from '@aipoch/providers/protocol'
+
 import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
@@ -25,14 +28,14 @@ import {
   providerRequestHeadersFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
+
 import {
   writeProviderLoopbackJson as json,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import type { ResponsesBridgeNamespacedTool } from './responses-bridge'
+
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,

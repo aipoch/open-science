@@ -5,7 +5,7 @@ import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
-import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
+import { resolveReasoningEffortControl } from '@aipoch/providers/catalog'
 import { SettingsSegmentedControl } from './SettingsSegmentedControl'
 
 // Segmented effort selector: the highlight block slides to the picked level. Fixed-width segments

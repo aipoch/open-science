@@ -17,15 +17,24 @@ export type {
 } from './responses-bridge-contract'
 
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers/catalog'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
-import { appendChatCompletions } from './base-url'
 import {
+  appendChatCompletions,
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
-  ResponseBodyLimitError
-} from './bounded-response'
+  ResponseBodyLimitError,
+  fetchProviderRequest,
+  type ResponsesBridgeNamespacedTool,
+  type ResponsesReplyReasoning,
+  responsesToChatRequest,
+  completionToResponse,
+  ResponsesProtocolError,
+  streamChatToResponses,
+  upstreamErrorMessage
+} from '@aipoch/providers/protocol'
+
 import { selectChatSkills } from './chat-skill-selector'
 import {
   DeterministicProviderErrorReplay,
@@ -33,23 +42,12 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
+
 import {
   writeProviderLoopbackJson as json,
   ProviderLoopbackHttpHost,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import type {
-  ResponsesBridgeNamespacedTool,
-  ResponsesReplyReasoning
-} from './responses-protocol-types'
-import { responsesToChatRequest } from './responses-request-adapter'
-import {
-  completionToResponse,
-  ResponsesProtocolError,
-  streamChatToResponses,
-  upstreamErrorMessage
-} from './responses-response-adapter'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -649,6 +647,4 @@ export class ResponsesBridge {
   }
 }
 
-export type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
-export { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
-export { chatUrl, completionToResponse, upstreamErrorMessage }
+export { chatUrl }

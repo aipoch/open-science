@@ -199,7 +199,8 @@
     "src/main/desktop-startup-recovery.ts",
     "src/main/desktop-update-integration.test.ts",
     "src/main/desktop-update-integration.ts",
-    "src/main/runtime-network-node.test.ts"
+    "src/main/runtime-network-node.test.ts",
+    "src/main/composition/document-reading.architecture.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -265,7 +266,9 @@
     "src/main/desktop-startup-recovery.ts",
     "src/main/desktop-update-integration.ts"
   ],
-  "consumerModules": ["main_web_service"],
+  "consumerModules": [
+    "main_web_service"
+  ],
   "testFiles": {
     "owner": [
       "src/main/composition/project-lifecycle.test.ts",
@@ -372,7 +375,8 @@
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
       "src/main/runtime-network-node.test.ts",
-      "src/main/legacy-service-termination.test.ts"
+      "src/main/legacy-service-termination.test.ts",
+      "src/main/composition/document-reading.architecture.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -923,8 +927,6 @@
       "src/main/settings/responses-bridge.skill-loading.test.ts",
       "src/main/settings/responses-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
-      "src/main/settings/responses-request-adapter.test.ts",
-      "src/main/settings/responses-response-adapter.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
@@ -1103,7 +1105,6 @@
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/writer.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
@@ -1216,6 +1217,10 @@
       "src/main/update/windows-update-handoff.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

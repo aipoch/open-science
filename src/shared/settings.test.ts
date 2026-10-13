@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { isModelBridgeSupported } from './provider-registry'
+import { isModelBridgeSupported } from '@aipoch/providers/catalog'
 import {
   canonicalSessionProviderId,
   canUseClaudeProviderTransport,

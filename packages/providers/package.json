@@ -1,0 +1,45 @@
+{
+  "name": "@aipoch/providers",
+  "version": "0.1.0",
+  "description": "Provider catalog, protocol conversion and bounded direct text generation",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "test-ownership.md"
+  ],
+  "scripts": {
+    "build": "node tsc.cjs -p tsconfig.json",
+    "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@aipoch/diagnostics": "0.1.0",
+    "zod": "^4.6.5"
+  }
+}

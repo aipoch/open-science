@@ -45,61 +45,61 @@ export type OfficialVendorId =
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
 // base URL and, since consoles differ by region, its own key-console URL.
 export type VendorRegion = {
-  id: string
-  label: string
-  baseUrl: string
+  readonly id: string
+  readonly label: string
+  readonly baseUrl: string
   // The region's OpenAI /v1/chat/completions base, when it differs from the Anthropic `baseUrl` and the
   // vendor supports both endpoints. Falls back to the region's `baseUrl` when absent.
-  openaiBaseUrl?: string
+  readonly openaiBaseUrl?: string
   // The region's native Responses API base, when it differs from the OpenAI chat base. Falls back to
   // `openaiBaseUrl` and then `baseUrl` when absent.
-  responsesBaseUrl?: string
+  readonly responsesBaseUrl?: string
   // Where the user creates/copies a key for this endpoint; falls back to the vendor-level one.
-  apiKeyUrl?: string
+  readonly apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
-  modelsListUrl?: string
+  readonly modelsListUrl?: string
   // An authoritative curated subset when this region serves fewer models than the vendor catalog.
-  modelIds?: readonly string[]
+  readonly modelIds?: readonly string[]
 }
 
 export type OfficialModel = {
-  id: string
+  readonly id: string
   // Advertised context-window size for this exact model, in tokens.
-  contextWindow: number
+  readonly contextWindow: number
   // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
   // the vendor-level endpoint set.
-  apiEndpoint?: ChatApiEndpoint
+  readonly apiEndpoint?: ChatApiEndpoint
   // Optional override for a model whose effort levels differ from the vendor default.
-  reasoningEffort?: ReasoningEffortPresetSetting
+  readonly reasoningEffort?: ReasoningEffortPresetSetting
 }
 
 export type OfficialVendor = {
-  id: OfficialVendorId
+  readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
-  label: string
+  readonly label: string
   // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['anthropic']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['anthropic', 'openai'].
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  readonly apiEndpoints?: readonly ChatApiEndpoint[]
   // Whether Anthropic Messages authenticates with `x-api-key` instead of `Authorization: Bearer`.
   // Absent keeps the existing bearer behavior used by the other compatible vendors.
-  anthropicApiKeyHeader?: boolean
+  readonly anthropicApiKeyHeader?: boolean
   // Model ids offered in the composer once a key is stored. First entry is the default selection when
   // the vendor is first added.
-  models: OfficialModel[]
+  readonly models: readonly OfficialModel[]
   // Static model capability used to project the app's five intent slots into the model's real
   // 2-5 effort choices. Model entries may override it; no runtime capability fetch is required.
-  reasoningEffort: ReasoningEffortPresetSetting
+  readonly reasoningEffort: ReasoningEffortPresetSetting
   // Models this vendor is known (via our own dev testing, before release) NOT to drive cleanly over
   // the Codex Responses->Chat bridge. Ships with the app so such models are greyed in the picker
   // rather than user-tested. Absent/empty ⇒ every listed model is bridge-compatible.
-  bridgeUnsupportedModels?: readonly string[]
+  readonly bridgeUnsupportedModels?: readonly string[]
   // Models that accept native Responses API (/v1/responses) requests, for vendors where only a
   // subset of the catalog implements the Responses protocol while the vendor-level `apiEndpoints`
   // does not include 'responses'. A vendor that declares 'responses' in `apiEndpoints` serves it
   // for its whole catalog and must not set this field. Absent ⇒ Responses availability is purely
   // governed by `apiEndpoints`.
-  responsesModels?: readonly string[]
+  readonly responsesModels?: readonly string[]
   // Describes which of this vendor's models accept image input (multimodal vision). Absent ⇒ the vendor
   // has no vision models. This must cover live-fetched ids too — a vendor that refreshes its catalog can
   // surface a vision model not in the bundled `models` array — so it is a rule, not a static id list:
@@ -108,30 +108,30 @@ export type OfficialVendor = {
   //   - multimodalModels          — an explicit id list, for catalogs where vision is an unpredictable
   //                                 subset (e.g. OpenRouter's cross-vendor slugs)
   // Precedence when resolving support: allMultimodal → pattern → explicit list.
-  multimodal?: {
-    allMultimodal?: boolean
-    multimodalModelPattern?: RegExp
-    multimodalModels?: readonly string[]
+  readonly multimodal?: {
+    readonly allMultimodal?: boolean
+    readonly multimodalModelPattern?: RegExp
+    readonly multimodalModels?: readonly string[]
   }
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
   // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
   // separate OpenAI /v1/chat/completions root. `responsesBaseUrl` may differ when the vendor's native
   // Responses API uses a different base path. Set these only when the vendor exposes the
   // corresponding endpoint.
-  baseUrl?: string
-  openaiBaseUrl?: string
-  responsesBaseUrl?: string
-  regions?: VendorRegion[]
+  readonly baseUrl?: string
+  readonly openaiBaseUrl?: string
+  readonly responsesBaseUrl?: string
+  readonly regions?: readonly VendorRegion[]
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
-  apiKeyUrl?: string
+  readonly apiKeyUrl?: string
   // Full URL of a live model-list endpoint (OpenAI-style `{ data: [{ id }] }`). Set only for vendors
   // that actually expose one, so the "refresh from vendor" affordance is hidden for those that don't.
-  modelsListUrl?: string
+  readonly modelsListUrl?: string
 }
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
 // conservative so a vendor's unrelated model types do not appear in the composer.
-export const OFFICIAL_VENDORS: OfficialVendor[] = [
+export const OFFICIAL_VENDORS: readonly OfficialVendor[] = [
   {
     id: 'openai',
     label: 'OpenAI',

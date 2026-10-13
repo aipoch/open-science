@@ -21,14 +21,14 @@ import {
 import {
   getOfficialVendor,
   getOfficialVendorModelIds,
-  resolveVendorApiKeyUrl
-} from '../../../../shared/provider-registry'
-import {
+  resolveVendorApiKeyUrl,
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
   type CustomReasoningEffortTransport,
-  type ReasoningEffortPresetId
-} from '../../../../shared/reasoning-effort'
+  type ReasoningEffortPresetId,
+  customProviderRequiresKey
+} from '@aipoch/providers/catalog'
+
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
@@ -43,7 +43,7 @@ import {
   type ProviderFormValue,
   type ProviderKind
 } from './provider-form-value'
-import { customProviderRequiresKey } from '../../../../shared/provider-base-url'
+
 import {
   ENDPOINT_PATHS,
   isProviderUsableByFramework,

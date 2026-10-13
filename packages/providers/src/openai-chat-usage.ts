@@ -1,4 +1,10 @@
-import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
+export type ProviderTokenUsage = Readonly<{
+  inputTokens: number
+  cacheTokens: number
+  cachedReadTokens?: number
+  cachedWriteTokens?: number
+  outputTokens: number
+}>
 
 const tokenCount = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
@@ -16,7 +22,7 @@ const firstTokenCount = (...values: unknown[]): number | undefined => {
   return undefined
 }
 
-const normalizeOpenAiChatModelStepUsage = (value: unknown): AcpModelStepTokenUsage | undefined => {
+const normalizeOpenAiChatModelStepUsage = (value: unknown): ProviderTokenUsage | undefined => {
   const usage = record(value)
   if (!usage) return undefined
 

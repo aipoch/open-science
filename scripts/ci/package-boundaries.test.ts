@@ -632,3 +632,89 @@ it('dedicated package edits retain module evidence and platform overlays', async
     expect(plan.capabilityOverlays, root).toEqual(expect.arrayContaining(owner.capabilityOverlays))
   }
 })
+
+it('keeps provider units upstream of host adapters and selects real downstream contracts', async () => {
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const { packageVerificationPlan } = await import('../package-verification-plan.mjs')
+  const graph = { status: 'not-used', testFiles: [] }
+  for (const path of [
+    'packages/providers/src/provider-registry.ts',
+    'packages/providers/src/responses-request-adapter.ts',
+    'packages/providers/src/provider-text-generation.ts',
+    'packages/providers/src/catalog.ts',
+    'packages/providers/src/protocol.ts',
+    'packages/providers/src/client.ts'
+  ]) {
+    expect(createPackageTestPlan([path], registry).selected).toEqual(['packages/providers'])
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toEqual(
+      expect.arrayContaining([
+        'packages/providers/src/provider-registry.test.ts',
+        'packages/providers/src/responses-conversion.test.ts',
+        'packages/providers/src/provider-text-generation.test.ts',
+        'src/main/settings/responses-bridge.test.ts',
+        'src/main/settings/provider-transport-owner.test.ts',
+        'src/main/literature/pdf-translation/api-target.test.ts',
+        'src/main/agent-framework/codex.test.ts',
+        'src/main/agent-framework/claude-code.test.ts',
+        'src/main/agent-framework/opencode.test.ts'
+      ])
+    )
+    expect(
+      plan.testFiles.filter(
+        (test) => test.startsWith('packages/') && !test.startsWith('packages/providers/')
+      )
+    ).toEqual([])
+  }
+  for (const [path, test] of [
+    ['src/main/settings/responses-bridge.ts', 'src/main/settings/responses-bridge.test.ts'],
+    [
+      'src/main/literature/pdf-translation/api-target.ts',
+      'src/main/literature/pdf-translation/api-target.test.ts'
+    ]
+  ]) {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toContain(test)
+    expect(plan.testFiles.filter((file) => file.startsWith('packages/providers/'))).toEqual([])
+    expect(createPackageTestPlan([path], registry).selected).toEqual([])
+  }
+  const modules = loadModuleImpactManifest().modules
+  for (const [id, module] of Object.entries(modules)) {
+    if (module.ownerPaths.some((path) => path.startsWith('src/')))
+      expect(
+        Object.values(module.testFiles)
+          .flat()
+          .filter((file) => file.startsWith('packages/providers/')),
+        id
+      ).toEqual([])
+  }
+  expect(
+    createPackageTestPlan(['packages/diagnostics/src/diagnostic-redaction.ts'], registry).selected
+  ).toContain('packages/providers')
+  expect(
+    createPackageTestPlan(['packages/resilient-download/src/resilient-download.ts'], registry)
+      .selected
+  ).not.toContain('packages/providers')
+  expect(packageVerificationPlan(registry, ['packages/providers'])).toEqual({
+    builds: ['packages/diagnostics', 'packages/providers'],
+    tests: ['packages/providers']
+  })
+  const older = {
+    ...registry,
+    packages: registry.packages.filter((entry) => entry.root !== 'packages/providers')
+  }
+  expect(createPackageTestPlan(['packages/providers/src/client.ts'], older).excluded).toEqual([])
+  expect(
+    packageVerificationPlan(
+      registry,
+      [],
+      older.packages.map((entry) => entry.root)
+    ).tests
+  ).toContain('packages/providers')
+  expect(
+    createPackageTestPlan(['scripts/check-providers-package.mjs'], registry, { verification: true })
+      .selected
+  ).toEqual(['packages/providers'])
+})

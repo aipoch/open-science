@@ -222,6 +222,10 @@ export default defineConfig({
       : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
       ...(portableTestScope === 'host' ||
+      packageTestExcludePatterns(process.env).includes('packages/providers/**')
+        ? []
+        : ['packages/providers/vitest.config.ts']),
+      ...(portableTestScope === 'host' ||
       packageTestExcludePatterns(process.env).includes('packages/resilient-download/**')
         ? []
         : ['packages/resilient-download/vitest.config.ts']),
@@ -240,6 +244,7 @@ export default defineConfig({
           name: 'default',
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**',
@@ -256,6 +261,7 @@ export default defineConfig({
           include: [...VITEST_ARCHITECTURE_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'
@@ -273,6 +279,7 @@ export default defineConfig({
           include: [...VITEST_PROCESS_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'
@@ -289,6 +296,7 @@ export default defineConfig({
           include: [...VITEST_DATABASE_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'
