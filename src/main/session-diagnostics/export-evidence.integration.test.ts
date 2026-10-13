@@ -1,3 +1,4 @@
+import { createAcpHandlerWorkflows } from '../acp/handler-workflows'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -102,4 +103,67 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
       expect.objectContaining({ id: 'log:main.1.log', selected: true })
     ])
   )
+})
+
+it('exports the actual failed resume operation with session identity and redacted exception evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'resume-diagnostic-evidence-'))
+  roots.push(root)
+  const logDir = join(root, 'logs')
+  const configRoot = join(root, 'config')
+  await mkdir(configRoot)
+  initLogger({ logDir, mirrorToConsole: false })
+  const failure = new Error('Resume failed; api_key=resume-secret-canary')
+  failure.stack =
+    'Error: Resume failed; api_key=resume-secret-canary\n    at resume (/opt/private-user/app/resume.js:42:7)'
+  const workflows = createAcpHandlerWorkflows(
+    {
+      resumeSession: async () => {
+        throw failure
+      }
+    } as unknown as Parameters<typeof createAcpHandlerWorkflows>[0],
+    {} as Parameters<typeof createAcpHandlerWorkflows>[1]
+  )
+  await expect(
+    workflows.resumeSession({
+      sessionId: 'resume-session',
+      projectId: 'resume-project',
+      cwd: '/workspace',
+      previousFrameworkId: 'codex',
+      agentTarget: { frameworkId: 'opencode', providerId: 'provider', reasoningEffort: 'medium' }
+    })
+  ).rejects.toBe(failure)
+  await flushLogs()
+  const files = await exportDiagnosticFiles(
+    {
+      configRoot,
+      dataRoot: join(root, 'data'),
+      logPath: join(logDir, 'main.log'),
+      appVersion: 'test'
+    },
+    { projectId: 'resume-project', sessionId: 'resume-session', selectedItems: ['log:main.log'] }
+  )
+  const exported = files['logs/main.log']
+  for (const retained of [
+    'acp:resume-session failed',
+    'resume-session',
+    'resume-project',
+    'Resume failed',
+    'resume.js:42:7'
+  ])
+    expect(exported).toContain(retained)
+  for (const excluded of ['resume-secret-canary', '/opt/private-user'])
+    expect(exported).not.toContain(excluded)
+  const record = exported
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((record) => record.event === 'acp:resume-session failed')
+  expect(Number.isFinite(Date.parse(record.t))).toBe(true)
+  expect(record.diagnostics).toMatchObject({
+    sessionId: 'resume-session',
+    projectId: 'resume-project',
+    frameworkId: 'opencode',
+    previousFrameworkId: 'codex',
+    operationId: expect.any(String)
+  })
 })

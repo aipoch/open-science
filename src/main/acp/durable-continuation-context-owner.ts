@@ -363,7 +363,9 @@ class AcpDurableContinuationContextOwner {
       return 'The user revised the previous structured answer by declining it.'
     const fields = new Map(request.fields.map((field) => [field.id, field]))
     const lines = (answers ?? []).map((answer) => {
-      const value = Array.isArray(answer.value) ? answer.value.join(', ') : String(answer.value)
+      const value = Array.isArray(answer.value)
+        ? JSON.stringify(answer.value)
+        : String(answer.value)
       return `${fields.get(answer.fieldId)?.label ?? answer.fieldId}: ${value}`
     })
     return ['The user revised the previous structured answer:', ...lines].join('\n')

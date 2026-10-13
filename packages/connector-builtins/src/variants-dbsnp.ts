@@ -176,9 +176,12 @@ const spdiStr = (s: Spdi): string =>
 function assemblyPlacements(psd: PrimarySnapshotData): Placement[] {
   const out: Placement[] = []
   for (const p of psd.placements_with_allele ?? []) {
-    const traits = p.placement_annot?.seq_id_traits_by_assembly ?? []
-    if (!traits.length || !traits[0].is_chromosome) continue
-    const assemblyFull = traits[0].assembly_name ?? ''
+    const assemblies = new Set(
+      (p.placement_annot?.seq_id_traits_by_assembly ?? [])
+        .filter((trait) => trait.is_chromosome)
+        .map((trait) => trait.assembly_name ?? '')
+    )
+    if (!assemblies.size) continue
     const spdis = (p.alleles ?? []).map((a) => a.allele?.spdi).filter((s): s is Spdi => Boolean(s))
     if (!spdis.length) continue
     const ref = spdis[0].deleted_sequence
@@ -191,19 +194,24 @@ function assemblyPlacements(psd: PrimarySnapshotData): Placement[] {
           .filter((x): x is string => typeof x === 'string')
       )
     ].sort()
-    out.push({
-      assembly: assemblyFull.split('.')[0] || assemblyFull,
-      assembly_full: assemblyFull,
-      seq_id: p.seq_id,
-      chrom: chromOf(p.seq_id),
-      position: (spdis[0].position ?? -1) + 1, // SPDI is 0-based
-      ref,
-      alts,
-      is_primary: Boolean(p.is_ptlp)
-    })
+    for (const assemblyFull of assemblies) {
+      out.push({
+        assembly: assemblyFull.split('.')[0] || assemblyFull,
+        assembly_full: assemblyFull,
+        seq_id: p.seq_id,
+        chrom: chromOf(p.seq_id),
+        position: (spdis[0].position ?? -1) + 1, // SPDI is 0-based
+        ref,
+        alts,
+        is_primary: Boolean(p.is_ptlp)
+      })
+    }
   }
   out.sort(
-    (a, b) => Number(b.is_primary) - Number(a.is_primary) || a.assembly.localeCompare(b.assembly)
+    (a, b) =>
+      Number(b.is_primary) - Number(a.is_primary) ||
+      Number(b.assembly === 'GRCh38') - Number(a.assembly === 'GRCh38') ||
+      a.assembly.localeCompare(b.assembly)
   )
   return out
 }

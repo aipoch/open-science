@@ -209,7 +209,11 @@ describe('ACP resume Session workflow', () => {
   it('cleans up attachment-only recovery only after the provider successfully attaches', async () => {
     const harness = createHarness(undefined, archiveAvailability)
     await harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
-    expect(harness.completeRuntimeAttachment).toHaveBeenCalledWith(persistedProjectId, 'session-1')
+    expect(harness.completeRuntimeAttachment).toHaveBeenCalledWith(
+      persistedProjectId,
+      'session-1',
+      { sessionId: 'session-1', cwd: '/workspace' }
+    )
     expect(harness.resumeSession).toHaveBeenCalledBefore(harness.completeRuntimeAttachment)
 
     harness.completeRuntimeAttachment.mockClear()
@@ -218,6 +222,32 @@ describe('ACP resume Session workflow', () => {
       harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
     ).rejects.toThrow('attachment unavailable')
     expect(harness.completeRuntimeAttachment).not.toHaveBeenCalled()
+  })
+
+  it('rejects attachment persistence failure and retries the same provider identity', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    const response = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      frameworkId: 'codex',
+      backendId: 'codex-responses',
+      providerSessionId: 'provider-adopted',
+      contextReset: true
+    }
+    harness.resumeSession.mockResolvedValue(response)
+    harness.completeRuntimeAttachment.mockRejectedValueOnce(new Error('disk write failed'))
+    await expect(
+      harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    ).rejects.toThrow('disk write failed')
+    expect(harness.startContinuation).not.toHaveBeenCalled()
+    await expect(
+      harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    ).resolves.toEqual(response)
+    expect(harness.completeRuntimeAttachment).toHaveBeenLastCalledWith(
+      persistedProjectId,
+      'session-1',
+      response
+    )
   })
 
   it('clears the interrupted run before admitting the next prompt after restart', async () => {

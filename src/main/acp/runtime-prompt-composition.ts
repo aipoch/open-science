@@ -26,6 +26,7 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onProviderPromptAccepted?: (sessionId: string) => void
   requestArtifactPublicationContinuation?: (input: {
     permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
@@ -311,6 +312,7 @@ const composeAcpRuntimePromptOwners = (
         // session/new alone may not create a resumable Claude transcript. Keep approved replay
         // through pre-prompt Skill reconnects, then retire it once the provider accepts a prompt.
         base.handoffContinuity.commitClaudeReplay(sessionId)
+        host.onProviderPromptAccepted?.(sessionId)
         callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
       },
       ...(options.runtimeSessions
