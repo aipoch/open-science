@@ -1,30 +1,34 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_PROMPT_FAILED_EVENT_TITLE,
-  type AcpModelCallUsage,
-  type AcpRuntimeEventInput,
-  type AcpTerminalContextWindow,
-  type AcpTurnTokenUsage
+  type AcpRuntimeEventInput
 } from '../../shared/acp'
+import type {
+  AcpModelCallUsage,
+  AcpTerminalContextWindow,
+  AcpTurnTokenUsage
+} from '../../shared/acp-usage-contract'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { isExpectedRunFailure } from '../../shared/run-error-classification'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
-import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import {
   describePromptError,
-  isOpenCodeSessionServiceFailure,
   isOpenCodeContextOverflow,
+  isOpenCodeSessionServiceFailure,
   isProviderPromptError
 } from './prompt-error'
+import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
-import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
-import type { AcpSessionInteractionOwner as InteractionOwner } from './session-interaction-owner'
+import type {
+  AcpPromptSessionInteractionScope,
+  AcpSessionInteractionOwner as InteractionOwner
+} from './session-interaction-owner'
 import type { TurnSkillHandle, TurnSkillOutcome } from './turn-skill-owner'
 const log = createLogger('acp')
 type LogFields = Record<string, unknown>

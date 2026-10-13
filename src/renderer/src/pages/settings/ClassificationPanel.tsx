@@ -1,3 +1,4 @@
+import type { ClassificationView } from '../../lib/settings-navigation'
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3
  * component: model settings · genre: modern-minimal · theme: project system
  * Shared controls own focus/hover/pressed/disabled; this panel owns loading/error/success.
@@ -63,10 +64,7 @@ const API_KEY_URLS = {
   opencode: 'https://opencode.ai/zen'
 } satisfies Record<Exclude<ClassificationAdapter, 'custom'>, string>
 
-export type ClassificationView =
-  | { kind: 'classification' }
-  | { kind: 'classification-create' }
-  | { kind: 'classification-edit'; serviceId: string }
+export type { ClassificationView } from '../../lib/settings-navigation'
 
 export const ClassificationPanel = ({
   view,

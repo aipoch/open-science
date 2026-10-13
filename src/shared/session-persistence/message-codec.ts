@@ -1,37 +1,36 @@
-import { sanitizeTurnOutcome } from './turn-outcome'
-import type {
-  PersistedMessageRole,
-  PersistedMessageStatus,
-  MessageAttribution,
-  PersistedMessagePresentation,
-  PersistedChatMessage,
-  PersistedMessageAgentTarget
-} from './message'
 import {
-  isRecord,
-  asString,
-  AGENT_FRAMEWORK_IDS,
-  hasOnlyFields,
-  asNumber,
-  asStringArray
-} from './primitives'
-import { type AgentFrameworkId, isReasoningEffort } from '../settings'
-import type { DelegatedCallerSource } from '../session-runtime-context'
-import {
-  sanitizeUploadedAttachment,
-  sanitizeMessageParts,
-  sanitizeMessageImages
-} from './message-content'
-import type { PersistedUploadedAttachment } from '../uploads'
+  sanitizeAcpContextWindowSample,
+  sanitizeAcpModelCallUsage,
+  sanitizeAcpTurnTokenUsage
+} from '../acp'
+import type { AcpContextWindowSample, AcpModelCallUsage } from '../acp-usage-contract'
 import { sanitizeAnnotations } from '../annotations'
+import type { DelegatedCallerSource } from '../delegated-work-contract'
+import { type AgentFrameworkId, isReasoningEffort } from '../settings'
+import type { PersistedUploadedAttachment } from '../uploads'
+import {
+  sanitizeMessageImages,
+  sanitizeMessageParts,
+  sanitizeUploadedAttachment
+} from './message-content'
+import type {
+  MessageAttribution,
+  PersistedChatMessage,
+  PersistedMessageAgentTarget,
+  PersistedMessagePresentation,
+  PersistedMessageRole,
+  PersistedMessageStatus
+} from '../session-message-contract'
 import { sanitizeMessagePdfContextSnapshot } from './pdf-context'
 import {
-  sanitizeAcpTurnTokenUsage,
-  sanitizeAcpModelCallUsage,
-  type AcpModelCallUsage,
-  sanitizeAcpContextWindowSample,
-  type AcpContextWindowSample
-} from '../acp'
+  AGENT_FRAMEWORK_IDS,
+  asNumber,
+  asString,
+  asStringArray,
+  hasOnlyFields,
+  isRecord
+} from './primitives'
+import { sanitizeTurnOutcome } from './turn-outcome'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
 

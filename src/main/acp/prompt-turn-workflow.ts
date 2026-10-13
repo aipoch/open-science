@@ -1,20 +1,24 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest } from '../../shared/acp'
-import type { MessageAttribution } from '../../shared/session-persistence'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
+import type { MessageAttribution } from '../../shared/session-message-contract'
 import type {
   ActivePlanProjection,
   PlanProtectedContextSource
 } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId
-} from '../../shared/permission-profiles'
-import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { AgentFramework } from '../agent-framework/types'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
+import {
+  NotebookWorkingFileObserver,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
@@ -23,27 +27,25 @@ import type {
   SessionEstimateInput
 } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
+import { PlanToolWaitObserver } from './plan-review-provider-stop'
 import {
   AcpPromptOutcomeFinalizer,
   type AcpPromptFinalizationHandles,
   type AcpPromptFinalizationOutcome
 } from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
-import { PlanToolWaitObserver } from './plan-review-provider-stop'
-import { combineProviderPromptFacts } from './provider-prompt-facts'
-import type { AcpProviderTurnResult } from './provider-turn-adapter'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
+import { combineProviderPromptFacts } from './provider-prompt-facts'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
-import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
-import type { AcpSessionToolingAvailability } from './session-presentation-policy'
+import type { AcpProviderTurnResult } from './provider-turn-adapter'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
+import type {
+  AcpPromptSessionInteractionScope,
+  AcpSessionInteractionOwner
+} from './session-interaction-owner'
+import type { AcpSessionToolingAvailability } from './session-presentation-policy'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
-import {
-  NotebookWorkingFileObserver,
-  type NotebookWorkingFile
-} from './artifact-publication-continuation'
 
 const log = createLogger('acp-prompt-turn-workflow')
 

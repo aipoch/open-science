@@ -7,6 +7,677 @@ const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 
 describe('analyzeNotebookSourceFileAccess', () => {
+  describe('R known-empty for semantics', () => {
+    it.each(['break', 'next', 'return(NULL)', ''])(
+      'preserves an unrelated path instead of visiting an empty body with %s',
+      async (exit) => {
+        const source = `path <- "inputs/observations.csv"\nfor(unused in c()) { path <- "inputs/decoy.csv"; ${exit} }\nread.csv(path)`
+        expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+          reads: ['inputs/observations.csv'],
+          writes: []
+        })
+      }
+    )
+
+    it('does not report a writer in an unreachable empty body', async () => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'for(unused in c()) { utils::write.table(1,"outputs/result.csv"); break }\nread.csv("inputs/observations.csv")'
+        )
+      ).toMatchObject({ reads: ['inputs/observations.csv'], writes: [] })
+    })
+
+    it.each([
+      'for(unused in c()) { file.path <- function(...) "inputs/decoy.csv"; break }\nread.csv(file.path("inputs","observations.csv"))',
+      'for(unused in c()) { c <- function(...) "x"; break }\nfor(other in c()) utils::write.table(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+      'for(c in c()) { utils::write.table(1,"outputs/result.csv"); break }\nread.csv("inputs/observations.csv")'
+    ])('keeps unreachable bindings out of literal-empty call identity: %s', async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/observations.csv'],
+        writes: []
+      })
+    })
+
+    it.each([
+      {
+        label: 'string target',
+        source:
+          'target <- "inputs/decoy.csv"\nfor(target in c()) NULL\n' +
+          'tryCatch(read.csv(target),error=function(e) NULL)\nread.csv("inputs/observations.csv")'
+      },
+      {
+        label: 'connection target while its other-symbol alias survives',
+        source:
+          'target <- file("inputs/decoy.csv")\nold <- target\nfor(target in c()) NULL\n' +
+          'tryCatch(read.csv(target),error=function(e) NULL)\nclose(old)\nread.csv("inputs/observations.csv")'
+      },
+      {
+        label: 'old callable target cannot manufacture a producer',
+        source:
+          'read.csv <- function(file) utils::write.table(1,file)\nfor(read.csv in c()) 1\n' +
+          'read.csv("inputs/observations.csv")\nutils::read.csv("inputs/observations.csv")'
+      }
+    ])('invalidates the NULL-rebound $label', async ({ source }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/observations.csv'],
+        writes: []
+      })
+    })
+
+    it.each([
+      'path <- "inputs/observations.csv"\nfor(unused in c("inputs/phantom.csv")) { path <- "inputs/decoy.csv"; break }\nread.csv(path)',
+      '`for` <- function(variable,sequence,body) eval(substitute(body),envir=parent.frame())\npath <- "inputs/observations.csv"\nfor(unused in c()) { path <- "inputs/decoy.csv"; if(FALSE) break }\nread.csv(path)',
+      'c <- function(...) "inputs/phantom.csv"\npath <- "inputs/observations.csv"\nfor(unused in c()) { path <- "inputs/decoy.csv"; break }\nread.csv(path)'
+    ])('keeps unproved loop execution conservative: %s', async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: [],
+        readState: 'partial'
+      })
+      expect((await analyzeRSources([source]))[0].state).toBe('unknown')
+    })
+  })
+
+  describe('R loop target handle invalidation', () => {
+    const read = 'read.csv("inputs/observations.csv")'
+    const replacement = '`{` <- function(...) NULL'
+    const writer = 'for (target in c("outputs/result.csv")) utils::write.table(1,target)'
+    const reader = 'for (target in c("inputs/observations.csv")) read.csv(target)'
+
+    it.each([
+      ...[false, true].map((shadowed) => ({
+        label: `${shadowed ? 'conditional' : 'trusted'} connection target writer`,
+        source: `target <- file("inputs/observations.csv")\nold <- target\n${shadowed ? replacement + '\n' : ''}{ ${writer} }\nclose(old)\n${read}`,
+        reads: ['inputs/observations.csv'],
+        writes: ['outputs/result.csv'],
+        partial: true
+      })),
+      ...[false, true].map((shadowed) => ({
+        label: `${shadowed ? 'conditional' : 'trusted'} in-memory target reader`,
+        source: `target <- textConnection("n\\n1")\nold <- target\n${shadowed ? replacement + '\n' : ''}{ ${reader} }\nclose(old)\nread.csv("inputs/phantom.csv")`,
+        reads: ['inputs/observations.csv', 'inputs/phantom.csv'],
+        writes: [],
+        partial: true
+      })),
+      {
+        label: 'early-exit fallback drops an unrelated old connection path',
+        source:
+          'target <- file("inputs/decoy.csv")\nold <- target\n' +
+          'for (target in c("inputs/observations.csv")) { read.csv(target); break }\n' +
+          'close(old)\nread.csv("inputs/phantom.csv")',
+        reads: ['inputs/phantom.csv'],
+        writes: [],
+        partial: true
+      },
+      {
+        label: 'empty sequence preserves the other-symbol connection alias',
+        source: `target <- file("inputs/observations.csv")\nold <- target\nfor (target in c()) utils::write.table(1,target)\nclose(old)\n${read}`,
+        reads: ['inputs/observations.csv'],
+        writes: [],
+        partial: true
+      },
+      {
+        label: 'ordinary string target still binds the body destination',
+        source: `target <- "inputs/observations.csv"\n{ ${writer} }\n${read}`,
+        reads: ['inputs/observations.csv'],
+        writes: ['outputs/result.csv'],
+        partial: false
+      },
+      {
+        label: 'sequence reads the old connection before target invalidation',
+        source: 'target <- file("inputs/observations.csv")\nfor (target in read.csv(target)) 1',
+        reads: ['inputs/observations.csv'],
+        writes: [],
+        partial: false
+      },
+      {
+        label: 'another symbol keeps its connection after target rebinding',
+        source: `target <- file("inputs/observations.csv")\nold <- target\n${writer}\nread.csv(old)`,
+        reads: ['inputs/observations.csv'],
+        writes: ['outputs/result.csv'],
+        partial: true
+      },
+      {
+        label: 'empty sequence clears its in-memory target without a known file read',
+        source: 'target <- textConnection("n\\n1")\nfor (target in c()) 1\nread.csv(target)',
+        reads: [],
+        writes: [],
+        partial: true
+      },
+      {
+        label: 'next element replaces a connection created by the body',
+        source:
+          'for (target in c("outputs/first.csv","outputs/second.csv")) { ' +
+          'utils::write.table(1,target); target <- file("inputs/observations.csv") }\n' +
+          'read.csv("inputs/observations.csv")',
+        reads: ['inputs/observations.csv'],
+        writes: ['outputs/first.csv', 'outputs/second.csv'],
+        partial: false
+      },
+      {
+        label: 'next element replaces an in-memory input created by the body',
+        source:
+          'for (target in c("inputs/observations.csv","inputs/phantom.csv")) { ' +
+          'read.csv(target); target <- textConnection("n\\n1") }',
+        reads: ['inputs/observations.csv', 'inputs/phantom.csv'],
+        writes: [],
+        partial: false
+      }
+    ])('preserves handle boundaries when $label', async ({ source, reads, writes, partial }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads,
+        writes,
+        readState: partial ? 'partial' : 'complete',
+        writeState: partial ? 'partial' : 'complete',
+        externalState: partial ? 'partial' : 'complete'
+      })
+      if (partial) expect((await analyzeRSources([source]))[0].state).toBe('unknown')
+    })
+  })
+
+  describe('R untrusted brace execution', () => {
+    const path = 'inputs/observations.csv'
+    const write = `utils::write.table(1,"${path}")`
+    const read = `read.csv("${path}")`
+    const replacement = '`{` <- function(...) NULL'
+
+    it.each([
+      {
+        label: 'direct writer promise cannot certify production',
+        source: `${replacement}\n{ ${write} }\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'helper writer promise cannot certify production',
+        source: `emit <- function(path) utils::write.table(1,path)\n${replacement}\n{ emit("${path}") }\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'path assignment promise cannot publish a certain value',
+        source: `file <- "inputs/decoy.csv"\n${replacement}\n{ file <- "${path}" }\nread.csv(file)`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'nested bounded loop target cannot publish a certain value',
+        source: `file <- "${path}"\n${replacement}\n{ for (file in c("inputs/decoy.csv")) 1 }\nread.csv(file)`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'nested bounded loop keeps its possible body destination',
+        source: `file <- "${path}"\n${replacement}\n{ for (file in c("inputs/decoy.csv")) utils::write.table(1,file) }\nread.csv(file)`,
+        reads: [],
+        writes: ['inputs/decoy.csv']
+      }
+    ])('retains conservative file paths when $label', async ({ source, reads, writes }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads,
+        writes,
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzeRSources([source]))[0].state).toBe('unknown')
+    })
+
+    it.each([
+      { label: 'trusted builtin block', source: `{ ${write} }\n${read}` },
+      {
+        label: 'write completed before brace replacement',
+        source: `${write}\n${replacement}\n{ utils::write.table(2,"${path}") }\n${read}`
+      },
+      {
+        label: 'builtin block selected before brace replacement',
+        source: `{ ${replacement}; ${write} }\n${read}`
+      }
+    ])('preserves established production for $label', async ({ source }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: [path]
+      })
+    })
+
+    it.each([
+      {
+        label: 'trusted bounded loop publishes its completed target',
+        source: `file <- "${path}"\n{ for (file in c("inputs/decoy.csv")) 1 }\nread.csv(file)`,
+        reads: ['inputs/decoy.csv']
+      },
+      {
+        label: 'conditional empty loop cannot certify its previous target value',
+        source: `file <- "${path}"\n${replacement}\n{ for (file in c()) 1 }\nread.csv(file)`,
+        reads: []
+      }
+    ])('preserves path bindings when $label', async ({ source, reads }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads,
+        writes: []
+      })
+    })
+  })
+
+  describe('R untrusted for execution', () => {
+    const path = 'inputs/observations.csv'
+    const write = `utils::write.table(1,"${path}")`
+    const read = `read.csv("${path}")`
+    const replaceFor = '`for` <- function(...) NULL'
+    const helper = 'emit <- function(x,file) utils::write.table(x,file)'
+
+    it.each([
+      {
+        label: 'direct body write is only possible',
+        source: `${replaceFor}\nfor (unused in c("x")) ${write}\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'direct sequence write is only possible',
+        source: `${replaceFor}\nfor (unused in ${write}) {}\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'helper body write is only possible',
+        source: `${helper}\n${replaceFor}\nfor (unused in c("x")) emit(1,"${path}")\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'helper sequence write is only possible',
+        source: `${helper}\n${replaceFor}\nfor (unused in emit(1,"${path}")) {}\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'sequence assignment cannot publish a certain path',
+        source: `${replaceFor}\nfor (unused in { file <- "inputs/decoy.csv"; NULL }) {}\nread.csv(file)`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'body assignment cannot publish a certain path',
+        source: `${replaceFor}\nfor (unused in c("x")) { file <- "inputs/decoy.csv" }\nread.csv(file)`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'writer alias does not force its sequence promise',
+        source:
+          'unused <- 1\nemit <- function(x,sequence,file) utils::write.table(x,file)\n`for` <- emit\n' +
+          `for (unused in ${write}) "outputs/real.csv"\n${read}`,
+        reads: [path],
+        writes: [path]
+      },
+      {
+        label: 'writer alias still retains a leaf destination',
+        source:
+          'unused <- 1\nemit <- function(x,sequence,file) utils::write.table(x,file)\n`for` <- emit\n' +
+          `for (unused in NULL) "outputs/real.csv"\n${read}`,
+        reads: [path],
+        writes: ['outputs/real.csv']
+      }
+    ])('retains conservative paths when $label', async ({ source, reads, writes }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads,
+        writes,
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzeRSources([source]))[0].state).toBe('unknown')
+    })
+
+    it.each([
+      { label: 'trusted builtin body', source: `for (unused in c("x")) ${write}\n${read}` },
+      { label: 'trusted builtin sequence', source: `for (unused in ${write}) {}\n${read}` },
+      {
+        label: 'builtin selected before its target replaces for',
+        source: `for (\`for\` in c("x")) ${write}\n${read}`
+      },
+      {
+        label: 'write completed before for is replaced',
+        source: `${write}\n${replaceFor}\nfor (unused in c("x")) {}\n${read}`
+      }
+    ])('preserves a completed write for $label', async ({ source }) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: [path]
+      })
+    })
+  })
+
+  describe('R loop sequence helper candidates', () => {
+    const prefix = 'reader <- function(file) { data <- utils::read.csv(file); file }'
+    const alias = 'reader <- function(file) utils::read.csv(file)\nalias <- reader'
+    const writer = 'emit <- function(x,file) utils::write.table(x,file)\nalias <- emit'
+
+    it.each([
+      {
+        label: 'first-read prefix before its target is rebound',
+        source: `${prefix}\nfor (reader in reader("inputs/first.csv")) {}`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'first-read prefix with unrelated target',
+        source: `${prefix}\nfor (unused in reader("inputs/first.csv")) {}`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'reader alias before its target is rebound',
+        source: `${alias}\nfor (alias in alias("inputs/first.csv")) {}`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'reader alias with unrelated target',
+        source: `${alias}\nfor (unused in alias("inputs/first.csv")) {}`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'possible writer alias before its target is rebound',
+        source: `${writer}\nfor (alias in alias(1,"outputs/result.csv")) {}\nread.csv("outputs/result.csv")`,
+        reads: ['outputs/result.csv'],
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'possible writer alias with unrelated target',
+        source: `${writer}\nfor (unused in alias(1,"outputs/result.csv")) {}\nread.csv("outputs/result.csv")`,
+        reads: ['outputs/result.csv'],
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'shadowed for does not force prefix reader',
+        source: `\`for\` <- function(...) NULL\n${prefix}\nfor (unused in reader("inputs/decoy.csv")) {}`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'shadowed for does not force reader alias',
+        source: `\`for\` <- function(...) NULL\n${alias}\nfor (unused in alias("inputs/decoy.csv")) {}`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'lazy outer call does not force prefix reader',
+        source: `${prefix}\nconsume <- function(...) NULL\nfor (unused in consume(reader("inputs/decoy.csv"))) {}`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'lazy outer call does not force reader alias',
+        source: `${alias}\nconsume <- function(...) NULL\nfor (unused in consume(alias("inputs/decoy.csv"))) {}`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'prefix candidate is consumed before body and later calls',
+        source: `${prefix}\nfor (unused in reader("inputs/first.csv")) { reader("inputs/body.csv") }\nreader("inputs/later.csv")`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'reader alias is consumed before body and later calls',
+        source: `${alias}\nfor (unused in alias("inputs/first.csv")) { alias("inputs/body.csv") }\nalias("inputs/later.csv")`,
+        reads: ['inputs/first.csv'],
+        writes: []
+      },
+      {
+        label: 'empty sequence does not preserve a prefix candidate',
+        source: `${prefix}\nfor (unused in NULL) {}\nreader("inputs/later.csv")`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'empty sequence does not preserve a reader alias',
+        source: `${alias}\nfor (unused in NULL) {}\nalias("inputs/later.csv")`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'namespace replacement invalidates a prefix candidate',
+        source: `${prefix}\n\`::\` <- function(pkg,name) function(...) NULL\nfor (unused in reader("inputs/decoy.csv")) {}`,
+        reads: [],
+        writes: []
+      },
+      {
+        label: 'namespace replacement invalidates a reader alias',
+        source: `${alias}\n\`::\` <- function(pkg,name) function(...) NULL\nfor (unused in alias("inputs/decoy.csv")) {}`,
+        reads: [],
+        writes: []
+      }
+    ])('preserves bounded sequence effects: $label', async ({ source, reads, writes }) => {
+      const access = await analyzeNotebookSourceFileAccess('r', source)
+      expect(access.reads).toEqual(reads)
+      expect(access.writes).toEqual(writes)
+      expect(access.readState).toBe('partial')
+      expect(access.writeState).toBe('partial')
+      expect(access.externalState).toBe('partial')
+    })
+  })
+
+  describe('R loop target helper invalidation', () => {
+    it.each([
+      {
+        label: 'namespace-after',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (`::` in list(function(pkg,name) function(...) NULL)) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'namespace-before',
+        source:
+          'for (`::` in list(function(pkg,name) function(...) NULL)) {}\nemit <- function(x,file) utils::write.table(x,file)\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'bare-csv-namespace',
+        source:
+          'emit <- function(x,file) write.csv(x,file)\nfor (`::` in list(function(pkg,name) function(...) NULL)) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'helper-loop-target',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (emit in list(function(...) NULL)) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'bare-writer-loop-target',
+        source:
+          'emit <- function(x,file) write.table(x,file)\nfor (write.table in list(function(...) NULL)) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'qualified-member-control',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (write.table in list(function(...) NULL)) {}\nemit(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'unrelated-target-control',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (unused in list(function(...) NULL)) {}\nemit(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'empty-sequence-control',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (`::` in c()) {}\nemit(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'shadowed-names-empty-proof',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nv <- list()\nnames <- function(x) list(function(pkg,name) function(...) NULL)\nfor (`::` in names(v)) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'shadowed-namespace-empty-proof',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\n`:::` <- function(pkg,name) function(...) list(function(pkg,name) function(...) NULL)\nfor (`::` in base:::list()) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'trusted-empty-names-control',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nv <- list()\nfor (`::` in names(v)) {}\nemit(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+        writes: ['outputs/result.csv']
+      },
+      {
+        label: 'loop-body-binding',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nfor (`::` in list(function(pkg,name) function(...) NULL)) { emit(1,"inputs/observations.csv") }\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'stored-shadowed-names-empty-proof',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nv <- list()\nnames <- function(x) list(function(pkg,name) function(...) NULL)\nitems <- names(v)\nfor (`::` in items) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'stored-shadowed-namespace-empty-proof',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\n`:::` <- function(pkg,name) function(...) list(function(pkg,name) function(...) NULL)\nitems <- base:::list()\nfor (`::` in items) {}\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")',
+        writes: []
+      },
+      {
+        label: 'stored-trusted-empty-alias-control',
+        source:
+          'emit <- function(x,file) utils::write.table(x,file)\nitems <- base:::list()\nitems_alias <- items\n`:::` <- function(pkg,name) function(...) list(function(pkg,name) function(...) NULL)\nfor (`::` in items_alias) {}\nemit(1,"outputs/result.csv")\nread.csv("inputs/observations.csv")',
+        writes: ['outputs/result.csv']
+      }
+    ])('preserves actual file relations after $label', async ({ source, writes }) => {
+      const access = await analyzeNotebookSourceFileAccess('r', source)
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual(writes)
+      if (writes.length === 0) {
+        expect(access.writeState).toBe('partial')
+        expect(access.externalState).toBe('partial')
+      }
+    })
+  })
+
+  it('evaluates the loop sequence before replacing a helper dependency', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'r',
+      'emit <- function(x,file) utils::write.table(x,file)\nfor (`::` in list({ emit(1,"outputs/result.csv"); function(pkg,name) function(...) NULL })) {}\nread.csv("outputs/result.csv")'
+    )
+    expect(access.writes).toEqual(['outputs/result.csv'])
+    expect(access.reads).toEqual([])
+  })
+
+  it('keeps trusted glue alias collections when resolving loop paths', async () => {
+    const access = await analyzeNotebookSourceFileAccess(
+      'r',
+      'library(glue); g <- glue; labels <- c("a","b"); paths <- g("outputs/{labels}.txt"); for (file in paths) writeLines("x",file)'
+    )
+    expect(access.writes).toEqual(['outputs/a.txt', 'outputs/b.txt'])
+  })
+
+  describe('R file helper namespace dependencies', () => {
+    it.each([
+      'emit <- function(file,`:::`) { if(FALSE) grDevices::png(file) else grDevices:::png(file) }\nemit("inputs/observations.csv",function(pkg,name) function(...) NULL)',
+      'emit <- function(file) { if(FALSE) grDevices::png(file) else grDevices:::png(file) }\n`:::` <- function(pkg,name) function(...) NULL\nemit("inputs/observations.csv")'
+    ])('checks every namespace lookup in a summarized device helper: %s', async (source) => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        source + '\nread.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it('keeps a device helper with an unused namespace formal', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'emit <- function(file,`:::`) { if(FALSE) grDevices::png(file) else grDevices::png(file) }\nemit("outputs/plot.png",NULL)\nread.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual(['outputs/plot.png'])
+    })
+
+    it.each([
+      ['::', 'write.csv'],
+      ['::', 'write.table'],
+      [':::', 'write.table']
+    ])('revokes a %s %s helper when its namespace lookup changes', async (operator, writer) => {
+      const definition = `emit <- function(x,file) utils${operator}${writer}(x,file)`
+      const replacement = `\`${operator}\` <- function(pkg,name) function(...) NULL`
+      for (const setup of [definition + '\n' + replacement, replacement + '\n' + definition]) {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          setup + '\nemit(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")'
+        )
+        expect(access.reads).toEqual(['inputs/observations.csv'])
+        expect(access.writes).toEqual([])
+        expect(access.writeState).toBe('partial')
+      }
+    })
+
+    it.each([
+      ['::', 'utils::write.csv'],
+      [':::', 'utils:::write.table'],
+      ['::', 'utils:::write.csv'],
+      ['::', 'write.csv'],
+      ['::', 'utils::read.csv']
+    ])('rejects a %s formal in a %s file helper', async (operator, callee) => {
+      const writer = callee.includes('write.')
+      const source = writer
+        ? `emit <- function(x,file,\`${operator}\`) ${callee}(x,file)\nemit(1,"inputs/observations.csv",function(pkg,name) function(...) NULL)`
+        : `read_one <- function(file,\`${operator}\`) ${callee}(file)\nread_one("inputs/decoy.csv",function(pkg,name) function(...) NULL)`
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        source + '\nread.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual([])
+      expect(writer ? access.writeState : access.readState).toBe('partial')
+    })
+
+    it.each(['write.csv', 'write.csv2'])(
+      'does not certify the indirect namespace call made by %s',
+      async (writer) => {
+        for (const prefix of ['', 'utils:::']) {
+          const access = await analyzeNotebookSourceFileAccess(
+            'r',
+            '`::` <- function(pkg,name) function(...) NULL\n' +
+              `${prefix}${writer}(1,"inputs/observations.csv")\nread.csv("inputs/observations.csv")`
+          )
+          expect(access.reads).toEqual(['inputs/observations.csv'])
+          expect(access.writes).toEqual([])
+          expect(access.writeState).toBe('partial')
+        }
+      }
+    )
+
+    it('keeps a qualified writer when only its member name is rebound', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'write.csv <- function(...) NULL\nemit <- function(x,file) utils::write.csv(x,file)\nemit(1,"outputs/summary.csv")\nread.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual(['outputs/summary.csv'])
+    })
+
+    it('keeps bare table helpers whose unused formal is named like a namespace operator', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        '`::` <- function(...) NULL\nemit <- function(x,file,`::`) write.table(x,file)\nemit(1,"outputs/summary.csv",NULL)\nread.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual(['outputs/summary.csv'])
+    })
+  })
+
   it('retains persistent REPL path bindings when normalizing explicit reads', async () => {
     await expect(
       analyzeNotebookSourceFileAccess('repl', "const fs = require('fs'); fs.readFileSync(path)", {
@@ -2898,6 +3569,485 @@ for path in left:
     })
   })
 
+  describe('R writer option evaluation', () => {
+    it('does not ignore option inputs through a rebound namespace operator', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        '`::` <- function(pkg,name) function(x,file,col.names) list(col.names)\nutils::write.csv(1,"outputs/summary.csv",col.names=read.csv("inputs/observations.csv"))'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it.each(['row.names', 'col.names', 'fileEncoding'])(
+      'retains input evaluation before a table destination opens: %s',
+      async (option) => {
+        const value = option === 'fileEncoding' ? '""' : 'FALSE'
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `utils::write.table(1,"inputs/observations.csv",${option}={utils::read.csv("inputs/observations.csv"); ${value}})\nutils::read.csv("inputs/observations.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/observations.csv'])
+        expect(access.writes).toEqual([])
+        expect(access.readState).toBe('partial')
+        expect(access.writeState).toBe('partial')
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2'])(
+      'skips only exact ignored options of the canonical %s',
+      async (writer) => {
+        for (const option of ['append', 'col.names', 'sep', 'dec', 'qmethod']) {
+          for (const prefix of ['', 'utils::']) {
+            const access = await analyzeNotebookSourceFileAccess(
+              'r',
+              `${prefix}${writer}(1,"outputs/summary.csv",${option}=utils::write.csv(1,"inputs/phantom.csv"))\nutils::read.csv("inputs/phantom.csv")`
+            )
+            expect(access).toMatchObject({
+              reads: ['inputs/phantom.csv'],
+              writes: ['outputs/summary.csv'],
+              readState: 'complete',
+              writeState: 'complete'
+            })
+          }
+        }
+      }
+    )
+
+    it.each([
+      'write.csv <- function(x,file,col.names) utils::write.csv(x,col.names)\nwrite.csv(1,"outputs/summary.csv",col.names=utils::read.csv("inputs/option.csv"))',
+      'other::write.csv(1,"outputs/summary.csv",col.names=utils::read.csv("inputs/option.csv"))',
+      'utils::write.csv(1,"outputs/summary.csv",col.na=utils::read.csv("inputs/option.csv"))',
+      'utils::write.table(1,"outputs/summary.csv",col.names=utils::read.csv("inputs/option.csv"))'
+    ])('does not extend CSV ignored options to untrusted or nonexact calls: %s', async (source) => {
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([
+        'inputs/option.csv'
+      ])
+    })
+
+    it.each(['write.csv', 'write.table'])(
+      'keeps nested helper inputs and literal possible outputs without certifying %s',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `emit <- function(x,file) utils::${writer}(x,file)\nemit(utils::read.csv("inputs/observations.csv"),"inputs/observations.csv")\nutils::read.csv("inputs/observations.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/observations.csv'])
+        expect(access.writes).toEqual(['inputs/observations.csv'])
+        expect(access.readState).toBe('partial')
+        expect(access.writeState).toBe('partial')
+      }
+    )
+
+    it('does not certify a helper destination rebound by argument evaluation', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'emit <- function(x,file) utils::write.csv(x,file)\npath <- "inputs/old.csv"\nemit({path <- "outputs/actual.csv"; utils::read.csv("inputs/source.csv")},path)\nutils::read.csv("inputs/old.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/old.csv', 'inputs/source.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it.each([
+      'emit <- function(file,x=utils::read.csv(file)) utils::write.csv(x,file)',
+      'emit <- function(x,file) utils::write.table(x,file,row.names={file <- "outputs/actual.csv"; FALSE})',
+      'emit <- function(x,file) utils::write.table(x,file,col.names={utils::read.csv(file); TRUE})',
+      'emit <- function(x,file) utils::write.csv(utils::read.csv(file),file)'
+    ])('rejects helper summaries hiding defaults or body effects: %s', async (definition) => {
+      const invocation = definition.includes('function(file,')
+        ? 'emit("inputs/observations.csv")'
+        : 'emit(1,"inputs/observations.csv")'
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        `${definition}\n${invocation}\nutils::read.csv("inputs/observations.csv")`
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.writeState).toBe('partial')
+      if (definition.includes('read.csv')) expect(access.readState).toBe('partial')
+    })
+
+    it.each(['write.csv', 'write.csv2'])(
+      'preserves a %s helper whose ignored option never evaluates',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `emit <- function(x,file) utils::${writer}(x,file,col.names=utils::write.csv(1,"inputs/phantom.csv"))\nemit(1,"outputs/summary.csv")\nutils::read.csv("inputs/phantom.csv")`
+        )
+        expect(access).toMatchObject({
+          reads: ['inputs/phantom.csv'],
+          writes: ['outputs/summary.csv'],
+          readState: 'complete',
+          writeState: 'complete'
+        })
+      }
+    )
+
+    it.each([
+      'emit <- function(file,x=read_one(file)) utils::write.csv(x,file)\nemit("inputs/observations.csv")',
+      'emit <- function(x,file) utils::write.csv(read_one(file),file)\nemit(1,"inputs/observations.csv")',
+      'emit <- function(x,file) utils::write.csv(x,file)\nemit(read_one("inputs/observations.csv"),"inputs/observations.csv")'
+    ])('does not hide a local reader helper behind a writer argument: %s', async (invocation) => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'read_one <- function(file) utils::read.csv(file)\n' +
+          invocation +
+          '\nutils::read.csv("inputs/observations.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.readState).toBe('partial')
+      expect(access.writeState).toBe('partial')
+      expect(access.writes).toEqual(
+        invocation.includes('emit(read_one(') ? ['inputs/observations.csv'] : []
+      )
+    })
+  })
+
+  describe('R CSV/table writer argument binding', () => {
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'does not certify a rebound %s as a producer or suppress its later input',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `${writer} <- base::list\n${writer}("payload", "inputs/observations.csv")\nutils::read.csv("inputs/observations.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/observations.csv'])
+        expect(access.writes).toEqual([])
+        expect(access.writeState).toBe('partial')
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'rejects a helper contract when a formal shadows %s',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `emit <- function(x, file, ${writer}) ${writer}(x, file)\nemit("payload", "inputs/observations.csv", base::list)\nutils::read.csv("inputs/observations.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/observations.csv'])
+        expect(access.writes).toEqual([])
+        expect(access.writeState).toBe('partial')
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'preserves qualified %s contracts despite global and formal shadowing',
+      async (writer) => {
+        for (const source of [
+          `${writer} <- base::list\nutils::${writer}("payload", "outputs/actual.csv")`,
+          `emit <- function(x, file, ${writer}) utils::${writer}(x, file)\nemit("payload", "outputs/actual.csv", base::list)`
+        ]) {
+          const access = await analyzeNotebookSourceFileAccess('r', source)
+          expect(access.writes).toEqual(['outputs/actual.csv'])
+          expect(access.writeState).toBe('complete')
+        }
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'retains a nested input forced before %s overwrites that same file',
+      async (writer) => {
+        for (const prefix of ['utils::', '']) {
+          for (const argumentsSource of [
+            'utils::read.csv("inputs/observations.csv"), "inputs/observations.csv"',
+            'file="inputs/observations.csv", x=utils::read.csv("inputs/observations.csv"), row.names=FALSE',
+            'row.names=FALSE, utils::read.csv("inputs/observations.csv"), "inputs/observations.csv"'
+          ]) {
+            const access = await analyzeNotebookSourceFileAccess(
+              'r',
+              `${prefix}${writer}(${argumentsSource})`
+            )
+            expect(access).toMatchObject({
+              reads: ['inputs/observations.csv'],
+              writes: ['inputs/observations.csv'],
+              readState: 'complete',
+              writeState: 'complete',
+              externalState: 'complete'
+            })
+          }
+        }
+      }
+    )
+
+    it('does not revisit forced data after the output is certified', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'utils::write.csv({utils::read.csv("inputs/observations.csv"); utils::write.csv(1,"inputs/observations.csv"); utils::read.csv("inputs/observations.csv")}, "outputs/actual.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/observations.csv'])
+      expect(access.writes).toEqual(['inputs/observations.csv', 'outputs/actual.csv'])
+    })
+
+    it.each([
+      ['write.table', 'quote', 'FALSE'],
+      ['write.table', 'qmethod', '"double"'],
+      ['write.csv', 'row.names', 'FALSE'],
+      ['write.csv2', 'row.names', 'FALSE']
+    ])('retains inputs changed by %s %s before data is forced', async (writer, option, value) => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        `path <- "inputs/old.csv"\nutils::${writer}(${option}={path <- "inputs/actual.csv"; ${value}}, utils::read.csv(path), "outputs/summary.csv")\nutils::read.csv("outputs/summary.csv")`
+      )
+      expect(access.reads).toEqual(['inputs/actual.csv', 'outputs/summary.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.readState).toBe('partial')
+      expect(access.writeState).toBe('partial')
+    })
+
+    it('does not certify a dynamic CSV destination after effectful early options', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "outputs/old.csv"\nutils::write.csv(row.names={path <- paste0(path,"-next"); FALSE}, x=1, file=path)\nutils::read.csv("outputs/old.csv-next")'
+      )
+      expect(access.writes).toEqual([])
+      expect(access.reads).toEqual(['outputs/old.csv-next'])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'matches named options before positional data and file in %s',
+      async (writer) => {
+        for (const prefix of ['utils::', '']) {
+          const access = await analyzeNotebookSourceFileAccess(
+            'r',
+            `${prefix}${writer}(row.names=FALSE, "inputs/decoy.csv", "outputs/actual.csv")\nutils::read.csv("inputs/decoy.csv")`
+          )
+          expect(access).toMatchObject({
+            reads: ['inputs/decoy.csv'],
+            writes: ['outputs/actual.csv'],
+            readState: 'complete',
+            writeState: 'complete',
+            externalState: 'complete'
+          })
+        }
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'does not consume a positional file as data already supplied by x in %s',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `utils::${writer}("outputs/actual.csv", x="inputs/decoy.csv", row.names=FALSE)\nutils::read.csv("inputs/decoy.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/decoy.csv'])
+        expect(access.writes).toEqual(['outputs/actual.csv'])
+      }
+    )
+
+    it.each(['write.csv', 'write.csv2', 'write.table'])(
+      'retains the file formal of a helper using reordered %s options',
+      async (writer) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          `emit <- function(x, file) utils::${writer}(row.names=FALSE, x, file)\nemit("inputs/decoy.csv", "outputs/actual.csv")\nutils::read.csv("inputs/decoy.csv")`
+        )
+        expect(access.reads).toEqual(['inputs/decoy.csv'])
+        expect(access.writes).toEqual(['outputs/actual.csv'])
+        expect(access.writeState).toBe('complete')
+      }
+    )
+
+    it('retains the actual destination as an input for an appended table', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        'utils::write.table(row.names=FALSE, "inputs/decoy.csv", "outputs/actual.csv", append=TRUE)\nutils::read.csv("inputs/decoy.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/decoy.csv', 'outputs/actual.csv'])
+      expect(access.writes).toEqual(['outputs/actual.csv'])
+    })
+
+    it.each([
+      'utils::write.csv(fi="unproved.csv", "inputs/decoy.csv", "outputs/actual.csv")',
+      'utils::write.csv(x=1, x=2, "outputs/actual.csv")',
+      'utils::write.csv(..., "inputs/decoy.csv", "outputs/actual.csv")',
+      'utils::write.csv(row.names=FALSE, , "outputs/actual.csv")',
+      'utils::write.csv(x=, "outputs/actual.csv")'
+    ])(
+      'does not infer a positional file through ambiguous argument matching: %s',
+      async (source) => {
+        const access = await analyzeNotebookSourceFileAccess(
+          'r',
+          source + '\nutils::read.csv("outputs/actual.csv")'
+        )
+        expect(access.writes).toEqual([])
+        expect(access.reads).toEqual(['outputs/actual.csv'])
+        expect(access.writeState).toBe('partial')
+      }
+    )
+  })
+
+  describe('same-cell R strict file-wrapper aliases', () => {
+    const reader = 'reader <- function(file = "") utils::read.csv(file = file)'
+    const writer =
+      'writer <- function(x, file = "") utils::write.csv(x, file = file, row.names = FALSE)'
+
+    it.each([
+      [reader, 'alias <- reader', 'alias(file="inputs/observations.csv")', 'read'],
+      [reader, 'alias = reader', 'alias("inputs/observations.csv")', 'read'],
+      [
+        reader,
+        'alias <- reader\nlabel <- "observations"',
+        'alias(file="inputs/observations.csv")',
+        'read'
+      ],
+      [writer, 'alias <- writer', 'alias(1, file="outputs/summary.csv")', 'write'],
+      [writer, 'alias = writer', 'alias(file="outputs/summary.csv", x=1)', 'write'],
+      [writer, 'alias <- writer\ndata <- 1', 'alias(data, "outputs/summary.csv")', 'write'],
+      [
+        'writer <- function(x, file) utils::write.csv(row.names=FALSE, x, file=file)',
+        'alias <- writer',
+        'alias("decoy.csv", file="outputs/summary.csv")',
+        'write'
+      ],
+      [
+        'writer <- function(x, file) utils::write.csv(row.names=FALSE, x, file)',
+        'alias <- writer',
+        'alias("decoy.csv", "outputs/summary.csv")',
+        'write'
+      ]
+    ])(
+      'retains a literal path without certifying alias effects: %s / %s',
+      async (helper, alias, call, kind) => {
+        const source = [helper, alias, call].join('\n')
+        const access = await analyzeNotebookSourceFileAccess('r', source)
+        expect(access).toMatchObject({
+          reads: kind === 'read' ? ['inputs/observations.csv'] : [],
+          writes: kind === 'write' ? ['outputs/summary.csv'] : [],
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect((await analyzeRSources([source]))[0].state).toBe('unknown')
+      }
+    )
+
+    it.each([
+      ['forward alias', 'alias <- reader\n' + reader + '\nalias(file="decoy.csv")'],
+      [
+        'source replacement',
+        reader + '\nalias <- reader\nreader <- identity\nalias(file="decoy.csv")'
+      ],
+      [
+        'alias replacement',
+        reader + '\nalias <- reader\nalias <- identity\nalias(file="decoy.csv")'
+      ],
+      ['conditional alias', reader + '\nif (flag) alias <- reader\nalias(file="decoy.csv")'],
+      [
+        'conditional source replacement',
+        reader + '\nalias <- reader\nif (flag) reader <- identity\nalias(file="decoy.csv")'
+      ],
+      [
+        'body replacement',
+        reader + '\nalias <- reader\nbody(reader) <- NULL\nalias(file="decoy.csv")'
+      ],
+      [
+        'formals replacement',
+        reader + '\nalias <- reader\nformals(alias) <- NULL\nalias(file="decoy.csv")'
+      ],
+      ['opaque call', reader + '\nalias <- reader\nconfigure()\nalias(file="decoy.csv")'],
+      ['omitted path', reader + '\nalias <- reader\nalias()'],
+      ['dynamic path', reader + '\nalias <- reader\npath <- "decoy.csv"\nalias(file=path)'],
+      ['partial argument', reader + '\nalias <- reader\nalias(fi="decoy.csv")'],
+      [
+        'duplicate argument',
+        reader + '\nalias <- reader\nalias(file="decoy.csv",file="other.csv")'
+      ],
+      ['extra argument', reader + '\nalias <- reader\nalias(file="decoy.csv",text="x\\n1")'],
+      ['missing writer input', writer + '\nalias <- writer\nalias(file="decoy.csv")'],
+      ['missing positional writer input', writer + '\nalias <- writer\nalias(,file="decoy.csv")'],
+      ['missing named writer input', writer + '\nalias <- writer\nalias(x=,file="decoy.csv")'],
+      ['ellipsis writer input', writer + '\nalias <- writer\nalias(..1,file="decoy.csv")'],
+      [
+        'missing helper writer input',
+        'writer <- function(file) utils::write.csv(file=file,row.names=FALSE)\nalias <- writer\nalias(file="decoy.csv")'
+      ],
+      [
+        'unknown helper option',
+        'reader <- function(file) utils::read.csv(file,unexpected=TRUE)\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'extra positional helper option',
+        'reader <- function(file) utils::read.csv(file,TRUE)\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'opaque helper tail',
+        'reader <- function(file) { x <- utils::read.csv(file); configure(); x }\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'opaque default',
+        'reader <- function(file=configure()) utils::read.csv(file)\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'opaque option',
+        'reader <- function(file) utils::read.csv(file,sep=configure())\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'in-memory reader option',
+        'reader <- function(file) utils::read.csv(file,text="x\\n1")\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'namespace operator replacement',
+        '`::` <- replacement\n' + reader + '\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'function operator replacement',
+        '`function` <- replacement\n' + reader + '\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'assignment operator replacement',
+        '`<-` <- replacement\n' + reader + '\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      ['conditional invocation', reader + '\nalias <- reader\nif (flag) alias(file="decoy.csv")'],
+      ['nested invocation', reader + '\nalias <- reader\nconsume(alias(file="decoy.csv"))'],
+      [
+        'wrong package',
+        'reader <- function(file) other::read.csv(file)\nalias <- reader\nalias(file="decoy.csv")'
+      ],
+      [
+        'omitted additional formal',
+        'reader <- function(file,sep) utils::read.csv(file,sep=sep)\nalias <- reader\nalias(file="decoy.csv")'
+      ]
+    ])('does not infer a file through an unsafe alias: %s', async (_label, source) => {
+      const access = await analyzeNotebookSourceFileAccess('r', source)
+      expect(access.reads).not.toContain('decoy.csv')
+      expect(access.writes).not.toContain('decoy.csv')
+    })
+
+    it('preserves nested input effects without claiming an alias write or suppressing reads', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        writer +
+          '\nalias <- writer\nalias(utils::read.csv("inputs/source.csv"), file="outputs/summary.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/source.csv'])
+      expect(access.writes).toEqual([])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it('does not treat a possible alias output as a certified intermediate', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        writer +
+          '\nalias <- writer\nalias(1,file="outputs/summary.csv")\nutils::read.csv("outputs/summary.csv")'
+      )
+      expect(access.reads).toEqual(['outputs/summary.csv'])
+      expect(access.writes).toEqual(['outputs/summary.csv'])
+      expect(access.writeState).toBe('partial')
+    })
+
+    it('does not reuse alias authority after the first invocation', async () => {
+      const access = await analyzeNotebookSourceFileAccess(
+        'r',
+        reader + '\nalias <- reader\nalias(file="inputs/first.csv")\nalias(file="inputs/later.csv")'
+      )
+      expect(access.reads).toEqual(['inputs/first.csv'])
+      expect(access.readState).toBe('partial')
+    })
+  })
+
   it.each([
     ['binary file', "writeBin(as.raw(1:3), 'values.bin')", 'values.bin'],
     ['text file', "writeLines('done', 'note.txt')", 'note.txt'],
@@ -2985,6 +4135,7 @@ for path in left:
         analyzeNotebookSourceFileAccess(language, source, {
           staticStrings: [],
           staticCollections: [],
+          resolvedKernelNames: ['save_plot'],
           localFileWrappers: [
             {
               name: 'save_plot',
@@ -3002,6 +4153,35 @@ for path in left:
         reads: [],
         writes: [language === 'r' ? 'r.png' : 'python.png'],
         reasonCodes: []
+      })
+    }
+  )
+
+  it.each([
+    ['an opaque prior callable', 'emit()', [], []],
+    [
+      'an opaque prior callable alongside explicit file access',
+      "emit()\nopen('inputs/visible.csv')\nopen('outputs/visible.csv', 'w')",
+      ['inputs/visible.csv'],
+      ['outputs/visible.csv']
+    ]
+  ])(
+    'does not certify file effects from a resolved value identity: %s',
+    async (_name, source, reads, writes) => {
+      const result = await analyzeNotebookSourceFileAccess('python', source as string, {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        resolvedKernelNames: ['emit']
+      })
+
+      expect(result).toMatchObject({
+        readState: 'complete',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads,
+        writes,
+        reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
       })
     }
   )

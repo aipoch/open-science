@@ -1,7 +1,6 @@
 {
   "ownerPaths": [
     "src/main/skills/user-skill-repository.ts",
-    "src/main/skills/activation-policy.ts",
     "src/main/skills/conversation-import.test.ts",
     "src/main/skills/conversation-import.ts",
     "src/main/skills/env-management-skill.test.ts",
@@ -13,14 +12,11 @@
     "src/main/skills/mcp-server.test.ts",
     "src/main/skills/mcp-server.ts",
     "src/main/skills/net-fetch.test.ts",
-    "src/main/network-fetch.ts",
     "src/main/skills/registered-helper-catalog.test.ts",
     "src/main/skills/registered-helper-catalog.runtime.test.ts",
     "src/main/skills/registered-helper-catalog.ts",
     "src/main/skills/registry.test.ts",
     "src/main/skills/resource-path.ts",
-    "src/main/skills/runtime-mcp-server.test.ts",
-    "src/main/skills/runtime-mcp-server.ts",
     "src/main/skills/self-awareness-skill.test.ts",
     "src/main/skills/skill-nudge-identity.test.ts",
     "src/main/skills/user-skill-repository.architecture.test.ts",
@@ -70,7 +66,6 @@
       "src/main/skills/registered-helper-catalog.test.ts",
       "src/main/skills/registered-helper-catalog.runtime.test.ts",
       "src/main/skills/registry.test.ts",
-      "src/main/skills/runtime-mcp-server.test.ts",
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
       "src/main/skills/package-boundary.architecture.test.ts"
@@ -646,7 +641,15 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/environment-download.contract.test.ts",
-      "src/main/notebook/windows-runtime-download.contract.test.ts"
+      "src/main/notebook/windows-runtime-download.contract.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/skills/runtime-mcp-server.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/runtime-network-node.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

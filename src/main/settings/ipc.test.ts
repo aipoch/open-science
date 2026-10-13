@@ -454,13 +454,13 @@ describe('settings IPC handlers', () => {
     expect(await handlers.get('settings:stop-skill-marketplace-batch')!({}, 'batch')).toBe(true)
     expect(fake.stopSkillMarketplaceBatch).toHaveBeenCalledWith('batch')
   })
-  it('registers every settings channel', () => {
+  it('registers direct settings channels without duplicating the validated snapshot read', () => {
     handlers.clear()
     registerTestSettingsIpcHandlers({ service: asService(createFakeService()) })
 
+    expect(handlers.has('settings:get-settings')).toBe(false)
     for (const channel of [
       'settings:get-preflight',
-      'settings:get-settings',
       'settings:encryption-available',
       'settings:npm-available',
       'settings:check-environment',

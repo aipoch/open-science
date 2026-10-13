@@ -218,6 +218,22 @@ describe('read-only ciphertext inventory', () => {
     expect(readdirSync(paths.configRoot)).toEqual(['credentials.json.123.tmp'])
   })
 
+  it('preserves a classified native key failure through the complete ciphertext validation boundary', () => {
+    const failure = new CredentialIdentityError('native-secret-operation-failed')
+    expect(() =>
+      verifyCredentialCiphertexts([Buffer.from('v10fixture')], () => {
+        throw failure
+      })
+    ).toThrow(failure)
+    try {
+      verifyCredentialCiphertexts([Buffer.from('v10fixture')], () => {
+        throw failure
+      })
+    } catch (error) {
+      expect(error).toBe(failure)
+    }
+  })
+
   it('verifies selected-key decryption without encrypting, clearing refs, or trying another name', () => {
     const ciphertext = Buffer.from('old-ciphertext')
     const decrypt = vi.fn(() => {

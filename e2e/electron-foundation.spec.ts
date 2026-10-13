@@ -4,6 +4,7 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { openRecentSession, sendPrompt } from './certification/helpers'
+import { homeNewProjectButton } from './fixtures/project'
 
 const PROJECT_NAME = 'Electron E2E project'
 
@@ -99,7 +100,7 @@ test('localizes CSL validation failures across the desktop bridge', async ({ app
 })
 
 const createProject = async (page: Page, name: string): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
+  await homeNewProjectButton(page).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(name)
   await dialog.getByLabel('Description').fill('Created through the real Electron IPC boundary.')

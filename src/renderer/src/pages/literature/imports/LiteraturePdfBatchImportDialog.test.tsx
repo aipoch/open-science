@@ -12,7 +12,7 @@ vi.mock('./literature-pdf-metadata', async (importOriginal) => ({
   extractLiteraturePdfDraft: mocks.extract,
   completeLiteraturePdfDraft: mocks.complete
 }))
-vi.mock('../../workspace/composer-upload-transfer', () => ({ stageComposerFile: mocks.stage }))
+vi.mock('@/lib/upload-transfer', () => ({ stageUploadFile: mocks.stage }))
 const transact = vi.fn()
 const importPdf = vi.fn()
 const deleteUpload = vi.fn()

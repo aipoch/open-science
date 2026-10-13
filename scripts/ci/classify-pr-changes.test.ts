@@ -784,6 +784,7 @@ describe('pull request change classification', () => {
 
   it.each([
     'src/main/notebook/windows-shell.ts',
+    'src/main/settings/claude-cli-process.ts',
     'packages/notebook-code-risk/src/index.ts',
     'src/main/notebook/runtime-service.ts',
     'src/main/notebook/environment-resources.ts',

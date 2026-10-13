@@ -1,45 +1,47 @@
-import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
-import type { NotebookSessionExecutionResult } from './session-aggregate'
 import type {
-  NotebookReproductionStep,
-  NotebookReproductionRuntime as ReproductionRuntime,
-  NotebookReproductionEnvironmentProgress,
+  CreateReproductionRuntime,
   NotebookReproductionEnvironmentOutput,
-  CreateReproductionRuntime
+  NotebookReproductionEnvironmentProgress,
+  NotebookReproductionStep,
+  NotebookReproductionRuntime as ReproductionRuntime
 } from '@aipoch/reproducibility'
-import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
+import { restoreRRandomState, validatePythonRandomState } from '@aipoch/reproducibility'
+import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
 import { createHash } from 'node:crypto'
-import { restoreRRandomState } from '@aipoch/reproducibility'
-import { validatePythonRandomState } from '@aipoch/reproducibility'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
+import type { NotebookSessionExecutionResult } from './session-aggregate'
 
+import {
+  buildManagedRuntimeProcessEnvironment,
+  createFromLockArgv,
+  micromambaCacheLockKey,
+  micromambaSpawnEnv,
+  nativeLockRestoreState,
+  normalizeRuntimeArchitecture,
+  parseNotebookEnvironmentLock,
+  pkgsCache,
+  prepareNotebookWorkloadCache,
+  pythonBin,
+  restoreNativeEnvironmentLock,
+  rScriptBin,
+  runtimeRoot,
+  selectMicromambaCache,
+  verifyRestoredEnvironment,
+  withSharedCacheLocks
+} from '@aipoch/environment'
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
-import { parseNotebookEnvironmentLock } from '@aipoch/environment'
-import { NotebookHelperModuleHost } from './helper-module-host'
-import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import { createFromLockArgv, micromambaSpawnEnv } from '@aipoch/environment'
-import { micromambaCacheLockKey, selectMicromambaCache } from '@aipoch/environment'
-import { nativeLockRestoreState, restoreNativeEnvironmentLock } from '@aipoch/environment'
-import { prepareNotebookWorkloadCache } from '@aipoch/environment'
-import { sandboxedPackageSpawn } from './package-process-sandbox'
-import { withSharedCacheLocks } from '@aipoch/environment'
-import type { NotebookProcessSandbox } from './process-sandbox'
-import { runMicromamba } from './environment-process'
-import { verifyExecutable } from './environment-process'
-import { verifyRestoredEnvironment } from '@aipoch/environment'
-import { buildManagedRuntimeProcessEnvironment } from '@aipoch/environment'
-import { resolveLoopScriptPaths } from './runtime-service'
-import {
-  normalizeRuntimeArchitecture,
-  pkgsCache,
-  pythonBin,
-  rScriptBin,
-  runtimeRoot
-} from '@aipoch/environment'
-import type { NotebookKernelEpochOwnership, NotebookSessionExecutor } from './session-aggregate'
 import { resolveStorageKey, storageKey } from '../artifacts/provenance-storage'
+import { runMicromamba, verifyExecutable } from './environment-process'
+import { NotebookHelperModuleHost } from './helper-module-host'
+import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
+import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
+import type { NotebookProcessSandbox } from './process-sandbox'
+import { resolveLoopScriptPaths } from './runtime-service'
+import type { NotebookSessionExecutor } from './session-aggregate'
 
 type CreateNotebookReproductionRuntimeInput = Parameters<CreateReproductionRuntime>[0] & {
   storageRoot: string
@@ -519,18 +521,18 @@ export { createNotebookReproductionRuntime }
 export type {
   CreateNotebookReproductionRuntimeDependencies,
   CreateNotebookReproductionRuntimeInput,
-  NotebookReproductionEnvironmentProgress,
   NotebookReproductionEnvironmentOutput,
+  NotebookReproductionEnvironmentProgress,
   NotebookReproductionRuntime,
   NotebookReproductionStep
 }
 
 import {
   createReproductionExecutor,
-  type ExecuteArtifactReproducibilityInput,
-  type ExecuteArtifactReproducibilityDependencies
+  type ExecuteArtifactReproducibilityDependencies,
+  type ExecuteArtifactReproducibilityInput
 } from '@aipoch/reproducibility'
-import { reproductionRecipes, reproductionEvidence } from '../artifacts/reproducibility-host'
+import { reproductionEvidence, reproductionRecipes } from '../artifacts/reproducibility-host'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 const executeReproduction = createReproductionExecutor({
   recipes: reproductionRecipes,

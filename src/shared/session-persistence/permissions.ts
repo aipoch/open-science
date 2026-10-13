@@ -1,12 +1,12 @@
+import type { AcpPermissionRequest } from '../acp-permission-contract'
 import {
+  EXACT_PERMISSION_QUALIFIER_PATTERN,
   PERMISSION_CAPABILITY_KINDS,
-  type PermissionCapability,
-  EXACT_PERMISSION_QUALIFIER_PATTERN
+  type PermissionCapability
 } from '../permission-grants'
-import { asString, isRecord, asNumber } from './primitives'
-import { sanitizeRawToolPayload, sanitizeToolDetailText } from '../tool-detail-sanitizer'
-import type { AcpPermissionRequest } from '../acp'
 import type { SessionPermissionRuntimeContext } from '../session-runtime-context'
+import { sanitizeRawToolPayload, sanitizeToolDetailText } from '../tool-detail-sanitizer'
+import { asNumber, asString, isRecord } from './primitives'
 
 const PERMISSION_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/
 

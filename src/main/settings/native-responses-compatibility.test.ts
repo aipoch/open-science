@@ -1,3 +1,8 @@
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { gzipSync } from 'node:zlib'
+
+import { fetch as nodeFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const logSpies = vi.hoisted(() => ({
@@ -24,6 +29,51 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('decodes upstream compression when the client accepts zstd', async () => {
+    const payload = { id: 'resp-fixture', object: 'response', status: 'completed', output: [] }
+    // Zstandard frame for JSON.stringify(payload), including the 0x28 magic byte.
+    const zstd = Buffer.from(
+      'KLUv/SBKUQIAeyJpZCI6InJlc3AtZml4dHVyZSIsIm9iamVjdCI6InJlc3BvbnNlIiwic3RhdHVzIjoiY29tcGxldGVkIiwib3V0cHV0IjpbXX0=',
+      'base64'
+    )
+    const upstream = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        const encoding = request.headers['accept-encoding']?.includes('zstd') ? 'zstd' : 'gzip'
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'content-encoding': encoding
+        })
+        response.end(encoding === 'zstd' ? zstd : gzipSync(JSON.stringify(payload)))
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1` },
+      nodeFetch as unknown as typeof fetch
+    )
+    try {
+      const connection = await proxy.start()
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          'accept-encoding': 'gzip, deflate, br, zstd'
+        },
+        body: JSON.stringify({ model: 'fixture-model', input: 'Reply with OK.', stream: false })
+      })
+      expect(await response.json()).toEqual(payload)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-encoding')).toBeNull()
+    } finally {
+      await proxy.close()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  })
+
   // Synthetic protocol fixtures only: no captured conversation, identifiers, or user code.
   type CallItem = {
     type: string

@@ -21,6 +21,7 @@ import type {
 } from '../src/shared/pdf-translation'
 
 import { test } from './fixtures/electron-app'
+import { openAllReferences } from './fixtures/library'
 
 const sources = ['Measurement 1 examines cell growth.', 'Measurement 2 examines cell growth.']
 const translation = (source: string, model: string): string =>
@@ -353,8 +354,7 @@ test('shares PDF editions across independent projects and Literature after owner
     )
     expect(requests).toHaveLength(3)
 
-    await page.getByRole('button', { name: 'Library', exact: true }).click()
-    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    await openAllReferences(page)
     await page.getByRole('button', { name: 'Preview library-editions.pdf', exact: true }).click()
     await expect(page.locator('[data-pdf-preview-root]')).toBeVisible()
     await page.getByRole('button', { name: /^(Full-text translation|View translation)$/ }).click()

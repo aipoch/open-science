@@ -429,6 +429,24 @@ export function recoverRuledRecordFaces(table, items, captions, rules) {
       if (
         labels.some((i) =>
           labels.some((j) => i !== j && Math.abs(i.baseline - j.baseline) > height * 1.8)
+        ) &&
+        !(
+          g.every(
+            (i) => i.rect[1] >= upper - i.height * 0.2 && i.baseline > upper && i.rect[3] <= lower
+          ) &&
+          groupSourceRowsWithScripts(
+            g.filter((i) => col(i) > 0),
+            height,
+            0.35
+          )?.length === 1 &&
+          rules.some(
+            (r) =>
+              r[0] === r[2] &&
+              r[1] <= upper &&
+              r[3] >= lower &&
+              labels.every((i) => i.rect[2] < r[0]) &&
+              g.filter((i) => col(i) > 0).every((i) => i.rect[0] > r[0])
+          )
         )
       )
         return

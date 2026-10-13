@@ -1,38 +1,43 @@
-import type { DatabaseStartupOwner } from './database/database-startup-owner'
-import {
-  desktopLifecycleRequestSchema,
-  type DesktopLifecycleRequest
-} from './desktop-runtime-lifecycle'
-import type { OfficePreviewRuntimeState } from '../shared/office-preview'
-import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
-import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
-import type { UploadTransferProgress } from '../shared/uploads'
-import {
-  desktopNativeResponseSchema,
-  desktopNotificationActionSchema,
-  desktopNotificationViewSchema,
-  desktopUploadProgressSchema,
-  withDesktopCaller,
-  parseDesktopNativeResult,
-  type DesktopNativeOperation
-} from './desktop-native-contract'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
+import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
+import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
+import type { OfficePreviewRuntimeState } from '../shared/office-preview'
+import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
+import type { UploadTransferProgress } from '../shared/uploads'
 import {
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema,
   type WebRpcResponse
 } from '../shared/web-rpc-contract'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
 import { createApplicationCommandClient } from './application-command-client'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
 import type { ApplicationEventSource } from './application-events'
 import { createCallerContext, type CallerContext } from './caller-context'
+import type { DatabaseStartupOwner } from './database/database-startup-owner'
 import { listenForDesktop } from './desktop-connection'
+import {
+  desktopNativeResponseSchema,
+  desktopNotificationActionSchema,
+  desktopNotificationViewSchema,
+  desktopUploadProgressSchema,
+  parseDesktopNativeResult,
+  withDesktopCaller,
+  type DesktopNativeOperation
+} from './desktop-native-contract'
+import {
+  desktopLifecycleRequestSchema,
+  type DesktopLifecycleRequest
+} from './desktop-runtime-lifecycle'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { InternalWebEventStream } from './web-service/internal-web-event-stream'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createWebSocketFrameSender } from './websocket-frame-sender'
+
+const logger = createLogger('desktop-runtime-transport')
 
 const clientId = z.string().uuid()
 const requestSchema = z.discriminatedUnion('kind', [
@@ -53,6 +58,10 @@ const requestSchema = z.discriminatedUnion('kind', [
   desktopNativeResponseSchema,
   desktopNotificationActionSchema,
   desktopNotificationViewSchema,
+  webRpcRequestSchema.extend({
+    kind: z.literal('session-event-read'),
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+  }),
   webRpcRequestSchema.extend({
     kind: z.literal('host-invoke'),
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -75,7 +84,7 @@ const requestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('release'), clientId }).strict(),
   z.object({ kind: z.literal('resume'), streamId: z.string().uuid(), after: z.number() }).strict()
 ])
-const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_PENDING_REQUESTS = 256
 const MAX_CLIENTS = 128
 
@@ -140,17 +149,9 @@ export async function startDesktopRuntimeTransport(options: {
         signal?: AbortSignal
       ) => Promise<unknown>)
     | undefined
-  const send = (socket: WebSocket, frame: string): void => {
-    if (socket.readyState !== WebSocket.OPEN) return
-    if (socket.bufferedAmount + Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
-      createLogger('desktop-transport').warn('desktop send buffer exceeded', {
-        bufferedBytes: socket.bufferedAmount,
-        frameBytes: Buffer.byteLength(frame)
-      })
-      socket.terminate()
-      return
-    }
-    socket.send(frame)
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
+  const send = (socket: WebSocket, frame: string, onSent?: () => void): void => {
+    senders.get(socket)?.send(frame, onSent)
   }
   const unsubscribe = options.events.subscribe((event) => {
     const frame = stream.publish(event)
@@ -158,6 +159,12 @@ export async function startDesktopRuntimeTransport(options: {
   })
   try {
     const listener = await listenForDesktop(options.version, (socket) => {
+      senders.set(
+        socket,
+        createWebSocketFrameSender(socket, (failure) => {
+          logger.warn('desktop runtime transport terminated', failure)
+        })
+      )
       let unsubscribeStartup: (() => void) | undefined
       const lifecycle = options.createLifecycle?.()
       const connectionId = randomUUID()
@@ -231,6 +238,7 @@ export async function startDesktopRuntimeTransport(options: {
       }
       let highestRequestId = 0
       let closed = false
+      let shutdownPending = false
       // A released renderer document never regains authority on this attachment.
       const released = new Set<string>()
       const cleanup = (): void => {
@@ -326,6 +334,7 @@ export async function startDesktopRuntimeTransport(options: {
             socket,
             stringifyRpcJson({
               kind: 'bootstrap',
+              rpcCapabilities: [RUNTIME_PAYLOAD_CAPABILITY],
               pid: process.pid,
               ...(options.startup ? { startup: options.startup.getState() } : {}),
               rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -398,11 +407,14 @@ export async function startDesktopRuntimeTransport(options: {
         }
         highestRequestId = message.id
         const request = message
-        const respond = (response: WebRpcResponse): void => {
+        let responseFailureReason: 'response-serialization' | 'response-send-failure' =
+          'response-serialization'
+        const respond = (response: WebRpcResponse, onSent?: () => void): void => {
+          responseFailureReason = 'response-serialization'
           let frame = stringifyRpcJson({ kind: 'response', id: request.id, ...response })
           // A command result can grow during JSON encoding. Reject only this response;
           // do not drop unrelated in-flight commands or retry a completed mutation.
-          if (Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
+          if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) {
             frame = stringifyRpcJson({
               kind: 'response',
               id: request.id,
@@ -414,7 +426,16 @@ export async function startDesktopRuntimeTransport(options: {
               }
             })
           }
-          send(socket, frame)
+          responseFailureReason = 'response-send-failure'
+          send(socket, frame, onSent)
+        }
+        if (shutdownPending && request.kind !== 'shutdown') {
+          respond({
+            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+            ok: false,
+            error: { code: 'command-unavailable', message: 'Desktop runtime is shutting down.' }
+          })
+          return
         }
         if (request.kind === 'startup-retry') {
           pending.add(request.id)
@@ -470,23 +491,28 @@ export async function startDesktopRuntimeTransport(options: {
             })
             return
           }
-          respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null })
-          if (!shutdownRequested) {
-            shutdownRequested = true
-            setImmediate(options.requestShutdown)
-          }
+          shutdownPending = true
+          respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null }, () => {
+            if (!shutdownRequested) {
+              shutdownRequested = true
+              setImmediate(options.requestShutdown!)
+            }
+          })
           return
         }
-        if (request.kind === 'host-invoke') {
+        if (request.kind === 'host-invoke' || request.kind === 'session-event-read') {
           pending.add(request.id)
           void (async () => {
             try {
-              if (!options.hostCommands) throw new Error('Desktop host commands are unavailable.')
+              const eventRead = request.kind === 'session-event-read'
+              const dispatcher = eventRead ? commands : options.hostCommands
+              if (!dispatcher) throw new Error('Desktop host commands are unavailable.')
               const result = await client.invoke(
-                options.hostCommands,
-                request.channel,
+                dispatcher,
+                eventRead ? 'sessions:load-one' : request.channel,
                 hostCaller,
-                request.args
+                request.args,
+                request
               )
               respond({
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -549,7 +575,7 @@ export async function startDesktopRuntimeTransport(options: {
         }
         pending.add(request.id)
         void client
-          .invoke(commands, request.channel, caller, request.args)
+          .invoke(commands, request.channel, caller, request.args, request)
           .then(
             (result) =>
               respond({
@@ -565,6 +591,7 @@ export async function startDesktopRuntimeTransport(options: {
               })
           )
           .catch(() => {
+            logger.warn('desktop runtime transport terminated', { reason: responseFailureReason })
             socket.terminate()
             cleanup()
           })
@@ -590,6 +617,7 @@ export async function startDesktopRuntimeTransport(options: {
       close: async () => {
         unsubscribe()
         await listener.close()
+        await runtimePayloadTransfers.settleReleased()
       }
     }
   } catch (error) {

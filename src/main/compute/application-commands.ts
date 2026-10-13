@@ -19,7 +19,7 @@ import {
 } from '../application-command-router'
 import type { ApplicationEventPublisher } from '../application-events'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
-import type { ComputeHandlers } from './ipc'
+import type { ComputeHandlers } from './handler-contract'
 
 type ComputeCommandOwner = Pick<
   ComputeHandlers,

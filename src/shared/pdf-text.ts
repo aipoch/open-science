@@ -287,6 +287,165 @@ const hasInitialLineClosedLabelGap = (
   return true
 }
 
+// Some two-column papers place the final author affiliation above a wide
+// raster figure whose short in-figure labels arrive next in PDF.js reading
+// order. The label row has no line-end marker, so require both source-like
+// affiliation text and a closed, widely spaced label band before separating it.
+const hasMetadataToFigureLabelGap = (
+  items: readonly PdfTextItem[],
+  index: number,
+  previous: PdfTextItem
+): boolean => {
+  if (index < 2 || previous.hasEOL) return false
+  let lineStart = index - 1
+  while (lineStart > 0 && !items[lineStart - 1].hasEOL) lineStart--
+  const line = items.slice(lineStart, index).filter((item) => item.str?.trim())
+  if (line.at(-1) !== previous) return false
+  const affiliation = line.map((item) => item.str).join(' ')
+  const commaBoundary = line.some(
+    (item) => /^\s*,/u.test(item.str ?? '') || /,\s*$/u.test(item.str ?? '')
+  )
+  const headerLike =
+    /^\d+\s*[•·]\s*.+\band\b/iu.test(affiliation) && (affiliation.match(/,/gu)?.length ?? 0) >= 2
+  if (
+    (line.length < 2 && !headerLike) ||
+    (!headerLike &&
+      (line.length < 2 || !commaBoundary || (affiliation.match(/,/gu)?.length ?? 0) < 1))
+  )
+    return false
+  const boxes = line.map(nativeRunBox)
+  if (boxes.some((box) => !box)) return false
+  const baseline = previous.transform?.[5],
+    size = previous.height
+  if (!Number.isFinite(baseline) || !Number.isFinite(size) || size! <= 0) return false
+  if (
+    line.some(
+      (item) =>
+        !item.transform ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        Math.abs(item.transform[5] - baseline!) >
+          (/[\p{P}\p{S}]/u.test(item.str ?? '') ? size! * 0.6 : size! * 0.05)
+    )
+  )
+    return false
+  const first = items[index],
+    firstBox = nativeRunBox(first)
+  if (!firstBox || !first.str || first.hasEOL) return false
+  const labelSize = first.height
+  if (
+    !Number.isFinite(labelSize) ||
+    labelSize! < size! * 0.5 ||
+    labelSize! > size! * (headerLike ? 1.1 : 0.9) ||
+    Math.abs(boxes.at(-1)![1] - firstBox[3]) <= size! * 5
+  )
+    return false
+  let labels = 0,
+    right = firstBox[0],
+    closed = false
+  for (const item of items.slice(index, index + 12)) {
+    if (!item.str?.trim()) {
+      if (item.hasEOL) {
+        closed = true
+        break
+      }
+      continue
+    }
+    const box = nativeRunBox(item)
+    if (
+      !box ||
+      !/^[A-Za-z]+(?: [A-Za-z]+){0,3}$/u.test(item.str) ||
+      item.str.length > 32 ||
+      !item.transform ||
+      item.transform[1] !== 0 ||
+      item.transform[2] !== 0 ||
+      Math.abs(item.transform[5] - first.transform![5]) > labelSize! * 0.15 ||
+      Math.abs(item.height! - labelSize!) > labelSize! * 0.05 ||
+      box[0] < right - labelSize! * 0.05 ||
+      (labels > 0 && box[0] - right <= labelSize! * 1.5)
+    )
+      return false
+    labels++
+    right = box[2]
+  }
+  return closed && labels >= 3 && labels <= 6
+}
+
+// Cross-column figures can start with short panel labels after a narrative tail
+// that PDF.js emitted without an EOL. Require a closed cluster of short labels,
+// consistent native geometry, and a large physical separation; a single short
+// word or an open prose continuation is never enough.
+const hasDetachedFigurePanelLabelGap = (
+  items: readonly PdfTextItem[],
+  index: number,
+  previous: PdfTextItem
+): boolean => {
+  let lineStart = index - 1
+  while (lineStart > 0 && !items[lineStart - 1].hasEOL) lineStart--
+  const previousLine = items
+    .slice(lineStart, index)
+    .filter((item) => item.str?.trim())
+    .map((item) => item.str)
+    .join(' ')
+  const headerLike =
+    /^\d+\s*[•·]\s*.+\band\b/iu.test(previousLine) && (previousLine.match(/,/gu)?.length ?? 0) >= 2
+  if (previous.hasEOL || (!/[.!?)]$/u.test(previous.str ?? '') && !headerLike)) return false
+  const before = nativeRunBox(previous),
+    first = nativeRunBox(items[index])
+  if (!before || !first || !items[index].str?.trim()) return false
+  const size = Math.max(previous.height ?? 0, items[index].height ?? 0)
+  if (
+    size <= 0 ||
+    (Math.abs(first[1] - before[3]) <= size * 4 && Math.abs(first[0] - before[2]) <= size * 4)
+  )
+    return false
+  const labels: PdfTextItem[] = [],
+    panelPrefix = /^\([a-z]\)\s*/u.test(items[index].str)
+  let lineLabels = 0,
+    lineBaseline = Number.NaN,
+    lineRight = Number.NaN,
+    sawLineBreak = true
+  for (const item of items.slice(index, index + 20)) {
+    if (!item.str?.trim()) {
+      if (item.hasEOL) {
+        sawLineBreak = true
+        lineLabels = 0
+      }
+      continue
+    }
+    const box = nativeRunBox(item)
+    const baseline = item.transform?.[5] ?? Number.NaN,
+      sameLine =
+        lineLabels > 0 &&
+        Number.isFinite(lineBaseline) &&
+        Math.abs(baseline - lineBaseline) <= (items[index].height ?? 0) * 0.2
+    if (
+      !box ||
+      item.str.length > (panelPrefix ? 40 : 16) ||
+      !/^(?:\([a-z]\)\s*|[A-Z][A-Za-z]*(?: [A-Za-z]+){0,3})/u.test(item.str) ||
+      !item.transform ||
+      item.transform[1] !== 0 ||
+      item.transform[2] !== 0 ||
+      Math.abs(item.height! - items[index].height!) > items[index].height! * 0.25 ||
+      (!sameLine && !sawLineBreak) ||
+      (sameLine && box[0] - lineRight <= items[index].height! * 1.5)
+    ) {
+      return sawLineBreak && labels.length >= (panelPrefix ? 2 : 3) && labels.length <= 8
+    }
+    labels.push(item)
+    if (!sameLine) {
+      lineBaseline = baseline
+      lineRight = box[2]
+      lineLabels = 1
+    } else {
+      lineRight = box[2]
+      lineLabels++
+    }
+    sawLineBreak = false
+  }
+  return labels.length >= (panelPrefix ? 2 : 3) && labels.length <= 8 && sawLineBreak
+}
+
 // A complete formal caption line and a closed smaller label band prove a text
 // boundary without assigning figure ownership or changing native item order.
 const hasNativeCaptionTailBandGap = (
@@ -545,6 +704,216 @@ const hasIndependentNumericBandGap = (
   return groups >= 1 && /^[+−-]?\d+(?:\.\d+)?$/u.test(value)
 }
 
+// A wrapped formal caption can end without PDF.js's line-end flag. Require
+// complete native caption lines and three closed, smaller, right-aligned labels
+// below it before inserting whitespace; preserve every item and its order.
+const hasCaptionLabelColumnGap = (
+  items: readonly PdfTextItem[],
+  index: number,
+  previous: PdfTextItem
+): boolean => {
+  if (previous.hasEOL || !/[.!?]$/u.test(previous.str ?? '')) return false
+  const tail = nativeRunBox(previous),
+    firstLabel = nativeRunBox(items[index])
+  if (!tail || !firstLabel) return false
+  const size = previous.height!,
+    small = items[index].height!
+  if (small < size * 0.5 || small > size * 0.8 || tail[1] - firstLabel[3] <= size * 1.5)
+    return false
+  let start = -1
+  for (let n = index - 1; n >= Math.max(0, index - 32); n--) {
+    if (/^(?:Figure\s+[A-Z]?\d+\s*:|Fig\.\s+[A-Z]?\d+[.:])(?:\s|$)/u.test(items[n].str ?? '')) {
+      start = n
+      break
+    }
+  }
+  if (start < 0 || (start > 0 && !items[start - 1].hasEOL)) return false
+  const first = nativeRunBox(items[start])
+  if (!first) return false
+  let baseline = items[start].transform![5],
+    right = first[0],
+    maxRight = first[2],
+    rows = 1
+  const seen = new Set<PdfTextItem>()
+  for (let n = start; n < index; n++) {
+    const part = items[n]
+    if (!part.str || /^ *$/u.test(part.str)) {
+      if (part.hasEOL) return false
+      continue
+    }
+    const box = nativeRunBox(part)
+    if (
+      !box ||
+      seen.has(part) ||
+      part.transform![1] !== 0 ||
+      part.transform![2] !== 0 ||
+      part.height! < size * 0.8 ||
+      part.height! > size * 1.25
+    )
+      return false
+    const y = part.transform![5]
+    if (n > start && items[n - 1].hasEOL) {
+      if (
+        baseline - y < size ||
+        baseline - y > size * 1.6 ||
+        Math.abs(box[0] - first[0]) > size * 0.15
+      )
+        return false
+      rows++
+      baseline = y
+      right = box[0]
+    }
+    if (
+      Math.abs(y - baseline) > size * 0.05 ||
+      box[0] < right - size * 0.05 ||
+      box[0] - right > size
+    )
+      return false
+    seen.add(part)
+    right = box[2]
+    maxRight = Math.max(maxRight, right)
+  }
+  if (rows < 2 || rows > 6 || index + 2 >= items.length) return false
+  let labelY = items[index].transform![5]
+  for (let n = index; n < index + 3; n++) {
+    const part = items[n],
+      box = nativeRunBox(part)
+    if (
+      !box ||
+      seen.has(part) ||
+      !part.hasEOL ||
+      !/^[\p{L}]+(?: [\p{L}]+){0,2}$/u.test(part.str ?? '') ||
+      (part.str?.length ?? 0) > 32 ||
+      part.transform![1] !== 0 ||
+      part.transform![2] !== 0 ||
+      Math.abs(part.height! - small) > small * 0.05 ||
+      Math.abs(box[2] - firstLabel[2]) > small * 0.05 ||
+      box[0] < first[0] ||
+      box[2] > maxRight
+    )
+      return false
+    const y = part.transform![5]
+    if (n > index && (labelY - y < small || labelY - y > small * 1.6)) return false
+    labelY = y
+    seen.add(part)
+  }
+  return true
+}
+
+// Two centered label rows far below a closed prose line are a new block,
+// even when the source forgot the final prose line-end flag.
+const hasSeparatedLabelPair = (
+  items: readonly PdfTextItem[],
+  index: number,
+  previous: PdfTextItem
+): boolean => {
+  if (previous.hasEOL || !/[.!?]$/u.test(previous.str ?? '') || (previous.str?.length ?? 0) < 40)
+    return false
+  const first = items[index],
+    prior = items[index - 2]
+  let n = index + 1
+  if (items[n]?.str === '' && items[n].hasEOL) n++
+  const second = items[n]
+  if (!prior?.hasEOL || !first || !second || n > index + 2) return false
+  const rows = [prior, previous, first, second],
+    boxes = rows.map(nativeRunBox)
+  if (
+    boxes.some((box) => !box) ||
+    rows.some((row) => row.transform![1] !== 0 || row.transform![2] !== 0)
+  )
+    return false
+  const [a, b, c, d] = boxes as readonly (readonly number[])[]
+  const em = previous.height!,
+    small = first.height!,
+    leading = prior.transform![5] - previous.transform![5]
+  return (
+    Math.abs(prior.height! - em) < em * 0.01 &&
+    Math.abs(a[0] - b[0]) < em * 0.1 &&
+    leading >= em &&
+    leading <= em * 1.6 &&
+    small >= em * 0.45 &&
+    small <= em * 0.7 &&
+    Math.abs(second.height! - small) < small * 0.01 &&
+    [first, second].every((row) => /^[\p{L}]{2,20}(?: [\p{L}]{2,20})?$/u.test(row.str ?? '')) &&
+    b[1] - c[3] > em * 3 &&
+    c[0] > b[0] &&
+    c[2] < b[2] &&
+    d[0] > b[0] &&
+    d[2] < b[2] &&
+    Math.abs(c[0] + c[2] - d[0] - d[2]) < small * 0.1 &&
+    first.transform![5] - second.transform![5] >= small &&
+    first.transform![5] - second.transform![5] <= small * 1.6
+  )
+}
+
+// A short skewed heading is independently set on the next paragraph's
+// baseline. Require its complete upright body row and aligned continuation.
+const hasNativeRunInHeading = (
+  items: readonly PdfTextItem[],
+  index: number,
+  previous: PdfTextItem
+): boolean => {
+  const heading = items[index],
+    t = heading.transform,
+    before = nativeRunBox(previous)
+  if (
+    previous.hasEOL ||
+    !before ||
+    !/[.!?]$/u.test(previous.str ?? '') ||
+    (previous.str?.length ?? 0) < 30 ||
+    !/^[A-Z][a-z]{2,20}\.$/u.test(heading.str ?? '') ||
+    (heading.dir && heading.dir !== 'ltr') ||
+    !t ||
+    t.length !== 6 ||
+    !t.every(Number.isFinite) ||
+    t[0] <= 0 ||
+    t[0] !== t[3] ||
+    t[1] !== 0 ||
+    t[2] <= 0 ||
+    t[2] > t[0] * 0.25 ||
+    !Number.isFinite(heading.width) ||
+    !(heading.width! > 0) ||
+    !Number.isFinite(heading.height) ||
+    Math.abs(heading.height! - Math.hypot(t[2], t[3])) > 1e-6 ||
+    previous.transform![1] !== 0 ||
+    previous.transform![2] !== 0
+  )
+    return false
+  let n = index + 1
+  if (items[n]?.str === ' ' && !items[n].hasEOL) n++
+  const body = items[n],
+    next = items[n + 1],
+    b = body && nativeRunBox(body),
+    c = next && nativeRunBox(next)
+  if (
+    !b ||
+    !c ||
+    !body.hasEOL ||
+    body.transform![1] !== 0 ||
+    body.transform![2] !== 0 ||
+    next.transform![1] !== 0 ||
+    next.transform![2] !== 0 ||
+    (body.str?.length ?? 0) < 30
+  )
+    return false
+  const em = previous.height!,
+    leading = previous.transform![5] - t[5]
+  return (
+    heading.height! >= em * 0.9 &&
+    heading.height! <= em &&
+    Math.abs(body.height! - em) < em * 0.01 &&
+    Math.abs(next.height! - em) < em * 0.01 &&
+    Math.abs(t[4] - before[0]) < em * 0.02 &&
+    leading >= em &&
+    leading <= em * 1.6 &&
+    Math.abs(body.transform![5] - t[5]) < em * 0.02 &&
+    b[0] >= t[4] + heading.width! &&
+    b[0] - t[4] - heading.width! < em &&
+    Math.abs(c[0] - t[4]) < em * 0.02 &&
+    Math.abs(t[5] - next.transform![5] - leading) < em * 0.02
+  )
+}
+
 export const joinPdfTextItems = (items: readonly PdfTextItem[]): string => {
   let text = ''
   let previousItem: PdfTextItem | undefined
@@ -559,10 +928,15 @@ export const joinPdfTextItems = (items: readonly PdfTextItem[]): string => {
     const previous = text.at(-1)
     if (previous && !/\s/u.test(previous) && !/^\s/u.test(value) && previousItem) {
       if (
+        hasSeparatedLabelPair(items, index, previousItem) ||
+        hasNativeRunInHeading(items, index, previousItem) ||
         hasInitialLineClosedLabelGap(items, index, previousItem) ||
+        hasMetadataToFigureLabelGap(items, index, previousItem) ||
+        hasDetachedFigurePanelLabelGap(items, index, previousItem) ||
         hasCaptionBlockGap(previousItem, item) ||
         hasNativeCaptionLineGap(items, index, previousItem) ||
         hasNativeCaptionTailBandGap(items, index, previousItem) ||
+        hasCaptionLabelColumnGap(items, index, previousItem) ||
         hasInitialIntegerLineGap(items, index, previousItem) ||
         hasIndependentNumericBandGap(items, index, previousItem)
       )

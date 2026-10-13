@@ -1,27 +1,17 @@
-import {
-  GeneratedFileCard,
-  artifactCardClassName,
-  artifactGalleryClassName
-} from './GeneratedFileCard'
-import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ErrorNotice } from '@/components/error-notice'
+import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import {
-  WorkspaceMessageTimestamp as MessageTimestamp,
-  WorkspaceUserMessageBubble,
-  WorkspaceAssistantMessageSurface
-} from './WorkspaceTranscriptSurface'
+import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
-import { Collapsible } from 'radix-ui'
 import {
+  BookOpenText,
   Bot,
   Brain,
-  BookOpenText,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -31,19 +21,18 @@ import {
   CircleGauge,
   Copy,
   GitBranch,
-  MessageCircleMore,
   Loader2,
+  MessageCircleMore,
   Pencil
 } from 'lucide-react'
+import { Collapsible } from 'radix-ui'
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ReplayReferenceText } from './ReplayReferenceText'
-import { splitReplayReferenceText } from './replay-reference-text'
-import { formatDisplayNumber } from '@/lib/locale-format'
-import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
+import type { AcpTurnTokenUsage } from '../../../../shared/acp-usage-contract'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
-import type { AcpTurnTokenUsage } from '../../../../shared/acp'
+import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
+import { resolvePdfPreparationScope } from '../../../../shared/pdf-preparation-scope'
 import type {
   LiteratureReference,
   MessagePart,
@@ -56,17 +45,42 @@ import {
   isHumanUserMessage,
   isReviewerCorrectionAttribution
 } from '../../../../shared/session-persistence'
-import { resolvePdfPreparationScope } from '../../../../shared/pdf-preparation-scope'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
+import {
+  GeneratedFileCard,
+  artifactCardClassName,
+  artifactGalleryClassName
+} from './GeneratedFileCard'
+import { ReplayReferenceText } from './ReplayReferenceText'
+import {
+  WorkspaceMessageTimestamp as MessageTimestamp,
+  WorkspaceAssistantMessageSurface,
+  WorkspaceUserMessageBubble
+} from './WorkspaceTranscriptSurface'
+import { splitReplayReferenceText } from './replay-reference-text'
 
-import { ArtifactPreview } from './artifact-preview'
-import { ComposerEditor } from './composer/ComposerEditor'
-import { copyMessageToClipboard } from './composer/message-clipboard'
-import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
-import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { FileTypeIcon } from './file-type-icon'
+import type { Annotation, TextAnnotation } from '../../../../shared/annotation-contract'
+import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
 import { providerKindKey } from '../settings/provider-form-value'
 import { AgentFrameworkIcon, ProviderKindIcon } from '../settings/provider-icons'
+import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
+import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { SessionMessageMarkdown } from './SessionMessageMarkdown'
+import { AnnotationDraftCards, AnnotationMessageCards } from './annotations/AnnotationCards'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import type { AnnotationPort } from './annotations/annotation-port'
+import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { ArtifactPreview } from './artifact-preview'
+import {
+  ARTIFACT_PREVIEW_BYTES,
+  getArtifactName,
+  isPendingArtifactPublication,
+  shouldReadArtifactPreview
+} from './artifact-preview-utils'
+import { useBookmarks } from './bookmarks/bookmark-context'
+import { ComposerEditor } from './composer/ComposerEditor'
 import {
   docFromMessageParts,
   docFromText,
@@ -75,12 +89,10 @@ import {
   emptyDoc,
   type ComposerDoc
 } from './composer/composer-doc'
-import {
-  ARTIFACT_PREVIEW_BYTES,
-  getArtifactName,
-  isPendingArtifactPublication,
-  shouldReadArtifactPreview
-} from './artifact-preview-utils'
+import { copyMessageToClipboard } from './composer/message-clipboard'
+import { resolveSessionProviderId } from './error-report'
+import { FileTypeIcon } from './file-type-icon'
+import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import {
   FILE_MISSING_TAG_KEY,
   isManagedFilePublicationPendingError,
@@ -88,23 +100,7 @@ import {
 } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
-import { resolveSessionProviderId } from './error-report'
-import { SessionMessageMarkdown } from './SessionMessageMarkdown'
-import { AnnotationDraftCards, AnnotationMessageCards } from './annotations/AnnotationCards'
-import type { AnnotationPort } from './annotations/annotation-port'
-import { requestAnnotationReveal } from './annotations/annotation-reveal'
-import { requestPdfReadingReveal } from './pdf-reading-reveal'
-import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
-import { useBookmarks } from './bookmarks/bookmark-context'
-import {
-  validateAnnotations,
-  type Annotation,
-  type AnnotationValidationError,
-  type TextAnnotation
-} from '../../../../shared/annotations'
-import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import type { SendEditedMessage } from './workspace-edited-message'
-import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 
 type EditAnnotationTarget = {
   messageId: string

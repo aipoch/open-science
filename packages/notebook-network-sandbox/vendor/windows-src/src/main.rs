@@ -5148,6 +5148,27 @@ mod windows_host {
             let acl_before = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
             let ticket =
                 format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
+            // Start the foreign process before creating the pipe. PowerShell startup can take
+            // several seconds on a busy hosted runner, so let it retry until the server is ready
+            // instead of spending the server's connection timeout before its first attempt.
+            let script = format!(
+                r#"$deadline = [DateTime]::UtcNow.AddSeconds(30); while ([DateTime]::UtcNow -lt $deadline) {{
+  $p = [System.IO.Pipes.NamedPipeClientStream]::new('.', 'LOCAL\OpenScience.RAccess.{ticket}', [System.IO.Pipes.PipeDirection]::InOut)
+  try {{ $p.Connect(1000); $null = $p.ReadByte(); exit 0 }} catch {{ Start-Sleep -Milliseconds 100 }} finally {{ $p.Dispose() }}
+}}
+exit 1"#
+            );
+            let mut foreign = Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &script,
+                ])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap();
             let server_ticket = ticket.clone();
             let server_root = root.clone();
             let expected_pid = unsafe { GetCurrentProcessId() };
@@ -5160,21 +5181,8 @@ mod windows_host {
                     expected_pid,
                 )
             });
-            let script = format!(
-                "$p = [System.IO.Pipes.NamedPipeClientStream]::new('.', 'LOCAL\\OpenScience.RAccess.{ticket}', [System.IO.Pipes.PipeDirection]::InOut); $p.Connect(10000); $null = $p.ReadByte(); $p.Dispose()"
-            );
-            let foreign = Command::new("powershell.exe")
-                .args([
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    &script,
-                ])
-                .creation_flags(0x08000000)
-                .status()
-                .unwrap();
             let error = format!("{:#}", server.join().unwrap().unwrap_err());
+            let foreign = foreign.wait().unwrap();
             assert!(foreign.success());
             assert!(
                 error.contains("Unexpected R verification client"),

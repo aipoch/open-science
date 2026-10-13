@@ -1,16 +1,16 @@
+import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import { ImageOff } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
-import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
-import type { PreviewFileRendererProps } from '../preview-types'
-import { useCachedPreviewImage } from '../useCachedPreviewImage'
-import { ZoomablePreview } from './ZoomablePreview'
+import type { Annotation } from '../../../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../../../shared/annotations'
 import { ImagePointAnnotationSurface } from '../../annotations/ImagePointAnnotationSurface'
-import type { Annotation, AnnotationValidationError } from '../../../../../../shared/annotations'
+import type { PreviewFileRendererProps } from '../preview-types'
+import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import { useCachedPreviewImage } from '../useCachedPreviewImage'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
+import { ZoomablePreview } from './ZoomablePreview'
 
 const ZoomableImage = ({
   url,

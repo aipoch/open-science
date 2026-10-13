@@ -1,7 +1,7 @@
-import type { AuthenticatedDelegateCaller } from './durable-delegated-work'
-import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 import { currentAttempt, sameSession } from './delegated-work-record-invariants'
 import type { DelegatedWorkDurableRecords } from './delegated-work-record-types'
+import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 import {
   StructuredOutputEvidenceAssociationError,
   associateStructuredOutputEvidence,

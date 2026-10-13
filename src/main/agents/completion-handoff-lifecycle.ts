@@ -1,3 +1,18 @@
+import type {
+  ApproveCompletionHandoff,
+  CompletionHandoffContinuation,
+  CompletionHandoffRetryStage,
+  CompletionHandoffStage,
+  DurableCompletionHandoff
+} from './completion-handoff-contract'
+export {
+  type ApproveCompletionHandoff,
+  type CompletionHandoffContinuation,
+  type CompletionHandoffProvenance,
+  type CompletionHandoffRetryStage,
+  type CompletionHandoffStage,
+  type DurableCompletionHandoff
+} from './completion-handoff-contract'
 // Durable, application-owned lifecycle for a completion captured after an approved specialist
 // switch. The lifecycle intentionally has no renderer dependency: only its repository state and
 // provider-facing runtime requests decide whether an old prompt can resume.
@@ -5,54 +20,15 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { deserialize, serialize } from 'node:v8'
+import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
+import type { CompletionHandoffLifecycleEvent } from '../../shared/specialist'
+import { completionHandoffKey } from './completion-gate'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
   ToolCompletionEnvelope,
   TrustedToolCompletionContext
-} from './completion-gate'
-import { completionHandoffKey } from './completion-gate'
-import type { ApprovedSwitchReadback } from '../../shared/agents-contract'
-import type {
-  CompletionHandoffLifecycleEvent,
-  CompletionHandoffPhase,
-  CompletionHandoffRetryFrom
-} from '../../shared/specialist'
-import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
-
-export type CompletionHandoffStage = CompletionHandoffPhase
-export type CompletionHandoffRetryStage = CompletionHandoffRetryFrom
-
-export type CompletionHandoffProvenance = {
-  originatingTurnId: string
-  originatingUserMessageId?: string
-  attachmentIds: string[]
-  artifactIds: string[]
-}
-
-export type CompletionHandoffContinuation = {
-  outcome: string
-  switchReadback?: ApprovedSwitchReadback
-}
-
-export type DurableCompletionHandoff = {
-  id: string
-  context: TrustedToolCompletionContext
-  targetName: string | null
-  approvedSpecialistId?: string
-  approvedSpecialistRevision?: number
-  generation: number
-  sequence: number
-  commitOrder?: number
-  observedAt: number
-  provenance: CompletionHandoffProvenance
-  stage: CompletionHandoffStage
-  envelope?: ToolCompletionEnvelope
-  retryFrom?: CompletionHandoffRetryStage
-  cancelled: boolean
-  failureMessage?: string
-  continuation?: CompletionHandoffContinuation
-}
+} from './completion-gate-contract'
 
 // Renderer adapters consume this projection as read-only data. The lifecycle owns the durable
 // authority; this shape merely prevents every adapter from inventing a subtly different mapping.
@@ -272,14 +248,6 @@ export class FileCompletionHandoffRepository implements CompletionHandoffReposit
 }
 
 export type CompletionHandoffRuntime = CompletionGateRuntime
-
-export type ApproveCompletionHandoff = {
-  context: TrustedToolCompletionContext
-  targetName: string | null
-  generation: number
-  provenance?: Omit<CompletionHandoffProvenance, 'originatingTurnId'>
-  continuation?: CompletionHandoffContinuation
-}
 
 export type ApprovedSpecialistIdentity = {
   specialistId: string

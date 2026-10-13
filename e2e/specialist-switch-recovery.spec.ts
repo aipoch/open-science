@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 // Real Electron/Notebook UI chain with deterministic OpenCode ACP, not a Claude provider test.
 // The real Claude ACP/SDK process contract lives in specialist-switch-recovery.integration.test.ts.
@@ -10,10 +11,7 @@ test('deterministic OpenCode Electron Notebook handoffs settle and repeated pick
   test.setTimeout(240_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Specialist switch recovery')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Specialist switch recovery')
   const specialist = await page.evaluate(async () => {
     const skills = await window.api.settings.createSkill({
       name: 'switch-regression-skill',

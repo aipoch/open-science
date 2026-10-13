@@ -1,4 +1,4 @@
-import type { AgentFrameworkId } from './types'
+import type { AgentFrameworkId } from '../../shared/settings'
 
 type AppMcpServerDefinition = {
   canonicalName: string
@@ -200,11 +200,11 @@ const renderAppMcpToolReferences = (frameworkId: AgentFrameworkId, text: string)
 }
 
 export {
-  appMcpToolIdentities,
   appMcpServerAliases,
+  appMcpToolIdentities,
   canonicalAppMcpServerName,
   modelFacingAppMcpServerName,
   modelFacingAppMcpToolName,
-  resolveCanonicalMcpToolIdentity,
-  renderAppMcpToolReferences
+  renderAppMcpToolReferences,
+  resolveCanonicalMcpToolIdentity
 }

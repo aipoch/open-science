@@ -1,3 +1,4 @@
+import type { ArchivedView } from '../../lib/settings-navigation'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { Archive, LoaderCircle, RotateCcw, Trash2 } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
@@ -18,7 +19,7 @@ import { useSessionStore } from '@/stores/session-store'
 import type { Project } from '../../../../shared/projects'
 import { sessionRevision } from '../../../../shared/session-persistence'
 
-export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
+export type { ArchivedView } from '../../lib/settings-navigation'
 
 type ArchivedPanelProps = {
   view: ArchivedView

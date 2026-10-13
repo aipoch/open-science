@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
 
@@ -11,10 +12,7 @@ test('refocuses the open find overlay and follows app language changes', async (
   await page.evaluate(async () => {
     await window.api.locale.setPreference({ preference: 'en' })
   })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Find overlay project')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Find overlay project')
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const modifiers = process.platform === 'darwin' ? (['meta'] as const) : (['control'] as const)

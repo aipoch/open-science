@@ -1,24 +1,23 @@
-import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
-import { runtimeMetadata } from '../runtime-metadata'
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { NotebookRunResultDeliveryAdapter } from '../background-result-delivery/notebook-adapter'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { serializeProvisioner, type RuntimeProvisioner } from '@aipoch/environment'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { NotebookRunResultDeliveryAdapter } from '../background-result-delivery/notebook-adapter'
+import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
 import { installNotebookEnvironmentSurface } from '../notebook/application'
 import { broadcastNotebookEnvProgress } from '../notebook/env-ipc'
 import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
 } from '../notebook/environment-lifecycle-workflows'
-import { serializeProvisioner } from '@aipoch/environment'
-import { effectiveMirrorAsync } from '../notebook/mirror-probe'
-import type { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
-import type { NotebookCommandWorkflows } from '../notebook/notebook-workflows'
 import {
   createProductionProvisioner,
   type ProductionProvisionerDeps
 } from '../notebook/environment-production'
-import { type RuntimeProvisioner } from '@aipoch/environment'
+import { effectiveMirrorAsync } from '../notebook/mirror-probe'
+import type { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
+import type { NotebookCommandWorkflows } from '../notebook/notebook-workflows'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import { runtimeMetadata } from '../runtime-metadata'
 import type { SettingsService } from '../settings/service'
 import { runDataRootStartupRecovery } from '../storage/migration-state'
 

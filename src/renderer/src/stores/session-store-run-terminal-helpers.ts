@@ -1,25 +1,24 @@
-import {
-  MAX_ACP_RUNTIME_EVENTS,
-  sanitizeAcpContextWindowSample,
-  type AcpContextWindowSample,
-  type AcpModelCallUsage,
-  type AcpTurnTokenUsage
-} from '../../../shared/acp'
+import { MAX_ACP_RUNTIME_EVENTS, sanitizeAcpContextWindowSample } from '../../../shared/acp'
+import type {
+  AcpContextWindowSample,
+  AcpModelCallUsage,
+  AcpTurnTokenUsage
+} from '../../../shared/acp-usage-contract'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
-import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
 import type {
   PersistedActivityGroup,
   PersistedChatSession,
   PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
+import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
+import type { ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
+import { projectSessionInteractionState } from './session-store-interaction-state'
 import { synchronizeSessionGraph } from './session-store-message-graph-helpers'
 import {
   completeOpenActivities,
   completeOpenActivityGroups,
   failOpenActivities
 } from './session-store-run-activity-helpers'
-import { projectSessionInteractionState } from './session-store-interaction-state'
-import type { ChatMessage, ChatSession, ToolActivity } from './session-store-persistence-owner'
 
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
 const TERMINAL_ARTIFACT_ERROR_PREFIX = 'Generated file finalization cannot be retried'

@@ -1,12 +1,12 @@
 import type {
-  SessionDelegatedWorkRuntimeContext,
   DelegatedMessageCommand,
   DelegatedQuestionAnswer,
-  DelegatedQuestionRequest
-} from '../session-runtime-context'
-import { isRecord, hasOnlyFields, asString, asNumber } from './primitives'
-import { sanitizeDelegatedWorkRecords } from './delegated-records'
+  DelegatedQuestionRequest,
+  SessionDelegatedWorkRuntimeContext
+} from '../delegated-work-contract'
 import { sanitizeAgentUserChoiceRequest } from '../elicitation'
+import { sanitizeDelegatedWorkRecords } from './delegated-records'
+import { asNumber, asString, hasOnlyFields, isRecord } from './primitives'
 
 export const sanitizeSessionDelegatedWorkRuntimeContext = (
   value: unknown

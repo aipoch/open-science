@@ -1,9 +1,10 @@
+import type { AcpReplayMessageImage } from './acp-image-contract'
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  type AcpReplayMessageImage
-} from './acp'
-import { buildHistoryReplay, type HistoryReplayDescriptor } from './history-preamble'
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE
+} from './acp-image-contract'
+import { buildHistoryReplay } from './history-preamble'
+import type { HistoryReplayDescriptor } from './history-replay-contract'
 import type { PersistedChatMessage } from './session-persistence'
 import {
   imageAttachmentMimeType,

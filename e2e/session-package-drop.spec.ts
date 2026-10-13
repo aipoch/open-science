@@ -2,6 +2,8 @@ import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test('drops a native package into the current Project without adding an attachment', async ({
   app
@@ -9,13 +11,9 @@ test('drops a native package into the current Project without adding an attachme
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   const archive = await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Research exchange')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Research exchange')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
@@ -114,10 +112,7 @@ test('attaches native files across the conversation and excludes both sidebars',
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Workspace file drop')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Workspace file drop')
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await expect(page.getByTestId('files-view')).toBeVisible()
   await expect(page.locator('#right-panel')).toBeVisible()
@@ -164,10 +159,7 @@ test('attaches native files across the conversation and excludes both sidebars',
     await attachment.click()
     await expect(attachment).toHaveCount(0)
     if (target === workspace) {
-      await page
-        .getByRole('textbox', { name: 'Ask anything' })
-        .fill('Check the workspace file drop.')
-      await page.getByRole('button', { name: 'Send message' }).click()
+      await submitPromptViaUi(page, 'Check the workspace file drop.')
       await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
     }

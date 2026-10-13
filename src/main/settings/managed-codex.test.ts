@@ -10,6 +10,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   writeFile
 } from 'node:fs/promises'
@@ -2023,7 +2024,104 @@ describe('patchCodexAcpTurnUsageSource', () => {
   })
 })
 
+// Adapter startup already patched by the previous application release.
+const PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE =
+  [
+    'function startCodexConnection(codexPath, env) {',
+    '  const spawnEnv = env ?? process.env;',
+    '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
+    '  const startupConfig = startupConfigString ? JSON.parse(startupConfigString) : void 0;',
+    '  const modelCatalogPath = typeof startupConfig?.model_catalog_json === "string"',
+    '    ? startupConfig.model_catalog_json',
+    '    : void 0;',
+    '  const appServerArgs = modelCatalogPath',
+    '    ? ["app-server", "-c", `model_catalog_json=${JSON.stringify(modelCatalogPath)}`]',
+    '    : ["app-server"];',
+    '  let codex;',
+    '  if (codexPath) {',
+    '    codex = process.platform === "win32"',
+    '      ? spawn(`"${codexPath}" app-server`, appServerArgs.slice(1), { shell: true, env: spawnEnv })',
+    '      : spawn(codexPath, appServerArgs, { env: spawnEnv });',
+    '  } else {',
+    '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+    '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
+    '  }'
+  ].join('\n') + '\n  return codex;\n}'
+
 describe('patchCodexAcpModelCatalogStartupSource', () => {
+  it.each(['C:\\Program Files\\Codex\\codex.exe', undefined])(
+    'hides the nested Windows app-server console for executable %s',
+    (codexPath) => {
+      const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
+      const spawn = vi.fn<(...args: unknown[]) => { pid: number }>(() => ({ pid: 1 }))
+      const start = Function(
+        'spawn',
+        'process',
+        'createRequire',
+        'importMetaUrl',
+        `${patched.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+      )(
+        spawn,
+        { platform: 'win32', execPath: 'node.exe', env: {} },
+        () => ({ resolve: () => 'bundled-codex.js' }),
+        'file:///adapter.js'
+      ) as (path: string | undefined, env: NodeJS.ProcessEnv) => unknown
+      const env = { CODEX_CONFIG: JSON.stringify({ model: 'gpt-5.4' }) }
+      start(codexPath, env)
+      expect(spawn).toHaveBeenCalledOnce()
+      expect(spawn.mock.calls[0]).toEqual(
+        codexPath
+          ? [`"${codexPath}" app-server`, [], { shell: true, env, windowsHide: true }]
+          : ['node.exe', ['bundled-codex.js', 'app-server'], { env, windowsHide: true }]
+      )
+    }
+  )
+
+  it('upgrades the installed startup patch and leaves a second check unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-console-'))
+    try {
+      const adapterPath = join(root, 'index.js')
+      await writeFile(
+        adapterPath,
+        withPinnedSkillMapper('').replace(
+          PINNED_MODEL_CATALOG_STARTUP_FIXTURE,
+          PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE
+        )
+      )
+      await ensureManagedCodexContextUsage(adapterPath)
+      const upgraded = await readFile(adapterPath, 'utf8')
+      const spawn = vi.fn<(...args: unknown[]) => { pid: number }>(() => ({ pid: 1 }))
+      const start = Function(
+        'spawn',
+        'process',
+        'createRequire',
+        'importMetaUrl',
+        `${upgraded.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+      )(
+        spawn,
+        { platform: 'win32', execPath: 'node.exe', env: {} },
+        () => ({ resolve: () => 'bundled-codex.js' }),
+        'file:///adapter.js'
+      ) as (path: string | undefined, env: NodeJS.ProcessEnv) => unknown
+      const env = { CODEX_CONFIG: JSON.stringify({ model_catalog_json: 'C:\\Data\\catalog.json' }) }
+      start('C:\\Program Files\\Codex\\codex.exe', env)
+      start(undefined, env)
+      expect(spawn.mock.calls.map((call) => call[2])).toEqual([
+        { shell: true, env, windowsHide: true },
+        { env, windowsHide: true }
+      ])
+      const catalogArg = `model_catalog_json=${JSON.stringify('C:\\Data\\catalog.json')}`
+      expect(spawn.mock.calls[0]?.[1]).toEqual(['-c', catalogArg])
+      expect(spawn.mock.calls[1]?.[1]).toEqual(['bundled-codex.js', 'app-server', '-c', catalogArg])
+      const before = await stat(adapterPath)
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(upgraded)
+      expect((await stat(adapterPath)).mtimeMs).toBe(before.mtimeMs)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('passes a generated model catalog to the native app-server at process startup', () => {
     const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
     const spawn = vi.fn(() => ({ pid: 1 }))
@@ -2076,6 +2174,14 @@ describe('patchCodexAcpModelCatalogStartupSource', () => {
       ['app-server'],
       expect.objectContaining({ env: expect.any(Object) })
     )
+  })
+
+  it('rejects ambiguous original and previously patched startup functions', () => {
+    expect(() =>
+      patchCodexAcpModelCatalogStartupSource(
+        `${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n${PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE}`
+      )
+    ).toThrow(/model-catalog startup patch no longer matches/)
   })
 
   it('fails closed when the pinned app-server spawn source drifts', () => {

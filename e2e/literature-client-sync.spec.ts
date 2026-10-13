@@ -3,13 +3,8 @@ import {
   literatureItemInputSchema
 } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
-
-const library = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
-}
+import { openAllReferences } from './fixtures/library'
 
 test('synchronizes ordinary writes across two Electron renderers and a Web client', async ({
   app,
@@ -22,7 +17,7 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
   const web = await browser.newPage()
   try {
     await web.goto(await app.authenticatedWebUrl())
-    for (const page of [first, second, web]) await library(page)
+    for (const page of [first, second, web]) await openAllReferences(page)
     const item = literatureItemInputSchema.parse({
       itemType: 'journalArticle',
       title: 'Created in desktop'
@@ -110,7 +105,7 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
 test('protects unsaved reference edits and keeps save actions visible', async ({ app }) => {
   const page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  await library(page)
+  await openAllReferences(page)
   await page.getByRole('button', { name: 'Add', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
   const title = page.getByLabel('Title', { exact: true })
@@ -159,7 +154,7 @@ test('protects unsaved reference edits and keeps save actions visible', async ({
 test('finishes manual reference creation before opening its saved detail', async ({ app }) => {
   const page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  await library(page)
+  await openAllReferences(page)
   await page.getByRole('button', { name: 'Add', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Add reference', exact: true })

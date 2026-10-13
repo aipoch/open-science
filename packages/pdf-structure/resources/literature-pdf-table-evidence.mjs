@@ -1063,7 +1063,216 @@ function isNativeProseFootnoteOverlap(table, caption, items, rules) {
 // A literal caption and a closed native frame preserve the visual table when
 // its detector grid cannot prove cell semantics. This does not create cells or
 // propagate a grouped stub through quoted or mathematical records.
+// Printed literal delimiters prove one complete quoted block, not detector
+// columns or semantic records. Preserve it through the existing visual result.
+function proveCaptionedNativeLiteralFrame(table, caption, items, rules) {
+  const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (
+    !valid(table?.cropRect) ||
+    !valid(caption?.rect) ||
+    !/^Table\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLC]+)\s*[:.]/iu.test(caption.lines?.[0] ?? '')
+  )
+    return
+  if (items.some((i) => i.text?.trim() && !valid(i.rect))) return
+  const nearby = items.filter(
+    (i) => i.horizontal && i.height > 0 && intersection(i.rect, table.cropRect) > 0
+  )
+  const h = Math.max(0, ...nearby.map((i) => i.height))
+  if (!Number.isFinite(h) || h <= 0) return
+  const horizontal = joinHorizontalTableRules(rules).filter((r) => r.every(Number.isFinite))
+  const openings = horizontal.filter(
+    (r) =>
+      r[1] > caption.rect[3] &&
+      r[1] - caption.rect[3] < h * 2 &&
+      r[1] <= table.cropRect[1] + h &&
+      r[0] <= table.cropRect[0] + h &&
+      r[2] >= table.cropRect[2] - h
+  )
+  const proofs = []
+  for (const opening of openings) {
+    const closing = horizontal
+      .filter(
+        (r) =>
+          r[1] > table.cropRect[3] - h &&
+          r[1] > opening[1] + h * 3 &&
+          Math.abs(r[0] - opening[0]) < 0.05 &&
+          Math.abs(r[2] - opening[2]) < 0.05
+      )
+      .sort((a, b) => a[1] - b[1])[0]
+    if (!closing) continue
+    const crop = [opening[0], opening[1], closing[2], closing[1]]
+    const source = items.filter((i) => i.text?.trim() && intersection(i.rect, crop) > 0)
+    if (
+      source.length < 8 ||
+      new Set(source.map((i) => JSON.stringify([i.text, i.rect, i.baseline]))).size !==
+        source.length ||
+      source.some(
+        (i) =>
+          !i.horizontal ||
+          !valid(i.rect) ||
+          !Number.isFinite(i.height) ||
+          i.height <= 0 ||
+          !Number.isFinite(i.baseline) ||
+          i.rect[0] < crop[0] ||
+          i.rect[1] < crop[1] ||
+          i.rect[2] > crop[2] ||
+          i.rect[3] > crop[3] ||
+          /^(?:Table|Figure|Algorithm)\s+\d+\b/iu.test(i.text.trim())
+      )
+    )
+      continue
+    const delimiters = source
+      .filter((i) => /^(?:`{3}|‘{3}|'{3})$/u.test(i.text.trim()))
+      .sort((a, b) => a.baseline - b.baseline)
+    if (
+      delimiters.length !== 2 ||
+      delimiters[0].text !== delimiters[1].text ||
+      Math.abs(delimiters[0].rect[0] - delimiters[1].rect[0]) > 0.05 ||
+      Math.abs(delimiters[0].height - delimiters[1].height) > 0.05 ||
+      !source.some((i) => i.rect[1] > delimiters[0].rect[3] && i.rect[3] < delimiters[1].rect[1]) ||
+      source.some((i) => i.rect[1] >= delimiters[1].rect[3]) ||
+      closing[1] - delimiters[1].rect[3] > h * 2 ||
+      horizontal.some(
+        (r) => r[1] > opening[1] && r[1] < closing[1] && r[0] <= crop[0] && r[2] >= crop[2]
+      ) ||
+      items.some(
+        (i) =>
+          i.text?.trim() &&
+          i.rect[0] < crop[2] &&
+          i.rect[2] > crop[0] &&
+          i.rect[1] < opening[1] &&
+          i.rect[3] > caption.rect[3]
+      )
+    )
+      continue
+    proofs.push({ kind: 'native-closed-table-visual', cropRect: crop, sourceTokens: source })
+  }
+  return proofs.length === 1 ? proofs[0] : undefined
+}
+
+function proveCaptionedNativeDoubleRulePlate(table, caption, items, rules) {
+  const crop = table?.cropRect
+  const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (
+    !valid(crop) ||
+    !valid(caption?.rect) ||
+    !/^Table\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLC]+)\s*[:.]/iu.test(caption.lines?.[0] ?? '')
+  )
+    return
+  if (items.some((i) => i.text?.trim() && !valid(i.rect))) return
+  const near = items.filter((i) => i.horizontal && intersection(i.rect, crop) > 0)
+  const h = Math.max(0, ...near.map((i) => i.height))
+  if (!Number.isFinite(h) || h <= 0 || caption.rect[1] <= crop[3]) return
+  const horizontal = joinHorizontalTableRules(rules).filter((r) => r.every(Number.isFinite))
+  const pair = (a, b) =>
+    Math.abs(a[0] - b[0]) < 0.01 &&
+    Math.abs(a[2] - b[2]) < 0.01 &&
+    b[1] - a[1] > h * 0.1 &&
+    b[1] - a[1] < h * 0.3
+  const openings = horizontal.filter(
+    (r) => Math.abs(r[1] - crop[1]) < h && r[0] < crop[0] + h && r[2] > crop[2] - h
+  )
+  const closings = horizontal.filter(
+    (r) => r[1] < caption.rect[1] && caption.rect[1] - r[1] < h * 2
+  )
+  const captionStarts = items.filter(
+    (i) =>
+      i.horizontal &&
+      /^Table\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLC]+)\s*[:.]$/iu.test(i.text.trim()) &&
+      intersection(i.rect, caption.rect) > 0 &&
+      Number.isFinite(i.baseline)
+  )
+  const captionLine = (i) =>
+    captionStarts.length === 1 &&
+    i.horizontal &&
+    Number.isFinite(i.baseline) &&
+    Math.abs(i.baseline - captionStarts[0].baseline) < 0.01 &&
+    i.rect[0] >= caption.rect[0] &&
+    i.rect[2] <= caption.rect[2] &&
+    i.rect[1] >= caption.rect[1] - i.height * 0.02 &&
+    i.rect[3] <= caption.rect[3]
+  const matches = []
+  for (const a of openings)
+    for (const b of openings.filter((r) => pair(a, r))) {
+      for (const c of closings)
+        for (const d of closings.filter((r) => pair(c, r))) {
+          if (
+            c[1] <= crop[3] ||
+            Math.abs(a[0] - c[0]) > 0.01 ||
+            Math.abs(a[2] - c[2]) > 0.01 ||
+            Math.abs((caption.rect[0] + caption.rect[2] - a[0] - a[2]) / 2) > h * 2
+          )
+            continue
+          const source = items.filter(
+            (i) =>
+              i.text?.trim() &&
+              i.rect?.[1] < c[1] &&
+              i.rect[3] > b[1] &&
+              i.rect[0] < a[2] &&
+              i.rect[2] > a[0]
+          )
+          if (
+            source.length < 12 ||
+            new Set(source.map((i) => JSON.stringify([i.text, i.rect, i.baseline]))).size !==
+              source.length ||
+            source.some(
+              (i) =>
+                !i.horizontal ||
+                !i.rect.every(Number.isFinite) ||
+                !Number.isFinite(i.height) ||
+                i.height <= 0 ||
+                !Number.isFinite(i.baseline) ||
+                i.rect[1] < b[1] ||
+                i.rect[3] > c[1] ||
+                i.rect[0] < a[0] - h ||
+                i.rect[2] > a[2] + h ||
+                /^(?:Table|Figure|Algorithm)\s+\d+\b/iu.test(i.text.trim())
+            )
+          )
+            continue
+          const divider = horizontal.filter(
+            (r) =>
+              r[1] > b[1] + h &&
+              r[1] < c[1] - h &&
+              Math.abs(r[0] - a[0]) < 0.01 &&
+              Math.abs(r[2] - a[2]) < 0.01
+          )
+          if (
+            divider.length !== 1 ||
+            !source.some((i) => i.baseline < divider[0][1]) ||
+            !source.some((i) => i.rect[1] > divider[0][1]) ||
+            source.filter((i) => /[=∂∇∫]/u.test(i.text)).length < 3 ||
+            items.some(
+              (i) =>
+                i.text?.trim() &&
+                i.rect[0] < a[2] &&
+                i.rect[2] > a[0] &&
+                i.rect[1] < caption.rect[1] &&
+                i.rect[3] > d[1] &&
+                !captionLine(i)
+            )
+          )
+            continue
+          matches.push({
+            kind: 'native-closed-table-visual',
+            cropRect: [
+              Math.min(a[0], ...source.map((i) => i.rect[0])),
+              a[1],
+              Math.max(a[2], ...source.map((i) => i.rect[2])),
+              d[1]
+            ],
+            sourceTokens: source
+          })
+        }
+    }
+  return matches.length === 1 ? matches[0] : undefined
+}
+
 export function proveCaptionedNativeClosedTableFrame(table, caption, items, rules) {
+  const literal = proveCaptionedNativeLiteralFrame(table, caption, items, rules)
+  if (literal) return literal
+  const doubleRulePlate = proveCaptionedNativeDoubleRulePlate(table, caption, items, rules)
+  if (doubleRulePlate) return doubleRulePlate
   if (
     !table.cropRect ||
     !caption?.rect ||
@@ -1584,7 +1793,135 @@ function isNumberedNativeDisplay(table, items) {
 // A displayed system of equations can be split into detector columns and look
 // like a small table.  Without a caption, repeated mathematical rows and an
 // equation ordinal are stronger evidence of native prose than tabular data.
+// A detector may see only the middle of a matrix and invent two rows. The
+// complete paired native bracket carriers, assignment and enclosed literals
+// establish display ownership independently of that damaged grid.
+function isNativeBracketedAssignment(table, caption, items, rules) {
+  if (caption || !table.cropRect?.every(Number.isFinite) || !Array.isArray(rules)) return false
+  const valid = (i) =>
+    i.horizontal &&
+    i.rect?.length === 4 &&
+    i.rect.every(Number.isFinite) &&
+    i.rect[2] > i.rect[0] &&
+    i.rect[3] > i.rect[1] &&
+    Number.isFinite(i.height) &&
+    i.height > 0 &&
+    Number.isFinite(i.baseline)
+  const starts = items.filter((i) => i.text === '⎡' && valid(i))
+  for (const start of starts) {
+    const h = start.height
+    const left = items
+      .filter(
+        (i) =>
+          '⎡⎢⎣'.includes(i.text) &&
+          i.text?.length === 1 &&
+          Math.abs(i.rect?.[0] - start.rect[0]) < h * 0.02 &&
+          i.rect[1] >= start.rect[1] - h * 0.02
+      )
+      .sort((a, b) => a.rect[1] - b.rect[1])
+    const end = left.findIndex((i) => i.text === '⎣')
+    if (end < 3) continue
+    left.splice(end + 1)
+    const right = items
+      .filter(
+        (i) =>
+          '⎤⎥⎦'.includes(i.text) &&
+          i.text?.length === 1 &&
+          i.rect?.[0] > start.rect[2] &&
+          i.rect[1] >= start.rect[1] - h * 0.02 &&
+          i.rect[1] <= left.at(-1).rect[1] + h * 0.02
+      )
+      .sort((a, b) => a.rect[1] - b.rect[1])
+    if (
+      right.length !== left.length ||
+      right[0]?.text !== '⎤' ||
+      right.at(-1)?.text !== '⎦' ||
+      left.slice(1, -1).some((i) => i.text !== '⎢') ||
+      right.slice(1, -1).some((i) => i.text !== '⎥') ||
+      left.some(
+        (i, n) =>
+          !valid(i) ||
+          !valid(right[n]) ||
+          Math.abs(i.height - h) > h * 0.02 ||
+          Math.abs(right[n].height - h) > h * 0.02 ||
+          Math.abs(i.rect[1] - right[n].rect[1]) > h * 0.02 ||
+          Math.abs(right[n].rect[0] - right[0].rect[0]) > h * 0.02 ||
+          (n && (i.rect[1] <= left[n - 1].rect[1] || i.rect[1] > left[n - 1].rect[3]))
+      )
+    )
+      continue
+    const bounds = [start.rect[0], start.rect[1], right[0].rect[2], left.at(-1).rect[3]]
+    if (
+      intersection(table.cropRect, bounds) < area(bounds) * 0.8 ||
+      rules.some((r) => intersection([r[0], r[1], r[2] + 0.01, r[3] + 0.01], bounds) > 0)
+    )
+      continue
+    const body = items.filter(
+      (i) => intersection(i.rect, bounds) > 0 && !left.includes(i) && !right.includes(i)
+    )
+    if (
+      !body.length ||
+      body.some(
+        (i) =>
+          !valid(i) ||
+          i.rect[0] < start.rect[2] - h * 0.02 ||
+          i.rect[2] > right[0].rect[0] + h * 0.02 ||
+          i.rect[1] < bounds[1] ||
+          i.rect[3] > bounds[3] ||
+          !/^[\p{L}\p{N}−+.,⋯⋮⋱ˆ^]+$/u.test(i.text) ||
+          [...i.text].length > 3
+      )
+    )
+      continue
+    const bands = []
+    for (const i of body.filter((i) => i.height >= h * 0.9)) {
+      const band = bands.find((b) => Math.abs(b[0].baseline - i.baseline) < h * 0.02)
+      if (band) band.push(i)
+      else bands.push([i])
+    }
+    if (bands.length < 3 || bands.some((b) => b.length < 3)) continue
+    const equals = items.filter(
+      (i) =>
+        i.text === '=' &&
+        valid(i) &&
+        i.rect[2] <= start.rect[0] &&
+        start.rect[0] - i.rect[2] < h &&
+        i.rect[1] > bounds[1] &&
+        i.rect[3] < bounds[3]
+    )
+    if (equals.length !== 1) continue
+    const sign = equals[0]
+    const lhs = items.filter(
+      (i) =>
+        valid(i) &&
+        i.rect[2] <= sign.rect[0] &&
+        sign.rect[0] - i.rect[2] < h * 4 &&
+        Math.abs(i.rect[3] - sign.rect[3]) < h * 0.5
+    )
+    if (
+      !lhs.some((i) => /^\p{L}$/u.test(i.text)) ||
+      lhs.some((i) => !/^[\p{L}\p{N}(),]+$/u.test(i.text))
+    )
+      continue
+    const display = new Set([...left, ...right, ...body, sign, ...lhs])
+    if (
+      items.some(
+        (i) => i.text?.trim() && intersection(i.rect, table.cropRect) > 0 && !display.has(i)
+      ) ||
+      (table.cells ?? [])
+        .flatMap((c) => c.sourceRects ?? [])
+        .some(
+          (rect) => [...display].filter((i) => i.rect.every((v, n) => v === rect[n])).length !== 1
+        )
+    )
+      continue
+    return true
+  }
+  return false
+}
+
 function isNativeAssignedMatrixDisplay(table, caption, items, rules) {
+  if (isNativeBracketedAssignment(table, caption, items, rules)) return true
   if (caption || !table.cropRect || table.grid.length < 3) return false
   const source = items.filter((i) => i.horizontal && i.text?.trim() && inside(table.cropRect, i))
   const valid = (i) =>
@@ -2015,6 +2352,98 @@ function isCaptionedNarrativeCard(table, caption) {
 // stronger ownership evidence than a lexical code signal.
 function isNativeCodeListing(table, caption, items) {
   if (caption || !table.cropRect || !Array.isArray(items)) return false
+  const valid = (i) =>
+    i.horizontal &&
+    i.rect?.length === 4 &&
+    i.rect.every(Number.isFinite) &&
+    i.rect[0] < i.rect[2] &&
+    i.rect[1] < i.rect[3] &&
+    Number.isFinite(i.height) &&
+    i.height > 0 &&
+    Number.isFinite(i.baseline)
+  const labels = items.filter(
+    (i) =>
+      valid(i) &&
+      /^Listing\s+\d+\s*[:.]$/iu.test(i.text.trim()) &&
+      i.rect[1] >= table.cropRect[3] - i.height &&
+      i.rect[1] - table.cropRect[3] < i.height * 3 &&
+      i.rect[0] >= table.cropRect[0] &&
+      i.rect[2] <= table.cropRect[2]
+  )
+  if (labels.length === 1) {
+    const label = labels[0],
+      h = label.height
+    const numbers = items
+      .filter(
+        (i) =>
+          /^\d{1,3}$/u.test(i.text?.trim() ?? '') &&
+          i.rect?.[1] < label.rect[1] &&
+          i.rect[3] > table.cropRect[1] - h * 30 &&
+          i.rect[0] >= table.cropRect[0] &&
+          i.rect[2] < table.cropRect[0] + h * 2
+      )
+      .sort((a, b) => a.baseline - b.baseline)
+    if (
+      numbers.length >= 5 &&
+      numbers.length <= 80 &&
+      numbers.every(
+        (i, n) =>
+          valid(i) &&
+          Number(i.text) === n + 1 &&
+          Math.abs(i.rect[2] - numbers[0].rect[2]) < 0.01 &&
+          Math.abs(i.height - numbers[0].height) < 0.01 &&
+          (!n ||
+            (i.baseline > numbers[n - 1].baseline && i.baseline - numbers[n - 1].baseline < h * 2))
+      ) &&
+      label.rect[1] - numbers.at(-1).baseline < h * 3
+    ) {
+      const source = items.filter(
+        (i) =>
+          i.text?.trim() &&
+          i.rect?.[1] >= numbers[0].rect[1] - h &&
+          i.rect[3] <= label.rect[1] &&
+          i.rect[0] >= Math.min(...numbers.map((n) => n.rect[0])) &&
+          i.rect[2] <= table.cropRect[2]
+      )
+      const code = source.filter((i) => !numbers.includes(i))
+      const cells = table.cells ?? [],
+        sameRect = (a, b) => Array.isArray(a) && a.length === 4 && a.every((v, n) => v === b[n]),
+        gutterCells = cells.filter(
+          (cell) =>
+            cell.sourceRects?.length === 1 &&
+            numbers.filter((n) => n.text === cell.text && sameRect(cell.sourceRects[0], n.rect))
+              .length === 1
+        )
+      const words = code.map((i) =>
+        i.text.replace(
+          /\b(?:w\s+h\s+i\s+l\s+e|i\s+f|e\s+l\s+s\s+e|f\s+o\s+r|r\s+e\s+t\s+u\s+r\s+n|c\s+o\s+n\s+t\s+i\s+n\s+u\s+e)\b/gu,
+          (s) => s.replace(/\s/gu, '')
+        )
+      )
+      if (
+        source.every(valid) &&
+        gutterCells.length >= 2 &&
+        new Set(gutterCells.map((c) => c.column)).size === 1 &&
+        cells.every((cell) =>
+          (cell.sourceRects ?? []).every(
+            (r) => source.filter((i) => sameRect(r, i.rect)).length === 1
+          )
+        ) &&
+        code.length >= 5 &&
+        code
+          .filter((i) => i.height >= h * 0.9)
+          .every(
+            (i) => numbers.filter((n) => Math.abs(i.baseline - n.baseline) < h * 0.1).length === 1
+          ) &&
+        words.filter((text) => /\b(?:while|if|else|for|return|continue)\b/iu.test(text)).length >=
+          3 &&
+        words.filter((text) => /[():;=]/u.test(text)).length >= 3 &&
+        Math.max(...code.map((i) => i.rect[0])) - Math.min(...code.map((i) => i.rect[0])) > h &&
+        code.every((i) => i.rect[0] - numbers[0].rect[2] > numbers[0].height)
+      )
+        return true
+    }
+  }
   const populated = table.grid.flat().filter((text) => text.trim())
   if (populated.length < 2) return false
   const text = [...populated, ...(table.unassigned ?? [])].join(' ')
@@ -2068,6 +2497,66 @@ function isNativeCodeListing(table, caption, items) {
     /^(?:return|yield)\b/i.test(item.text.trim())
   ).length
   return sourceDeclarations >= 2 && sourceReturns >= 2
+}
+
+// A ruled two-column action plan is visually a listing, even though a detector
+// can turn each line into a plausible pair of table cells.  These blocks have
+// no table caption, little natural-language prose, and repeated identifier()
+// calls (often with an ordinal in the left column).  Keep the proof narrow and
+// require both closing horizontal rules; captioned two-column tables bypass it.
+function isCaptionlessRuledActionListing(table, caption, items, rules) {
+  if (
+    caption ||
+    !table?.cropRect ||
+    !Array.isArray(items) ||
+    !Array.isArray(rules) ||
+    table.grid.length < 6 ||
+    Math.max(...table.grid.map((row) => row.length)) !== 2
+  )
+    return false
+  const values = table.grid
+    .flat()
+    .map((text) => text.trim())
+    .filter(Boolean)
+  if (values.length < 12) return false
+  const action = /\b[a-z][\w-]*_[a-z][\w-]*\s*\([^)]*\)/iu
+  const actionCells = values.filter((text) => action.test(text))
+  if (actionCells.length < Math.ceil(values.length * 0.6)) return false
+  // The rule is for compact command/listing text, not prose tables whose cells
+  // happen to contain one function-like example.
+  if (values.filter((text) => text.split(/\s+/u).length > 8).length > 1) return false
+  const [left, top, right, bottom] = table.cropRect
+  const width = right - left
+  if (!(width > 0 && bottom > top)) return false
+  const frameTolerance = Math.max(8, (bottom - top) * 0.035)
+  const frameRules = rules.filter((rule) => {
+    if (!Array.isArray(rule) || rule.length !== 4 || !rule.every(Number.isFinite)) return false
+    const [x1, y1, x2, y2] = rule
+    return (
+      Math.abs(y2 - y1) <= 1.5 &&
+      x2 - x1 >= width * 0.7 &&
+      ((Math.abs(y1 - top) <= frameTolerance && Math.abs(y2 - top) <= frameTolerance) ||
+        (Math.abs(y1 - bottom) <= frameTolerance && Math.abs(y2 - bottom) <= frameTolerance))
+    )
+  })
+  if (frameRules.length < 2) return false
+  const source = items.filter(
+    (item) =>
+      item?.horizontal &&
+      Array.isArray(item.rect) &&
+      item.rect.length === 4 &&
+      item.rect.every(Number.isFinite) &&
+      item.rect[1] >= top - 2 &&
+      item.rect[3] <= bottom + 2 &&
+      item.rect[2] > left &&
+      item.rect[0] < right
+  )
+  // PDF text extraction often exposes a complete two-column listing as one
+  // combined line per row rather than one item per inferred cell.  Require
+  // row-level coverage, while retaining the crop-boundary and two-rule proof;
+  // requiring two source items per row rejects the same listing when its
+  // columns are only visually separated.
+  return source.length >= Math.max(4, Math.ceil(table.grid.length * 0.75))
 }
 
 function isNativeSingleColumnDerivation(table, caption, items, rules) {
@@ -3165,6 +3654,11 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   const nativeCaption = caption?.rect
     ? { ...caption, rect: caption.rect.map((v) => v * (table.sourceViewport?.scale ?? 1.5)) }
     : undefined
+  const literalFrame =
+    nativeCaption &&
+    sourceRules &&
+    proveCaptionedNativeLiteralFrame(table, nativeCaption, pageItems, sourceRules)
+  if (literalFrame && !isNativeClosedFrameOwnedByTable(table, literalFrame)) return false
   const nativeLeaves =
     nativeCaption &&
     sourceRules &&
@@ -3265,6 +3759,7 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   if (isCaptionedNarrativeCard(table, caption)) return false
   if (isImageBackedNonTable(table, caption, sourceGraphics)) return false
   if (isNativeCodeListing(table, caption, pageItems)) return false
+  if (isCaptionlessRuledActionListing(table, caption, pageItems, sourceRules)) return false
   if (caption) return true
   if (isNativeBibliographyWithAffiliationMarkers(table, pageItems)) return false
   if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false

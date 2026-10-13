@@ -1,21 +1,21 @@
 import type {
+  DelegatedWorkAttemptRecord,
   DelegatedWorkAttemptStatus,
   DelegatedWorkCancellationReason,
-  DelegatedWorkResolvedAgent,
-  ResolvedSubagentModelSnapshot,
   DelegatedWorkRecord,
-  DelegatedWorkAttemptRecord
-} from '../session-runtime-context'
-import {
-  isRecord,
-  hasOnlyFields,
-  asString,
-  asNumber,
-  AGENT_FRAMEWORK_IDS,
-  asStringArray
-} from './primitives'
+  DelegatedWorkResolvedAgent,
+  ResolvedSubagentModelSnapshot
+} from '../delegated-work-contract'
 import type { ResolvedReasoningEffort } from '../reasoning-effort'
 import type { AgentFrameworkId } from '../settings'
+import {
+  AGENT_FRAMEWORK_IDS,
+  asNumber,
+  asString,
+  asStringArray,
+  hasOnlyFields,
+  isRecord
+} from './primitives'
 
 const DELEGATED_WORK_ATTEMPT_STATUSES = new Set<DelegatedWorkAttemptStatus>([
   'running',

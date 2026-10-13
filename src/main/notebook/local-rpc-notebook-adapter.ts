@@ -2,23 +2,26 @@ import { z } from 'zod'
 
 import {
   notebookLanguageSchema,
+  type AbortNotebookCodeCellRequest,
   type AppendNotebookCodeCellRequest,
   type BeginNotebookCodeCellRequest,
   type ExecuteNotebookCodeRequest,
   type ExecuteNotebookControlRequest,
   type ExecuteShellRequest,
-  type AbortNotebookCodeCellRequest,
   type FinishNotebookCodeCellRequest,
   type NotebookBackgroundRunLookupRequest,
-  type NotebookLanguage,
   type NotebookRestartRequest,
   type NotebookSessionRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
 } from '../../shared/notebook'
-import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
-import type { InstallRequest } from '../../shared/notebook-env'
-import type { InstallResult } from '../../shared/notebook-env'
+import type {
+  InstallRequest,
+  InstallResult,
+  ManageEnvironmentsRequest,
+  ManageEnvironmentsResult
+} from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { shellRuntimeBindingSchema } from './shell-runtime'
 
 const provenanceContextSchema = z
@@ -441,9 +444,9 @@ const resolveNotebookLocalRpcHandler = (
 }
 
 export {
+  isNotebookLocalRpcMethod,
   markRuntimeBindingHostAdmission,
   NOTEBOOK_LOCAL_RPC_METHODS,
-  isNotebookLocalRpcMethod,
   opensNotebookInputRun,
   resolveNotebookLocalRpcHandler
 }

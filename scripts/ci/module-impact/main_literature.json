@@ -60,7 +60,8 @@
     "src/main/literature/citation-errors.ts",
     "src/main/literature/discovery-adapters.ts",
     "src/main/literature/screening-adapter.ts",
-    "src/main/literature/screening-store.ts"
+    "src/main/literature/screening-store.ts",
+    "src/main/literature/discovery-contract.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -421,7 +422,13 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

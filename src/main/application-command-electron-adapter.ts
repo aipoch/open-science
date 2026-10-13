@@ -1,11 +1,12 @@
 import type { IpcMainInvokeEvent } from 'electron'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   toApplicationCommandErrorEnvelope,
   type ApplicationCommandOutcome
 } from '../shared/application-command-contract'
 import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../shared/renderer-contract-catalog'
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
 import type { ApplicationInvocation } from './application-command-router'
 import { callerContextForEvent } from './caller-context'
 import { callerLeaseForEvent } from './caller-lifecycle'
@@ -14,7 +15,6 @@ import {
   type IpcRejectionLogger
 } from './diagnostics/ipc-rejection'
 import { ipcMainHandle } from './ipc-handler-registry'
-import { createLogger } from '@aipoch/diagnostics/node'
 
 const registerApplicationCommandElectronAdapter = (
   dispatcher: ApplicationCommandByNameDispatcher,

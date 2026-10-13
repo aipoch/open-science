@@ -1,3 +1,4 @@
+import { expectModuleBoundary } from '../../../test/module-boundary-assertions'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 
 import {
@@ -405,9 +406,8 @@ describe('Reviewer orchestrator architecture', () => {
 
   it('routes interface changes through every cross-surface and downstream certification suite', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
-    const module = manifest.modules.reviewer_orchestrator
 
-    expect(module).toEqual({
+    expectModuleBoundary(manifest, 'reviewer_orchestrator', {
       ownerPaths: [
         'src/main/reviewer/acp-runtime.ts',
         'src/main/reviewer/orchestrator.ts',
@@ -863,7 +863,13 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/session-plan/session-plan-turn-outcome.test.ts',
           'src/main/acp/specialist-switch-recovery.integration.test.ts',
           'src/main/agents/production-completion-handoff.test.ts',
-          'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
+          'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
+          'src/main/desktop-runtime-backpressure.integration.test.ts',
+          'src/main/desktop-runtime-transport-diagnostics.test.ts',
+          'src/main/node-entry.test.ts',
+          'src/main/desktop-runtime-session-size.integration.test.ts',
+          'src/main/notebook-payload.integration.test.ts',
+          'src/main/web-service/session-payload.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

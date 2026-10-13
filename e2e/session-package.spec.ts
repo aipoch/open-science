@@ -2,6 +2,8 @@ import { expect } from '@playwright/test'
 import { stat, writeFile, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
@@ -272,10 +274,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   const page = await app.completeOnboarding()
   const archive = await app.configureSessionPackageDialogs({ availableBytes: 0 })
   await writeFile(archive, 'No archive bytes should be parsed')
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Capacity test')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Capacity test')
   await page.getByRole('button', { name: 'Capacity test', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
   const operation = page.getByRole('dialog', { name: 'Import Session package', exact: true })
@@ -296,10 +295,7 @@ test('exports a Session package and opens its research workspace and read-only s
     if (message.type() === 'warning' || message.type() === 'error') console.log(message.text())
   })
   const archive = await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Portable research')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Portable research')
   await page.locator('input[type="file"][multiple]').setInputFiles([
     {
       name: 'research-notes.md',
@@ -316,8 +312,7 @@ test('exports a Session package and opens its research workspace and read-only s
     page.getByRole('button', { name: 'Remove attachment raw-results.csv' })
   ).toBeVisible()
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   // Session preparation on Windows is not a response-latency benchmark.
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
     timeout: 60_000
@@ -399,10 +394,7 @@ test('exports a Session package and opens its research workspace and read-only s
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-background.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Continue another Session during export.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue another Session during export.')
   // The installed fake Agent returns its configured fixed response for every Session.
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
     timeout: 60_000
@@ -536,8 +528,7 @@ test('exports a Session package and opens its research workspace and read-only s
   await imported.getByText('Package source', { exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('session-package-imported.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await submitPromptViaUi(page, 'Continue in an ordinary Session.')
   await expect(
     page
       .getByRole('region', { name: 'Conversation', exact: true })

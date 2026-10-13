@@ -1,47 +1,12 @@
-import type {
-  ListPdfAnnotationsRequest,
-  PdfAnnotationListResult
-} from '../../shared/pdf-annotations'
+import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
-  capturePackagePdfNotes,
-  filterPackagePdfNotes,
-  namespacePackagePdfNotes,
-  readPackagePdfSource,
-  retainInheritedPdfNotes,
-  type PackagePdfNotes
-} from './pdf-notes'
-import type { PackageFileSelection } from '../../shared/session-package'
-import { replayAnnotationTarget, splitReplayReferenceText } from '../../shared/replay-reference'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId
-} from '../../shared/permission-profiles'
-import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
-import { encodeDataPath, decodeDataPath } from '../storage/data-path'
-import type { BookmarkTarget } from '../../shared/bookmarks'
-import {
-  capturePackageLiterature,
-  sessionLiteratureReferences,
-  validatePackageLiteratureSession
-} from './literature'
-import { assertSettledHistory, readSession, preview, inspectSessionPackage } from './inspection'
-import {
-  capturePackageReproducibility,
-  installPackageReproducibility,
-  packageReproducibilityExclusions,
-  packageReproducibilityKeys
-} from './reproducibility'
-import { z } from 'zod'
-import { withPackageCleanup } from './cleanup'
-import { withPackageTransfer } from './transfer'
-import { paceFileIo } from '../file-io-pacing'
-import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
-import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+  createLogger,
+  diagnosticErrorFields,
+  startDiagnosticOperation
+} from '@aipoch/diagnostics/node'
+import { defaultFileDurability, writeDurableJsonFile } from '@aipoch/durable-files'
 import type { PrismaClient } from '@prisma/client'
-import type { NotebookRunDocument } from '../../shared/notebook'
 import { randomUUID } from 'node:crypto'
-import { isDeepStrictEqual } from 'node:util'
-import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { createReadStream } from 'node:fs'
 import {
   lstat,
@@ -54,86 +19,124 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { sep, join } from 'node:path'
-import { sha256 } from '../artifacts/provenance-canonical'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
-import {
-  type PackageRecords,
-  captureNativeRecords,
-  mapPackageReferences,
-  nativeStorageKeys,
-  notebookStorageKeys,
-  notebookDocumentIdentity,
-  parseNativeRecords,
-  prepareNativeImport,
-  prepareNativePublication,
-  remapStorageKey,
-  readPackageNotebooks,
-  sessionFileVersionIds
-} from './native-snapshot'
 import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
+import { isDeepStrictEqual } from 'node:util'
+import { z } from 'zod'
+import type { BookmarkTarget } from '../../shared/bookmarks'
+import type { NotebookRunDocument } from '../../shared/notebook'
+import type {
+  ListPdfAnnotationsRequest,
+  PdfAnnotationListResult
+} from '../../shared/pdf-annotations'
 import {
-  sessionPackageRequestSchema,
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
+import { replayAnnotationTarget, splitReplayReferenceText } from '../../shared/replay-reference'
+import type {
+  PackageFileSelection,
+  PackageProgress,
+  PackageSelectableFile,
+  PackageSelectionSummary
+} from '../../shared/session-package'
+import {
+  PACKAGE_MAX_BYTES,
+  PACKAGE_MAX_FILE_BYTES,
+  PACKAGE_RO_CRATE_METADATA,
   sessionPackageImportRequestSchema,
-  type SessionPackageImportRequest,
   sessionPackageManifestSchema,
   sessionPackageReceiptSchema,
-  type SessionPackageReceipt,
-  type SessionPackageRequest,
+  sessionPackageRequestSchema,
+  type SessionPackageImportRequest,
+  type SessionPackageManifest,
   type SessionPackagePreview,
-  type SessionPackageManifest
+  type SessionPackageReceipt,
+  type SessionPackageRequest
 } from '../../shared/session-package'
-import type {
-  PackageSelectableFile,
-  PackageSelectionSummary,
-  PackageProgress
-} from '../../shared/session-package'
-import {
-  selectablePackageFiles,
-  markRequiredPackageFiles,
-  validateExcludedFiles,
-  assertNoExcludedContentCopies,
-  excludedNotebookInputCopy,
-  isNotebookInputCopy
-} from './selection'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
-import {
-  buildSensitiveContentEvidence,
-  findSensitivePackageText,
-  isPrivatePackageValue,
-  PackageSensitiveContentError,
-  PackageTextScanner,
-  type PackageSensitiveContentSource
-} from './sensitive-content'
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
+import { sha256 } from '../artifacts/provenance-canonical'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
+import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
+import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import { paceFileIo } from '../file-io-pacing'
+import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
-import { isSessionPackagePending } from '../storage/session-package-state'
+import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
-import { defaultFileDurability } from '@aipoch/durable-files'
-import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { encodeSessionDataPaths } from '../session-persistence/session-data-paths'
+import { decodeDataPath, encodeDataPath } from '../storage/data-path'
+import { isSessionPackagePending } from '../storage/session-package-state'
+import { publishUserFile } from '../user-file-publisher'
 import {
-  fileChecksum,
   assertPackageSourcePath,
+  fileChecksum,
   packageEntry,
   readPackageJson,
   validatePackageDirectory,
   writePackageArchive
 } from './archive'
-import { assertPortablePackageStorageKey, validatePackageRecords } from './validation'
-import { encodeSessionDataPaths } from '../session-persistence/session-data-paths'
-import { publishUserFile } from '../user-file-publisher'
-import { PACKAGE_MAX_BYTES, PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
-import { capturePackageHistory, type PackageHistory } from './history'
-import { SessionProjectionRepository } from '../session-persistence/projection'
-import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
-import { executionEvidenceKeys } from './execution-evidence'
 import { assertPackageCapacity } from './capacity'
-import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
+import { withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
-import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
-import { createForkSession, nextForkTitle, ForkRecoveryRequiredError } from './fork-session'
+import { executionEvidenceKeys } from './execution-evidence'
+import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
+import { capturePackageHistory, type PackageHistory } from './history'
+import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
+import {
+  capturePackageLiterature,
+  sessionLiteratureReferences,
+  validatePackageLiteratureSession
+} from './literature'
+import {
+  captureNativeRecords,
+  mapPackageReferences,
+  nativeStorageKeys,
+  notebookDocumentIdentity,
+  notebookStorageKeys,
+  parseNativeRecords,
+  prepareNativeImport,
+  prepareNativePublication,
+  readPackageNotebooks,
+  remapStorageKey,
+  sessionFileVersionIds
+} from './native-snapshot'
+import {
+  capturePackagePdfNotes,
+  filterPackagePdfNotes,
+  namespacePackagePdfNotes,
+  readPackagePdfSource,
+  retainInheritedPdfNotes
+} from './pdf-notes'
+import type { PackagePdfNotes } from './pdf-notes-contract'
+import type { PackageRecords } from './records-contract'
+import {
+  capturePackageReproducibility,
+  installPackageReproducibility,
+  packageReproducibilityExclusions,
+  packageReproducibilityKeys
+} from './reproducibility'
 import { writePackageRoCrateMetadata } from './ro-crate'
-import { PACKAGE_RO_CRATE_METADATA } from '../../shared/session-package'
+import {
+  assertNoExcludedContentCopies,
+  excludedNotebookInputCopy,
+  isNotebookInputCopy,
+  markRequiredPackageFiles,
+  selectablePackageFiles,
+  validateExcludedFiles
+} from './selection'
+import {
+  PackageSensitiveContentError,
+  PackageTextScanner,
+  buildSensitiveContentEvidence,
+  findSensitivePackageText,
+  isPrivatePackageValue,
+  type PackageSensitiveContentSource
+} from './sensitive-content'
+import { withPackageTransfer } from './transfer'
+import { assertPortablePackageStorageKey, validatePackageRecords } from './validation'
 
 const importJournalSchema = sessionPackageRequestSchema
   .extend({

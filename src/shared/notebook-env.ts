@@ -6,10 +6,10 @@ export type InstallRequest = Omit<EnvironmentInstallRequest, 'cwd' | 'context'> 
   EnvironmentRequestContext & { workspaceCwd?: string }
 
 import type { InstallResult as EnvironmentInstallResult } from '@aipoch/environment'
+import type { EnvironmentInfo } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from './notebook-language-contract'
 import type { RuntimeTargetReceipt } from './notebook-runtime'
 export type InstallResult = EnvironmentInstallResult & { target?: RuntimeTargetReceipt }
-import type { EnvironmentInfo } from '@aipoch/environment/contracts'
-import type { NotebookLanguage } from './notebook'
 
 // Canonical wire shapes for the notebook runtime provisioning surface (contract §4). Renderer,
 // preload, and the main provisioner (Plan A) all import these so there is one source of truth.

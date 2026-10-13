@@ -1,4 +1,4 @@
-import type { Annotation } from '../../../../shared/annotations'
+import type { Annotation } from '../../../../shared/annotation-contract'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,

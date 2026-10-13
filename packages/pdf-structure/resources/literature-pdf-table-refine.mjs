@@ -1294,6 +1294,111 @@ export function recoverClippedLeftLabelCrop(table, pageItems) {
 // clipping the terminal glyphs of a right-hand header/value column. Expand
 // only when several short horizontal items cross the same right edge on
 // distinct table rows; a single adjacent prose line must not pull the crop.
+function recoverClippedTerminalScript(table, pageItems, clipped, rules) {
+  const validRect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (
+    !validRect(table.cropRect) ||
+    !Array.isArray(rules) ||
+    rules.some(
+      (r) =>
+        !Array.isArray(r) ||
+        r.length !== 4 ||
+        !r.every(Number.isFinite) ||
+        !((r[0] < r[2] && r[1] === r[3]) || (r[0] === r[2] && r[1] < r[3]))
+    ) ||
+    pageItems.some(
+      (i) =>
+        !validRect(i.rect) ||
+        !Number.isFinite(i.baseline) ||
+        !Number.isFinite(i.height) ||
+        i.height <= 0
+    ) ||
+    (table.structure?.objects ?? []).some((o) => !validRect(o.rect))
+  )
+    return
+  clipped = clipped.filter((item) => item.rect[0] < table.cropRect[2])
+  if (clipped.length !== 1 || !Array.isArray(rules)) return
+  const crop = table.cropRect,
+    tail = clipped[0]
+  if (!/^\d+$/.test(tail.text) || tail.rect[0] >= crop[2]) return
+  const chain = [tail]
+  for (;;) {
+    const first = chain[0]
+    const previous = pageItems.filter(
+      (item) =>
+        !chain.includes(item) &&
+        item.horizontal &&
+        /^[\d.]+$/.test(item.text) &&
+        Math.abs(item.height - tail.height) < tail.height * 0.05 &&
+        Math.abs(item.baseline - tail.baseline) < tail.height * 0.05 &&
+        Math.abs(first.rect[0] - item.rect[2]) < tail.height * 0.05 &&
+        item.rect[0] < first.rect[0]
+    )
+    if (!previous.length) break
+    if (previous.length !== 1 || chain.length >= 12) return
+    chain.unshift(previous[0])
+  }
+  if (!/^\d+\.\d+$/.test(chain.map((item) => item.text).join(''))) return
+  const anchors = pageItems.filter(
+    (item) =>
+      /^[\d.]+$/.test(item.text) &&
+      item.rect[2] <= crop[2] &&
+      item.rect[0] >= crop[0] &&
+      isAdjacentTableScript(chain[0], item)
+  )
+  if (anchors.length !== 1) return
+  const anchor = anchors[0]
+  const columns = (table.structure?.objects ?? [])
+    .filter((object) => object.label === 'table column')
+    .sort((a, b) => b.rect[2] - a.rect[2])
+  const rows = (table.structure?.objects ?? []).filter((object) => object.label === 'table row')
+  if (columns.length < 2 || rows.length < 3 || anchor.rect[0] < crop[0] + columns[0].rect[0]) return
+  const owners = rows.filter((row) =>
+    [anchor, ...chain].every((item) => {
+      const center = (item.rect[1] + item.rect[3]) / 2
+      return center >= crop[1] + row.rect[1] && center <= crop[1] + row.rect[3]
+    })
+  )
+  if (owners.length !== 1) return
+  const right = tail.rect[2] + anchor.height * 0.2
+  if (right - crop[2] > anchor.height) return
+  if (
+    pageItems.some(
+      (item) =>
+        !chain.includes(item) &&
+        item.rect[2] > crop[2] &&
+        item.rect[0] < right &&
+        item.rect[1] < crop[3] &&
+        item.rect[3] > crop[1]
+    )
+  )
+    return
+  const rails = rules.filter(
+    (rule) => rule[1] === rule[3] && rule[0] <= crop[0] + anchor.height && rule[2] >= right
+  )
+  const top = rails.find(
+    (rule) => Math.abs(rule[1] - crop[1]) <= anchor.height && rule[1] < anchor.rect[1]
+  )
+  const bottom = rails.find(
+    (rule) => Math.abs(rule[1] - crop[3]) <= anchor.height && rule[1] > tail.rect[3]
+  )
+  if (!top || !bottom || Math.abs(top[0] - bottom[0]) > 1 || Math.abs(top[2] - bottom[2]) > 1)
+    return
+  if (
+    rules.some(
+      (rule) =>
+        rule[0] === rule[2] &&
+        rule[0] > anchor.rect[2] &&
+        rule[0] < right &&
+        rule[1] < tail.rect[3] &&
+        rule[3] > anchor.rect[1]
+    )
+  )
+    return
+  return [crop[0], crop[1], right, crop[3]]
+}
+
 export function recoverClippedRightLabelCrop(table, pageItems, rules) {
   const crop = table?.cropRect
   if (!crop || !Array.isArray(pageItems)) return
@@ -1314,6 +1419,10 @@ export function recoverClippedRightLabelCrop(table, pageItems, rules) {
       item.rect[1] >= crop[1] - height &&
       item.rect[3] <= crop[3] + height
   )
+  // A single terminal script needs its own native ownership proof: a touching
+  // decimal chain, one larger numeric anchor and a matching ruled table frame.
+  const scriptCrop = recoverClippedTerminalScript(table, pageItems, clipped, rules)
+  if (scriptCrop) return scriptCrop
   if (clipped.length < 3) return
   const rows = new Set(
     clipped.map((item) => Math.round(((item.rect[1] + item.rect[3]) / 2 - crop[1]) / height))
@@ -1500,6 +1609,7 @@ export function refineTable(
   )
   if (alignedLiteralColumns) {
     const { cuts } = alignedLiteralColumns
+    pageItems = recoverNativePrintedLaneTokens(table, pageItems, captions, rules, observedRuns)
     table = {
       ...table,
       columnCount: cuts.length - 1,
@@ -2070,6 +2180,37 @@ export function refineTable(
   const coefficientGrid = recoverSectionedCoefficientsGrid(table, pageItems, rules)
   if (coefficientGrid) table = rebaseTableCrop(table, coefficientGrid.cropRect)
   const ruledColumnGrid = recoverRuledColumnGrid(table, pageItems, captions, sourceRules)
+  if (ruledColumnGrid?.ownedTokens instanceof Set && rulePaintBounds instanceof Map) {
+    const crop = ruledColumnGrid.cropRect
+    const edges = sourceRules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        (r[1] === crop[1] || r[1] === crop[3]) &&
+        [...ruledColumnGrid.ownedTokens].every((i) => i.rect[0] >= r[0] && i.rect[2] <= r[2])
+    )
+    const paint = edges.map((r) => rulePaintBounds.get(r.join(',')))
+    if (
+      edges.some((r) => r[1] === crop[1]) &&
+      edges.some((r) => r[1] === crop[3]) &&
+      paint.every((r) => r?.length === 4 && r.every(Number.isFinite))
+    ) {
+      const expanded = [
+        crop[0],
+        Math.min(crop[1], ...paint.map((r) => r[1])),
+        crop[2],
+        Math.max(crop[3], ...paint.map((r) => r[3]))
+      ]
+      if (
+        !pageItems.some(
+          (i) =>
+            !ruledColumnGrid.ownedTokens.has(i) &&
+            intersect(i.rect, expanded) > 0 &&
+            intersect(i.rect, crop) === 0
+        )
+      )
+        ruledColumnGrid.cropRect = expanded
+    }
+  }
   if (ruledColumnGrid) table = rebaseTableCrop(table, ruledColumnGrid.cropRect)
   const ruledHeaderGrid = recoverRuledHeaderGrid(table, pageItems, captions, sourceRules)
   if (ruledHeaderGrid?.cropRect) table = rebaseTableCrop(table, ruledHeaderGrid.cropRect)
@@ -3795,6 +3936,158 @@ export function refineTable(
     )
     const headingRun = (run) => /^(?:\p{L}|\d+\s*[-–]\s*\p{L})/u.test(run[0]?.text ?? '')
     if (leading.length && columns.length >= 3) {
+      // An occupied stub and joined leaf titles are not a blank-stub header.
+      // Use literal native gaps only when complete ruled records independently
+      // establish every lane; a model cut through a word is not split evidence.
+      const measuredLeading = (() => {
+        const valid = (i) =>
+          i.horizontal &&
+          Number.isFinite(i.height) &&
+          i.height > 0 &&
+          Number.isFinite(i.baseline) &&
+          i.rect?.length === 4 &&
+          i.rect.every(Number.isFinite) &&
+          i.rect[2] > i.rect[0] &&
+          i.rect[3] > i.rect[1]
+        if (
+          rows.length < 3 ||
+          !leading.every(valid) ||
+          [...columnRects, ...rows.map((r) => r.rect)].some(
+            (r) => r.length !== 4 || !r.every(Number.isFinite) || r[2] <= r[0] || r[3] <= r[1]
+          ) ||
+          !leading.some((i) => columnOf(i) === 0)
+        )
+          return
+        const h = leading[0].height
+        if (
+          leading.some(
+            (i) =>
+              Math.abs(i.baseline - leading[0].baseline) > h * 0.15 ||
+              Math.abs(i.height - h) > h * 0.1
+          )
+        )
+          return
+        const records = rows.map((row) => items.filter((i) => inside(row.rect, i)))
+        if (
+          records.some(
+            (record) =>
+              record.length !== columns.length ||
+              !record.every(valid) ||
+              record.some(
+                (i) =>
+                  Math.abs(i.baseline - record[0].baseline) > h * 0.15 ||
+                  Math.abs(i.height - h) > h * 0.1
+              ) ||
+              columnRects.some((_, c) => record.filter((i) => columnOf(i) === c).length !== 1)
+          )
+        )
+          return
+        const lanes = columnRects.map((_, c) =>
+          records.map((r) => r.find((i) => columnOf(i) === c))
+        )
+        if (lanes.slice(1).some((lane) => lane.some((i) => !/^[−+-]?\d+(?:\.\d+)?$/.test(i.text))))
+          return
+        const gutters = lanes
+          .slice(1)
+          .map((lane, c) => [
+            Math.max(...lanes[c].map((i) => i.rect[2])),
+            Math.min(...lane.map((i) => i.rect[0]))
+          ])
+        if (gutters.some(([a, b]) => b - a < h * 0.3)) return
+        const bounds = union([...leading, ...records.flat()])
+        const ruledBetween = (a, b) =>
+          sourceRules.some(
+            (r) =>
+              r.length === 4 &&
+              r.every(Number.isFinite) &&
+              r[2] > r[0] &&
+              r[1] === r[3] &&
+              r[1] >= a &&
+              r[1] <= b &&
+              r[0] <= bounds[0] &&
+              r[2] >= bounds[2]
+          )
+        if (
+          !ruledBetween(
+            Math.max(...leading.map((i) => i.rect[3])),
+            Math.min(...records[0].map((i) => i.rect[1]))
+          ) ||
+          records.some(
+            (record, n) =>
+              !ruledBetween(
+                Math.max(...record.map((i) => i.rect[3])),
+                n + 1 < records.length
+                  ? Math.min(...records[n + 1].map((i) => i.rect[1]))
+                  : bounds[3] + h
+              )
+          )
+        )
+          return
+        const replacements = new Map()
+        for (const item of leading) {
+          const crossed = gutters.filter(([a, b]) => item.rect[0] < a && item.rect[2] > b)
+          if (!crossed.length) continue
+          const matches = observedRuns.filter(
+            (r) =>
+              r.text === item.text &&
+              r.rect?.length === 4 &&
+              r.rect.every((v, n) => Number.isFinite(v) && Math.abs(v - item.rect[n]) < 0.02)
+          )
+          if (matches.length !== 1) return
+          const run = matches[0]
+          if (
+            !Number.isFinite(run.height) ||
+            run.height <= 0 ||
+            !Number.isFinite(run.baseline) ||
+            Math.abs(run.height - item.height) > 0.02 ||
+            Math.abs(run.baseline - item.baseline) > 0.02 ||
+            !Array.isArray(run.glyphRuns) ||
+            !run.glyphRuns.length ||
+            run.glyphRuns.some((r) => !Number.isInteger(r) || r < 0) ||
+            !Array.isArray(run.literalGlyphs) ||
+            run.literalGlyphs.some((g) => typeof g !== 'string') ||
+            !Array.isArray(run.gaps) ||
+            run.gaps.some(
+              (g, n) =>
+                !Number.isFinite(g.left) ||
+                !Number.isFinite(g.right) ||
+                g.right <= g.left ||
+                g.left < item.rect[0] ||
+                g.right > item.rect[2] ||
+                !Number.isInteger(g.index) ||
+                g.index <= 0 ||
+                g.index >= run.glyphRuns.length ||
+                (n && (g.index <= run.gaps[n - 1].index || g.left < run.gaps[n - 1].right))
+            )
+          )
+            return
+          const gaps = run.gaps.filter((g) => g.right - g.left >= h * 0.3)
+          if (
+            gaps.length !== crossed.length ||
+            crossed.some(([a, b]) => gaps.filter((g) => g.left >= a && g.right <= b).length !== 1)
+          )
+            return
+          // This stricter lane proof permits a 0.3-em gap rather than the
+          // standalone helper's 0.4-em threshold.
+          const parts = splitNativeMeasuredFields(item, observedRuns, h * 0.75)
+          if (!parts || parts.length !== crossed.length + 1 || !parts.every(valid)) return
+          replacements.set(item, parts)
+        }
+        if (!replacements.size) return
+        const parts = leading.flatMap((i) => replacements.get(i) ?? [i])
+        if (
+          parts.length !== columns.length ||
+          columnRects.some((_, c) => parts.filter((i) => columnOf(i) === c).length !== 1)
+        )
+          return
+        for (const collection of [items, leading, ...groups]) {
+          for (let n = collection.length - 1; n >= 0; n--) {
+            const replacement = replacements.get(collection[n])
+            if (replacement) collection.splice(n, 1, ...replacement)
+          }
+        }
+        return true
+      })()
       const bounds = union(leading)
       const runs = []
       for (const i of leading
@@ -3805,7 +4098,9 @@ export function refineTable(
         else runs.push([i])
       }
       const completeRuns =
-        runs.length === columns.length - 1 && runs.every((run) => /^\p{L}/u.test(run[0].text))
+        !measuredLeading &&
+        runs.length === columns.length - 1 &&
+        runs.every((run) => /^\p{L}/u.test(run[0].text))
       const firstBand = items.filter((i) => inside(rows[0].rect, i))
       // Percentage-prefixed interval labels are headings, not numeric records.
       // Require two populated child columns under the label and model header evidence.
@@ -12552,6 +12847,24 @@ export function refineTable(
   }
   reconcileNativeLiteralFractions(outputCells, sourceRules, repairs)
   rejectNativeLetterFractionScriptMetadata(outputCells, sourceRules)
+  const preserveClosingPaint = (crop) => {
+    // Native rule centers may trim whitespace, but not their measured paint.
+    if (rulePaintBounds instanceof Map)
+      for (const rule of sourceRules) {
+        const paint = rulePaintBounds.get(rule.join(','))
+        if (
+          rule[1] === rule[3] &&
+          rule[1] <= crop[3] &&
+          paint?.[1] <= crop[3] &&
+          paint[3] > crop[3] &&
+          paint[3] <= outputCrop[3] &&
+          paint[0] >= outputCrop[0] &&
+          paint[2] <= outputCrop[2]
+        )
+          crop[3] = paint[3]
+      }
+    return crop
+  }
   const nativeBodyCrop = recoverNativeClosedLeafBodyCrop(
     table,
     outputCrop,
@@ -12562,7 +12875,7 @@ export function refineTable(
     observedRuns
   )
   if (nativeBodyCrop) {
-    outputCrop = nativeBodyCrop
+    outputCrop = preserveClosingPaint(nativeBodyCrop)
     outputClipped = outputClipped.filter((i) => i.rect[1] < outputCrop[3])
     if (!outputClipped.length) issues.delete('text-crosses-crop-boundary')
     repairs.push('native-closed-leaf-body-crop-trimmed')
@@ -12586,7 +12899,7 @@ export function refineTable(
     !unassigned.length &&
     recoverNativeClosingRuleCrop(outputCrop, outputCells, pageItems, sourceRules, outputClipped)
   if (closingRuleCrop) {
-    outputCrop = closingRuleCrop
+    outputCrop = preserveClosingPaint(closingRuleCrop)
     outputClipped = outputClipped.filter((item) => item.rect[1] < outputCrop[3])
     if (!outputClipped.length) issues.delete('text-crosses-crop-boundary')
     repairs.push('native-closing-rule-crop-trimmed')
@@ -17194,7 +17507,8 @@ export function recoverCaptionedRuledTables(
     captions,
     pageNumber,
     existing,
-    rulePaintBounds
+    rulePaintBounds,
+    runs
   )
   const full = joinHorizontalTableRules(rules)
   for (const caption of captions.filter((c) => captionKind(c.lines?.[0]) === 'table')) {

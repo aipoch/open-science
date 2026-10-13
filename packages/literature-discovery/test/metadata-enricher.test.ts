@@ -763,16 +763,20 @@ it.each([false, true])(
       currentValue: 'DOI: 10.1000/example ★; PMID: 12345678',
       value: 'DOI: 10.2000/new ★'
     })
-    await enricher.complete({
+    const commit = enricher.complete({
       mode: 'commit',
       itemId: view.id,
       reviewToken: review.reviewToken,
       expectedMetadataRevision: 2,
       overwriteFields: selected ? ['identifiers'] : []
     })
-    expect(applyMetadata.mock.calls[0]![0].item.identifiers).toEqual(
-      selected ? review.item.item.identifiers : original.identifiers
-    )
+    if (!selected) {
+      await expect(commit).rejects.toThrow('Reference identifiers disagree')
+      expect(applyMetadata).not.toHaveBeenCalled()
+    } else {
+      await commit
+      expect(applyMetadata.mock.calls[0]![0].item.identifiers).toEqual(review.item.item.identifiers)
+    }
   }
 )
 
@@ -784,7 +788,7 @@ it('shows changes to primary flags even when identifier values are unchanged', a
       { scheme: 'pmid' as const, value: '12345678', isPrimary: true }
     ]
   }
-  const { enricher } = regressionEnricher(original, crossref({}))
+  const { enricher, applyMetadata } = regressionEnricher(original, crossref({}))
   const review = await enricher.complete({
     mode: 'preview',
     itemId: view.id,
@@ -795,6 +799,14 @@ it('shows changes to primary flags even when identifier values are unchanged', a
     currentValue: 'DOI: 10.1000/example; PMID: 12345678 ★',
     value: 'PMID: 12345678; DOI: 10.1000/example ★'
   })
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: []
+  })
+  expect(applyMetadata.mock.calls[0]![0].item.identifiers).toEqual(original.identifiers)
 })
 
 it('uses one publication-date choice to replace both date and year', async () => {
@@ -1192,10 +1204,95 @@ it('reviews replacement identifiers atomically without retaining identifiers fro
     { scheme: 'doi', value: '10.1234/replacement', isPrimary: true }
   ])
   expect(review.conflicts.some(({ field }) => field === 'identifiers')).toBe(true)
-  await enricher.applyReviewed(review, [])
-  expect(applyMetadata.mock.calls[0][0].item.identifiers).toEqual(current.identifiers)
+  await expect(enricher.applyReviewed(review, [])).rejects.toThrow('Reference identifiers disagree')
+  expect(applyMetadata).not.toHaveBeenCalled()
   await enricher.applyReviewed(review, ['identifiers'])
-  expect(applyMetadata.mock.calls[1][0].item.identifiers).toEqual(review.item.item.identifiers)
+  expect(applyMetadata.mock.calls[0][0].item.identifiers).toEqual(review.item.item.identifiers)
+})
+
+it.each([[], ['title'], ['abstract']] as const)(
+  'rejects cross-paper fills without accepting the replacement identity: %j',
+  async (overwriteFields) => {
+    const original = {
+      ...structuredClone(item),
+      title: 'Study A in adults',
+      identifiers: [
+        ...item.identifiers,
+        { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+      ]
+    }
+    const before = structuredClone(original)
+    const { enricher, applyMetadata } = regressionEnricher(
+      original,
+      crossref({
+        DOI: '10.2000/study-b',
+        title: ['Study B in mice'],
+        abstract: 'Study B measured EGFR expression in mice.',
+        URL: 'https://doi.org/10.2000/study-b'
+      })
+    )
+    const review = await enricher.complete({
+      mode: 'preview',
+      itemId: view.id,
+      identifier: { scheme: 'doi', value: '10.2000/study-b' }
+    })
+    expect(review.filled).toEqual(
+      expect.arrayContaining([
+        { field: 'abstract', value: 'Study B measured EGFR expression in mice.' },
+        { field: 'url', value: 'https://doi.org/10.2000/study-b' }
+      ])
+    )
+    const commit = {
+      mode: 'commit' as const,
+      itemId: view.id,
+      expectedMetadataRevision: 2,
+      reviewToken: review.reviewToken
+    }
+    await expect(enricher.complete({ ...commit, overwriteFields })).rejects.toThrow(
+      'Reference identifiers disagree'
+    )
+    expect(applyMetadata).not.toHaveBeenCalled()
+    expect(original).toEqual(before)
+
+    // A refused commit retains the review so the user can explicitly accept the new identity.
+    await enricher.complete({ ...commit, overwriteFields: ['identifiers', 'title'] })
+    expect(applyMetadata).toHaveBeenCalledTimes(1)
+    expect(applyMetadata.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({
+        item: expect.objectContaining({
+          title: 'Study B in mice',
+          abstract: 'Study B measured EGFR expression in mice.',
+          url: 'https://doi.org/10.2000/study-b',
+          identifiers: review.item.item.identifiers
+        }),
+        sources: review.sources,
+        source: expect.objectContaining({ externalId: '10.2000/study-b' })
+      })
+    )
+  }
+)
+
+it('fills an unidentified reference from the entered DOI without requiring identity replacement', async () => {
+  const { enricher, applyMetadata } = regressionEnricher(
+    { ...item, identifiers: [] },
+    crossref({ DOI: '10.2000/new', abstract: 'Publisher abstract.' })
+  )
+  const review = await enricher.complete({
+    mode: 'preview',
+    itemId: view.id,
+    identifier: { scheme: 'doi', value: '10.2000/new' }
+  })
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: []
+  })
+  expect(applyMetadata.mock.calls[0]![0].item).toMatchObject({
+    abstract: 'Publisher abstract.',
+    identifiers: [{ scheme: 'doi', value: '10.2000/new', isPrimary: true }]
+  })
 })
 
 it.each([false, true])(

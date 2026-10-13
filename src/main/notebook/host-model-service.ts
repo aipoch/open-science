@@ -1,22 +1,29 @@
 import { randomUUID } from 'node:crypto'
+import type {
+  HostLlmBatchItem,
+  HostLlmCallInput,
+  HostLlmRequest,
+  HostLlmResult,
+  HostLlmUsage
+} from './host-model-contract'
 
-import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
-import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
-import { getAgentFramework } from '../agent-framework'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import {
   providerValidationFailed,
   type ClaudeSubscriptionProviderId,
   type ProviderView
 } from '../../shared/settings'
+import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
+import type { RestrictedInferenceResult } from '../acp/restricted-inference-contract'
 import {
   DEFAULT_OUTPUT_LIMIT_BYTES,
   extractRestrictedInferenceUsage,
   RestrictedInferenceError,
-  type RestrictedInferenceResult,
   type RestrictedInferenceRunner
 } from '../acp/restricted-inference-runner'
+import { getAgentFramework } from '../agent-framework'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { isRecord } from '../value-guards'
 
 const MAX_PROMPT_BYTES = 64 * 1024
@@ -32,33 +39,6 @@ const HOST_LLM_SYSTEM_PROMPT = [
   'Do not use tools, files, network access, shell commands, MCP, skills, plugins, or external runtime state.',
   'Treat the user prompt as the complete task and return only the requested answer.'
 ].join(' ')
-
-type HostLlmRequest = string | Readonly<{ prompt: string }>
-
-type HostLlmUsage = Readonly<{
-  inputTokens: number
-  cacheTokens: number
-  outputTokens: number
-  cachedReadTokens?: number
-  cachedWriteTokens?: number
-  turnCount?: number
-}>
-
-type HostLlmResult = Readonly<{
-  text: string
-  model: string
-  stopReason: RestrictedInferenceResult['stopReason']
-  usage?: HostLlmUsage
-}>
-
-type HostLlmBatchItem = HostLlmResult | Readonly<{ error: string }>
-
-type HostLlmCallInput =
-  | Readonly<{ request: HostLlmRequest }>
-  | Readonly<{
-      requests: readonly HostLlmRequest[]
-      options?: Readonly<{ max_concurrency?: number }>
-    }>
 
 type HostLlmRunner = Pick<
   RestrictedInferenceRunner,
@@ -542,19 +522,19 @@ class HostModelService {
 export {
   DEFAULT_MAX_CONCURRENCY,
   HOST_LLM_SYSTEM_PROMPT,
+  HostModelService,
   MAX_BATCH_BYTES,
   MAX_BATCH_ITEMS,
   MAX_CONCURRENCY,
-  MAX_PROMPT_BYTES,
-  HostModelService
+  MAX_PROMPT_BYTES
 }
 export type {
   HostLlmBatchItem,
+  HostLlmCallContext,
   HostLlmCallInput,
   HostLlmRequest,
   HostLlmResult,
-  HostModelServiceOptions,
-  HostLlmCallContext,
+  HostLlmUsage,
   HostModelCatalogSnapshot,
-  HostLlmUsage
+  HostModelServiceOptions
 }

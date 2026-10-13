@@ -7,6 +7,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfStructureCache } from '../src/main/literature/pdf-structure/cache'
 import { createPdfStructureEngine } from '../src/main/literature/pdf-structure/engine'
 import { test } from './fixtures/electron-app'
+import { openAllReferences } from './fixtures/library'
 
 function textPdf(pageCount = 2): Buffer {
   const streams = [
@@ -137,8 +138,7 @@ test('prepares a Library PDF through real IPC and cached table provenance', asyn
   )
   expect(cached?.extractionId).toBe(result.extractionId)
   const library = async (): Promise<void> => {
-    await page.getByRole('button', { name: 'Library', exact: true }).click()
-    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    await openAllReferences(page)
   }
   const prepare = async (separate: boolean): Promise<void> => {
     await page.getByRole('button', { name: 'Preview preparation.pdf', exact: true }).click()
@@ -332,8 +332,7 @@ test('cancels preparation and closes an active Library PDF without retaining its
     },
     { item, bytes: [...textPdf(240)] }
   )
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(page)
   await page.getByRole('button', { name: 'Preview long-preparation.pdf', exact: true }).click()
   await page.getByRole('button', { name: 'Full-text translation', exact: true }).click()
   const report = page.locator('[data-pdf-preparation]')

@@ -1,4 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import {
+  expectTypeOnlyContract,
+  expectModuleBoundary
+} from '../../../../test/module-boundary-assertions'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 
 import {
@@ -111,6 +115,7 @@ const publicValueExports = [
   'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
   'hydrateSession',
+  'retainSessionRecoveryDrafts',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',
   'isExternallyHydratedSession',
@@ -893,8 +898,11 @@ describe('Session Store architecture', () => {
       )
       .map((path) => normalizePathSeparators(relative(__dirname, path)))
       .sort()
+    const contractPath = resolve(__dirname, 'session-store-contract.ts')
+    const contracts = existsSync(contractPath) ? ['session-store-contract.ts'] : []
+    if (contracts.length) expectTypeOnlyContract(contractPath, readSource(contractPath))
     expect(actualModules).toEqual(
-      ['session-store.ts', ...ownerNames.map((name) => `${name}.ts`)].sort()
+      ['session-store.ts', ...ownerNames.map((name) => `${name}.ts`), ...contracts].sort()
     )
   })
 
@@ -1016,7 +1024,7 @@ describe('Session Store architecture', () => {
 
   it('keeps the architecture suite in the Session renderer impact set', () => {
     const manifest = loadModuleImpactManifest(moduleImpactPath)
-    expect(manifest.modules.session_renderer).toEqual({
+    expectModuleBoundary(manifest, 'session_renderer', {
       ownerPaths: [
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-store-interaction-state.ts',
@@ -1069,19 +1077,16 @@ describe('Session Store architecture', () => {
           'src/renderer/src/App.test.tsx',
           'src/renderer/src/app-shell-presentation-owner.test.ts',
           'src/renderer/src/components/CloseConfirmModal.render.test.tsx',
-          'src/renderer/src/components/ConnectorAuthToast.test.tsx',
           'src/renderer/src/components/JobDetailModal.render.test.tsx',
           'src/renderer/src/components/LegacyDataMoveDialog.render.test.tsx',
           'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
           'src/renderer/src/components/LifecycleToast.test.tsx',
-          'src/renderer/src/components/NetworkStatusIndicator.render.test.tsx',
           'src/renderer/src/components/NotificationBell.test.tsx',
           'src/renderer/src/components/NotificationLiveToast.test.tsx',
           'src/renderer/src/components/NotificationRecovery.test.tsx',
           'src/renderer/src/components/PermissionUndoSnackbar.test.tsx',
           'src/renderer/src/components/SessionCatalogRecoveryAlert.render.test.tsx',
           'src/renderer/src/components/SessionPackageOperation.test.tsx',
-          'src/renderer/src/components/StorageCleanupToast.test.tsx',
           'src/renderer/src/components/UpdateDialog.blockers.test.tsx',
           'src/renderer/src/components/UpdateDialog.lifecycle.test.tsx',
           'src/renderer/src/components/UpdateDialog.render.test.tsx',
@@ -1138,73 +1143,43 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx',
           'src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx',
           'src/renderer/src/pages/onboarding/AgentStep.render.test.tsx',
-          'src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx',
-          'src/renderer/src/pages/onboarding/LocationStep.render.test.tsx',
           'src/renderer/src/pages/onboarding/NotebookStep.render.test.tsx',
           'src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx',
           'src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx',
           'src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx',
           'src/renderer/src/pages/settings/ActiveModelSelect.render.test.tsx',
-          'src/renderer/src/pages/settings/AppIconSection.recovery.render.test.tsx',
           'src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/ClaudeIsolatedSignInModal.render.test.tsx',
-          'src/renderer/src/pages/settings/ComputeHostDetail.render.test.tsx',
           'src/renderer/src/pages/settings/ComputePanel.render.test.tsx',
           'src/renderer/src/pages/settings/ConnectorAddForm.render.test.tsx',
-          'src/renderer/src/pages/settings/ConnectorApprovalDialog.render.test.tsx',
-          'src/renderer/src/pages/settings/ConnectorCredentialDialog.render.test.tsx',
-          'src/renderer/src/pages/settings/ConnectorDetailView.render.test.tsx',
-          'src/renderer/src/pages/settings/ConnectorOAuthSignInDialog.render.test.tsx',
-          'src/renderer/src/pages/settings/ConnectorsPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/CredentialsPanel.loading.render.test.tsx',
-          'src/renderer/src/pages/settings/CredentialsPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/DeviceCredentialEditor.render.test.tsx',
           'src/renderer/src/pages/settings/FileBrowserModal.render.test.tsx',
           'src/renderer/src/pages/settings/GeneralPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/GitHubTokenControl.test.tsx',
-          'src/renderer/src/pages/settings/ModelFrameworkCompatibilityAlert.render.test.tsx',
-          'src/renderer/src/pages/settings/NetworkPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/NetworkProxyForm.test.tsx',
-          'src/renderer/src/pages/settings/NotebookNetworkDomainsForm.render.test.tsx',
-          'src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx',
           'src/renderer/src/pages/settings/ProviderForm.render.test.tsx',
           'src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx',
-          'src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx',
           'src/renderer/src/pages/settings/RuntimesPanel.render.test.tsx',
           'src/renderer/src/pages/settings/ScenarioModelList.render.test.tsx',
           'src/renderer/src/pages/settings/SettingsGlobalSearch.test.tsx',
           'src/renderer/src/pages/settings/SettingsPage.render.test.tsx',
           'src/renderer/src/pages/settings/SkillDetailView.render.test.tsx',
-          'src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx',
           'src/renderer/src/pages/settings/SkillImportApprovalDialog.render.test.tsx',
           'src/renderer/src/pages/settings/SkillImportCandidatePreview.render.test.tsx',
           'src/renderer/src/pages/settings/SkillMarketplace.render.test.tsx',
           'src/renderer/src/pages/settings/SkillUploadView.render.test.tsx',
           'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
-          'src/renderer/src/pages/settings/SpecialistCapabilitiesSection.accessibility.test.tsx',
           'src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx',
-          'src/renderer/src/pages/settings/SpecialistEditor.render.test.tsx',
-          'src/renderer/src/pages/settings/SpecialistMarketplace.render.test.tsx',
           'src/renderer/src/pages/settings/SpecialistsPanel.render.test.tsx',
           'src/renderer/src/pages/settings/StorageMigrationModal.render.test.tsx',
           'src/renderer/src/pages/settings/StoragePanel.render.test.tsx',
           'src/renderer/src/pages/settings/SubagentModelSelect.render.test.tsx',
-          'src/renderer/src/pages/settings/TagsPanel.render.test.tsx',
           'src/renderer/src/pages/settings/WslLocalShellSection.render.test.tsx',
           'src/renderer/src/pages/settings/agent-home-import-i18n.render.test.tsx',
-          'src/renderer/src/pages/settings/claude-sign-in-i18n.render.test.tsx',
           'src/renderer/src/pages/settings/compute-i18n.render.test.tsx',
-          'src/renderer/src/pages/settings/connectors-i18n.render.test.tsx',
           'src/renderer/src/pages/settings/file-browser-i18n.render.test.tsx',
           'src/renderer/src/pages/settings/general-sections-i18n.render.test.tsx',
-          'src/renderer/src/pages/settings/network-panel-i18n.render.test.tsx',
-          'src/renderer/src/pages/settings/skill-editor-i18n.render.test.tsx',
           'src/renderer/src/pages/settings/skill-upload-i18n.render.test.tsx',
           'src/renderer/src/pages/settings/storage-i18n.render.test.tsx',
           'src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx',
           'src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx',
           'src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx',
-          'src/renderer/src/pages/workspace/ComposerAgentControlsMenu.interaction.test.tsx',
           'src/renderer/src/pages/workspace/ComposerMessageQueue.interaction.test.tsx',
           'src/renderer/src/pages/workspace/ComposerModelPicker.render.test.tsx',
           'src/renderer/src/pages/workspace/ContextWindowDialog.render.test.tsx',
@@ -1223,7 +1198,6 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/NotebookInputDataStrip.test.tsx',
           'src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx',
           'src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx',
-          'src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx',
@@ -1234,7 +1208,6 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/ProjectComputeInbox.test.tsx',
           'src/renderer/src/pages/workspace/ProjectFilesView.test.tsx',
           'src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx',
-          'src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx',
           'src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx',
           'src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx',
           'src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx',
@@ -1247,7 +1220,6 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx',
           'src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx',
           'src/renderer/src/pages/workspace/SessionReviewerPanel.render.test.tsx',
-          'src/renderer/src/pages/workspace/SpecialistSubmenu.render.test.tsx',
           'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceActivityGroup.i18n.render.test.tsx',
@@ -1296,7 +1268,6 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/composer/ArtifactMentionPopup.render.test.tsx',
           'src/renderer/src/pages/workspace/composer/ComposerEditor.interaction.test.tsx',
           'src/renderer/src/pages/workspace/composer/SessionMentionPopup.render.test.tsx',
-          'src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx',
           'src/renderer/src/pages/workspace/composer/composer-history.test.ts',
           'src/renderer/src/pages/workspace/context-window-trend.test.ts',
           'src/renderer/src/pages/workspace/file-type-icon.test.ts',
@@ -1382,16 +1353,12 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/workspace-web-search-details.test.ts',
           'src/renderer/src/stores/archive-undo-store.test.ts',
           'src/renderer/src/stores/navigation-store.test.ts',
-          'src/renderer/src/stores/network-store.test.ts',
           'src/renderer/src/stores/preview-workbench-store.test.ts',
           'src/renderer/src/stores/session-details-claim.test.ts',
-          'src/renderer/src/stores/settings-navigation-slice.test.ts',
-          'src/renderer/src/stores/settings-store.test.ts',
           'src/renderer/web/bootstrap.test.ts',
           'src/renderer/web/renderer-argument-shape-characterization.test.ts',
           'src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx',
           'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx',
-          'src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx',
           'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
           'src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx',
           'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
@@ -1403,9 +1370,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx',
           'src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx',
           'src/renderer/src/pages/workspace/research-navigation-model.test.ts',
-          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx',
-          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx',
-          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx'
+          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx',
+          'src/renderer/src/components/desktop-runtime-recovery.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

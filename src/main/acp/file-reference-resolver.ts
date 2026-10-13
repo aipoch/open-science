@@ -6,18 +6,16 @@ import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
 
-import type { FileReference } from '../../shared/artifacts'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
+import type { FileReference } from '../../shared/artifacts'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { ManagedFileReadLease } from '../managed-file-versions/read-port'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
-import type {
-  ManagedFileReadLease,
-  ManagedFileVersionService
-} from '../managed-file-versions/service'
 
 const log = createLogger('acp-file-reference-resolver')
 

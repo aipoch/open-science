@@ -1,10 +1,10 @@
-import { registerApplicationCommandElectronAdapter } from '../desktop-surface-declarations'
-import type { ApplicationModuleBuilder } from '../application-runtime'
 import {
   createApplicationCommandComposition,
-  type ApplicationCommandComposition,
   type ApplicationCommandCompositionDependencies
 } from '../application-command-composition'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
+import type { ApplicationModuleBuilder } from '../application-runtime'
+import { registerApplicationCommandElectronAdapter } from '../desktop-surface-declarations'
 
 type ApplicationCommandCompositionRegistration = Readonly<{
   modules: ApplicationModuleBuilder

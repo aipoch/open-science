@@ -51,7 +51,11 @@
     "src/main/session-package/sensitive-content.test.ts",
     "src/main/session-package/json-syntax.ts",
     "src/main/session-package/json-syntax.test.ts",
-    "src/main/session-package/pdf-notes.ts"
+    "src/main/session-package/pdf-notes.ts",
+    "src/main/session-package/literature-contract.ts",
+    "src/main/session-package/pdf-notes-contract.ts",
+    "src/main/session-package/records-contract.ts",
+    "src/main/session-package/reproducibility-contract.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -100,7 +104,8 @@
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
-      "src/main/session-persistence/prompt-preparation-restart.test.ts"
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1,6 +1,9 @@
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { withDataRootWrite } from '../storage/migration-state'
+import type { LiteratureLibraryDiscovery } from './discovery-contract'
+import { literatureDiscoverySchema } from './discovery-contract'
+export { literatureDiscoverySchema } from './discovery-contract'
 
 import {
   LITERATURE_CITATION_LOCALES,
@@ -8,11 +11,7 @@ import {
   type LiteratureCitationLocale,
   type LiteratureCitationStyle
 } from '@aipoch/literature-citations/contracts'
-import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import {
-  literatureSourceInputSchema,
-  type LiteratureItemView
-} from '@aipoch/literature-library/contracts'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
   summarizeLiteratureSaveReceipts,
   type LiteratureLibrarySaveResult
@@ -38,13 +37,6 @@ export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'i
 
 type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
 
-export const literatureDiscoverySchema = z
-  .object({
-    item: literatureItemInputSchema,
-    source: literatureSourceInputSchema
-  })
-  .strict()
-
 const literatureDiscoveryBatchSchema = z
   .object({ candidates: z.array(literatureDiscoverySchema).min(1).max(10) })
   .strict()
@@ -57,8 +49,6 @@ type LiteratureLibrarySearchRequest = Readonly<{
   offset?: number
   limit?: number
 }>
-
-type LiteratureLibraryDiscovery = z.infer<typeof literatureDiscoverySchema>
 
 type LiteratureLibrarySaveRequest = Readonly<{
   candidates: readonly LiteratureLibraryDiscovery[]

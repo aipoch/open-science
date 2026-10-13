@@ -1,14 +1,11 @@
+import type { DurableDelegateRequest } from './delegate-request-contract'
+import type { DelegatedWorkDurableRecords, DurableSnapshot } from './delegated-work-record-types'
+import type { SpecialistDelegationProfile } from './durable-delegated-work-contract'
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
-import type { DelegatedWorkDurableRecords } from './delegated-work-record-types'
 import {
   prepareStructuredOutputSchema,
   type PreparedStructuredOutputSchema
 } from './structured-output'
-import type {
-  DurableDelegateRequest,
-  DurableSnapshot,
-  SpecialistDelegationProfile
-} from './durable-delegated-work'
 
 type DurableResolvedAgent = DurableSnapshot['records'][number]['attempts'][number]['resolvedAgent']
 
@@ -339,13 +336,13 @@ class DelegatedWorkAdmissionPolicy {
 }
 
 export {
-  DELEGATION_INPUT_SHAPE_MESSAGE,
-  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
-  MAX_DELEGATE_NAME_CODE_POINTS,
   allocateDelegateNames,
   assertDelegateInputShape,
   assertDelegateRequestShape,
   assertNoRemovedDelegateContext,
   createAdmissionGate,
-  DelegatedWorkAdmissionPolicy
+  DelegatedWorkAdmissionPolicy,
+  DELEGATION_INPUT_SHAPE_MESSAGE,
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
+  MAX_DELEGATE_NAME_CODE_POINTS
 }

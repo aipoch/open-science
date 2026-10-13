@@ -3,7 +3,8 @@
     "src/main/acp/image-input-compatibility-owner.ts",
     "src/main/acp/vision-evidence-repository.ts",
     "src/main/acp/image-input-compatibility-owner.test.ts",
-    "src/main/acp/vision-evidence-repository.test.ts"
+    "src/main/acp/vision-evidence-repository.test.ts",
+    "src/main/acp/image-input-compatibility-port.ts"
   ],
   "interfacePaths": [
     "src/main/acp/image-input-compatibility-owner.ts",
@@ -163,7 +164,13 @@
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

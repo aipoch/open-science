@@ -20,16 +20,19 @@ function requireStringArray(value, label, { nonEmpty = false } = {}) {
   return value
 }
 
-function validateRepositoryPath(path, label, pathExists) {
-  if (
-    path.length === 0 ||
-    path.startsWith('/') ||
-    path.includes('\\') ||
-    path.includes('//') ||
-    /^[A-Za-z]:/.test(path) ||
-    path.split('/').some((segment) => segment === '.' || segment === '..')
-  ) {
-    throw new Error(`${label} must be a portable repository-relative path: ${path}`)
+function validateRepositoryPath(path, label, pathExists, validPaths) {
+  if (!validPaths.has(path)) {
+    if (
+      path.length === 0 ||
+      path.startsWith('/') ||
+      path.includes('\\') ||
+      path.includes('//') ||
+      /^[A-Za-z]:/.test(path) ||
+      path.split('/').some((segment) => segment === '.' || segment === '..')
+    ) {
+      throw new Error(`${label} must be a portable repository-relative path: ${path}`)
+    }
+    validPaths.add(path)
   }
   if (pathExists && !pathExists(path)) throw new Error(`${label} does not exist: ${path}`)
 }
@@ -53,6 +56,8 @@ export function validateModuleImpactManifest(
   const modules = manifest.modules
   const moduleIds = new Set(Object.keys(modules))
   const ownedPaths = new Map()
+  // Evidence paths repeat across consumers; only syntax is reusable within this validation.
+  const validPaths = new Set()
 
   for (const [moduleId, module] of Object.entries(modules)) {
     if (
@@ -75,7 +80,7 @@ export function validateModuleImpactManifest(
     const overlays = requireStringArray(module.capabilityOverlays, `${moduleId}.capabilityOverlays`)
 
     for (const ownerPath of ownerPaths) {
-      validateRepositoryPath(ownerPath, `${moduleId}.ownerPaths`, pathExists)
+      validateRepositoryPath(ownerPath, `${moduleId}.ownerPaths`, pathExists, validPaths)
       const existingOwner = ownedPaths.get(ownerPath)
       if (existingOwner) {
         throw new Error(
@@ -85,7 +90,7 @@ export function validateModuleImpactManifest(
       ownedPaths.set(ownerPath, moduleId)
     }
     for (const interfacePath of interfacePaths) {
-      validateRepositoryPath(interfacePath, `${moduleId}.interfacePaths`, pathExists)
+      validateRepositoryPath(interfacePath, `${moduleId}.interfacePaths`, pathExists, validPaths)
     }
 
     for (const consumer of consumers) {
@@ -132,7 +137,7 @@ export function validateModuleImpactManifest(
     }
     if (declaredTests.length === 0) throw new Error(`${moduleId}.testFiles must not be empty`)
     for (const testFile of declaredTests) {
-      validateRepositoryPath(testFile, `${moduleId}.testFiles`, pathExists)
+      validateRepositoryPath(testFile, `${moduleId}.testFiles`, pathExists, validPaths)
       if (!/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(testFile)) {
         throw new Error(`${moduleId}.testFiles must reference a test file: ${testFile}`)
       }

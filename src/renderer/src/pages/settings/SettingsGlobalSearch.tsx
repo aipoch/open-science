@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
-import type { SettingsPanelId } from './settings-navigation'
+import type { SettingsPanelId } from '@/lib/settings-navigation'
 import { SettingsSearchInput } from './SettingsSearchInput'
 
 type SettingsSearchEntry = {

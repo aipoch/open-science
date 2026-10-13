@@ -16,7 +16,7 @@ on:
     inputs:
       nightly:
         description: >-
-          Mark artifacts as a nightly build: appends `-nightly.<short-sha>` to the version so
+          Mark artifacts as a nightly build: appends `-nightly.g<short-sha>` to the version so
           nightly installers get distinct filenames (and in-app version) from stable releases.
         type: boolean
         default: false
@@ -608,14 +608,12 @@ jobs:
           eb_ver=()
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
-            # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
-            # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
-            # filenames distinct from stable ones and ties each build to its commit. Rewrite the
-            # root manifest itself — not just extraMetadata — because the standalone Node backend is
-            # staged by beforePack from the root manifest; otherwise the backend reports the stable
-            # base version from /api/bootstrap while installers carry the nightly suffix.
-            npm version --no-git-tag-version "${base}-nightly.${GITHUB_SHA::7}"
-            eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
+            # Prefix the SHA so npm cannot normalize a numeric identifier (0189093 -> 189093).
+            # The staged Node backend reads the root manifest; Electron and artifact filenames
+            # read extraMetadata. Both must carry exactly the same version.
+            nightly_version="${base}-nightly.g${GITHUB_SHA::7}"
+            npm version --no-git-tag-version "$nightly_version"
+            eb_ver=(-c.extraMetadata.version="$nightly_version")
           fi
           npm run build:e2e
           npm run build:web

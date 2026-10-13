@@ -1,18 +1,18 @@
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { EnvPackage } from '@aipoch/environment/contracts'
-import type { RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
+import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import type { MicromambaRunner } from '@aipoch/environment'
 import {
   defaultDiscoveryDeps,
+  discoverExternalRLibraries,
   discoverInterpreters,
+  listEnvPackages,
+  resolveExternalRLibrary,
   rscriptFor,
   type DiscoveredInterpreter
 } from '@aipoch/environment'
-import { listEnvPackages } from '@aipoch/environment'
-import { discoverExternalRLibraries, resolveExternalRLibrary } from '@aipoch/environment'
-import type { MicromambaRunner } from '@aipoch/environment'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
-import { createLogger } from '@aipoch/diagnostics/node'
-import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without

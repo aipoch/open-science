@@ -1,6 +1,6 @@
-import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
-import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 
 export type OpenCodeUsageSnapshot = {
   assistantMessageIds: Set<string>

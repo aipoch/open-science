@@ -1,5 +1,5 @@
-import { getTokenizer as getAnthropicTokenizer } from '@anthropic-ai/tokenizer'
 import type { ContentBlock, SessionNotification } from '@agentclientprotocol/sdk'
+import { getTokenizer as getAnthropicTokenizer } from '@anthropic-ai/tokenizer'
 import { resolve } from 'node:path'
 import { get_encoding, type Tiktoken } from 'tiktoken'
 
@@ -9,7 +9,7 @@ import type {
   AcpContextUsageCategory,
   AcpContextUsageCategoryKey,
   AcpContextWindowSampleSource
-} from '../../shared/acp'
+} from '../../shared/acp-usage-contract'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { isNativeSkillToolUpdate } from './runtime-events'
 
