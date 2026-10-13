@@ -1,6 +1,7 @@
+import { EnvironmentSnapshotInUseError } from './environment-snapshot'
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -74,6 +75,139 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it('keeps an unconfirmed verification clone and never publishes a complete lock', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snapshot-unreaped-'))
+    try {
+      const prefix = join(root, 'source')
+      await mkdir(prefix)
+      await writeFile(join(prefix, 'package.py'), 'version = 1')
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'python',
+          environmentName: 'default-python',
+          runtimeSource: 'managed',
+          condaPrefix: prefix
+        },
+        manifest({ runtimeVersion: '3.12.14' }),
+        {
+          execute: async () => {
+            throw new Error('No package lock')
+          },
+          snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+          verifySnapshotRuntime: async () => {
+            throw new EnvironmentSnapshotInUseError(new Error('timeout'))
+          }
+        }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'partial',
+        partialReasons: ['environment-snapshot-unverified']
+      })
+      const retained = await readdir(join(root, 'r'))
+      expect(retained).toHaveLength(1)
+      expect(await readFile(join(root, 'r', retained[0]!, 'e', 'package.py'), 'utf8')).toBe(
+        'version = 1'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reuses snapshot verification only while installed bytes and observations are unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snapshot-verification-cache-'))
+    try {
+      const prefix = join(root, 'source')
+      await mkdir(prefix)
+      await writeFile(join(prefix, 'package.py'), 'version = 1')
+      const owner = new EnvironmentLockCaptureOwner()
+      const verifySnapshotRuntime = vi.fn(async () => 'OPEN_SCIENCE_SNAPSHOT_VERIFIED\n')
+      const capture = (): ReturnType<EnvironmentLockCaptureOwner['capture']> =>
+        owner.capture(
+          {
+            language: 'python',
+            environmentName: 'default-python',
+            runtimeSource: 'managed',
+            condaPrefix: prefix
+          },
+          manifest({ runtimeVersion: '3.12.14' }),
+          {
+            execute: async () => {
+              throw new Error('Package lock unavailable')
+            },
+            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+            verifySnapshotRuntime
+          }
+        )
+      const first = await capture()
+      expect(first).toMatchObject({ state: 'captured', captureStatus: 'complete' })
+      expect(await capture()).toEqual(first)
+      expect(verifySnapshotRuntime).toHaveBeenCalledTimes(1)
+      await writeFile(join(prefix, 'package.py'), 'version = 2')
+      expect(await capture()).not.toEqual(first)
+      expect(verifySnapshotRuntime).toHaveBeenCalledTimes(2)
+      expect(await readdir(join(root, 'r'))).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([true, false])(
+    'captures a conflicting prefix only after snapshot verification succeeds: %s',
+    async (verified) => {
+      const root = await mkdtemp(join(tmpdir(), 'environment-snapshot-lock-'))
+      try {
+        const prefix = join(root, 'original-environment')
+        await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+        await writeFile(join(prefix, 'conda-meta', 'numpy-old.json'), '{"version":"1"}')
+        await writeFile(join(prefix, 'conda-meta', 'numpy-new.json'), '{"version":"2"}')
+        const execute = vi.fn(async (argv: string[]) => {
+          if (argv[0] === 'micromamba')
+            return JSON.stringify(
+              JSON.parse(condaInventory('python', 'numpy')).map((pkg) => ({
+                ...pkg,
+                version: '1.0'
+              }))
+            )
+          if (!verified) throw new Error('Loaded module does not match the restored prefix')
+          expect(argv[0]).not.toContain('original-environment')
+          expect(argv).toContain('-I')
+          return 'OPEN_SCIENCE_SNAPSHOT_VERIFIED\n'
+        })
+        const result = await captureNotebookEnvironmentLock(
+          {
+            language: 'python',
+            environmentName: 'default-python',
+            runtimeSource: 'managed',
+            condaPrefix: prefix
+          },
+          manifest({ runtimeVersion: '3.12.14' }),
+          {
+            micromamba: 'micromamba',
+            execute,
+            snapshotStorage: { store: join(root, 'store'), restoreRoot: join(root, 'r') },
+            verifySnapshotRuntime: (_prefix, argv) => execute(argv)
+          }
+        )
+        expect(result.state).toBe('captured')
+        if (result.state !== 'captured') throw new Error('Expected captured evidence')
+        expect(result.captureStatus).toBe(verified ? 'complete' : 'partial')
+        expect(result.lock.schemaVersion).toBe(3)
+        if (!verified) expect(result.partialReasons).toEqual(['environment-snapshot-unverified'])
+        expect(decodeNotebookEnvironmentLock(JSON.stringify(result.lock))).toMatchObject({
+          status: 'valid'
+        })
+        expect(await readdir(join(prefix, 'conda-meta'))).toEqual([
+          'numpy-new.json',
+          'numpy-old.json'
+        ])
+        expect(await readdir(join(root, 'r'))).toEqual([])
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('captures equivalent certifi release spellings with the exact Conda lock', async () => {
     const result = await captureNotebookEnvironmentLock(
       {

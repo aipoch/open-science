@@ -162,6 +162,7 @@ export type NotebookEnvironmentLockPartialReason =
   | 'non-conda-installer-detected'
   | 'native-lock-file-best-effort'
   | 'native-lock-file-rejected'
+  | 'environment-snapshot-unverified'
 
 export type NotebookEnvironmentLockDiagnostic = {
   reason:
@@ -205,7 +206,9 @@ export type NotebookEnvironmentLockComponent =
     }
 
 export type NotebookEnvironmentLock = {
-  schemaVersion: 1 | 2
+  schemaVersion: 1 | 2 | 3
+  // v3 restores captured installed files; package components remain inspection evidence.
+  snapshot?: { checksum: string }
   // v2 native-only locks restore packages conditionally; they do not provision this runtime.
   externalRuntime?: { version: string; installerVersion: string }
   format: 'environment-lock-bundle'

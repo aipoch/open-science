@@ -7181,6 +7181,19 @@
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "請檢查 Open-Science 使用的代理。瀏覽器連線正常時，可能使用了不同的代理設定。",
     "Reconnect the backend, then check again.": "請重新連接後端，然後再次檢查。",
     "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "系統模式使用後端可用的代理設定，可能與瀏覽器和作業系統的代理設定不同。如需固定代理，請選擇手動模式。",
-    "Backend defaults": "後端預設設定"
+    "Backend defaults": "後端預設設定",
+    "Environment snapshot": "環境快照",
+    "The environment files were captured, but isolated restoration could not be verified.": "已擷取環境檔案，但未能驗證隔離還原。",
+    "Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.": "擷取的環境檔案用於本機可重現性檢查。此快照不支援匯出套件鎖定檔或建立可重用環境。",
+    "This code uses file or external state whose dependencies are not fully confirmed.": "此程式碼使用了檔案或外部狀態，其相依關係尚未完全確認。",
+    "Some calls may read or change values that the analyzer cannot identify.": "某些呼叫可能讀取或變更分析器無法識別的值。",
+    "Dynamic names or custom objects prevent complete variable tracking.": "動態名稱或自訂物件使變數追蹤無法完整進行。",
+    "Not all branch or loop effects could be determined.": "部分分支或迴圈的影響無法確定。",
+    "The captured environment is not yet verified for isolated restoration.": "擷取的環境尚未通過隔離還原驗證。",
+    "No environment lock was captured for one or more required runs.": "一或多個必要執行未擷取環境鎖。",
+    "The complete set of input files was not captured.": "未擷取完整的輸入檔案集合。",
+    "Some output files could not be attributed to a single run.": "部分輸出檔案無法歸屬於單次執行。",
+    "Some dependencies on earlier cells could not be determined.": "部分對先前儲存格的相依關係無法確定。",
+    "Required earlier runs are missing from the captured history.": "擷取的歷程記錄中缺少必要的先前執行。"
   }
 }

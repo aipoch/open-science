@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -140,4 +140,80 @@ it.skipIf(process.platform !== 'darwin').each([1, 65])(
     }
   },
   120_000
+)
+
+it.skipIf(process.platform !== 'darwin')(
+  'isolates snapshot verification from user grants and PATH directories',
+  async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'snapshot-isolation-')))
+    const prefix = join(fixture, 'environment'),
+      workspace = join(fixture, 'verification'),
+      granted = join(fixture, 'granted')
+    for (const path of [prefix, workspace, granted]) await mkdir(path)
+    await writeFile(join(prefix, 'captured'), 'captured\n')
+    await writeFile(join(granted, 'secret'), 'outside\n')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(fixture, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny',
+      getGrantedLocalRoots: async () => [
+        { id: 'user-grant', path: granted, name: 'User grant', access: 'rw' }
+      ]
+    })
+    let wrapped: NotebookSandboxedSpawn | undefined
+    let child: ChildProcessWithoutNullStreams | undefined
+    let closed: Promise<unknown[]> | undefined
+    try {
+      const script =
+        'IFS= read -r value < "$CAPTURED" || exit 10; [[ "$value" == captured ]] || exit 11; if IFS= read -r value < "$SECRET"; then exit 12; fi; if printf changed > "$CAPTURED"; then exit 13; fi; printf verified'
+      wrapped = await owner.wrap({
+        executable: '/bin/bash',
+        args: ['--noprofile', '--norc', '-c', script],
+        env: {
+          PATH: `${granted}:/usr/bin:/bin`,
+          HOME: workspace,
+          CAPTURED: join(prefix, 'captured'),
+          SECRET: join(granted, 'secret')
+        },
+        cwd: workspace,
+        commandText: 'Verify captured environment isolation',
+        projectId: 'snapshot-test',
+        sessionId: 'snapshot-test',
+        runtime: 'bash',
+        restrictToDeclaredRoots: true,
+        filesystem: {
+          readOnlyRoots: [prefix],
+          readWriteRoots: [workspace],
+          deniedReadRoots: [],
+          deniedWriteRoots: [prefix]
+        }
+      })
+      wrapped.beginExecution?.()
+      child = spawn(wrapped.executable, [...wrapped.args], {
+        cwd: workspace,
+        env: wrapped.env,
+        stdio: 'pipe'
+      })
+      closed = once(child, 'close')
+      let stdout = '',
+        stderr = ''
+      child.stdout.on('data', (data) => {
+        stdout += data.toString()
+      })
+      child.stderr.on('data', (data) => {
+        stderr += data.toString()
+      })
+      expect((await closed)[0], stderr).toBe(0)
+      expect(stdout).toBe('verified')
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      if (closed) await closed
+      if (wrapped) await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+      await rm(fixture, { recursive: true, force: true })
+    }
+  },
+  30_000
 )

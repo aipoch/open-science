@@ -156,6 +156,7 @@ type EnvironmentStateTrackerOptions = {
   captureFingerprint?: (target: EnvironmentCaptureTarget) => Promise<string | undefined>
   execFile?: EnvironmentExecFile
   resolveMicromamba?: () => Promise<string | undefined>
+  verifySnapshotRuntime?: (prefix: string, argv: string[]) => Promise<string>
   now?: () => Date
   platform?: NodeJS.Platform
   logger?: Pick<RuntimeDiagnosticLogger, 'warn' | 'error'>
@@ -647,24 +648,29 @@ const mergePackages = (
   live: NotebookEnvironmentPackage[]
 ): NotebookEnvironmentPackage[] => {
   const merged = new Map<string, NotebookEnvironmentPackage>()
+  const observedKey = (pkg: NotebookEnvironmentPackage): string =>
+    packageIdentityKey(pkg) + (pkg.ecosystem === 'python' ? `\0version:${pkg.version ?? ''}` : '')
   for (const pkg of installed) {
-    merged.set(packageIdentityKey(pkg), { ...pkg, loadedState: 'installed-only' })
+    // Residual dist-info directories are real captured state, even when another version
+    // wins import resolution. Do not erase them by keying only on the distribution name.
+    merged.set(observedKey(pkg), { ...pkg, loadedState: 'installed-only' })
   }
   for (const pkg of live) {
-    let key = packageIdentityKey(pkg)
-    let existing = merged.get(key)
-    // Multiple copies can be observed after sys.path changes while an older module is still
-    // loaded. Preserve both live versions so observation order cannot erase required evidence.
-    if (
-      pkg.ecosystem === 'python' &&
-      pkg.version &&
-      existing?.version &&
-      !packageVersionsMatch('python', pkg.version, existing.version) &&
-      existing.evidenceSources.includes('python-kernel-modules')
-    ) {
-      key += `\0version:${pkg.version}`
-      existing = merged.get(key)
+    let key = observedKey(pkg)
+    if (pkg.ecosystem === 'python') {
+      key =
+        [...merged].find(
+          ([, candidate]) =>
+            packageIdentityKey(candidate) === packageIdentityKey(pkg) &&
+            (candidate.version === pkg.version ||
+              Boolean(
+                candidate.version &&
+                pkg.version &&
+                packageVersionsMatch('python', pkg.version, candidate.version)
+              ))
+        )?.[0] ?? key
     }
+    let existing = merged.get(key)
     // A cell can prepend its own .libPaths(). Equal ranks in the live and inspection
     // interpreters then refer to different libraries; do not inherit the default copy's evidence.
     if (
@@ -679,7 +685,12 @@ const mergePackages = (
     merged.set(key, {
       ...existing,
       ...pkg,
-      version: pkg.version ?? existing?.version,
+      // Keep the exact inventory spelling for installed evidence; loaded numeric release
+      // spellings can be equivalent (e.g. 2026.07.22 and 2026.7.22).
+      version:
+        pkg.ecosystem === 'python'
+          ? (existing?.version ?? pkg.version)
+          : (pkg.version ?? existing?.version),
       versionStatus:
         pkg.versionStatus === 'known' || existing?.versionStatus === 'known'
           ? 'known'
@@ -1232,6 +1243,11 @@ class EnvironmentStateTracker {
       })
       const lockCapture = await this.environmentLockCapture.capture(target, manifest, {
         micromamba,
+        verifySnapshotRuntime: this.options.verifySnapshotRuntime,
+        snapshotStorage: {
+          store: join(this.options.dataRoot, 'runtime', 'provenance', 'environment-snapshots'),
+          restoreRoot: join(this.options.dataRoot, 'runtime', '.e')
+        },
         ...(endFingerprint ? { environmentFingerprint: endFingerprint } : {}),
         ...(lockWorkspace ? { workspace: lockWorkspace } : {}),
         execute: async (argv) => {

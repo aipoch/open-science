@@ -1461,6 +1461,179 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       replace: { effect: 'read', returnType: 'python.string' }
     }
   },
+  // python-docx's document objects share one mutable XML tree. Preserve the owner
+  // alias through paragraphs, runs and cells so later formatting invalidates its readers.
+  // https://python-docx.readthedocs.io/en/latest/api/document.html
+  docx: {
+    kind: 'module',
+    methods: {
+      Document: {
+        effect: 'read',
+        returnType: 'docx.Document',
+        file: { kind: 'read', position: 0, keywords: ['docx'], pathOptional: true }
+      }
+    }
+  },
+  'docx.shared': {
+    kind: 'module',
+    methods: Object.fromEntries(
+      ['Inches', 'Cm', 'Mm', 'Pt', 'Emu', 'RGBColor'].map((name) => [
+        name,
+        { effect: 'read', returnType: 'python.scalar' }
+      ])
+    )
+  },
+  'docx.Document': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      add_heading: {
+        effect: 'mutate',
+        returnType: 'docx.Paragraph',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      add_paragraph: {
+        effect: 'mutate',
+        returnType: 'docx.Paragraph',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      add_table: { effect: 'mutate', returnType: 'docx.Table', returnsPossibleAliasOf: 'receiver' },
+      add_picture: {
+        effect: 'mutate',
+        file: { kind: 'read', position: 0, keywords: ['image_path_or_stream'] }
+      },
+      save: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['path_or_stream'] } },
+      '@paragraphs': {
+        effect: 'read',
+        returnType: 'docx.Paragraphs',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      '@styles': { effect: 'read', returnType: 'docx.Styles', returnsPossibleAliasOf: 'receiver' }
+    }
+  },
+  'docx.Paragraph': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      add_run: { effect: 'mutate', returnType: 'docx.Run', returnsPossibleAliasOf: 'receiver' },
+      '@runs': { effect: 'read', returnType: 'docx.Runs', returnsPossibleAliasOf: 'receiver' }
+    }
+  },
+  'docx.Run': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      '@font': { effect: 'read', returnType: 'docx.Font', returnsPossibleAliasOf: 'receiver' },
+      '@_element': {
+        effect: 'read',
+        returnType: 'docx.OxmlElement',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      add_picture: {
+        effect: 'mutate',
+        file: { kind: 'read', position: 0, keywords: ['image_path_or_stream'] }
+      }
+    }
+  },
+  'docx.Table': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      add_row: { effect: 'mutate', returnType: 'docx.Row', returnsPossibleAliasOf: 'receiver' },
+      cell: { effect: 'read', returnType: 'docx.Cell', returnsPossibleAliasOf: 'receiver' },
+      '@rows': { effect: 'read', returnType: 'docx.Rows', returnsPossibleAliasOf: 'receiver' }
+    }
+  },
+  'docx.Row': {
+    kind: 'type',
+    methods: {
+      '@cells': { effect: 'read', returnType: 'docx.Cells', returnsPossibleAliasOf: 'receiver' }
+    }
+  },
+  'docx.Cell': {
+    kind: 'type',
+    methods: {
+      '@paragraphs': {
+        effect: 'read',
+        returnType: 'docx.Paragraphs',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    }
+  },
+  'docx.Font': { kind: 'type', methods: {} },
+  'docx.Style': {
+    kind: 'type',
+    methods: {
+      '@font': { effect: 'read', returnType: 'docx.Font', returnsPossibleAliasOf: 'receiver' },
+      '@element': {
+        effect: 'read',
+        returnType: 'docx.OxmlElement',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    }
+  },
+  ...Object.fromEntries(
+    [
+      ['Paragraphs', 'Paragraph'],
+      ['Runs', 'Run'],
+      ['Rows', 'Row'],
+      ['Cells', 'Cell'],
+      ['Styles', 'Style']
+    ].map(([collection, item]) => [
+      `docx.${collection}`,
+      {
+        kind: 'type' as const,
+        iterationTypes: [`docx.${item}`],
+        methods: {
+          __getitem__: {
+            effect: 'read' as const,
+            returnType: `docx.${item}`,
+            returnsPossibleAliasOf: 'receiver' as const
+          }
+        }
+      }
+    ])
+  ),
+  'docx.oxml': {
+    kind: 'module',
+    methods: {
+      OxmlElement: { effect: 'read', returnType: 'docx.OxmlElement' }
+    }
+  },
+  'docx.oxml.ns': {
+    kind: 'module',
+    methods: {
+      qn: { effect: 'read', returnType: 'python.string' }
+    }
+  },
+  // These bounded XML operations never resolve external resources. Unregistered OXML
+  // methods remain opaque; do not treat the entire lxml surface as an in-memory value.
+  'docx.OxmlElement': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      find: { effect: 'read', returnType: 'docx.OxmlElement', returnsPossibleAliasOf: 'receiver' },
+      get_or_add_rPr: {
+        effect: 'mutate',
+        returnType: 'docx.OxmlElement',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      set: { effect: 'mutate' },
+      // Attaching a node also moves it from its previous parent. Until the graph
+      // preserves both ownership links, keep subsequent readers conservative.
+      append: { effect: 'unknown', unsafeNamespace: true },
+      '@rPr': {
+        effect: 'read',
+        returnType: 'docx.OxmlElement',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      '@rFonts': {
+        effect: 'read',
+        returnType: 'docx.OxmlElement',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    }
+  },
   'xml.etree.ElementTree': {
     kind: 'module',
     methods: {
@@ -1546,6 +1719,60 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'type',
     methods: containerMethods,
     iterationTypes: ['python.object']
+  },
+  json: {
+    kind: 'module',
+    methods: {
+      load: {
+        effect: 'read',
+        callbackKeywords: [
+          'cls',
+          'object_hook',
+          'object_pairs_hook',
+          'parse_int',
+          'parse_float',
+          'parse_constant'
+        ]
+      },
+      loads: {
+        effect: 'read',
+        callbackKeywords: [
+          'cls',
+          'object_hook',
+          'object_pairs_hook',
+          'parse_int',
+          'parse_float',
+          'parse_constant'
+        ]
+      }
+    }
+  },
+  'python.literal-mapping': {
+    kind: 'type',
+    methods: { get: { effect: 'read', returnsPossibleAliasOf: 'receiver' } }
+  },
+  'python.json-value': {
+    kind: 'type',
+    methods: {
+      get: { effect: 'read', returnsPossibleAliasOf: 'receiver' },
+      items: {
+        effect: 'read',
+        returnType: 'python.json-items',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      keys: { effect: 'read', returnType: 'python.strings' },
+      values: {
+        effect: 'read',
+        returnType: 'python.json-value',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    },
+    iterationTypes: ['python.json-value']
+  },
+  'python.json-items': {
+    kind: 'type',
+    methods: {},
+    iterationTypes: ['python.string', 'python.json-value']
   },
   'python.mapping': {
     kind: 'type',

@@ -1,0 +1,312 @@
+import { createHash } from 'node:crypto'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  captureEnvironmentSnapshot,
+  EnvironmentSnapshotInUseError,
+  restoreEnvironmentSnapshot,
+  materializeEnvironmentSnapshot,
+  relocateEnvironmentSnapshot,
+  readEnvironmentSnapshot,
+  removeEnvironmentSnapshot
+} from './environment-snapshot'
+
+const roots: string[] = []
+const fixture = async (): Promise<{ root: string; prefix: string; store: string }> => {
+  const root = await mkdtemp(join(tmpdir(), 'environment-snapshot-'))
+  roots.push(root)
+  const prefix = join(root, 'source'),
+    store = join(root, 'store')
+  await mkdir(join(prefix, 'lib'), { recursive: true })
+  await mkdir(join(prefix, 'conda-meta'))
+  await writeFile(join(prefix, 'lib', 'package.py'), 'VERSION = "2"\n')
+  await writeFile(join(prefix, 'lib', 'old_only.py'), 'RESIDUAL = True\n')
+  await writeFile(join(prefix, 'conda-meta', 'package-1.json'), '{"version":"1"}')
+  await writeFile(join(prefix, 'conda-meta', 'package-2.json'), '{"version":"2"}')
+  return { root, prefix, store }
+}
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+describe('environment file snapshots', () => {
+  it('retains a restored prefix when verification process termination is unconfirmed', async () => {
+    const { root, prefix, store } = await fixture()
+    const { checksum } = await captureEnvironmentSnapshot(prefix, store, {
+      runtimeVersion: '3.12.14',
+      packages: []
+    })
+    const destination = join(root, 'r')
+    await expect(
+      restoreEnvironmentSnapshot(store, checksum, destination, async () => {
+        throw new EnvironmentSnapshotInUseError(new Error('timeout'))
+      })
+    ).rejects.toBeInstanceOf(EnvironmentSnapshotInUseError)
+    expect(await readFile(join(destination, 'lib', 'package.py'), 'utf8')).toContain('VERSION')
+  })
+
+  it.each(['matching', 'mismatched', 'missing', 'invalid'] as const)(
+    'uses cached binary relocation declarations only with matching archive and installed hashes: %s',
+    async (evidence) => {
+      const { root, prefix, store } = await fixture()
+      const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(prefix))
+      const bytes = Buffer.from(`terminfo\0${canonical}/share\0`)
+      await writeFile(join(prefix, 'lib', 'terminal'), bytes)
+      const cache = join(root, 'cache')
+      await mkdir(join(cache, 'info'), { recursive: true })
+      const archiveHash = createHash('sha256').update('original archive bytes').digest('hex')
+      await writeFile(
+        join(cache, 'info', 'paths.json'),
+        JSON.stringify({
+          paths: [
+            {
+              _path: 'lib/terminal',
+              file_mode: 'binary',
+              prefix_placeholder: '/build/placeholder',
+              ...(evidence === 'missing'
+                ? {}
+                : { sha256: evidence === 'invalid' ? 'not-a-hash' : archiveHash })
+            }
+          ]
+        })
+      )
+      await writeFile(
+        join(prefix, 'conda-meta', 'terminal.json'),
+        JSON.stringify({
+          link: { source: cache },
+          paths_data: {
+            paths: [
+              {
+                _path: 'lib/terminal',
+                sha256_in_prefix: createHash('sha256').update(bytes).digest('hex'),
+                ...(evidence === 'missing'
+                  ? {}
+                  : {
+                      sha256:
+                        evidence === 'matching'
+                          ? archiveHash
+                          : evidence === 'invalid'
+                            ? 'not-a-hash'
+                            : '0'.repeat(64)
+                    })
+              }
+            ]
+          }
+        })
+      )
+      const { checksum, snapshot } = await captureEnvironmentSnapshot(prefix, store)
+      const file = snapshot.entries.find((entry) => entry.path === 'lib/terminal')
+      expect(file).toMatchObject(
+        evidence === 'matching' ? { condaBinaryPrefix: true } : { kind: 'file' }
+      )
+      const destination = join(root, 'r')
+      await materializeEnvironmentSnapshot(store, checksum, destination)
+      if (evidence === 'matching') {
+        await relocateEnvironmentSnapshot(snapshot, destination)
+        expect(await readFile(join(destination, 'lib', 'terminal'))).not.toEqual(bytes)
+      } else {
+        expect(file).not.toHaveProperty('condaBinaryPrefix')
+        await expect(relocateEnvironmentSnapshot(snapshot, destination)).rejects.toThrow(
+          'evidence is unavailable'
+        )
+      }
+      expect(await readFile(join(prefix, 'lib', 'terminal'))).toEqual(bytes)
+    }
+  )
+
+  it('relocates installed text and attested padded binaries without replacing residual bytes', async () => {
+    const { root, prefix, store } = await fixture()
+    const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(prefix))
+    const binary = Buffer.concat([
+      Buffer.from('7f454c4600', 'hex'),
+      Buffer.from(`${canonical}/lib/code`),
+      Buffer.alloc(12),
+      Buffer.from('tail')
+    ])
+    await writeFile(join(prefix, 'lib', 'native'), binary)
+    await writeFile(join(prefix, 'lib', 'config'), `home=${canonical}\n`)
+    await writeFile(
+      join(prefix, 'conda-meta', 'native.json'),
+      JSON.stringify({
+        paths_data: {
+          paths: [
+            {
+              _path: 'lib/native',
+              sha256_in_prefix: createHash('sha256').update(binary).digest('hex')
+            }
+          ]
+        }
+      })
+    )
+    const { checksum, snapshot } = await captureEnvironmentSnapshot(prefix, store)
+    const destination = join(root, 'r')
+    await materializeEnvironmentSnapshot(store, checksum, destination)
+    await relocateEnvironmentSnapshot(snapshot, destination)
+    const restored = await import('node:fs/promises').then(({ realpath }) => realpath(destination))
+    expect(await readFile(join(destination, 'lib', 'config'), 'utf8')).toBe(`home=${restored}\n`)
+    const patched = await readFile(join(destination, 'lib', 'native'))
+    expect(patched.length).toBe(binary.length)
+    expect(patched.includes(Buffer.from(`${restored}/lib/code\0`))).toBe(true)
+    expect(patched.subarray(-4).toString()).toBe('tail')
+    expect(await readFile(join(prefix, 'lib', 'native'))).toEqual(binary)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'cleans an isolated snapshot with read-only package directories',
+    async () => {
+      const { root, prefix, store } = await fixture()
+      await chmod(join(prefix, 'lib'), 0o555)
+      try {
+        const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+        const destination = join(root, 'restored')
+        await materializeEnvironmentSnapshot(store, checksum, destination)
+        await removeEnvironmentSnapshot(destination)
+        await expect(lstat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect((await lstat(join(prefix, 'lib'))).mode & 0o777).toBe(0o555)
+      } finally {
+        await chmod(join(prefix, 'lib'), 0o755)
+      }
+    }
+  )
+
+  it('rejects binary serialization even when Conda records its installed checksum', async () => {
+    const { root, prefix, store } = await fixture()
+    const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(prefix))
+    const bytes = Buffer.from(`serialized\0${canonical}/data\0`)
+    await writeFile(join(prefix, 'lib', 'object'), bytes)
+    await writeFile(
+      join(prefix, 'conda-meta', 'object.json'),
+      JSON.stringify({
+        paths_data: {
+          paths: [
+            {
+              _path: 'lib/object',
+              sha256_in_prefix: createHash('sha256').update(bytes).digest('hex')
+            }
+          ]
+        }
+      })
+    )
+    const { checksum, snapshot } = await captureEnvironmentSnapshot(prefix, store)
+    const destination = join(root, 'r')
+    await materializeEnvironmentSnapshot(store, checksum, destination)
+    await expect(relocateEnvironmentSnapshot(snapshot, destination)).rejects.toThrow(
+      'evidence is unavailable'
+    )
+    expect(await readFile(join(prefix, 'lib', 'object'))).toEqual(bytes)
+  })
+
+  it('rejects an unverified binary prefix instead of certifying a relocatable environment', async () => {
+    const { root, prefix, store } = await fixture()
+    const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(prefix))
+    await writeFile(join(prefix, 'lib', 'native'), Buffer.from(`\0${canonical}/lib/code\0`))
+    const { checksum, snapshot } = await captureEnvironmentSnapshot(prefix, store)
+    const destination = join(root, 'r')
+    await materializeEnvironmentSnapshot(store, checksum, destination)
+    await expect(relocateEnvironmentSnapshot(snapshot, destination)).rejects.toThrow(
+      'evidence is unavailable'
+    )
+  })
+
+  it('preserves the installed mixture, deduplicates captures and does not hardlink restored writes', async () => {
+    const { root, prefix, store } = await fixture()
+    const first = await captureEnvironmentSnapshot(prefix, store)
+    const objects = await readdir(join(store, 'objects'))
+    expect(await captureEnvironmentSnapshot(prefix, store)).toEqual(first)
+    expect(await readdir(join(store, 'objects'))).toEqual(objects)
+    const restored = join(root, 'restored')
+    await materializeEnvironmentSnapshot(store, first.checksum, restored)
+    expect(await readdir(join(restored, 'conda-meta'))).toEqual([
+      'package-1.json',
+      'package-2.json'
+    ])
+    expect(await readFile(join(restored, 'lib', 'old_only.py'), 'utf8')).toContain('RESIDUAL')
+    await writeFile(join(restored, 'lib', 'package.py'), 'changed')
+    expect(await readFile(join(prefix, 'lib', 'package.py'), 'utf8')).toBe('VERSION = "2"\n')
+    const second = join(root, 'second')
+    await materializeEnvironmentSnapshot(store, first.checksum, second)
+    expect(await readFile(join(second, 'lib', 'package.py'), 'utf8')).toBe('VERSION = "2"\n')
+  })
+
+  it('rejects damaged payloads and removes an incomplete materialization', async () => {
+    const { root, prefix, store } = await fixture()
+    const capture = await captureEnvironmentSnapshot(prefix, store)
+    const file = capture.snapshot.entries.find((entry) => entry.kind === 'file')!
+    if (file.kind !== 'file') throw new Error('Missing fixture file')
+    await writeFile(join(store, 'objects', file.checksum), 'damaged')
+    const restored = join(root, 'restored')
+    await expect(materializeEnvironmentSnapshot(store, capture.checksum, restored)).rejects.toThrow(
+      'checksum'
+    )
+    await expect(lstat(restored)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it.each(['../outside', '/absolute', 'C:/outside', 'lib\\outside'])(
+    'rejects nonportable manifest path %s',
+    async (path) => {
+      const { prefix, store } = await fixture()
+      const { snapshot } = await captureEnvironmentSnapshot(prefix, store)
+      snapshot.entries[0]!.path = path
+      const bytes = JSON.stringify(snapshot),
+        checksum = createHash('sha256').update(bytes).digest('hex')
+      await writeFile(join(store, 'objects', checksum), bytes)
+      await expect(readEnvironmentSnapshot(store, checksum)).rejects.toThrow('path')
+    }
+  )
+
+  it('does not materialize over an existing directory or inside the source', async () => {
+    const { prefix, store } = await fixture()
+    const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+    await expect(materializeEnvironmentSnapshot(store, checksum, prefix)).rejects.toThrow('source')
+    await expect(
+      materializeEnvironmentSnapshot(store, checksum, join(prefix, 'nested'))
+    ).rejects.toThrow('source')
+    await expect(materializeEnvironmentSnapshot(store, checksum, store)).rejects.toMatchObject({
+      code: 'EEXIST'
+    })
+    expect(await readdir(join(store, 'objects'))).not.toHaveLength(0)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'relocates internal symlink chains and preserves executable modes',
+    async () => {
+      const { root, prefix, store } = await fixture()
+      await chmod(join(prefix, 'lib', 'package.py'), 0o755)
+      await symlink(join(prefix, 'lib', 'package.py'), join(prefix, 'z-link'))
+      await symlink('z-link', join(prefix, 'a-link'))
+      const { checksum } = await captureEnvironmentSnapshot(prefix, store)
+      const restored = join(root, 'restored')
+      await materializeEnvironmentSnapshot(store, checksum, restored)
+      await writeFile(join(restored, 'lib', 'package.py'), 'restored')
+      expect(await readFile(join(restored, 'a-link'), 'utf8')).toBe('restored')
+      expect((await lstat(join(restored, 'lib', 'package.py'))).mode & 0o777).toBe(0o755)
+      expect(await readFile(join(prefix, 'a-link'), 'utf8')).toBe('VERSION = "2"\n')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects external links without changing the target',
+    async () => {
+      const { root, prefix, store } = await fixture()
+      const external = join(root, 'outside')
+      await writeFile(external, 'unchanged')
+      await symlink(external, join(prefix, 'outside'))
+      await expect(captureEnvironmentSnapshot(prefix, store)).rejects.toThrow(
+        'external symbolic link'
+      )
+      expect(await readFile(external, 'utf8')).toBe('unchanged')
+    }
+  )
+})

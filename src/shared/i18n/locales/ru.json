@@ -7648,6 +7648,19 @@
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Проверьте прокси, используемый Open-Science. Рабочее подключение браузера может использовать другие настройки прокси.",
     "Reconnect the backend, then check again.": "Подключитесь к серверной части повторно и выполните проверку ещё раз.",
     "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "Системный режим использует настройки прокси, доступные серверной части. Настройки браузера и операционной системы могут отличаться. Выберите ручной режим, чтобы задать фиксированный прокси.",
-    "Backend defaults": "Настройки серверной части"
+    "Backend defaults": "Настройки серверной части",
+    "Environment snapshot": "Снимок окружения",
+    "The environment files were captured, but isolated restoration could not be verified.": "Файлы окружения сохранены, но изолированное восстановление не удалось проверить.",
+    "Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.": "Сохранённые файлы окружения используются для локальных проверок воспроизводимости. Экспорт блокировки пакетов и повторно используемые окружения для этого снимка недоступны.",
+    "This code uses file or external state whose dependencies are not fully confirmed.": "Этот код использует файлы или внешнее состояние, зависимости которых подтверждены не полностью.",
+    "Some calls may read or change values that the analyzer cannot identify.": "Некоторые вызовы могут читать или изменять значения, которые анализатор не может определить.",
+    "Dynamic names or custom objects prevent complete variable tracking.": "Динамические имена или пользовательские объекты препятствуют полному отслеживанию переменных.",
+    "Not all branch or loop effects could be determined.": "Не удалось определить все эффекты ветвлений или циклов.",
+    "The captured environment is not yet verified for isolated restoration.": "Изолированное восстановление сохранённого окружения ещё не проверено.",
+    "No environment lock was captured for one or more required runs.": "Для одного или нескольких необходимых запусков не сохранён файл фиксации окружения.",
+    "The complete set of input files was not captured.": "Полный набор входных файлов не был сохранён.",
+    "Some output files could not be attributed to a single run.": "Некоторые выходные файлы не удалось связать с одним запуском.",
+    "Some dependencies on earlier cells could not be determined.": "Не удалось определить некоторые зависимости от предыдущих ячеек.",
+    "Required earlier runs are missing from the captured history.": "В сохранённой истории отсутствуют необходимые предыдущие запуски."
   }
 }

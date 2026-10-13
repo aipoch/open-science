@@ -7509,6 +7509,19 @@
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Vérifiez le proxy utilisé par Open-Science. Une connexion de navigateur fonctionnelle peut utiliser d’autres paramètres de proxy.",
     "Reconnect the backend, then check again.": "Reconnectez le backend, puis vérifiez à nouveau.",
     "System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.": "Le mode Système utilise la configuration proxy disponible pour le serveur. Les paramètres du navigateur et du système d’exploitation peuvent différer. Choisissez Manuel pour définir un proxy fixe.",
-    "Backend defaults": "Valeurs par défaut du serveur"
+    "Backend defaults": "Valeurs par défaut du serveur",
+    "Environment snapshot": "Instantané de l’environnement",
+    "The environment files were captured, but isolated restoration could not be verified.": "Les fichiers de l’environnement ont été capturés, mais la restauration isolée n’a pas pu être vérifiée.",
+    "Captured environment files are used for local reproducibility checks. Package lock export and reusable environments are unavailable for this snapshot.": "Les fichiers de l’environnement capturés servent aux vérifications locales de reproductibilité. L’exportation des verrous de paquets et les environnements réutilisables ne sont pas disponibles pour cet instantané.",
+    "This code uses file or external state whose dependencies are not fully confirmed.": "Ce code utilise des fichiers ou un état externe dont les dépendances ne sont pas entièrement confirmées.",
+    "Some calls may read or change values that the analyzer cannot identify.": "Certains appels peuvent lire ou modifier des valeurs que l’analyseur ne peut pas identifier.",
+    "Dynamic names or custom objects prevent complete variable tracking.": "Les noms dynamiques ou les objets personnalisés empêchent le suivi complet des variables.",
+    "Not all branch or loop effects could be determined.": "Les effets de certaines branches ou boucles n’ont pas pu être déterminés.",
+    "The captured environment is not yet verified for isolated restoration.": "La restauration isolée de l’environnement capturé n’a pas encore été vérifiée.",
+    "No environment lock was captured for one or more required runs.": "Aucun verrou d’environnement n’a été capturé pour une ou plusieurs exécutions requises.",
+    "The complete set of input files was not captured.": "L’ensemble complet des fichiers d’entrée n’a pas été capturé.",
+    "Some output files could not be attributed to a single run.": "Certains fichiers de sortie n’ont pas pu être attribués à une seule exécution.",
+    "Some dependencies on earlier cells could not be determined.": "Certaines dépendances envers des cellules précédentes n’ont pas pu être déterminées.",
+    "Required earlier runs are missing from the captured history.": "Des exécutions précédentes requises manquent dans l’historique capturé."
   }
 }

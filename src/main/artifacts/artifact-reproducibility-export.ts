@@ -411,7 +411,8 @@ const environmentLockBundleInfo = (
   environmentName: lock.environmentName,
   ...(lock.platform ? { platform: lock.platform } : {}),
   ...(lock.architecture ? { architecture: lock.architecture } : {}),
-  packageManagers: packageManagers(lock)
+  packageManagers: packageManagers(lock),
+  ...(lock.schemaVersion === 3 ? { snapshot: true as const } : {})
 })
 
 const buildEnvironmentLockReadme = (
@@ -659,6 +660,10 @@ const readEnvironmentLockArchive = async (
     throw new Error('Environment lock bundle checksum mismatch.')
   }
   const lock = parseNotebookEnvironmentLock(serialized)
+  if (lock.schemaVersion === 3)
+    throw new Error(
+      'This environment snapshot requires its captured files and cannot be imported as a package lock bundle.'
+    )
   if (
     lock.kernelKind !== info.kernelKind ||
     lock.environmentName !== info.environmentName ||
@@ -954,10 +959,14 @@ const createArtifactReproducibilityReceiptExporter = (
       if (await dependencies.readSourceScope?.(receiptScope(request)))
         throw new Error('Imported Sessions are read-only.')
       const { info, lock } = await resolveEnvironmentLock(request)
+      if (lock.schemaVersion === 3)
+        throw new Error('Environment snapshots are restored in isolated reproducibility checks.')
       return materializeEnvironmentLock(request.projectId, info, lock)
     },
     exportEnvironmentLock: async (owner, request) => {
       const { lock, serialized, info } = await resolveEnvironmentLock(request)
+      if (lock.schemaVersion === 3)
+        throw new Error('Package lock export cannot include captured environment snapshot files.')
       const archive = buildEnvironmentLockArchive(lock, serialized, info)
 
       const translate = dependencies.translate ?? englishNativeTranslator

@@ -51,6 +51,7 @@
     "packages/environment/src/micromamba-cache-acl.integration.test.ts",
     "packages/environment/src/runtime-repair-policy.ts",
     "packages/environment/src/environment-lock.test.ts",
+    "packages/environment/src/environment-snapshot.test.ts",
     "packages/environment/src/language-pack-fetch.ts",
     "packages/environment/src/external-r-library.ts",
     "packages/environment/src/native-lock-restoration.test.ts",
@@ -84,6 +85,7 @@
     "packages/environment/src/runtime-relocation.ts",
     "packages/environment/src/package-version-comparison.ts",
     "packages/environment/src/environment-lock.ts",
+    "packages/environment/src/environment-snapshot.ts",
     "packages/environment/src/external-environment-lock.test.ts"
   ],
   "interfacePaths": ["packages/environment/src/index.ts"],
@@ -131,6 +133,7 @@
       "packages/environment/src/micromamba-cache-powershell.test.ts",
       "packages/environment/src/micromamba-cache-acl.integration.test.ts",
       "packages/environment/src/environment-lock.test.ts",
+      "packages/environment/src/environment-snapshot.test.ts",
       "packages/environment/src/native-lock-restoration.test.ts",
       "packages/environment/src/environment-state-tracker.test.ts",
       "packages/environment/src/python-command.test.ts",

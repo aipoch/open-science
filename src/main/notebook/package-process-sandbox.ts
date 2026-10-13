@@ -29,7 +29,13 @@ import { defaultSpawn } from './environment-process'
 import { packageProcessTreeTerminated, type InstallSpawn } from '@aipoch/environment'
 import type { InstallRequest } from '../../shared/notebook-env'
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
-import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from '@aipoch/environment'
+import {
+  buildManagedRuntimeProcessEnvironment,
+  buildNotebookKernelEnvironment,
+  condaActivatedPath,
+  EnvironmentSnapshotInUseError,
+  PIP_TRANSPORT_ENV_KEYS
+} from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
@@ -44,6 +50,66 @@ type PackageProcessSandboxOptions = Readonly<{
   terminateTree?: typeof terminateProcessTree
   getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
 }>
+
+/** Verify a captured interpreter with a private home and no package-install or network grants. */
+export const verifySnapshotRuntime = async (
+  processSandbox: NotebookProcessSandbox,
+  prefix: string,
+  argv: string[],
+  signal?: AbortSignal
+): Promise<string> => {
+  const root = join(dirname(prefix), 'verification')
+  const home = join(root, 'home')
+  mkdirSync(home, { recursive: true, mode: 0o700 })
+  const env = buildManagedRuntimeProcessEnvironment(root, { language: 'python', prefix })
+  env.PATH = condaActivatedPath(prefix, env.PATH)
+  env.TMPDIR = env.TEMP = env.TMP = root
+  const [command, ...args] = argv
+  if (!command) throw new Error('Snapshot interpreter command is missing.')
+  const spawn = sandboxedPackageSpawn({
+    processSandbox: {
+      wrap: (invocation) =>
+        processSandbox.wrap({
+          ...invocation,
+          restrictToDeclaredRoots: true,
+          filesystem: {
+            readOnlyRoots: [prefix],
+            readWriteRoots: [root],
+            deniedReadRoots: [],
+            deniedWriteRoots: [prefix]
+          }
+        })
+    },
+    request: { language: 'python', packages: [], workspaceCwd: root },
+    runtimeRoot: root,
+    storageRoot: root,
+    interpreter: { command, condaPrefix: prefix }
+  })
+  let started = false
+  const result = await spawn(
+    command,
+    args,
+    env,
+    () => {
+      started = true
+    },
+    undefined,
+    false,
+    root,
+    {
+      signal,
+      timeoutMs: 30_000
+    }
+  ).catch((error) => {
+    if (started && !packageProcessTreeTerminated(error))
+      throw new EnvironmentSnapshotInUseError(error)
+    throw error
+  })
+  if (result.processesTerminated === false) throw new EnvironmentSnapshotInUseError(undefined)
+  if (result.code !== 0 || result.stdoutDroppedBytes)
+    throw new Error('Environment snapshot verification failed.')
+  return result.stdout
+}
 
 const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
   const hosts = [mirror?.condaChannel, mirror?.pypiIndex, mirror?.cranMirror].flatMap((value) => {

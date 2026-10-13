@@ -902,7 +902,7 @@ describe('ArtifactReproducibilityPanel', () => {
         'Execution recordSome execution details were not fully captured.'
       )
       expect(detailsContent?.textContent).toContain(
-        'File lineageSome file inputs or outputs could not be confirmed.'
+        'File lineageThe complete set of input files was not captured.'
       )
       expect(detailsContent?.textContent).not.toContain('Activity file evidence')
       expect(detailsContent?.textContent).not.toContain('File access evidence')
@@ -996,7 +996,9 @@ describe('ArtifactReproducibilityPanel', () => {
       )
       await act(async () => capture?.focus())
       expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
-        'The original code or environment is not available for replay.'
+        reason === 'environment-lock-partial'
+          ? 'The captured environment is not yet verified for isolated restoration.'
+          : 'No environment lock was captured for one or more required runs.'
       )
       await act(async () => capture?.blur())
       const details = [...container.querySelectorAll('button')].find(
@@ -1058,7 +1060,7 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(document.body.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain(
       area === 'File lineage'
         ? 'Some file inputs or outputs could not be confirmed.'
-        : 'The original code or environment is not available for replay.'
+        : 'No environment lock was captured for one or more required runs.'
     )
   })
 

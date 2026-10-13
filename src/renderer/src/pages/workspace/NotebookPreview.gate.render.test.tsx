@@ -1356,7 +1356,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
     fireEvent.focus(badge as HTMLButtonElement)
     expect((await screen.findByRole('tooltip')).textContent).toBe(
-      'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+      'Some calls may read or change values that the analyzer cannot identify.'
     )
     expect(container.textContent).not.toContain('result is current')
   })

@@ -195,6 +195,10 @@ const environmentCaptureDetails = (
             )
           case 'native-lock-file-rejected':
             return t('A dependency lock file could not be safely captured.')
+          case 'environment-snapshot-unverified':
+            return t(
+              'The environment files were captured, but isolated restoration could not be verified.'
+            )
           default:
             return t(
               'Create a lock from the environment that ran the code, then rerun the code to create a new version.'
@@ -365,11 +369,31 @@ const summarizedIssues = (
   reasons: ReproducibilityIssueReason[],
   t: ReturnType<typeof useTranslation>['t']
 ): Array<{ category: ReproducibilityIssueCategory; label: string; description: string }> => {
+  const specific: Partial<Record<ReproducibilityIssueReason, string>> = {
+    'environment-lock-partial': t(
+      'The captured environment is not yet verified for isolated restoration.'
+    ),
+    'environment-lock-missing': t(
+      'No environment lock was captured for one or more required runs.'
+    ),
+    'file-reads-unavailable': t('The complete set of input files was not captured.'),
+    'writer-attribution-unavailable': t(
+      'Some output files could not be attributed to a single run.'
+    ),
+    'kernel-dependencies-unavailable': t(
+      'Some dependencies on earlier cells could not be determined.'
+    ),
+    'history-truncated': t('Required earlier runs are missing from the captured history.')
+  }
   const categories = new Set(reasons.map((reason) => issueCategoryByReason[reason]))
   return issueCategoryOrder.flatMap((category) => {
     if (!categories.has(category)) return []
     const copy = issueCategoryCopy[category]
-    return [{ category, label: t(copy.label), description: t(copy.description) }]
+    const categoryReasons = reasons.filter((reason) => issueCategoryByReason[reason] === category)
+    const descriptions = [
+      ...new Set(categoryReasons.map((reason) => specific[reason] ?? t(copy.description)))
+    ]
+    return [{ category, label: t(copy.label), description: descriptions.join(' ') }]
   })
 }
 

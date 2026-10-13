@@ -237,6 +237,46 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it('retains every installed distribution version and attaches live evidence only to its match', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'mixed-python-inventory-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => ({
+        packages: ['1.0', '2.0'].map((version) => ({
+          name: 'example',
+          version,
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-importlib-metadata']
+        }))
+      })
+    })
+    const capture = await tracker.captureCompletedRun(target, {
+      packages: [
+        {
+          name: 'example',
+          version: '2.0.0',
+          versionStatus: 'known',
+          ecosystem: 'python',
+          evidenceSources: ['python-kernel-modules'],
+          loadedState: 'loaded'
+        }
+      ]
+    })
+    expect(capture.manifest.packages).toEqual([
+      expect.objectContaining({
+        version: '1.0',
+        loadedState: 'installed-only',
+        evidenceSources: ['python-importlib-metadata']
+      }),
+      expect.objectContaining({
+        version: '2.0',
+        loadedState: 'loaded',
+        evidenceSources: ['python-importlib-metadata', 'python-kernel-modules']
+      })
+    ])
+  })
+
   it('does not certify conflicting Python distribution versions', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'ambiguous-python-inspection-'))
     const tracker = new EnvironmentStateTracker({

@@ -13,6 +13,22 @@ type SerializationCase = {
 
 const cases: SerializationCase[] = [
   {
+    name: 'Python DOCX with images and a template',
+    language: 'python',
+    source:
+      "from docx import Document\ndoc = Document('template.docx')\ndoc.add_picture('figure.png')\ndoc.save('report.docx')",
+    reads: ['figure.png', 'template.docx'],
+    writes: ['report.docx']
+  },
+  {
+    name: 'Python DOCX built-in template',
+    language: 'python',
+    source:
+      "from docx import Document\ndoc = Document()\ndoc.add_paragraph('Results')\ndoc.save(path_or_stream='report.docx')",
+    reads: [],
+    writes: ['report.docx']
+  },
+  {
     name: 'Python OpenPyXL',
     language: 'python',
     source:

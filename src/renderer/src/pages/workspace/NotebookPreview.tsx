@@ -174,6 +174,29 @@ const DependencyStatusBadge = ({
       : missingGraphicsState
         ? t('Plot setup is incomplete')
         : t('Variable tracking is limited')
+  const trackingDetails =
+    staleness.state === 'unknown'
+      ? [
+          ...(staleness.reasons.includes('external-state')
+            ? [
+                t(
+                  'This code uses file or external state whose dependencies are not fully confirmed.'
+                )
+              ]
+            : []),
+          ...(staleness.reasons.some((reason) =>
+            ['opaque-call', 'opaque-mutation', 'scoped-opaque-call'].includes(reason)
+          )
+            ? [t('Some calls may read or change values that the analyzer cannot identify.')]
+            : []),
+          ...(staleness.reasons.includes('dynamic-namespace')
+            ? [t('Dynamic names or custom objects prevent complete variable tracking.')]
+            : []),
+          ...(staleness.reasons.includes('control-flow')
+            ? [t('Not all branch or loop effects could be determined.')]
+            : [])
+        ]
+      : []
   const detail = isStale
     ? t(
         'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
@@ -188,9 +211,11 @@ const DependencyStatusBadge = ({
         ? t(
             'Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.'
           )
-        : t(
-            'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
-          )
+        : trackingDetails.length
+          ? trackingDetails.join(' ')
+          : t(
+              'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+            )
 
   return (
     <>

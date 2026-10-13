@@ -692,6 +692,53 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it('keeps automatic snapshot verification separate from user grants and host PATH roots', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'outside-snapshot-'))
+    fixtureDirectories.push(outside)
+    const granted = vi.fn(async () => [
+      { id: 'outside', name: 'outside', path: outside, access: 'rw' as const }
+    ])
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getGrantedLocalRoots: granted,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn().mockResolvedValue('allowAlways'),
+      platform: 'linux'
+    })
+    const wrapped = await owner.wrap({
+      executable: '/snapshot/bin/python',
+      args: ['-I', '-B', '-c', 'pass'],
+      env: { PATH: outside },
+      cwd: '/verification',
+      commandText: 'snapshot verification',
+      sessionId: 'verification',
+      projectId: 'verification',
+      runtime: 'python',
+      restrictToDeclaredRoots: true,
+      allowedNetworkHosts: ['example.org'],
+      filesystem: {
+        readOnlyRoots: ['/snapshot'],
+        readWriteRoots: ['/verification'],
+        deniedReadRoots: [],
+        deniedWriteRoots: ['/snapshot']
+      }
+    })
+    try {
+      const policy = backend.wrap.mock.calls.at(-1)![0].filesystem
+      expect(policy.readOnlyRoots).toContain('/snapshot')
+      expect(policy.readOnlyRoots).not.toContain(outside)
+      expect(policy.readWriteRoots).not.toContain(outside)
+      expect(granted).not.toHaveBeenCalled()
+      const end = wrapped.beginExecution?.()
+      await expect(backend.request?.({ host: 'example.org', port: 443 })).resolves.toBe(false)
+      end?.()
+    } finally {
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()

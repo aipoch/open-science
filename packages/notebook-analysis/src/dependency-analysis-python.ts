@@ -3324,6 +3324,7 @@ class Analyzer extends NodeVisitor {
   calculatedValueTypes = new WeakMap<PyNode, string>()
   calculatedReturnName?: string
   literalBindings = new Map<string, PyNode>()
+  literalIterationSources: string[] = []
   localFunctions = new Map<string, PyNode>()
   assignmentVersions = new Map<string, number>()
   localFunctionDefaultVersions = new Map<PyNode, Map<string, number>>()
@@ -3464,6 +3465,52 @@ class Analyzer extends NodeVisitor {
   }
 
   addMutation(name: string): void {
+    if (
+      [...this.serializedConnections.keys()].some(
+        (source) =>
+          source === name ||
+          this.aliases.get(name) === source ||
+          [...this.possibleAliases].some((alias) => alias.startsWith(`${name}\0${source}\0`))
+      )
+    )
+      this.serializedConnections.clear()
+    const jsonNames = [...this.localLibraryTypes]
+      .filter(([, type]) => type.startsWith('python.json-') || type === 'python.literal-mapping')
+      .map(([name]) => name)
+    if (
+      jsonNames.includes(name) ||
+      this.localLibraryTypeScopes.some(
+        (scope) =>
+          scope[name]?.startsWith('python.json-') || scope[name] === 'python.literal-mapping'
+      ) ||
+      jsonNames.some(
+        (source) =>
+          this.aliases.get(name) === source ||
+          [...this.possibleAliases].some((alias) => alias.startsWith(`${name}\0${source}\0`))
+      )
+    ) {
+      for (const target of jsonNames) this.localLibraryTypes.delete(target)
+      for (const scope of this.localLibraryTypeScopes)
+        for (const [target, type] of Object.entries(scope))
+          if (type?.startsWith('python.json-') || type === 'python.literal-mapping')
+            delete scope[target]
+      this.typeBindings = this.typeBindings.filter(
+        (binding) =>
+          !(
+            binding.typeName?.startsWith('python.json-') ||
+            binding.typeName === 'python.literal-mapping'
+          )
+      )
+    }
+    if (
+      this.literalIterationSources.some(
+        (source) =>
+          source === name ||
+          this.aliases.get(name) === source ||
+          [...this.possibleAliases].some((alias) => alias.startsWith(`${name}\0${source}\0`))
+      )
+    )
+      this.unknown.add('opaque-call')
     this.literalBindings.delete(name)
     for (const [binding, value] of this.literalBindings)
       if (!staticScalar(value)) this.literalBindings.delete(binding)
@@ -3561,6 +3608,12 @@ class Analyzer extends NodeVisitor {
       node.value.type === 'Call'
         ? this.libraryCallEffect(node.value)?.returnType
         : this.libraryTypeName(node.value)
+    if (
+      owner === 'python.json-value' &&
+      (staticScalar(node.slice) ||
+        ['python.scalar', 'python.string'].includes(this.arithmeticResultType(node.slice) ?? ''))
+    )
+      return 'python.json-value'
     if (
       node.value.type === 'Attribute' &&
       ['loc', 'iloc'].includes(node.value.attr ?? '') &&
@@ -3698,6 +3751,25 @@ class Analyzer extends NodeVisitor {
   }
 
   iterationTypes(node: PyNode | null | undefined): string[] {
+    if (
+      node?.type === 'Call' &&
+      node.func?.type === 'Attribute' &&
+      node.func.attr === 'items' &&
+      !(Array.isArray(node.args) && node.args.length) &&
+      !node.keywords?.length
+    ) {
+      const receiver = node.func.value as PyNode
+      const literal =
+        receiver.type === 'Name' ? this.literalBindings.get(receiver.id ?? '') : receiver
+      if (
+        literal?.type === 'Dict' &&
+        literal.values?.length &&
+        literal.values.every(
+          (value) => value?.type === 'Dict' && value.keys?.every((key) => staticScalar(key))
+        )
+      )
+        return ['', 'python.literal-mapping']
+    }
     if (node?.type === 'ListComp') {
       const generator = node.generators?.[0]
       if (
@@ -4328,6 +4400,38 @@ class Analyzer extends NodeVisitor {
     node: PyNode,
     canonicalName: string
   ): PythonLibraryMethodEffect {
+    if (/^docx\.shared\.(?:Inches|Cm|Mm|Pt|Emu|RGBColor)$/u.test(canonicalName)) {
+      const args = Array.isArray(node.args) ? node.args : []
+      return args.every(
+        (argument) =>
+          staticScalar(argument) || this.arithmeticResultType(argument) === 'python.scalar'
+      ) && !(node.keywords ?? []).length
+        ? effect
+        : { effect: 'unknown', unsafeNamespace: true }
+    }
+    if (canonicalName === 'json.load' || canonicalName === 'json.loads') {
+      const argument = Array.isArray(node.args) ? node.args[0] : undefined
+      const directOpen =
+        argument?.type === 'Call' &&
+        pythonDottedName(argument.func) === 'open' &&
+        !this.defined.has('open') &&
+        !this.taintedNamespaces.has('builtins') &&
+        !this.taintedNamespaces.has('*')
+      if (
+        canonicalName === 'json.load' &&
+        !directOpen &&
+        !(argument?.type === 'Name' && this.serializedConnections.has(argument.id ?? ''))
+      )
+        return { effect: 'unknown', unsafeNamespace: true }
+      if (
+        this.serializationCallName(node) !== canonicalName ||
+        !Array.isArray(node.args) ||
+        node.args.length !== 1 ||
+        node.keywords?.length
+      )
+        return effect
+      return { effect: 'read', returnType: 'python.json-value' }
+    }
     if (pythonTextReaderConverterPosition(canonicalName) !== undefined)
       return specializePythonTextReaderEffect(effect, node, canonicalName)
     if (canonicalName === 'scipy.signal.periodogram') {
@@ -4424,6 +4528,54 @@ class Analyzer extends NodeVisitor {
               : undefined))
     if (!typeName) return undefined
     const member = node.func.attr ?? ''
+    if (
+      member === 'get' &&
+      ['python.literal-mapping', 'python.json-value'].includes(typeName) &&
+      !staticScalar(Array.isArray(node.args) ? node.args[0] : undefined) &&
+      !['python.scalar', 'python.string'].includes(
+        this.arithmeticResultType(Array.isArray(node.args) ? node.args[0] : undefined) ?? ''
+      )
+    )
+      return { effect: 'unknown', unsafeNamespace: true }
+    if (member === 'get' && typeName.startsWith('python.') && receiverNode !== node.func.value)
+      return undefined
+    if (
+      member === 'get' &&
+      ['python.container', 'python.literal-mapping', 'python.json-value'].includes(typeName)
+    ) {
+      const literal =
+        receiverNode.type === 'Name'
+          ? this.literalBindings.get(receiverNode.id ?? '')
+          : receiverNode
+      if (
+        typeName === 'python.container' &&
+        literal?.type === 'Dict' &&
+        !literal.keys?.every((key) => staticScalar(key))
+      )
+        return { effect: 'unknown', unsafeNamespace: true }
+
+      const args = Array.isArray(node.args) ? node.args : []
+      const fallback = args[1]
+      const freshEmpty =
+        fallback &&
+        ((fallback.type === 'Dict' && !fallback.keys?.length) ||
+          (['List', 'Tuple'].includes(fallback.type) && !fallback.elts?.length))
+      // A named mutable default may be returned by reference; do not lose that dependency.
+      if (
+        node.keywords?.length ||
+        args.length > 2 ||
+        (fallback && !staticScalar(fallback) && !freshEmpty)
+      )
+        return { effect: 'unknown', unsafeNamespace: true }
+      if (typeName === 'python.container' && !literal) return undefined
+      if (typeName === 'python.json-value')
+        return {
+          effect: 'read',
+          returnType: 'python.json-value',
+          returnsPossibleAliasOf: 'receiver'
+        }
+      return { effect: 'read', returnsPossibleAliasOf: 'receiver' }
+    }
     const effect = pythonLibraryMethodEffect(typeName, member)
     const registered = effect
       ? this.specializeScientificCallEffect(
@@ -4560,6 +4712,7 @@ class Analyzer extends NodeVisitor {
       for (const name of targetNames) this.conditionallyDefined.delete(name)
     }
     for (const name of targetNames) {
+      for (const scope of this.localLibraryTypeScopes) delete scope[name]
       this.assignmentVersions.set(name, (this.assignmentVersions.get(name) ?? 0) + 1)
       this.freshCalculatedNames.delete(name)
       this.literalBindings.delete(name)
@@ -4831,7 +4984,7 @@ class Analyzer extends NodeVisitor {
     const literalBinding =
       value?.type === 'Name'
         ? this.literalBindings.get(value.id ?? '')
-        : staticScalar(value) || staticNonemptyIterable(value)
+        : staticScalar(value) || staticNonemptyIterable(value) || value?.type === 'Dict'
           ? value
           : undefined
     const preservedIterationSource = this.iterationSource(value)
@@ -4909,6 +5062,7 @@ class Analyzer extends NodeVisitor {
         this.builtinContainers.add(target.id)
       if (
         arithmeticValue ||
+        returnType === 'python.json-value' ||
         value?.type === 'Attribute' ||
         (value && this.procedureReturnTypes.has(value))
       )
@@ -5252,6 +5406,12 @@ class Analyzer extends NodeVisitor {
     const structurallyNonempty = knownNonemptyIterableShape(node.iter)
     const scoped = this.scopedLoops.has(node)
     const targetNames = this.assignedNames(node.target)
+    const iteratorTypes = this.loopLibraryTypes(node.iter, targetNames)
+    const literalIterationSource =
+      ['python.literal-mapping', 'python.json-value'].includes(iteratorTypes[1] ?? '') &&
+      node.iter?.func?.type === 'Attribute'
+        ? rootName(node.iter.func.value as PyNode)
+        : undefined
     const stableIterator = this.knownStableIterator(node.iter)
     const isolatedConditionalNames = this.isolatedConditionalLoops.get(node)
     const body = Array.isArray(node.body) ? node.body : []
@@ -5340,7 +5500,7 @@ class Analyzer extends NodeVisitor {
       this.recordPythonBinding(targetNames)
       for (const name of targetNames) this.defined.add(name)
       const sources = this.loopSourceNames(node.iter)
-      const targetTypes = this.loopLibraryTypes(node.iter, targetNames)
+      const targetTypes = iteratorTypes
       this.bindTypedLoopValues(node.iter, targetNames, sources, targetTypes)
       this.localScopes.push(
         Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
@@ -5354,6 +5514,7 @@ class Analyzer extends NodeVisitor {
         assignmentDepth: this.controlDepth,
         initializedNames: new Set(targetNames)
       })
+      if (literalIterationSource) this.literalIterationSources.push(literalIterationSource)
       for (const statement of body) {
         const scopedEffect =
           temporaryValuesOnly && !['Assign', 'AnnAssign'].includes(statement.type)
@@ -5361,6 +5522,7 @@ class Analyzer extends NodeVisitor {
         this.visit(statement)
         if (scopedEffect) this.controlDepth += 1
       }
+      if (literalIterationSource) this.literalIterationSources.pop()
       this.isolatedLoopEffects.pop()
       this.localLibraryTypeScopes.pop()
       this.localScopes.pop()
@@ -5386,7 +5548,7 @@ class Analyzer extends NodeVisitor {
       for (const name of targetNames) this.defined.add(name)
     }
     const sources = this.loopSourceNames(node.iter)
-    const targetTypes = this.loopLibraryTypes(node.iter, targetNames)
+    const targetTypes = iteratorTypes
     this.bindTypedLoopValues(node.iter, targetNames, sources, targetTypes)
     this.localScopes.push(
       Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
@@ -5396,7 +5558,9 @@ class Analyzer extends NodeVisitor {
     )
     const scopedAggregation = Boolean(localAggregation) || stableScoped
     if (scopedAggregation) this.localAggregationDepth += 1
+    if (literalIterationSource) this.literalIterationSources.push(literalIterationSource)
     for (const statement of body) this.visit(statement)
+    if (literalIterationSource) this.literalIterationSources.pop()
     if (scopedAggregation) this.localAggregationDepth -= 1
     this.localLibraryTypeScopes.pop()
     this.localScopes.pop()
@@ -6429,6 +6593,14 @@ class Analyzer extends NodeVisitor {
       node.func.value.type === 'Attribute' &&
       node.func.value.attr === 'str' &&
       !libraryEffect
+    )
+      this.unknown.add('opaque-call')
+    if (
+      node.func?.type === 'Attribute' &&
+      node.func.attr === 'get' &&
+      isPyNode(node.func.value) &&
+      node.func.value.type === 'Subscript' &&
+      !this.librarySubscriptType(node.func.value)
     )
       this.unknown.add('opaque-call')
     if (

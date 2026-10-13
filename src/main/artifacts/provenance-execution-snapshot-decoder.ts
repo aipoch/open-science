@@ -125,7 +125,8 @@ const ENVIRONMENT_LOCK_PARTIAL_REASONS = new Set([
   'non-conda-package-detected',
   'non-conda-installer-detected',
   'native-lock-file-best-effort',
-  'native-lock-file-rejected'
+  'native-lock-file-rejected',
+  'environment-snapshot-unverified'
 ])
 
 const ENVIRONMENT_LOCK_UNAVAILABLE_REASONS = new Set([

@@ -965,6 +965,19 @@ class NotebookDependencyProjector {
           ? undefined
           : objectTypes.get(call.receiver)) ??
         typeSummaries.get(call.receiver)
+      // A prior JSON tree can contain arbitrary objects after a write in this cell.
+      // Revoke its recursive type before resolving chained calls, not only at run end.
+      if (
+        (typeSummary?.name.startsWith('python.json-') ||
+          typeSummary?.name === 'python.literal-mapping') &&
+        [
+          ...(facts.mutatedNames ?? []),
+          ...(facts.memberWrites ?? []).map((write) => write.receiver)
+        ].some((name) => receiversMayAlias(name, call.receiver))
+      ) {
+        typeSummary = undefined
+        typeAwareReasons.push('opaque-call', 'dynamic-namespace')
+      }
       const configuredTypeName = typeSummary
         ? (facts.memberWrites ?? []).find(
             (write) =>
@@ -1092,6 +1105,19 @@ class NotebookDependencyProjector {
       const method = methodWasShadowed
         ? undefined
         : typeSummary?.methods.find((candidate) => candidate.name === methodName)
+      // Same-run containers already have source-level checks for their local construction.
+      // A prior or chained untyped mapping cannot prove that key comparison is side-effect free.
+      if (
+        run.kernelKind === 'python' &&
+        call.member === 'get' &&
+        !method &&
+        !(
+          knownBuiltinContainers.has(call.receiver) &&
+          (facts.definedNames ?? []).includes(call.receiver) &&
+          !call.receiverChain?.length
+        )
+      )
+        typeAwareReasons.push('opaque-call', 'dynamic-namespace')
       const libraryEffect = methodWasShadowed
         ? undefined
         : (libraryEffectFor(typeSummary, methodName) ??
@@ -2336,6 +2362,17 @@ class NotebookDependencyProjector {
     ]
     for (const name of possibleMutationRoots) {
       for (const aliasName of namesSharingReference(name)) possibleMutations.add(aliasName)
+    }
+    // Default JSON decoding proves a tree of built-in values only until that tree is changed.
+    // Retain variable lineage, but discard recursive element types across writes and aliases.
+    for (const [name, summary] of objectTypes) {
+      if (
+        (summary.name.startsWith('python.json-') || summary.name === 'python.literal-mapping') &&
+        [...definiteMutations, ...possibleMutations].some((mutated) =>
+          receiversMayAlias(name, mutated)
+        )
+      )
+        objectTypes.delete(name)
     }
     const namesReachableThroughPossibleReferences = (names: Iterable<string>): Set<string> => {
       const reachable = new Set(names)

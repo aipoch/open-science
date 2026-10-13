@@ -485,7 +485,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    const grantedRoots = invocation.restrictToDeclaredRoots
+      ? []
+      : ((await this.options.getGrantedLocalRoots?.()) ?? [])
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
@@ -535,7 +537,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
-            ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
+            ...(invocation.restrictToDeclaredRoots ||
+            invocation.target?.kind === 'wsl2' ||
+            this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
             ...grantedRoots.map((root) => root.path),
@@ -545,7 +549,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
-                  ...environmentPathRoots(env, this.platform)
+                  ...(invocation.restrictToDeclaredRoots
+                    ? []
+                    : environmentPathRoots(env, this.platform))
                 ]
               }
             : {}),
@@ -566,15 +572,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: (request) =>
-          this.isCommandGrantAllowed(
-            invocation.sessionId,
-            invocation.runtime,
-            activeCommandText,
-            executionActive,
-            activeExecutionGrants,
-            allowedNetworkHosts,
-            request
-          )
+          invocation.restrictToDeclaredRoots
+            ? Promise.resolve(false)
+            : this.isCommandGrantAllowed(
+                invocation.sessionId,
+                invocation.runtime,
+                activeCommandText,
+                executionActive,
+                activeExecutionGrants,
+                allowedNetworkHosts,
+                request
+              )
       })
       if (target.kind === 'wsl2') {
         // Returning from the runtime certifies guest-receipt reconciliation for this exact profile.
