@@ -164,9 +164,23 @@ describe('managed-file deletion integration', () => {
       }
       if (target === 'failed-session') {
         vi.spyOn(sessions, 'deleteSession').mockRejectedValueOnce(new Error('disk locked'))
-        await expect(coordinator.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toThrow(
-          'disk locked'
-        )
+        const owner = new SessionDeletionOwner({
+          runtime: {
+            liveSessionProjectId: () => PROJECT_ID,
+            deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+          },
+          persistence: {
+            deleteSession: ({ projectId, sessionId }) =>
+              coordinator.deleteSession(projectId, sessionId)
+          }
+        })
+        await expect(
+          owner.delete({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+        ).resolves.toEqual({
+          status: 'failed',
+          reason: 'persistence',
+          runtimeDetached: true
+        })
       } else if (target === 'project') {
         await coordinator.deleteProjectSessions(PROJECT_ID)
       } else {
