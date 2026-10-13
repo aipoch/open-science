@@ -1,7 +1,7 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
-import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -193,12 +193,13 @@ describe('Notebook reproduction runtime', () => {
     async (outcome) => {
       const storageRoot = await mkdtemp(join(tmpdir(), 'snapshot-runtime-'))
       replayRoots.push(storageRoot)
+      const sourcePrefix = join(await realpath(storageRoot), 'runtime', 'envs', 'a')
       const payload = 'captured interpreter fixture'
       const payloadChecksum = await sha256(payload)
       const executablePath = process.platform === 'win32' ? 'python.exe' : 'bin/python'
       const snapshot = JSON.stringify({
         schemaVersion: 1,
-        sourcePrefix: join(storageRoot, 'original-environment'),
+        sourcePrefix,
         observation: { runtimeVersion: '3.12.14', packages: [] },
         entries: [
           ...(process.platform === 'win32'
@@ -274,7 +275,7 @@ describe('Notebook reproduction runtime', () => {
         },
         { createExecutor }
       )
-      const scratch = join(storageRoot, 'runtime', '.e')
+      const scratch = join(storageRoot, '.e')
       if (outcome === 'verification-unreaped') {
         await expect(creating).rejects.toThrow('termination is unconfirmed')
         expect(createExecutor).not.toHaveBeenCalled()
@@ -287,7 +288,12 @@ describe('Notebook reproduction runtime', () => {
       } else {
         const runtime = await creating
         expect(await readdir(scratch)).toHaveLength(1)
-        expect(wrap.mock.calls[0]![0].executable).toContain(`${join('runtime', '.e')}`)
+        const executable = wrap.mock.calls[0]![0].executable
+        const prefix =
+          process.platform === 'win32' ? dirname(executable) : dirname(dirname(executable))
+        expect(Buffer.byteLength(await realpath(prefix))).toBeLessThanOrEqual(
+          Buffer.byteLength(sourcePrefix)
+        )
         await expect(runtime.shutdown()).resolves.toEqual({ reaped: outcome === 'reaped' })
         expect(await readdir(scratch)).toHaveLength(outcome === 'reaped' ? 0 : 1)
       }

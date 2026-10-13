@@ -215,7 +215,8 @@ const restoreEnvironment = async (
     })
   const platform = dependencies.platform ?? process.platform
   if (lock.schemaVersion === 3 && lock.snapshot) {
-    const scratch = join(input.storageRoot, 'runtime', '.e')
+    // Match capture's short private prefix, including one-character managed names.
+    const scratch = join(input.storageRoot, '.e')
     await mkdir(scratch, { recursive: true, mode: 0o700 })
     const snapshotRoot = await mkdtemp(join(scratch, 'r-'))
     const prefix = join(snapshotRoot, 'e')

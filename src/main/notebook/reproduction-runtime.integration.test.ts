@@ -594,8 +594,8 @@ with open("scores.json", "w") as handle:
       ])
       // Exercise the generated Python verifier, including packages without __version__
       // and legacy distributions without RECORD. Only the disposable restored prefix changes.
-      const [restored] = await readdir(join(storageRoot, 'runtime', '.e'))
-      const prefix = join(storageRoot, 'runtime', '.e', restored!, 'e')
+      const [restored] = await readdir(join(storageRoot, '.e'))
+      const prefix = join(storageRoot, '.e', restored!, 'e')
       const sitePackages = (
         await execute(
           pythonBin(prefix),
@@ -666,7 +666,7 @@ with open("scores.json", "w") as handle:
         signal
       })
       expect(comparison).toMatchObject({ matched: true, completedStepIds: ['step:scores'] })
-      expect(await readdir(join(storageRoot, 'runtime', '.e'))).toEqual([])
+      expect(await readdir(join(storageRoot, '.e'))).toEqual([])
     } finally {
       const reaped = runtime ? (await runtime.shutdown()).reaped : true
       if (reaped) await removeEnvironmentSnapshot(root)

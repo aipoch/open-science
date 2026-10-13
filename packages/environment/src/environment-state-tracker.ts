@@ -1246,7 +1246,8 @@ class EnvironmentStateTracker {
         verifySnapshotRuntime: this.options.verifySnapshotRuntime,
         snapshotStorage: {
           store: join(this.options.dataRoot, 'runtime', 'provenance', 'environment-snapshots'),
-          restoreRoot: join(this.options.dataRoot, 'runtime', '.e')
+          // .e/s-XXXXXX/e stays shorter than runtime/envs/a, even for the shortest name.
+          restoreRoot: join(this.options.dataRoot, '.e')
         },
         ...(endFingerprint ? { environmentFingerprint: endFingerprint } : {}),
         ...(lockWorkspace ? { workspace: lockWorkspace } : {}),

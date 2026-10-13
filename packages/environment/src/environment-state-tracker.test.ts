@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
@@ -47,6 +47,63 @@ const readBinding = async (
 }
 
 describe('EnvironmentStateTracker', () => {
+  it('captures and relocates a binary snapshot of a one-character managed environment', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'short-environment-'))
+    const prefix = join(dataRoot, 'runtime', 'envs', 'a')
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    const canonical = await realpath(prefix)
+    const bytes = Buffer.from(`terminfo\0${canonical}/share\0`)
+    await writeFile(join(prefix, 'terminal'), bytes)
+    await writeFile(
+      join(prefix, 'conda-meta', 'terminal.json'),
+      JSON.stringify({
+        paths_data: {
+          paths: [
+            {
+              _path: 'terminal',
+              sha256_in_prefix: createHash('sha256').update(bytes).digest('hex'),
+              file_mode: 'binary',
+              prefix_placeholder: '/build/placeholder'
+            }
+          ]
+        }
+      })
+    )
+    const verify = vi.fn(async (restored: string) => {
+      const destination = await realpath(restored)
+      expect(Buffer.byteLength(destination)).toBeLessThanOrEqual(Buffer.byteLength(canonical))
+      const relocated = await readFile(join(destination, 'terminal'))
+      expect(relocated.includes(Buffer.from(destination))).toBe(true)
+      expect(relocated.includes(Buffer.from(canonical))).toBe(false)
+      return 'OPEN_SCIENCE_SNAPSHOT_VERIFIED'
+    })
+    const observation = {
+      runtimeVersion: '3.12.14',
+      platform: process.platform,
+      architecture: process.arch,
+      packages: []
+    }
+    const captured = await new EnvironmentStateTracker({
+      dataRoot,
+      inspectInstalled: async () => observation,
+      captureFingerprint: async () => 'stable',
+      verifySnapshotRuntime: verify
+    }).captureCompletedRun(
+      {
+        language: 'python',
+        environmentName: 'a',
+        runtimeSource: 'managed',
+        command: join(prefix, 'python'),
+        condaPrefix: prefix
+      },
+      observation
+    )
+    expect(captured.environmentLock).toMatchObject({ state: 'available' })
+    expect(verify).toHaveBeenCalledOnce()
+    expect(await readFile(join(prefix, 'terminal'))).toEqual(bytes)
+    expect(await readdir(join(dataRoot, '.e'))).toEqual([])
+  })
+
   it.each(['python', 'r'] as const)(
     'keeps %s fingerprint, inventory, and lock subprocesses hidden throughout a run',
     async (language) => {
