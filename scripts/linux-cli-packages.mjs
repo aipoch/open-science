@@ -57,11 +57,11 @@ export async function preparePackage(archive, expectedDigest, expectedSha, targe
   assert.match(expectedSha, /^[a-f0-9]{40}$/)
   assert.ok(Object.hasOwn(linuxTargets, target), 'Unsupported Linux target')
   assert.equal(await digest(archive), expectedDigest, 'Source archive checksum mismatch')
-  const match = /^open-science-(\d+\.\d+\.\d+)-(linux-(?:x64|arm64)-gnu)\.tar\.gz$/.exec(
+  const match = /^open-science-cli-(\d+\.\d+\.\d+)-(linux-(?:x64|arm64)-gnu)\.tar\.gz$/.exec(
     basename(archive)
   )
   assert.ok(match && match[2] === target, 'Source archive filename mismatch')
-  const stem = `open-science-${match[1]}-${target}`
+  const stem = `open-science-cli-${match[1]}-${target}`
   const { t, x } = await import('tar')
   // Inspect every link before extraction, including entries appearing after a link.
   const entries = []
@@ -407,7 +407,7 @@ export async function collectPackages(directory, expectedVersion, expectedSha) {
         'Package checksum mismatch'
       )
       assert.match(report.sourceArchiveSha256, /^[a-f0-9]{64}$/)
-      assert.equal(report.sourceArchive, `open-science-${identity.version}-${target}.tar.gz`)
+      assert.equal(report.sourceArchive, `open-science-cli-${identity.version}-${target}.tar.gz`)
       const sibling = reports.find((item) => item.target === target)
       if (sibling)
         assert.equal(

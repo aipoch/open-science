@@ -55,11 +55,19 @@ data and credentials. See the tap README for checksum maintenance and installati
 
 ## Install the standalone Release archive
 
-Stable Releases attach `open-science-<version>-<target>.tar.gz` for `darwin-arm64`,
+Stable Releases attach `open-science-cli-<version>-<target>.tar.gz` for `darwin-arm64`,
 `darwin-x64`, `linux-x64-gnu` and `linux-arm64-gnu`, and
-`open-science-<version>-win32-x64.zip` for Windows x64. These are separate from the desktop
+`open-science-cli-<version>-win32-x64.zip` for Windows x64. These are separate from the desktop
 installers and GitHub's automatically generated source archives. Linux musl, Windows ARM64
 and older glibc distributions are not certified.
+
+The extracted directory uses the same `open-science-cli-<version>-<target>` stem. The
+launcher remains `open-science` (`open-science.cmd` on Windows). Releases through v0.37.2
+retain their original `open-science-<version>-<target>` archive names and directories.
+Download automation, including the separate Homebrew tap's Formula URLs, must use the new
+prefix when updating to a release with the new names. Existing pinned downloads remain valid.
+Current Linux repackaging tools accept only the new archive names; repackaging an older Release
+requires the historical tooling from that Release.
 
 Download the matching archive and `SHA256SUMS.txt` from the same GitHub Release. Verify its
 SHA-256, then extract the entire directory. The archive includes the pinned Node executable,

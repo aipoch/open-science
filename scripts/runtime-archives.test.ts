@@ -86,6 +86,17 @@ async function fixture(): Promise<{
   return { root, source, nodeSource, output, target, sourceSha: sha }
 }
 describe('standalone runtime archives', () => {
+  it('uses the CLI package name for every archive and extracted directory', () => {
+    expect(runtimeTargets.map((target) => archiveFilename('1.2.3', target)).sort()).toEqual([
+      'open-science-cli-1.2.3-darwin-arm64.tar.gz',
+      'open-science-cli-1.2.3-darwin-x64.tar.gz',
+      'open-science-cli-1.2.3-linux-arm64-gnu.tar.gz',
+      'open-science-cli-1.2.3-linux-x64-gnu.tar.gz',
+      'open-science-cli-1.2.3-win32-x64.zip'
+    ])
+    for (const target of runtimeTargets)
+      expect(archiveStem('1.2.3', target)).toBe(`open-science-cli-1.2.3-${target.id}`)
+  })
   it('roundtrips the launcher, hidden files, arguments, cwd and exit status', async () => {
     const options = await fixture()
     await writeFile(
