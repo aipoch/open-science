@@ -186,7 +186,7 @@ const WorkspaceDelegatedQuestionCard = ({
           })}
         </span>
       </div>
-      {question.multiSelect ? (
+      {question.kind === 'multi-select' ? (
         <p className="mt-1 text-xs text-text-300">{t('Select one or more options')}</p>
       ) : null}
       <div className="mt-3 max-h-[min(24rem,50vh)] overflow-y-auto">
@@ -205,7 +205,7 @@ const WorkspaceDelegatedQuestionCard = ({
                 selected && 'bg-bg-200'
               )}
               onClick={() => {
-                if (!question.multiSelect) return choose(option.label)
+                if (question.kind !== 'multi-select') return choose(option.label)
                 const previous = Array.isArray(currentAnswer) ? currentAnswer : []
                 const next = selected
                   ? previous.filter((value) => value !== option.label)

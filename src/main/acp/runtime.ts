@@ -2063,7 +2063,7 @@ class AcpRuntime {
             id: `question_${questionIndex}`,
             label: question.header ?? `Question ${questionIndex + 1}`,
             description: question.question,
-            kind: question.multiSelect ? ('multi-select' as const) : ('single-select' as const),
+            kind: question.kind ?? 'single-select',
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
@@ -2098,7 +2098,7 @@ class AcpRuntime {
           {
             ...(question.header ? { title: question.header } : {}),
             description: question.question,
-            ...(question.multiSelect
+            ...(question.kind === 'multi-select'
               ? {
                   type: 'array',
                   items: {

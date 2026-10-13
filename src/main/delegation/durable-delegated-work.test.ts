@@ -95,7 +95,7 @@ describe('durable delegated work', () => {
           {
             question: 'Which cohort definition should I use?',
             header: 'Cohort',
-            multiSelect,
+            kind: multiSelect ? ('multi-select' as const) : ('single-select' as const),
             options: [
               { label: 'Strict', description: 'Use published exclusions.' },
               { label: 'Broad', description: 'Include the exploratory subgroup.' }

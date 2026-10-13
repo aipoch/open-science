@@ -42,7 +42,7 @@ export const Fixture = (): React.JSX.Element => {
             rootOriginMessageId: 'prompt',
             rootBranchId: 'root-branch',
             sourceName: 'Researcher',
-            questions: [{ question: 'Which outputs?', multiSelect: true, options }],
+            questions: [{ question: 'Which outputs?', kind: 'multi-select', options }],
             askedAt: 1,
             status: 'pending',
             draftAnswers: [],

@@ -46,7 +46,7 @@ describe('WorkspaceDelegatedQuestionCard', () => {
           questions: [
             {
               question: 'Which outputs?',
-              multiSelect: true,
+              kind: 'multi-select',
               options: labels.map((label) => ({ label }))
             }
           ],
@@ -84,7 +84,7 @@ describe('WorkspaceDelegatedQuestionCard', () => {
       <WorkspaceDelegatedQuestionCard
         projectId="project-1"
         sessionId="session-1"
-        request={{ ...request, questions: [{ ...request.questions[0], multiSelect: true }] }}
+        request={{ ...request, questions: [{ ...request.questions[0], kind: 'multi-select' }] }}
         onRespond={onRespond}
       />
     )

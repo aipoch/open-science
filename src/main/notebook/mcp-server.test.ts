@@ -784,11 +784,13 @@ describe('ask_user_question tool', () => {
         {
           question: 'Which path should I take?',
           header: 'Approach',
+          kind: 'single-select',
           options: [option('Minimal'), option('Expanded')]
         },
         {
           question: 'Which output should I produce?',
           header: 'Output',
+          kind: 'single-select',
           options: [option('Notebook'), option('Report')]
         }
       ]
@@ -820,7 +822,7 @@ describe('ask_user_question tool', () => {
     (count) => {
       const question = {
         question: 'Which outputs?',
-        multiSelect: true,
+        kind: 'multi-select' as const,
         options: Array.from({ length: count }, (_, index) => ({ label: `Option ${index + 1}` }))
       }
       const parsed = z.object(tool!.inputSchema).parse({ questions: [question] })
@@ -830,7 +832,7 @@ describe('ask_user_question tool', () => {
         questions: [question]
       })
       expect(tool!.description).toContain('2-16')
-      expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('multiSelect:true')
+      expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('kind to multi-select')
     }
   )
 
@@ -838,12 +840,12 @@ describe('ask_user_question tool', () => {
     const question = { question: 'Which outputs?', options: [{ label: 'A' }, { label: 'B' }] }
     const request = { sessionId: 'session-1', questions: [question] }
     expect(sanitizeAgentUserChoiceRequest(request)).toEqual(request)
-    for (const multiSelect of ['true', 1, null]) {
+    for (const kind of ['text', 'multiple', true, 1, null]) {
       expect(
-        z.object(tool!.inputSchema).safeParse({ questions: [{ ...question, multiSelect }] }).success
+        z.object(tool!.inputSchema).safeParse({ questions: [{ ...question, kind }] }).success
       ).toBe(false)
       expect(
-        sanitizeAgentUserChoiceRequest({ ...request, questions: [{ ...question, multiSelect }] })
+        sanitizeAgentUserChoiceRequest({ ...request, questions: [{ ...question, kind }] })
       ).toBeUndefined()
     }
     expect(
@@ -857,16 +859,16 @@ describe('ask_user_question tool', () => {
     expect(
       sanitizeAgentUserChoiceRequest({
         ...request,
-        questions: [{ ...question, multiSelect: false }]
-      })?.questions[0].multiSelect
-    ).toBe(false)
+        questions: [{ ...question, kind: 'single-select' }]
+      })?.questions[0].kind
+    ).toBe('single-select')
   })
 
   it('validates multiple answers without losing label boundaries or custom text', () => {
     const labels = ['A, B', 'A', 'Quote " and newline\nend']
     const question = {
       question: 'Which outputs?',
-      multiSelect: true,
+      kind: 'multi-select' as const,
       options: labels.map((label) => ({ label }))
     }
     expect(sanitizeAgentUserChoiceAnswer(question, [...labels].reverse())).toEqual(labels)
@@ -876,7 +878,7 @@ describe('ask_user_question tool', () => {
       expect(sanitizeAgentUserChoiceAnswer(question, value)).toBeUndefined()
     }
     expect(
-      sanitizeAgentUserChoiceAnswer({ ...question, multiSelect: false }, labels)
+      sanitizeAgentUserChoiceAnswer({ ...question, kind: 'single-select' }, labels)
     ).toBeUndefined()
   })
 

@@ -7528,7 +7528,7 @@ describe('ACP runtime session management', () => {
       ]
       const question = {
         question: 'Which outputs?',
-        multiSelect: true,
+        kind: 'multi-select' as const,
         options: labels.map((label) => ({ label }))
       }
       await expect(

@@ -4926,9 +4926,10 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
-  it.each([false, true])(
-    'round-trips delegated question drafts and answers (multiSelect: %s)',
-    (multiSelect) => {
+  it.each([undefined, 'single-select', 'multi-select'])(
+    'round-trips delegated question drafts and answers (kind: %s)',
+    (kind) => {
+      const multiSelect = kind === 'multi-select'
       const labels = Array.from({ length: 16 }, (_, index) => `Option ${index + 1}`)
       const answer = multiSelect ? [labels[0], labels[15]] : labels[0]
       const pending = {
@@ -4944,7 +4945,7 @@ describe('normalizeSessionFile with activities', () => {
         questions: [
           {
             question: 'Which outputs?',
-            ...(multiSelect ? { multiSelect: true } : {}),
+            ...(kind === undefined ? {} : { kind }),
             options: labels.map((label) => ({ label }))
           }
         ],

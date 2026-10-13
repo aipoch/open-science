@@ -101,7 +101,7 @@ export type AgentUserChoicePrompt = {
   question: string
   header?: string
   options: AgentUserChoiceOption[]
-  multiSelect?: boolean
+  kind?: Extract<ElicitationField['kind'], 'single-select' | 'multi-select'>
 }
 
 export type AgentUserChoiceRequest = {
@@ -302,7 +302,12 @@ export const sanitizeAgentUserChoiceRequest = (
         ? undefined
         : boundedString(candidate.header, MAX_ELICITATION_LABEL_CHARS)
     if (!question || (candidate.header !== undefined && !header)) return []
-    if (candidate.multiSelect !== undefined && typeof candidate.multiSelect !== 'boolean') return []
+    if (
+      candidate.kind !== undefined &&
+      candidate.kind !== 'single-select' &&
+      candidate.kind !== 'multi-select'
+    )
+      return []
     if (
       !Array.isArray(candidate.options) ||
       candidate.options.length < MIN_AGENT_USER_CHOICE_OPTIONS ||
@@ -333,9 +338,7 @@ export const sanitizeAgentUserChoiceRequest = (
         question,
         ...(header ? { header } : {}),
         options,
-        ...(candidate.multiSelect !== undefined
-          ? { multiSelect: candidate.multiSelect as boolean }
-          : {})
+        ...(candidate.kind !== undefined ? { kind: candidate.kind } : {})
       }
     ]
   })
@@ -350,7 +353,7 @@ export const sanitizeAgentUserChoiceAnswer = (
 ): string | string[] | undefined => {
   if (typeof value === 'string') return boundedString(value, MAX_ELICITATION_MESSAGE_CHARS)
   if (
-    !question.multiSelect ||
+    question.kind !== 'multi-select' ||
     !Array.isArray(value) ||
     value.length === 0 ||
     value.length > question.options.length ||
