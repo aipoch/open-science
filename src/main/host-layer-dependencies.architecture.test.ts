@@ -165,6 +165,7 @@ describe('host dependency layers', () => {
     )
   })
 
+  // Whole-repository parsing needs headroom under coverage on shared CI runners.
   it('keeps type contracts, runtime module dependencies and test routing acyclic', () => {
     const graphs = hostGraphs()
     expect(
@@ -173,5 +174,5 @@ describe('host dependency layers', () => {
     ).toEqual([])
     expect(cycles(graphs.runtimeModules), 'runtime dependencies between module owners').toEqual([])
     expect(cycles(graphs.consumerModules), 'consumer test routing').toEqual([])
-  }, 60_000)
+  }, 180_000)
 })

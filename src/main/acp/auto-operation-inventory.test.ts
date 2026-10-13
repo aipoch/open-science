@@ -146,6 +146,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         ])
     )
     const sharedContracts = {
+      literatureDiscovery: digest(readSource(join(mainRoot, 'literature/discovery-contract.ts'))),
       planSchema: digest(z.toJSONSchema(generatePlanToolSchema)),
       planValidation: digest(readSource(join(mainRoot, '../shared/session-plan/contract.ts'))),
       activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts')))
@@ -155,7 +156,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         'artifacts/mcp-server.ts':
           '6b43e2b69387c7310dee65d97674b94e608a349f987ef90d7dd5cee7ff675c7f',
         'literature/library-mcp-server.ts':
-          '3ee3013dd0775d3b8b3c1190ab75d1fd18941d70f45dc5fea9a25d3e837ce738',
+          'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
         'literature/mcp-server.ts':
           'd7baeae460b294940d198e2a16f701c399b7630da945f31226260f19decdae72',
         'notebook/mcp-server.ts':
@@ -172,8 +173,9 @@ describe('Auto operation completeness against real tool registrations', () => {
       },
       sharedContracts: {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
+        literatureDiscovery: '3ded9eab859b472f0d20d7a232c8971a517f3b493db318efb0a07753278fdee6',
         planSchema: '16f6ba38e7ae9320c2fb9d1a215592c11ada256781882e5e3f16336eb303cfb7',
-        planValidation: '0b1349725044d30d8cd9518e5891a237ff11cfde31c9f613b3550bdb37463414'
+        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb'
       }
     })
   })
