@@ -1352,9 +1352,7 @@
       "src/main/runtime-payload-transfers.test.ts",
       "src/main/web-service/internal-web-event-stream.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
-      "src/shared/runtime-payload-client.test.ts",
-      "src/shared/session-event-hydrator.test.ts",
-      "src/shared/web-rpc-contract.test.ts"
+      "src/shared/session-event-hydrator.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -1,5 +1,7 @@
 {
-  "ownerPaths": ["src/shared/artifact-reproducibility.ts"],
+  "ownerPaths": [
+    "src/shared/artifact-reproducibility.ts"
+  ],
   "interfacePaths": [
     "src/main/artifacts/artifact-provenance-graph.ts",
     "src/main/artifacts/artifact-reproducibility-commands.ts",
@@ -468,10 +470,19 @@
       "src/renderer/web/api-installer.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts"
     ]
   },
-  "consumerModules": ["session_persistence"],
-  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
+  "consumerModules": [
+    "session_persistence"
+  ],
+  "capabilityOverlays": [
+    "e2e_delegation",
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

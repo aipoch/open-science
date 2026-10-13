@@ -1,11 +1,10 @@
 import { z } from 'zod'
-import { MAX_PERSISTED_SESSION_BYTES } from './session-persistence'
 
 export const RUNTIME_PAYLOAD_CAPABILITY = 'bounded-payload-v1' as const
 export const RUNTIME_PAYLOAD_PAGE_BYTES = 1024 * 1024
 export const RUNTIME_PAYLOAD_INLINE_BYTES = 8 * 1024 * 1024
-// A decoded Session includes both its canonical graph and the active-message projection.
-export const MAX_RUNTIME_PAYLOAD_BYTES = 2 * MAX_PERSISTED_SESSION_BYTES
+// Transport admission is independent of domain codecs; Session projection compatibility is tested.
+export const MAX_RUNTIME_PAYLOAD_BYTES = 512 * 1024 * 1024
 export const RUNTIME_PAYLOAD_UPLOAD_CHANNELS = new Set([
   'sessions:save-session',
   'sessions:update-configuration'

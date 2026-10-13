@@ -5,6 +5,7 @@ import { ApplicationEventHub } from './application-events'
 import { connectDesktopRuntime } from './desktop-runtime-client'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 import { stringifyRpcJson } from './rpc-json'
+import { MAX_RUNTIME_PAYLOAD_BYTES } from '../shared/runtime-payload-transfer'
 import {
   createSessionFile,
   decodeSessionFile,
@@ -63,6 +64,10 @@ function largeReadableSession(): PersistedChatSession {
   expect(Buffer.byteLength(stringifyRpcJson(decoded.session))).toBeGreaterThan(16 * 1024 * 1024)
   return decoded.session
 }
+
+it('retains capacity for a persisted Session and its active-message projection', () => {
+  expect(MAX_RUNTIME_PAYLOAD_BYTES).toBeGreaterThanOrEqual(2 * MAX_PERSISTED_SESSION_BYTES)
+})
 
 it('keeps unrelated desktop commands usable after a valid large session update', async () => {
   const session = largeReadableSession()

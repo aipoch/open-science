@@ -19,7 +19,9 @@
     "src/shared/session-diagnostics.ts"
   ],
   "testFiles": {
-    "owner": ["src/shared/session-diagnostics-contracts.test.ts"],
+    "owner": [
+      "src/shared/session-diagnostics-contracts.test.ts"
+    ],
     "contract": [
       "src/main/data-content-application-commands.test.ts",
       "src/preload/index.test.ts",
@@ -98,10 +100,14 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

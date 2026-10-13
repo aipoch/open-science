@@ -1,5 +1,8 @@
 {
-  "ownerPaths": ["src/main/websocket-frame-sender.test.ts", "src/main/websocket-frame-sender.ts"],
+  "ownerPaths": [
+    "src/main/websocket-frame-sender.test.ts",
+    "src/main/websocket-frame-sender.ts"
+  ],
   "interfacePaths": [
     "build/node-runtime.json",
     "scripts/stage-node-runtime.mjs",
@@ -59,7 +62,9 @@
     "test/runtime-metadata.ts"
   ],
   "testFiles": {
-    "owner": ["src/main/websocket-frame-sender.test.ts"],
+    "owner": [
+      "src/main/websocket-frame-sender.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -977,10 +982,19 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "test/config/electron.vite.config.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts"
     ]
   },
-  "consumerModules": ["main_web_service"],
-  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
+  "consumerModules": [
+    "main_web_service"
+  ],
+  "capabilityOverlays": [
+    "e2e_delegation",
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }
