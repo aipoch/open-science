@@ -7177,7 +7177,6 @@
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "本機草稿仍保持開啟。已提交的操作可能已經完成，不會自動重試。",
     "The original backend is no longer available. Quit and reopen the app to continue.": "原後端已無法使用。請結束並重新開啟應用程式以繼續。",
     "Reconnect": "重新連線",
-    "Open-Science could not load settings. Retry to continue.": "Open-Science 無法載入設定。請重試以繼續。",
     "Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.": "檢查 npmjs 和 npmmirror。Conda 和 Python 套件鏡像在下方個別設定。",
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "請檢查 Open-Science 使用的代理。瀏覽器連線正常時，可能使用了不同的代理設定。",
     "Reconnect the backend, then check again.": "請重新連接後端，然後再次檢查。",

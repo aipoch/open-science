@@ -7177,7 +7177,6 @@
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "ローカルの下書きは開いたままです。送信済みの操作は完了している可能性があり、再実行されません。",
     "The original backend is no longer available. Quit and reopen the app to continue.": "元のバックエンドは利用できません。アプリを終了して再度開いてください。",
     "Reconnect": "再接続",
-    "Open-Science could not load settings. Retry to continue.": "Open-Science は設定を読み込めませんでした。再試行して続行してください。",
     "Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.": "npmjs と npmmirror を確認します。Conda と Python のパッケージミラーは下で別途設定します。",
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Open-Science が使用するプロキシを確認してください。ブラウザーの接続には異なるプロキシ設定が使われている場合があります。",
     "Reconnect the backend, then check again.": "バックエンドに再接続してから、もう一度確認してください。",

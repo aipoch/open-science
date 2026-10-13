@@ -7505,7 +7505,6 @@
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "Vos brouillons locaux restent ouverts. Les opérations envoyées ont peut-être abouti ; elles ne seront pas relancées.",
     "The original backend is no longer available. Quit and reopen the app to continue.": "Le backend initial n’est plus disponible. Quittez puis rouvrez l’application pour continuer.",
     "Reconnect": "Reconnecter",
-    "Open-Science could not load settings. Retry to continue.": "Open-Science n’a pas pu charger les paramètres. Réessayez pour continuer.",
     "Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.": "Vérifie npmjs et npmmirror. Les miroirs de paquets Conda et Python se configurent séparément ci-dessous.",
     "Check the proxy used by Open-Science. A working browser connection may use different proxy settings.": "Vérifiez le proxy utilisé par Open-Science. Une connexion de navigateur fonctionnelle peut utiliser d’autres paramètres de proxy.",
     "Reconnect the backend, then check again.": "Reconnectez le backend, puis vérifiez à nouveau.",

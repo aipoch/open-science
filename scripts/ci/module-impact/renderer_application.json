@@ -99,9 +99,7 @@
     "src/renderer/src/hooks/useUnreadTaskViewSync.ts",
     "src/renderer/src/hooks/useWindowFindAppearanceSync.ts"
   ],
-  "consumerModules": [
-    "renderer_hooks"
-  ],
+  "consumerModules": ["renderer_hooks"],
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",
@@ -452,9 +450,6 @@
       "src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
-      "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
-      "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
-      "src/renderer/src/components/UpdateDialog.render.test.tsx",
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
       "src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/SpecialistSubmenu.render.test.tsx",

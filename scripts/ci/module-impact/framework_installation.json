@@ -583,7 +583,9 @@
       "src/renderer/src/stores/runtime-settings-store.test.ts",
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/runtime-network-node.integration.test.ts"
     ]
   },
   "consumerModules": [],

@@ -20,12 +20,14 @@
     "src/renderer/src/stores/settings-store.test.ts",
     "src/renderer/src/stores/settings-store.ts",
     "src/renderer/src/stores/settings-write-coordinator.test.ts",
-    "src/renderer/src/stores/settings-write-coordinator.ts"
+    "src/renderer/src/stores/settings-write-coordinator.ts",
+    "src/renderer/src/lib/read-with-deadline.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/runtime-settings-store.ts",
     "src/renderer/src/stores/settings-return-focus.ts",
-    "src/renderer/src/stores/settings-store.ts"
+    "src/renderer/src/stores/settings-store.ts",
+    "src/renderer/src/lib/read-with-deadline.ts"
   ],
   "consumerModules": [],
   "testFiles": {

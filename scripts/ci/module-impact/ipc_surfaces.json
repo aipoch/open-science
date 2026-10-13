@@ -110,9 +110,7 @@
     "test/runtime-metadata.ts",
     "src/main/websocket-frame-sender.ts"
   ],
-  "consumerModules": [
-    "main_web_service"
-  ],
+  "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
       "src/main/ipc-surfaces/adapter.test.ts",
@@ -1069,10 +1067,6 @@
       "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

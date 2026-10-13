@@ -22,8 +22,7 @@
     "src/renderer/src/lib/startup-issue.test.ts",
     "src/renderer/src/lib/startup-issue.ts",
     "src/renderer/src/lib/streaming-metrics.ts",
-    "src/renderer/src/lib/storage-error.ts",
-    "src/renderer/src/lib/read-with-deadline.ts"
+    "src/renderer/src/lib/storage-error.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/interface-scale.ts",
@@ -49,8 +48,7 @@
     "src/renderer/src/lib/theme.ts",
     "src/renderer/src/lib/utils.ts",
     "src/renderer/src/lib/wsl-support-handoff.ts",
-    "src/renderer/src/lib/session-fork.ts",
-    "src/renderer/src/lib/read-with-deadline.ts"
+    "src/renderer/src/lib/session-fork.ts"
   ],
   "consumerModules": [],
   "testFiles": {

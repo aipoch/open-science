@@ -70,13 +70,9 @@
     "test/runtime-metadata.ts",
     "src/main/websocket-frame-sender.ts"
   ],
-  "consumerModules": [
-    "main_web_service"
-  ],
+  "consumerModules": ["main_web_service"],
   "testFiles": {
-    "owner": [
-      "src/main/renderer-broadcast.test.ts"
-    ],
+    "owner": ["src/main/renderer-broadcast.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -997,10 +993,6 @@
       "src/main/node-entry.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

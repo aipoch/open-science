@@ -1073,7 +1073,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "test/config/electron.vite.config.test.ts",
-      "cli/config-root.test.ts"
+      "cli/config-root.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "consumerModules": [

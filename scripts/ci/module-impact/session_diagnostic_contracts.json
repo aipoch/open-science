@@ -96,7 +96,9 @@
       "src/renderer/src/pages/workspace/session-action-menu.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/shared/renderer-surface-inventory.test.ts"
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/ipc-surfaces/settings.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "consumerModules": [],

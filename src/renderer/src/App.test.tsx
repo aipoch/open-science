@@ -7,7 +7,6 @@ import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import { i18next } from '@/i18n'
 
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
