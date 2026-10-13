@@ -7,7 +7,7 @@ import {
   providerErrorDetails,
   providerTextGenerationFailure,
   type ProviderTextGenerationFailure
-} from '../../../../../../shared/provider-text-generation-failure'
+} from '@aipoch/providers/catalog'
 
 import {
   type PdfTranslationGlossary,

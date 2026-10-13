@@ -1,6 +1,6 @@
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import type { SessionDelegatedWorkRuntimeContext } from './delegated-work-contract'
-import type { ReasoningEffort } from './model-preference-contract'
+import type { ReasoningEffort } from '@aipoch/providers/catalog'
 import type { PermissionCapability } from './permission-grants'
 import type { SessionPdfContext } from './session-pdf-contract'
 import type { SessionPlanRuntimeContext } from './session-plan/contract'

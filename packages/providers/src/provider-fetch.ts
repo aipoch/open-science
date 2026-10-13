@@ -1,4 +1,4 @@
-import { isSecureProviderUrl, PROVIDER_TRANSPORT_ERROR } from '../../shared/provider-base-url'
+import { isSecureProviderUrl, PROVIDER_TRANSPORT_ERROR } from './provider-base-url'
 
 // Enforce this at the sending boundary as well as the form: persisted configurations and every
 // provider adapter must obey the same policy before credentials or content reach the network.

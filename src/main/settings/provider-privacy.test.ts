@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
-import { fetchProviderRequest } from './provider-fetch'
+import { getCustomProviderBaseUrlError } from '@aipoch/providers/catalog'
+import { fetchProviderRequest } from '@aipoch/providers/protocol'
 import { resolveProviderDraft } from './provider-draft-projection'
 import { listProviderModels } from './list-models'
 import { validateProvider } from './validate'

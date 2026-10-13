@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getOfficialVendorModelIds,
   resolveVendorModelApiEndpoints
-} from '../../../../shared/provider-registry'
+} from '@aipoch/providers/catalog'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'

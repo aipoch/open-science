@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getOfficialVendorModelIds,
   resolveVendorModelApiEndpoints
-} from '../../../../shared/provider-registry'
+} from '@aipoch/providers/catalog'
 
 import {
   LOCAL_MODEL_PRESETS,

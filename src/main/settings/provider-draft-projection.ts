@@ -7,7 +7,7 @@ import {
   resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl,
   resolveVendorResponsesBaseUrl
-} from '../../shared/provider-registry'
+} from '@aipoch/providers/catalog'
 import type { ResolvedProvider } from './provider-env'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 

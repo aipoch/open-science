@@ -1,28 +1,46 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { sanitizeAcpTurnTokenUsage } from '../../shared/acp'
-import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import { customProviderRequiresKey } from '../../shared/provider-base-url'
+import { customProviderRequiresKey } from './provider-base-url'
 import {
   providerErrorDetails,
   providerHttpFailure,
   type ProviderTextGenerationFailure
-} from '../../shared/provider-text-generation-failure'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import { netFetchStandard } from '../network-fetch'
-import { isRecord } from '../value-guards'
+} from './provider-text-generation-failure'
+import type { ResolvedReasoningEffort } from './reasoning-effort'
 import { anthropicMessagesUrl, openAiChatCompletionsUrl, openAiResponsesUrl } from './base-url'
 import { readBoundedResponseText, ResponseBodyLimitError } from './bounded-response'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
-import type { ResolvedProvider } from './provider-env'
+import { normalizeOpenAiChatModelStepUsage, type ProviderTokenUsage } from './openai-chat-usage'
 import { fetchProviderRequest } from './provider-fetch'
 import { resolveChatReasoningTransport } from './reasoning-transport'
+
+import type { ChatApiEndpoint } from './model-preference-contract'
+import type { OfficialVendorId } from './provider-registry'
+import type { CustomReasoningEffortTransport } from './reasoning-effort'
+
+/** Only direct API configuration; accounts, subscription auth and launch policy stay with the caller. */
+export type ProviderTextGenerationConfiguration = Readonly<{
+  type: 'custom' | 'official'
+  key?: string
+  baseUrl?: string
+  openaiBaseUrl?: string
+  apiEndpoints?: readonly ChatApiEndpoint[]
+  vendorId?: OfficialVendorId
+  reasoningEffortTransport?: CustomReasoningEffortTransport
+  maxOutputTokens?: number
+}>
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// Individual counters are validated by the wire schema; addition can still overflow.
+const normalizeAnthropicUsage = (usage: ProviderTokenUsage): ProviderTokenUsage | undefined =>
+  Number.isSafeInteger(usage.cacheTokens) ? usage : undefined
 
 export type ProviderTextGenerationTarget = Readonly<{
   providerId: string
   model?: string
   reasoningEffort?: ResolvedReasoningEffort
-  provider: ResolvedProvider
+  provider: ProviderTextGenerationConfiguration
 }>
 
 export type ProviderTextGenerationRequest = Readonly<{
@@ -32,7 +50,7 @@ export type ProviderTextGenerationRequest = Readonly<{
   signal: AbortSignal
   maxOutputTokens: number
   outputLimitBytes: number
-  onUsage?: (usage: AcpTurnTokenUsage) => void
+  onUsage?: (usage: ProviderTokenUsage) => void
 }>
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
@@ -127,7 +145,7 @@ export function providerTextGenerationTargetKey(target: ProviderTextGenerationTa
 
 /** A bounded, tool-less text generation service shared by domain workflows. */
 export class ProviderTextGenerationService {
-  constructor(private readonly fetchImpl: typeof fetch = netFetchStandard) {}
+  constructor(private readonly fetchImpl: typeof fetch = globalThis.fetch) {}
 
   supportsTarget(target: ProviderTextGenerationTarget): boolean {
     const provider = target.provider
@@ -291,7 +309,7 @@ export class ProviderTextGenerationService {
         apiType !== 'anthropic'
           ? normalizeOpenAiChatModelStepUsage(reported)
           : anthropic.success
-            ? sanitizeAcpTurnTokenUsage({
+            ? normalizeAnthropicUsage({
                 inputTokens: anthropic.data.input_tokens,
                 outputTokens: anthropic.data.output_tokens,
                 cacheTokens:

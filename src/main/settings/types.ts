@@ -3,17 +3,19 @@ import type { ClassificationAdapter, ClassificationBinding } from '../../shared/
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ChatApiEndpoint, ReasoningEffort } from '../../shared/model-preference-contract'
+import type {
+  ChatApiEndpoint,
+  ReasoningEffort,
+  OfficialVendorId,
+  CustomReasoningEffortTransport,
+  ReasoningEffortPresetSetting
+} from '@aipoch/providers/catalog'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from '../../shared/reasoning-effort'
+
 import type {
   AppIconVariant,
   ClaudeInfo,

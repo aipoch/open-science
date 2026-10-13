@@ -7,7 +7,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
-import { normalizeAnthropicBaseUrl } from './base-url'
+import { normalizeAnthropicBaseUrl, fetchProviderRequest } from '@aipoch/providers/protocol'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
@@ -22,7 +22,6 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
 
 const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
 const HOP_BY_HOP_HEADERS = new Set([

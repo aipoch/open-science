@@ -113,7 +113,6 @@
       "src/main/literature/pdf-translation/index.test.ts",
       "src/main/literature/pdf-translation/writer.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",

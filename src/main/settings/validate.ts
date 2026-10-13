@@ -1,8 +1,8 @@
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
+import { type ChatApiEndpoint, usesVendorAnthropicApiKeyHeader } from '@aipoch/providers/catalog'
+
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { preferredEndpoint } from '../../shared/settings'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
@@ -10,14 +10,19 @@ import { toErrorMessage } from '../error-message'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
-import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
+  openAiCompletionsBase,
+  ResponseBodyLimitError,
+  readBoundedResponseText,
+  fetchProviderRequest,
+  responsesToChatRequest
+} from '@aipoch/providers/protocol'
+
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import type { ResolvedProvider } from './provider-env'
-import { fetchProviderRequest } from './provider-fetch'
+
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
+
+import { ResponsesBridge } from './responses-bridge'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;

@@ -35,7 +35,7 @@ import {
   isSupportedCodexAcpVersion,
   MINIMUM_CODEX_ACP_VERSION
 } from '../../shared/codex-runtime'
-import { isModelBridgeSupported } from '../../shared/provider-registry'
+import { isModelBridgeSupported } from '@aipoch/providers/catalog'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {

@@ -273,15 +273,12 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const sessionEfforts = new Map<
     string,
-    import('../../shared/reasoning-effort').ResolvedReasoningEffort
+    import('@aipoch/providers/catalog').ResolvedReasoningEffort
   >()
   const runtime = {
     getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
     applySessionReasoningEffortChange: vi.fn(
-      async (
-        id: string,
-        effort: import('../../shared/reasoning-effort').ResolvedReasoningEffort
-      ) => {
+      async (id: string, effort: import('@aipoch/providers/catalog').ResolvedReasoningEffort) => {
         sessionEfforts.set(id, effort)
         return true
       }

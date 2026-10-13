@@ -1,10 +1,13 @@
-import { readPdfTranslationCases } from '../../../test/fixtures/pdf-translation/read-cases'
-import { providerTextGenerationFailure } from '../../shared/provider-text-generation-failure'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { providerTextGenerationFailure } from './provider-text-generation-failure'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
-import { ProviderTextGenerationService } from './provider-text-generation'
-vi.mock('electron', () => ({ net: {} }))
+import {
+  ProviderTextGenerationService,
+  providerTextGenerationTargetKey
+} from './provider-text-generation'
 
 const target = {
   providerId: 'provider',
@@ -180,6 +183,7 @@ describe('provider text generation service', () => {
     const fetchImpl = vi.fn(async () => Response.json(completion))
     const runner = new ProviderTextGenerationService(fetchImpl)
     expect(
+      // @ts-expect-error Runtime validation also rejects unsupported callers without TypeScript.
       runner.supportsTarget({ ...target, provider: { ...target.provider, type: 'claude-shared' } })
     ).toBe(false)
     expect(
@@ -689,9 +693,15 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
 )
 
 it.each(
-  readPdfTranslationCases<{ name: string; status: number; kind: string; providerCode?: string }>(
-    'provider-error-diagnostics.jsonl'
-  )
+  readFileSync(resolve(__dirname, '../test/provider-error-diagnostics.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line)) as {
+    name: string
+    status: number
+    kind: string
+    providerCode?: string
+  }[]
 )(
   '$name: exposes redacted provider details across Electron serialization',
   async ({ status, kind, providerCode }) => {
@@ -730,3 +740,41 @@ it('preserves network diagnostics without leaking the configured credential', as
   expect((error as Error).message).toContain('ECONNRESET')
   expect((error as Error).message).not.toContain('private-key')
 })
+
+it('preserves pre-extraction target identities and omitted/default reasoning equivalence', () => {
+  expect(providerTextGenerationTargetKey(target)).toBe(
+    'a61dc22d3ec5edeba53fe947db15dad880b1adf2eed1616f791ada8939024741'
+  )
+  expect(providerTextGenerationTargetKey({ ...target, reasoningEffort: 'default' })).toBe(
+    providerTextGenerationTargetKey(target)
+  )
+  expect(providerTextGenerationTargetKey({ ...target, reasoningEffort: 'low' })).toBe(
+    '1e990939637586026c128f7ed5beea3b12e0f73942dff8f3b1e3cf588a73ebec'
+  )
+})
+it.each([
+  { input_tokens: -1, output_tokens: 2 },
+  { input_tokens: 1, output_tokens: 0.5 },
+  {
+    input_tokens: 1,
+    output_tokens: 2,
+    cache_read_input_tokens: Number.MAX_SAFE_INTEGER,
+    cache_creation_input_tokens: 1
+  }
+])(
+  'rejects invalid or overflowing Anthropic usage while retaining valid answer text: %j',
+  async (usage) => {
+    const onUsage = vi.fn()
+    const service = new ProviderTextGenerationService(async () =>
+      Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'answer' }], usage })
+    )
+    await expect(
+      service.run({
+        ...request,
+        target: { ...target, provider: { ...target.provider, apiEndpoints: ['anthropic'] } },
+        onUsage
+      })
+    ).resolves.toEqual({ text: 'answer', stopReason: 'end_turn' })
+    expect(onUsage).not.toHaveBeenCalled()
+  }
+)

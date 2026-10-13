@@ -8,7 +8,7 @@ import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
-import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
+import { resolveReasoningEffortControl } from '@aipoch/providers/catalog'
 import { providerKindKey } from '../settings/provider-form-value'
 import { AgentFrameworkIcon, ProviderKindIcon } from '../settings/provider-icons'
 

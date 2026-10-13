@@ -13,14 +13,11 @@ import {
   type ProviderView,
   type SessionAgentConfiguration
 } from '../../../../shared/settings'
-import {
-  reasoningEffortProfile,
-  resolveReasoningEffortControl
-} from '../../../../shared/reasoning-effort'
+import { reasoningEffortProfile, resolveReasoningEffortControl } from '@aipoch/providers/catalog'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
-import * as providerRegistry from '../../../../shared/provider-registry'
+import * as providerRegistry from '@aipoch/providers/catalog'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 

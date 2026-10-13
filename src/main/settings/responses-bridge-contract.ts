@@ -1,10 +1,11 @@
-import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
+  OfficialVendorId,
   CustomReasoningEffortTransport,
   ModelReasoningEffort
-} from '../../shared/reasoning-effort'
+} from '@aipoch/providers/catalog'
+
 import type { ProviderFailureObserver } from './provider-failure-observation'
-import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
 import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 
 export type ResponsesBridgeTarget = {

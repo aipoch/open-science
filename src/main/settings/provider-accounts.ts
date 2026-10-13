@@ -1,12 +1,14 @@
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 import {
+  type ChatApiEndpoint,
   customProviderRequiresKey,
-  getCustomProviderBaseUrlError
-} from '../../shared/provider-base-url'
-import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+  getCustomProviderBaseUrlError,
+  defaultVendorModel,
+  isOfficialVendorId,
+  type ReasoningEffortProfile
+} from '@aipoch/providers/catalog'
+
 import type {
   ProviderDeletionScenarioModelHandling,
   ProviderDraft,

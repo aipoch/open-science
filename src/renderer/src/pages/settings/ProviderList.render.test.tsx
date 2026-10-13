@@ -9,7 +9,7 @@ import type {
   ClaudeSubscriptionProviderId,
   ProviderView
 } from '../../../../shared/settings'
-import { defaultVendorModel } from '../../../../shared/provider-registry'
+import { defaultVendorModel } from '@aipoch/providers/catalog'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement

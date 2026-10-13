@@ -32,7 +32,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
-import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 
 const jsonSchema = (schema: z.ZodType): ResponsesBridgeNamespacedTool['parameters'] =>

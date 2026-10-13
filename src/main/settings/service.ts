@@ -45,14 +45,14 @@ import type { FetchLike, SkillExportArchive } from '@aipoch/skills/sources'
 import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/sources'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffort, ResolvedReasoningEffort } from '@aipoch/providers/catalog'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookNetworkStatus } from '../../shared/notebook-network'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+
 import type {
   AddCustomServerRequest,
   AppIconVariant,

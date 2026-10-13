@@ -2,14 +2,18 @@ import type { ServerResponse } from 'node:http'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { netFetchStandard } from '../network-fetch'
 
-import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/protocol'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import { fetchProviderRequest } from './provider-fetch'
+
 import {
   anthropicToResponses,
   chatToResponses,

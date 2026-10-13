@@ -1,8 +1,7 @@
 import { ANTHROPIC_VERSION } from './validate'
-import { readBoundedResponseText } from './bounded-response'
+import { readBoundedResponseText, fetchProviderRequest } from '@aipoch/providers/protocol'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import { fetchProviderRequest } from './provider-fetch'
+import type { OfficialVendorId } from '@aipoch/providers/catalog'
 
 // Fetches a provider's live model list from its dedicated model-list URL (from the registry). Both the
 // Anthropic and OpenAI model-list shapes are `{ data: [{ id }] }`, so one parser covers the compatible

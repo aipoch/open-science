@@ -13,7 +13,7 @@ import {
   resolvePermissionProfileApplication,
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
-import { openAiChatCompletionsUrl, openAiCompletionsBase } from '../settings/base-url'
+import { openAiChatCompletionsUrl, openAiCompletionsBase } from '@aipoch/providers/protocol'
 import type { ResolvedProvider } from '../settings/provider-env'
 import { augmentedPathEnv } from '../settings/shell-path'
 import {

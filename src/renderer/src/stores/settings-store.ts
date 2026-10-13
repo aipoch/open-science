@@ -13,7 +13,7 @@ import {
   configuredModelKey
 } from '../../../shared/configured-model-catalog'
 import type { PackageMirror } from '../../../shared/mirror'
-import type { ChatApiEndpoint, ReasoningEffort } from '../../../shared/model-preference-contract'
+import type { ChatApiEndpoint, ReasoningEffort, OfficialVendorId } from '@aipoch/providers/catalog'
 import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
@@ -25,7 +25,7 @@ import {
   getDefaultPermissionProfile,
   type PermissionProfileId
 } from '../../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../../shared/provider-registry'
+
 import type {
   AgentFrameworkId,
   AgentFrameworkView,

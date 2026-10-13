@@ -78,10 +78,10 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
 ]
 
 export type ReasoningEffortProfile =
-  | { supported: false }
+  | { readonly supported: false }
   | {
-      supported: true
-      slots: readonly [
+      readonly supported: true
+      readonly slots: readonly [
         ModelReasoningEffort,
         ModelReasoningEffort,
         ModelReasoningEffort,

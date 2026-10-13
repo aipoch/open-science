@@ -38,7 +38,7 @@ describe('module test impact commands', () => {
       expect(plan.testFiles).toEqual(
         expect.arrayContaining([
           'packages/pdf-translation/test/writer.test.ts',
-          'src/main/settings/provider-text-generation.test.ts',
+          'src/main/literature/pdf-translation/api-target.test.ts',
           'packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts',
           'packages/pdf-translation/test/recovery.test.ts',
           'test/pdf-translation-native-verification.test.ts'
@@ -58,7 +58,7 @@ describe('module test impact commands', () => {
     expect(mixed.testFiles).toEqual(expect.arrayContaining(sourcePlan.testFiles))
     const packageFixture = createAffectedTestPlan(
       [
-        { path: 'src/main/settings/provider-text-generation.ts', status: 'modified' },
+        { path: 'src/main/literature/pdf-translation/api-target.ts', status: 'modified' },
         { path: 'test/fixtures/pdf-translation/new-regression-case.jsonl', status: 'modified' }
       ],
       graph
@@ -565,45 +565,135 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'src/main/settings/responses-request-adapter.ts',
+      'packages/providers/src/responses-request-adapter.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
-      'src/main/settings/responses-response-adapter.ts',
+      'packages/providers/src/responses-response-adapter.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
-      'src/main/settings/responses-protocol-types.ts',
+      'packages/providers/src/responses-protocol-types.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
@@ -618,16 +708,14 @@ describe('module test impact commands', () => {
 
     expect(plan.mode).toBe('selective')
     expect([...plan.modules].sort()).toEqual(expectedModules)
-    const rootModule =
-      path === 'src/main/settings/repository.ts' ||
-      path === 'src/main/settings/compute-grant-port.ts'
+    const rootModule = path.startsWith('packages/providers/')
+      ? 'providers_package'
+      : path === 'src/main/settings/repository.ts' ||
+          path === 'src/main/settings/compute-grant-port.ts'
         ? 'settings_repository'
         : path === 'src/main/settings/provider-accounts.ts'
           ? 'settings_provider_accounts'
-          : path === 'src/main/settings/responses-bridge.ts' ||
-              path === 'src/main/settings/responses-protocol-types.ts' ||
-              path === 'src/main/settings/responses-request-adapter.ts' ||
-              path === 'src/main/settings/responses-response-adapter.ts'
+          : path === 'src/main/settings/responses-bridge.ts'
             ? 'settings_backend_resolution'
             : 'settings_service_facade'
     expect(plan.reasonChains).toEqual(

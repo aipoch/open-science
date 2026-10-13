@@ -641,7 +641,6 @@
       "paths": ["test/fixtures/pdf-translation/*.json", "test/fixtures/pdf-translation/*.jsonl"],
       "tests": [
         "src/main/literature/pdf-translation/*.test.ts",
-        "src/main/settings/provider-text-generation.test.ts",
         "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.ts",
         "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.tsx",
         "src/shared/pdf-translation*.test.ts",

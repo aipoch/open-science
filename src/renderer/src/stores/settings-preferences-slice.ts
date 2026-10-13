@@ -1,5 +1,5 @@
 import type { PackageMirror } from '../../../shared/mirror'
-import type { ReasoningEffort } from '../../../shared/model-preference-contract'
+import type { ReasoningEffort } from '@aipoch/providers/catalog'
 import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type { NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
