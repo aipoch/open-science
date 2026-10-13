@@ -37,7 +37,7 @@ import {
   type EnvironmentSnapshotProcessObserver,
   PIP_TRANSPORT_ENV_KEYS
 } from '@aipoch/environment'
-import type { NotebookProcessSandbox } from './process-sandbox'
+import type { NotebookProcessSandbox, NotebookSandboxCleanupResult } from './process-sandbox'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
 type PackageProcessSandboxOptions = Readonly<{
@@ -70,21 +70,26 @@ export const verifySnapshotRuntime = async (
   if (!command) throw new Error('Snapshot interpreter command is missing.')
   let retryTermination: (() => Promise<boolean>) | undefined
   let wrapped: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
+  let processesTerminated = false
+  let spawnAttempted = false
+  const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
+    result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
   const retryVerificationCleanup = async (): Promise<boolean> => {
     if (!wrapped) return false
     const reaped = wrapped.requestProcessTreeTermination
       ? await wrapped.requestProcessTreeTermination()
       : wrapped.confirmProcessTreeTermination
         ? await wrapped.confirmProcessTreeTermination()
-        : await retryTermination?.()
+        : processesTerminated || (await retryTermination?.())
     if (!reaped) return false
     const result = await wrapped.cleanup('exit', {
       processesTerminated: true,
+      ...(!spawnAttempted ? { processState: 'never-started' as const } : {}),
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmTermination: wrapped.confirmProcessTreeTermination }
         : {})
     })
-    return result.processesTerminated
+    return cleanupComplete(result)
   }
   const spawn = sandboxedPackageSpawn({
     processSandbox: {
@@ -99,7 +104,21 @@ export const verifySnapshotRuntime = async (
             deniedWriteRoots: [prefix]
           }
         })
-        return wrapped
+        const prepared = wrapped
+        return {
+          ...prepared,
+          cleanup: async (reason, outcome) => {
+            if (!spawnAttempted)
+              outcome = { ...outcome, processesTerminated: true, processState: 'never-started' }
+            processesTerminated = outcome.processesTerminated
+            const result = await prepared.cleanup(reason, outcome).catch((error: unknown) => {
+              throw new EnvironmentSnapshotInUseError(error, retryVerificationCleanup)
+            })
+            if (!cleanupComplete(result))
+              throw new EnvironmentSnapshotInUseError(undefined, retryVerificationCleanup)
+            return result
+          }
+        }
       }
     },
     request: { language: 'python', packages: [], workspaceCwd: root },
@@ -120,7 +139,10 @@ export const verifySnapshotRuntime = async (
       started = true
       observer?.childStarted(pid)
     },
-    () => observer?.beforeSpawn(),
+    () => {
+      spawnAttempted = true
+      observer?.beforeSpawn()
+    },
     false,
     root,
     {
@@ -128,6 +150,7 @@ export const verifySnapshotRuntime = async (
       timeoutMs: 30_000
     }
   ).catch((error) => {
+    if (error instanceof EnvironmentSnapshotInUseError) throw error
     if (started && !packageProcessTreeTerminated(error))
       throw new EnvironmentSnapshotInUseError(error, retryVerificationCleanup)
     throw error
