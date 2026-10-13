@@ -3747,16 +3747,22 @@ export const PdfPreviewContent = ({
       onNewTranslation={(options) => {
         if (!document) return
         setSuppressedRecoveryKey(resourceRequestKey)
-        translationJob.reset()
-        preparation.reset()
-        pendingNewTranslation.current = {
-          key: resourceRequestKey,
-          document,
-          options: {
-            ...options,
-            ...(attachmentVersionId ? { attachmentVersionId } : {}),
-            ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+        const requestedOptions = {
+          ...options,
+          ...(attachmentVersionId ? { attachmentVersionId } : {}),
+          ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+        }
+        pendingNewTranslation.current = undefined
+        if (preparationAvailable) {
+          translationJob.reset()
+          preparation.reset()
+          pendingNewTranslation.current = {
+            key: resourceRequestKey,
+            document,
+            options: requestedOptions
           }
+        } else {
+          translationJob.restart(requestedOptions)
         }
         setTranslationQuery('')
         setSelectedTranslation(undefined)

@@ -1964,6 +1964,78 @@ describe('PdfPreviewContent', () => {
     }
   )
 
+  it('restarts translations with an externally supplied source without extracting a layout', async () => {
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        fingerprints: ['fp'],
+        getPage,
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const props = { path: 'supplied.pdf', name: 'supplied.pdf', source: 'local' as const }
+    const source = createPdfTranslationSource({
+      resourceRequestKey: createPreviewResourceKey(props) + ':0',
+      fingerprint: 'fp',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'p1',
+          source: 'Selectable text',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+              items: [{ index: 0, text: 'Selectable text' }]
+            }
+          ]
+        }
+      ]
+    })
+    const extract = vi.spyOn(pdfTranslations, 'extractPdfTranslationSource')
+    const executor = {
+      targets: [{ id: 'test', label: 'Test model', mode: 'agent' as const }],
+      begin: vi.fn(async () => undefined),
+      translate: vi.fn(async () => 'Translated paragraph')
+    }
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent {...props} translationSource={source} translationExecutor={executor} />
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
+        key: 'ArrowDown'
+      })
+    )
+    await act(async () => fireEvent.click(screen.getByRole('option', { name: 'Test model' })))
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Target language'), { target: { value: 'French' } })
+    )
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    await waitFor(() => expect(executor.translate).toHaveBeenCalledTimes(1))
+    await act(async () => screen.getByRole('button', { name: 'Translation settings' }).click())
+    await act(async () => screen.getByRole('button', { name: 'New translation' }).click())
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    await waitFor(() => expect(executor.begin).toHaveBeenCalledTimes(2))
+    expect(executor.begin).toHaveBeenLastCalledWith(
+      source,
+      expect.objectContaining({ language: 'French' }),
+      expect.any(AbortSignal)
+    )
+    expect(executor.translate).toHaveBeenCalledTimes(2)
+    expect(extract).not.toHaveBeenCalled()
+  })
+
   it('keeps source coverage accessible after a prepared document is translated', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
     const page = await (
