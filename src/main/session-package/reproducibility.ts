@@ -21,6 +21,11 @@ export {
   type PackageReproducibility
 } from './reproducibility-contract'
 
+const assertPortableEnvironmentLock = (serialized: string): void => {
+  if (parseNotebookEnvironmentLock(serialized).snapshot)
+    throw new Error('Environment file snapshots cannot be transferred in a Session Package.')
+}
+
 const versionOwner = (
   records: PackageRecords,
   versionId: string
@@ -90,7 +95,10 @@ export const capturePackageReproducibility = async (
         } catch (error) {
           if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
         }
-        if (serialized !== undefined) locks.set(checksum, serialized)
+        if (serialized !== undefined) {
+          assertPortableEnvironmentLock(serialized)
+          locks.set(checksum, serialized)
+        }
       }
       signal?.throwIfAborted()
       lockBytes += locks.get(checksum) ? Buffer.byteLength(locks.get(checksum)!) : 0
@@ -155,6 +163,7 @@ export const installPackageReproducibility = async (
   let lockBytes = 0
   for (const entry of records.reproducibility?.versions ?? []) {
     for (const lock of entry.environmentLocks) {
+      if (lock.serialized !== undefined) assertPortableEnvironmentLock(lock.serialized)
       lockBytes += lock.serialized ? Buffer.byteLength(lock.serialized) : 0
       if (lockBytes > 32 * 1024 * 1024)
         throw new Error('Environment lock evidence exceeds the package limit.')
@@ -166,7 +175,7 @@ export const installPackageReproducibility = async (
       if (lock.serialized === undefined) continue
       if (sha256(lock.serialized) !== lock.checksum)
         throw new Error('Environment lock checksum mismatch.')
-      parseNotebookEnvironmentLock(lock.serialized)
+      assertPortableEnvironmentLock(lock.serialized)
       await mkdir(join(directory, 'reproducibility-locks'), { recursive: true })
       await writeFile(
         join(directory, 'reproducibility-locks', `${lock.checksum}.json`),
@@ -213,6 +222,7 @@ export const validatePackageReproducibility = async (
     for (const lock of entry.environmentLocks) {
       if (locks.has(lock.checksum)) throw new Error('Duplicate environment lock.')
       locks.add(lock.checksum)
+      if (lock.serialized !== undefined) assertPortableEnvironmentLock(lock.serialized)
       lockBytes += lock.serialized ? Buffer.byteLength(lock.serialized) : 0
       if (lockBytes > 32 * 1024 * 1024)
         throw new Error('Environment lock evidence exceeds the package limit.')

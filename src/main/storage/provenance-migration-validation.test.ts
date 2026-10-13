@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
-import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
+import {
+  restoreEnvironmentSnapshot,
+  operationJournalPath,
+  RuntimeOperationJournal
+} from '@aipoch/environment'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
 
@@ -21,6 +25,106 @@ afterEach(async () => {
 })
 
 describe('validateProvenanceMigrationState', () => {
+  it.each([
+    'complete',
+    'missing-manifest',
+    'corrupt-manifest',
+    'missing-file',
+    'corrupt-file',
+    'wrong-size'
+  ] as const)(
+    'validates snapshot objects before migrating a referenced lock: %s',
+    async (scenario) => {
+      const source = join(root, 'runtime', 'envs', 'a')
+      await mkdir(source, { recursive: true })
+      const bytes = 'captured installed bytes'
+      await writeFile(join(source, 'package.py'), bytes)
+      const store = join(root, 'runtime', 'provenance', 'environment-snapshots')
+      const snapshot = {
+        schemaVersion: 1,
+        sourcePrefix: source,
+        observation: { runtimeVersion: '3.12.14', packages: [] },
+        entries: [
+          {
+            path: 'package.py',
+            kind: 'file',
+            mode: 0o600,
+            checksum: sha256(bytes),
+            size: Buffer.byteLength(bytes)
+          }
+        ]
+      }
+      const serialized = JSON.stringify(snapshot)
+      const captured = { checksum: sha256(serialized), snapshot }
+      await mkdir(join(store, 'objects'), { recursive: true })
+      await writeFile(join(store, 'objects', captured.checksum), serialized)
+      await writeFile(join(store, 'objects', sha256(bytes)), bytes)
+      let checksum = captured.checksum
+      const objects = join(store, 'objects')
+      const file = join(objects, sha256(bytes))
+      if (scenario === 'wrong-size') {
+        const manifest = JSON.stringify({
+          ...captured.snapshot,
+          entries: captured.snapshot.entries.map((entry) =>
+            entry.kind === 'file' ? { ...entry, size: entry.size + 1 } : entry
+          )
+        })
+        checksum = sha256(manifest)
+        await writeFile(join(objects, checksum), manifest)
+      }
+      if (scenario === 'missing-manifest') await rm(join(objects, checksum))
+      if (scenario === 'corrupt-manifest') await writeFile(join(objects, checksum), '{}')
+      if (scenario === 'missing-file') await rm(file)
+      if (scenario === 'corrupt-file') await writeFile(file, 'x'.repeat(bytes.length))
+      const lock = JSON.stringify({
+        schemaVersion: 3,
+        format: 'environment-lock-bundle',
+        kernelKind: 'python',
+        environmentName: 'a',
+        platform: process.platform,
+        architecture: process.arch,
+        components: [],
+        snapshot: { checksum }
+      })
+      const locks = join(root, 'runtime', 'provenance', 'environment-locks')
+      await mkdir(locks, { recursive: true })
+      await writeFile(join(locks, sha256(lock) + '.json'), lock)
+      const notebook = join(root, 'notebooks', 'project-1', 'session-1')
+      await mkdir(notebook, { recursive: true })
+      await writeFile(
+        join(notebook, 'run.json'),
+        JSON.stringify({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          runs: [
+            { runId: 'run-1', environmentLock: { state: 'available', lockChecksum: sha256(lock) } }
+          ]
+        })
+      )
+      if (scenario !== 'complete') {
+        await expect(validateProvenanceMigrationState(root)).rejects.toThrow()
+        expect(await readFile(join(source, 'package.py'), 'utf8')).toBe(bytes)
+      } else {
+        await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+        const moved = join(root, 'moved')
+        await cp(join(root, 'runtime', 'provenance'), join(moved, 'runtime', 'provenance'), {
+          recursive: true
+        })
+        await cp(join(root, 'notebooks'), join(moved, 'notebooks'), { recursive: true })
+        await rm(join(root, 'runtime'), { recursive: true })
+        await validateProvenanceMigrationState(moved)
+        const clone = join(root, 'clone')
+        await restoreEnvironmentSnapshot(
+          join(moved, 'runtime', 'provenance', 'environment-snapshots'),
+          checksum,
+          clone,
+          async () => 'OPEN_SCIENCE_SNAPSHOT_VERIFIED'
+        )
+        expect(await readFile(join(clone, 'package.py'), 'utf8')).toBe(bytes)
+      }
+    }
+  )
+
   it('accepts dirty Environment cache state because relocation rebuilds the runtime', async () => {
     const target = join(root, 'runtime', 'provenance', 'environment-inventory', 'environment-key')
     await mkdir(join(target, 'operations'), { recursive: true })

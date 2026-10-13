@@ -59,6 +59,80 @@ vi.mock('electron', () => ({
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
 
+it('rejects Session Package snapshot locks whose installed files are not portable', async () => {
+  const { capturePackageReproducibility, installPackageReproducibility } =
+    await import('./reproducibility')
+  const source = await createProvenanceTestFixture()
+  fixtures.push(source)
+  const lock = JSON.stringify({
+    schemaVersion: 3,
+    format: 'environment-lock-bundle',
+    kernelKind: 'python',
+    environmentName: 'a',
+    platform: process.platform,
+    architecture: process.arch,
+    components: [],
+    snapshot: { checksum: 'a'.repeat(64) }
+  })
+  const checksum = sha256(lock)
+  const locks = join(source.storageRoot, 'runtime/provenance/environment-locks')
+  await mkdir(locks, { recursive: true })
+  await writeFile(join(locks, checksum + '.json'), lock)
+  const tables: import('./records-contract').PackageRecords['tables'] = {
+    FileOriginSession: [],
+    Review: [],
+    Finding: [],
+    ReviewFindingDisposition: [],
+    ReviewScopeSnapshot: [],
+    UploadFile: [],
+    UploadVersion: [],
+    ArtifactVersionInput: [],
+    ArtifactMessageSnapshot: [],
+    ArtifactLineage: [],
+    ArtifactVersion: []
+  }
+  tables.ArtifactLineage = [{ id: 'artifact-1', projectId: 'project-1', sessionId: 'session-1' }]
+  tables.ArtifactVersion = [
+    {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      contentStorageKey:
+        'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/content',
+      executionSnapshotJson: JSON.stringify({
+        runs: [{ environmentLock: { lockChecksum: checksum } }]
+      })
+    }
+  ]
+  const records: import('./records-contract').PackageRecords = { schemaVersion: 1, tables }
+  await expect(
+    capturePackageReproducibility(source.storageRoot, records, {
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+  ).rejects.toThrow('snapshots cannot be transferred')
+  records.reproducibility = {
+    versions: [
+      {
+        versionId: 'version-1',
+        sourceScope: {
+          projectId: 'project-1',
+          appSessionId: 'session-1',
+          artifactId: 'artifact-1',
+          versionId: 'version-1'
+        },
+        environmentLocks: [{ checksum, serialized: lock }],
+        entityIds: {},
+        metadataKeys: [],
+        outputs: [],
+        omittedOutputChecksums: []
+      }
+    ]
+  }
+  await expect(
+    installPackageReproducibility(source.storageRoot, records, new Set())
+  ).rejects.toThrow('snapshots cannot be transferred')
+})
+
 it.each(['identical versions', 'identical evidence', 'small edit'] as const)(
   'preserves independent history with shared package content for %s',
   async (scenario) => {
