@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { usePdfAnnotations } from './pdf-annotations-context'
 
 const isEditableTarget = (target: EventTarget | null): boolean =>
@@ -18,12 +19,14 @@ export const PdfAnnotationMarker = ({
   id,
   left,
   top,
-  note
+  note,
+  selected = false
 }: {
   id: string
   left: string
   top: string
   note: string
+  selected?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const annotations = usePdfAnnotations()
@@ -76,7 +79,12 @@ export const PdfAnnotationMarker = ({
                 data-pdf-annotation-marker="true"
                 data-annotation-trigger="true"
                 aria-label={t('Annotation note')}
-                className="pointer-events-auto absolute z-50 grid size-6 place-items-center rounded-md border border-border bg-popover text-primary shadow-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(
+                  'absolute z-50 grid size-6 place-items-center rounded-md border border-border bg-popover text-primary shadow-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  selected || open || hoverOpen
+                    ? 'pointer-events-auto opacity-100'
+                    : 'pointer-events-none opacity-0 group-hover/pdf-annotation:pointer-events-auto group-hover/pdf-annotation:opacity-100 group-focus-within/pdf-annotation:pointer-events-auto group-focus-within/pdf-annotation:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100'
+                )}
                 style={{ left, top }}
                 onKeyDown={(event) => {
                   if (

@@ -21,7 +21,7 @@ import {
   decodePDFRawStream
 } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
-import { nativeReadingOrder } from './reading-order.mjs'
+import { nativeReadingOrder, nativeHyphenatedText } from './reading-order.mjs'
 import { proveNumericGlyphSources } from './numeric-glyphs.mjs'
 import { createSourceFragmentRecovery } from './source-fragments.mjs'
 import { unwrapPageContainers } from './page-containers.mjs'
@@ -903,6 +903,11 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     }
   }
   const recoverActualTextSources = (number, objects, sourcePage) => {
+    const caseKey = (text) =>
+      text
+        .replace(/^\u00ad/u, ' ')
+        .trim()
+        .toLowerCase()
     const expanded = actualTextObjects(sourcePage, objects)
     const claims = units
         .flatMap((unit) => unit.fragments)
@@ -911,7 +916,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         (object) =>
           object.type === 1 &&
           typeof object.text === 'string' &&
-          /^[A-Za-z ]{1,64}$/u.test(object.text) &&
+          /^\u00ad?[A-Za-z ]{1,64}$/u.test(object.text) &&
           p.FPDFPageObj_CountMarks(object.obj) === 1 &&
           claims.some((fragment) => {
             const box = fragmentBounds(fragment)
@@ -924,7 +929,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
                 ({ text }) =>
                   text.trim() !== object.text.trim() &&
                   /^[A-Za-z ]{1,64}$/u.test(text) &&
-                  text.trim().toLowerCase() === object.text.trim().toLowerCase()
+                  text.trim().toLowerCase() === caseKey(object.text)
               )
             )
           })
@@ -967,20 +972,20 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         const mark = p.FPDFPageObj_GetMark(object.obj, 0)
         if (
           p.FPDFPageObjMark_CountParams(mark) !== 1 ||
-          !p.FPDFPageObjMark_GetParamStringValue(mark, 'ActualText', at, 1024, length)
+          !p.FPDFPageObjMark_GetParamBlobValue(mark, 'ActualText', at, 1024, length)
         )
           continue
         const bytes = e.m.HEAPU32[length / 4]
-        if (!bytes || bytes > 258 || bytes % 2) continue
+        if (!bytes || bytes > 258) continue
+        // Read raw bytes: the string API applies PDFDocEncoding to UTF-16 bytes
+        // and loses U+00AD. Accept BOM-tagged UTF-16BE or the existing ASCII form.
         const marked = Buffer.from(e.m.HEAPU8.slice(at, at + bytes))
-          .toString('utf16le')
-          .replace(/\0$/u, '')
-        // PDFium widens raw UTF-16BE PDF string bytes, including each zero byte.
-        // Accept that exact ASCII representation as well as plain ASCII strings.
-        const semantic = /^(?:\0[A-Za-z ]){1,64}$/u.test(marked)
-          ? marked.replace(/\0/gu, '')
-          : marked
-        if (!/^[A-Za-z ]{1,64}$/u.test(semantic)) continue
+        const unicode = marked[0] === 0xfe && marked[1] === 0xff
+        if (unicode && bytes % 2) continue
+        const semantic = unicode
+          ? marked.subarray(2).swap16().toString('utf16le')
+          : marked.toString('latin1')
+        if (!/^\u00ad?[A-Za-z ]{1,64}$/u.test(semantic)) continue
         if (semantic.trim() !== original.text.trim()) continue
         const before = snapshot(object)
         if (!before || !p.FPDFPageObj_RemoveMark(object.obj, mark)) continue
@@ -989,7 +994,8 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         if (
           !/^[A-Za-z ]{1,64}$/u.test(painted.text) ||
           painted.text.trim() === original.text.trim() ||
-          painted.text.trim().toLowerCase() !== original.text.trim().toLowerCase() ||
+          painted.text.trim().toLowerCase() !== caseKey(original.text) ||
+          (semantic.startsWith('\u00ad') && !painted.text.startsWith(' ')) ||
           painted.bounds.some((value, axis) => value !== original.bounds[axis]) ||
           !claims.some((fragment) => {
             const box = fragmentBounds(fragment)
@@ -4111,7 +4117,8 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
           const text = nativeReadingOrder(
             e,
             planningPage(region.fragment.pageNumber).page,
-            region.rect
+            region.rect,
+            new Set(region.sourceObjects?.map((object) => object.obj))
           )
           if (text) {
             for (const [cursor, proof] of proofs) {
@@ -4124,6 +4131,27 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
               if (aligned.endOffset) next.set(cursor + aligned.endOffset, [...proof, false])
             }
           }
+        }
+        if (!next.size || (regionIndex === regions.length - 1 && !next.has(unit.source.length))) {
+          const snapshot = planningPage(region.fragment.pageNumber)
+          const text = nativeHyphenatedText(
+            e,
+            snapshot.page,
+            region.rect,
+            new Set(
+              [...snapshot.zeroInkPositioningMarkers].map((index) => snapshot.objects[index].obj)
+            )
+          )
+          if (text)
+            for (const [cursor, proof] of proofs) {
+              const aligned = objectSourceOffsets(
+                unit.source.slice(cursor),
+                [{ i: 0, text }],
+                true,
+                true
+              )
+              if (aligned.endOffset) next.set(cursor + aligned.endOffset, [...proof, false])
+            }
         }
         check(next.size > 0 && next.size <= 128, 'source-mismatch')
         proofs = next
@@ -5778,8 +5806,9 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
           // Some publishers split one paragraph into multiple linked fragments;
           // PDFium cannot verify that aggregate as one unchanged region. Leave that
           // region untouched while retaining strict source checks for single regions.
-          if (fallbackError.failure?.code !== 'source-mismatch' || !canPreserveOriginal)
+          if (fallbackError.failure?.code !== 'source-mismatch' || !canPreserveOriginal) {
             throw fallbackError
+          }
           retainRegions(unit)
         }
         diagnoseRetention(unit, error.failure.code, 'planning')

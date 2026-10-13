@@ -1268,7 +1268,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     expect(admissionActive).toBe(false)
   })
 
-  it('logs correlated resume identities without unrelated request or backend details', async () => {
+  it('logs a correlated lifecycle with session identity for diagnostics export', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
       sessionId: 'private-session-id',
@@ -1300,6 +1300,8 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     expect(completed?.[1]).toMatchObject({
       operationId: started?.[1]?.operationId,
       sessionHash: started?.[1]?.sessionHash,
+      sessionId: request.sessionId,
+      projectId: request.projectId,
       frameworkId: 'codex',
       contextReset: true,
       durationMs: expect.any(Number)
@@ -1309,7 +1311,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     expect(serialized).not.toContain('private-backend-id')
   })
 
-  it('retains classified failure evidence for session-bound diagnostics', async () => {
+  it('classifies a failure and retains its evidence for the redacted diagnostic sink', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
       sessionId: 'private-session-id',
@@ -1348,14 +1350,17 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
       durationMs: expect.any(Number),
       error: failure.message,
       stack: failure.stack,
+      name: failure.name,
       code: failure.code,
       data: failure.data
     })
     const serialized = JSON.stringify([infoLogSpy.mock.calls, errorLogSpy.mock.calls])
     expect(serialized).not.toContain(request.cwd)
+    // This spy observes input to the logger. Credential and export-path redaction are exercised
+    // with real sinks in logger.test.ts and session-diagnostics/export-evidence.integration.test.ts.
   })
 
-  it('buckets an unknown RPC category while retaining the original diagnostic code', async () => {
+  it('buckets an unknown RPC classification while retaining its original diagnostic code', async () => {
     registerWithFakes()
     const privateCode = 987_654_321
     resumeSession.mockRejectedValueOnce(

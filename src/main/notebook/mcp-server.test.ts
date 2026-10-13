@@ -832,7 +832,8 @@ describe('ask_user_question tool', () => {
         questions: [question]
       })
       expect(tool!.description).toContain('2-16')
-      expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('kind to multi-select')
+      expect(tool!.description).toContain('multi-select only for combinable choices')
+      expect(tool!.description).toContain('never exclusive alternatives')
     }
   )
 
