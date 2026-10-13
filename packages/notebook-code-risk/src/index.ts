@@ -1188,6 +1188,12 @@ const jsInvocation = (
     // Unknown call/apply/bind members cannot prove a native constructor's identity.
     if (callee?.startsWith('<dynamic>')) {
       thisValue = undefined
+      // Preserve review evidence once forwarding is explicit. An ordinary unknown
+      // model.apply(...) remains a member call, not proof of Function.apply.
+      if (hops > 0 || /\.(?:call|apply|bind)\.(?:call|apply)$/.test(callee)) {
+        callee = undefined
+        uncertainArgs = true
+      }
       break
     }
     const boundApply = jsApplyBoundTarget(callee ?? '')

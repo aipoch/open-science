@@ -10861,6 +10861,21 @@ ${source}`
         )
       ).not.toEqual([])
     })
+    it.each([
+      'Function.prototype.call.call(Reflect.construct, null, Promise, [erase])',
+      'Function.prototype.call.apply(Reflect.construct, [null, Promise, [erase]])',
+      'Reflect.apply(Function.prototype.call, Reflect.construct, [null, Promise, [erase]])'
+    ])('retains review evidence for an unknown forwarding helper: %s', async (source) => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `const fs = require("fs"); function run(Function) {
+            function erase() { fs.unlinkSync("target.txt") }
+            ${source};
+          }; run(custom);`
+        )
+      ).toEqual([expect.objectContaining({ operation: 'run: dynamic call target' })])
+    })
     it('does not treat a named executor self binding as the native Promise', async () => {
       expect(
         await analyzeNotebookCodeRisk(
