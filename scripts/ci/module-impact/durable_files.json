@@ -54,6 +54,7 @@
       "test/config/vitest.config.test.ts"
     ],
     "consumer": [
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "cli/config-root.test.ts",
       "packages/skills/src/agent-home-skill-catalog.test.ts",
       "packages/skills/src/catalog.test.ts",

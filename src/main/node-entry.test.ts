@@ -87,10 +87,12 @@ it('reports credential recovery during startup as a failure after draining resou
   process.exitCode = undefined
   const attemptId = 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'
   vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', attemptId)
-  // The Vitest worker has a real parent pipe: intercept only this entry's send boundary.
+  // Keep startup reporting from sending on or unrefing the Vitest worker's real parent pipe.
   const send = vi.spyOn(process, 'send').mockImplementation(() => true)
+  const unref = vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
   await import('./node-entry')
   await vi.waitFor(() => expect(process.exitCode).toBeDefined())
+  expect(unref).toHaveBeenCalledOnce()
   expect(f.log.error).toHaveBeenCalledWith('credential recovery required', {
     reason: 'decryption-failed'
   })

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 
-import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
+import {
+  sanitizeAgentUserChoiceAnswer,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult
+} from '../../shared/elicitation'
 import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 import { currentAttempt, sameSession } from './delegated-work-record-invariants'
 import type {
@@ -54,9 +58,8 @@ const assertQuestionAnswers = (
         !Number.isSafeInteger(answer.questionIndex) ||
         answer.questionIndex < 0 ||
         answer.questionIndex >= request.questions.length ||
-        typeof answer.value !== 'string' ||
-        !answer.value.trim() ||
-        answer.value.length > 4_000
+        sanitizeAgentUserChoiceAnswer(request.questions[answer.questionIndex], answer.value) ===
+          undefined
     )
   ) {
     throw new DurableDelegatedWorkError(
@@ -70,7 +73,12 @@ const questionContinuationMessage = (
   request: DurableDelegatedQuestionRequest,
   answers: readonly DelegatedQuestionAnswer[]
 ): string => {
-  const byIndex = new Map(answers.map((answer) => [answer.questionIndex, answer.value.trim()]))
+  const byIndex = new Map(
+    answers.map((answer) => [
+      answer.questionIndex,
+      Array.isArray(answer.value) ? JSON.stringify(answer.value) : answer.value.trim()
+    ])
+  )
   return [
     'The user answered your delegated questions:',
     ...request.questions.map(
@@ -175,14 +183,15 @@ class DelegatedUserQuestionOwner {
       !Number.isSafeInteger(input.questionIndex) ||
       input.questionIndex < 0 ||
       input.questionIndex >= request.questions.length ||
+      new Set(input.draftAnswers.map((answer) => answer.questionIndex)).size !==
+        input.draftAnswers.length ||
       input.draftAnswers.some(
         (answer) =>
           !Number.isSafeInteger(answer.questionIndex) ||
           answer.questionIndex < 0 ||
           answer.questionIndex >= request.questions.length ||
-          typeof answer.value !== 'string' ||
-          !answer.value.trim() ||
-          answer.value.length > 4_000
+          sanitizeAgentUserChoiceAnswer(request.questions[answer.questionIndex], answer.value) ===
+            undefined
       )
     ) {
       throw new DurableDelegatedWorkError(
@@ -192,7 +201,10 @@ class DelegatedUserQuestionOwner {
     }
     await this.options.records.updateQuestionDraft(
       input.requestId,
-      input.draftAnswers,
+      input.draftAnswers.map((answer) => ({
+        ...answer,
+        value: sanitizeAgentUserChoiceAnswer(request.questions[answer.questionIndex], answer.value)!
+      })),
       input.questionIndex
     )
   }
@@ -218,6 +230,10 @@ class DelegatedUserQuestionOwner {
       throw new DurableDelegatedWorkError('authorization', 'delegated question branch is inactive')
     }
     assertQuestionAnswers(request, input.answers)
+    const answers = input.answers.map((answer) => ({
+      ...answer,
+      value: sanitizeAgentUserChoiceAnswer(request.questions[answer.questionIndex], answer.value)!
+    }))
     const child = snapshot.records.find(
       (candidate) => candidate.frameId === request.sourceFrameId
     ) as DurableChild | undefined
@@ -258,7 +274,7 @@ class DelegatedUserQuestionOwner {
     }
     const reservation = await this.options.reserve()
     const attemptId = this.options.createId('attempt')
-    const message = questionContinuationMessage(request, input.answers)
+    const message = questionContinuationMessage(request, answers)
     let committed = false
     try {
       await this.options.admission(() =>
@@ -269,7 +285,7 @@ class DelegatedUserQuestionOwner {
           attemptId,
           userMessageId: this.options.createId('message'),
           message,
-          answers: input.answers,
+          answers,
           resolvedAgent,
           executionModel,
           startedAt: this.options.now(),

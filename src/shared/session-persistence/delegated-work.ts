@@ -4,7 +4,11 @@ import type {
   DelegatedQuestionRequest,
   SessionDelegatedWorkRuntimeContext
 } from '../delegated-work-contract'
-import { sanitizeAgentUserChoiceRequest } from '../elicitation'
+import {
+  sanitizeAgentUserChoiceRequest,
+  sanitizeAgentUserChoiceAnswer,
+  type AgentUserChoicePrompt
+} from '../elicitation'
 import { sanitizeDelegatedWorkRecords } from './delegated-records'
 import { asNumber, asString, hasOnlyFields, isRecord } from './primitives'
 
@@ -217,19 +221,19 @@ export const sanitizeSessionDelegatedWorkRuntimeContext = (
   }
   const sanitizeAnswers = (
     raw: unknown,
-    questionCount: number
+    questions: readonly AgentUserChoicePrompt[]
   ): DelegatedQuestionAnswer[] | undefined => {
-    if (!Array.isArray(raw) || raw.length > questionCount) return undefined
+    if (!Array.isArray(raw) || raw.length > questions.length) return undefined
     const answers = raw.flatMap((answer): DelegatedQuestionAnswer[] => {
       if (!isRecord(answer) || !hasOnlyFields(answer, ['questionIndex', 'value'])) return []
       const questionIndex = asNumber(answer.questionIndex)
-      const answerValue = asString(answer.value)
+      const question = questionIndex === undefined ? undefined : questions[questionIndex]
+      const answerValue = question && sanitizeAgentUserChoiceAnswer(question, answer.value)
       return questionIndex !== undefined &&
         Number.isSafeInteger(questionIndex) &&
         questionIndex >= 0 &&
-        questionIndex < questionCount &&
-        answerValue &&
-        answerValue.length <= 4_000
+        questionIndex < questions.length &&
+        answerValue !== undefined
         ? [{ questionIndex, value: answerValue }]
         : []
     })
@@ -292,11 +296,11 @@ export const sanitizeSessionDelegatedWorkRuntimeContext = (
       const askedAt = asNumber(raw.askedAt)
       const draftQuestionIndex = asNumber(raw.draftQuestionIndex)
       const status = asString(raw.status)
-      const draftAnswers = questions && sanitizeAnswers(raw.draftAnswers, questions.length)
+      const draftAnswers = questions && sanitizeAnswers(raw.draftAnswers, questions)
       const answers =
         raw.answers === undefined || !questions
           ? undefined
-          : sanitizeAnswers(raw.answers, questions.length)
+          : sanitizeAnswers(raw.answers, questions)
       const respondedAt = raw.respondedAt === undefined ? undefined : asNumber(raw.respondedAt)
       const continuationAttemptId =
         raw.continuationAttemptId === undefined ? undefined : asString(raw.continuationAttemptId)

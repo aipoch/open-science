@@ -442,7 +442,7 @@ const useTranscriptWindow = (
           const withinPresentationWindow =
             itemIndex >= presentationStart && itemIndex <= presentationBarrierIndex
           const liveActivityAfterBarrier =
-            itemIndex > presentationBarrierIndex && !hidesBehindPresentationBarrier(item.type)
+            itemIndex > presentationBarrierIndex && !hidesBehindPresentationBarrier(item)
           return withinPresentationWindow || liveActivityAfterBarrier ? [{ item, itemIndex }] : []
         })
       : items.slice(start, end).map((item, offset) => ({ item, itemIndex: start + offset }))

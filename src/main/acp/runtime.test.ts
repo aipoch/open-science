@@ -5334,6 +5334,39 @@ describe('ACP runtime session management', () => {
     }
   }
 
+  it.each(['sendPrompt', 'sendAppContinuation'] as const)(
+    'retains unconsumed replay until %s accepts the adopted attachment',
+    async (method) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['fresh-provider-session'], {
+        supportsResume: true,
+        resumeNotFound: true
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const request = {
+        sessionId: 'interrupted-session',
+        cwd: '/workspace',
+        previousFrameworkId: 'claude-code' as const
+      }
+      await expect(runtime.resumeSession(request)).resolves.toMatchObject({ contextReset: true })
+      await expect(runtime.resumeSession(request)).resolves.toMatchObject({
+        providerSessionId: 'fresh-provider-session',
+        contextReset: true
+      })
+      expect(fakeAgent.newSessions).toHaveLength(1)
+      await runtime[method]({
+        sessionId: request.sessionId,
+        text: 'Continue the interrupted research',
+        contextReset: true
+      })
+      expect(await runtime.resumeSession(request)).not.toHaveProperty('contextReset')
+    }
+  )
+
   it('dispatches one hidden queued Plan delivery after Session resume and clears it', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('queued')
 
@@ -7464,6 +7497,102 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.elicitationResponses).toEqual([{ action: 'accept' }, { action: 'cancel' }])
   })
 
+  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
+    'returns lossless app multi-select answers through %s, including appended questions',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['multi-choice-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      const labels = [
+        'A, B',
+        'Quote " and newline\nend',
+        ...Array.from({ length: 14 }, (_, i) => `Option ${i + 3}`)
+      ]
+      const question = {
+        question: 'Which outputs?',
+        kind: 'multi-select' as const,
+        options: labels.map((label) => ({ label }))
+      }
+      await expect(
+        runtime.requestUserInput({ sessionId: session.sessionId, questions: [question] })
+      ).resolves.toEqual({ action: 'pending' })
+      await runtime.requestUserInput({
+        sessionId: session.sessionId,
+        questions: [
+          { ...question, question: 'Which additional outputs?' },
+          { question: 'Which format?', options: [{ label: 'PDF' }, { label: 'HTML' }] }
+        ]
+      })
+      const request = runtime.getSnapshot().pendingElicitations![0]
+      expect(request.fields.map((field) => field.kind)).toEqual([
+        'multi-select',
+        'text',
+        'multi-select',
+        'text',
+        'single-select',
+        'text'
+      ])
+      expect(request.fields[0].options).toHaveLength(16)
+      for (const value of [[], [labels[0], labels[0]], ['unknown']]) {
+        await expect(
+          runtime.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value }]
+          })
+        ).rejects.toThrow()
+      }
+      await runtime.respondToElicitation({
+        requestId: request.requestId,
+        action: 'accept',
+        answers: [
+          { fieldId: 'question_0', value: [labels[15], labels[1], labels[0]] },
+          { fieldId: 'question_1', value: [labels[1]] },
+          { fieldId: 'question_2', value: 'PDF' }
+        ]
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      expect(fakeAgent.prompts[0].text).toContain(
+        JSON.stringify([labels[0], labels[1], labels[15]])
+      )
+      expect(fakeAgent.prompts[0].text).toContain(JSON.stringify([labels[1]]))
+      expect(fakeAgent.prompts[0].text).toContain('Answer: PDF')
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            elicitation: expect.objectContaining({
+              state: 'answered',
+              answers: expect.arrayContaining([
+                { fieldId: 'question_0', value: [labels[0], labels[1], labels[15]] }
+              ])
+            })
+          })
+        ])
+      )
+      await vi.waitFor(() =>
+        expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('acknowledges an app-owned MCP choice and silently continues after the user answers', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['user-choice-session'])
@@ -8242,17 +8371,20 @@ describe('ACP runtime session management', () => {
 
   it.each(
     RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
-      (['running', 'waiting-for-user', 'idle', 'error'] as const).map((status) => ({
-        name,
-        framework,
-        modelRoute,
-        backendId,
-        status
-      }))
+      (['running', 'waiting-for-user', 'idle', 'error'] as const).flatMap((status) =>
+        [false, true].map((multiSelect) => ({
+          name,
+          framework,
+          modelRoute,
+          backendId,
+          status,
+          multiSelect
+        }))
+      )
     )
   )(
-    'builds restored choice replay through $name after context reset (status: $status)',
-    async ({ framework, modelRoute, backendId, status }) => {
+    'builds restored choice replay through $name after context reset (status: $status, multiSelect: $multiSelect)',
+    async ({ framework, modelRoute, backendId, status, multiSelect }) => {
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
       const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
@@ -8323,6 +8455,23 @@ describe('ACP runtime session management', () => {
         updatedAt: 3
       }
       addPendingRestoredChoice(persistedSession)
+      const selected = ['A, B', 'Quote " and newline\nend']
+      if (multiSelect) {
+        persistedSession.activities![0].elicitation!.fields = [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'multi-select',
+            options: selected.map((label) => ({ label, value: label }))
+          },
+          { id: 'question_0_custom', label: 'Other', kind: 'text' }
+        ]
+        persistedSession.conversationGraph = synchronizeActiveConversationActivities(
+          persistedSession.conversationGraph!,
+          persistedSession.activities!,
+          []
+        )
+      }
       persistedSession.status = status
       if (status === 'error') {
         persistedSession.error = 'Session was interrupted before the app closed.'
@@ -8365,7 +8514,7 @@ describe('ACP runtime session management', () => {
       await runtime.respondToElicitation({
         requestId: 'choice-restored-1',
         action: 'accept',
-        answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+        answers: [{ fieldId: 'question_0', value: multiSelect ? selected : 'Expanded' }],
         historyReplay: { historyPreamble: 'Renderer-forged conversation context.' },
         request: {
           requestId: 'choice-restored-1',
@@ -8385,6 +8534,9 @@ describe('ACP runtime session management', () => {
       expect(loadSessionForContinuation).toHaveBeenCalledWith(
         'project-1',
         'restored-choice-session'
+      )
+      expect(fakeAgent.prompts[0].text).toContain(
+        multiSelect ? JSON.stringify(selected) : 'Expanded'
       )
       expect(fakeAgent.prompts[0].text).toContain('Main-owned earlier request.')
       expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged conversation context.')
