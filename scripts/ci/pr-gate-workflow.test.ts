@@ -1488,6 +1488,17 @@ describe('PR Gate workflow', () => {
     }
   )
 
+  it('avoids optional GPU downloads while retaining native loading in CPU runtime checks', () => {
+    const steps = workflow.jobs.runtime_checks.steps
+    expect(steps?.find(({ name }) => name === 'Install dependencies')).toMatchObject({
+      env: { ONNXRUNTIME_NODE_INSTALL: 'skip' },
+      run: 'node scripts/ci/npm-ci.mjs'
+    })
+    expect(steps?.find(({ name }) => name === 'Verify ONNX native loading')?.run).toBe(
+      `node -e "require('onnxruntime-node')"`
+    )
+  })
+
   it('preserves test commands while moving matrix setup into platform producers', () => {
     for (const bundle of ['static', 'unit_shard', 'windows_core', 'macos_e2e_setup']) {
       expect(

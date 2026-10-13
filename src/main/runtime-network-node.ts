@@ -81,7 +81,12 @@ export function createNodeRuntimeNetwork(
             })
           },
           (error: unknown) =>
-            finish(error instanceof Error ? error : new Error(String(error)), null)
+            finish(
+              Object.assign(new Error('Proxy connection failed.', { cause: error }), {
+                code: 'ERR_PROXY_CONNECTION_FAILED'
+              }),
+              null
+            )
         )
       }
     })

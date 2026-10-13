@@ -1,13 +1,14 @@
-import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
-import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   resolveReasoningEffortValue,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
+import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
+import { DEFAULT_REASONING_EFFORT } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
-import type { StoredSettings } from './types'
 import type { ExplicitAgentBackendTarget } from './backend-target'
 import type { ProviderAccountsModule, RuntimeProviderModelSelection } from './provider-accounts'
+import type { StoredSettings } from './types'
 
 type AgentBackendSelection = Readonly<{
   frameworkId: AgentFrameworkId

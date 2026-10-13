@@ -750,8 +750,6 @@
       "src/main/research-execution-profiles/ipc.test.ts",
       "src/main/notebook/screened-auxiliary-output.test.ts",
       "src/main/browser-recordings/driver-deadline.test.ts",
-      "packages/open-science/cli.test.ts",
-      "packages/open-science/client.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",

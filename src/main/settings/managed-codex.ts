@@ -594,7 +594,7 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
   '  }'
 ].join('\n')
 
-const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
+const CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS = [
   'function startCodexConnection(codexPath, env) {',
   '  const spawnEnv = env ?? process.env;',
   '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
@@ -615,6 +615,13 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
   '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
   '  }'
 ].join('\n')
+
+// Recognize the exact installed patch so existing adapters receive the console fix too.
+const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT =
+  CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS.replaceAll(
+    'env: spawnEnv }',
+    'env: spawnEnv, windowsHide: true }'
+  )
 
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
@@ -810,14 +817,14 @@ export const patchCodexAcpSkillInputSource = (source: string): string => {
 // in model lookup. Project just that immutable catalog path into this native process's CLI override;
 // the remaining request-scoped config continues through codex-acp unchanged.
 export const patchCodexAcpModelCatalogStartupSource = (source: string): string => {
-  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)) return source
-
-  const matches = source.split(CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE).length - 1
-  if (matches === 1) {
-    return source.replace(
-      CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
-      CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
-    )
+  const variants = [
+    CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
+    CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS,
+    CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
+  ]
+  const matches = variants.filter((variant) => source.includes(variant))
+  if (matches.length === 1 && source.split(matches[0]).length === 2) {
+    return source.replace(matches[0], CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)
   }
 
   throw new Error(

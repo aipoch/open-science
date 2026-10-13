@@ -5920,6 +5920,7 @@ describe('SettingsPage Codex framework', () => {
   it('re-detects CodeBuddy after Settings is reopened', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const initialSnapshot = {
+      revision: 1,
       claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
@@ -5934,6 +5935,7 @@ describe('SettingsPage Codex framework', () => {
     }
     const detectedSnapshot = {
       ...initialSnapshot,
+      revision: 2,
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' }
     }
     api.settings.getSettings = vi.fn().mockResolvedValue(initialSnapshot)

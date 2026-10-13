@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Console } from 'node:console'
+import { Writable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -45,6 +47,62 @@ afterEach(async () => {
 })
 
 describe('logger: main-process boundary', () => {
+  it.each(['debug', 'info', 'warn', 'error'] as const)(
+    'mirrors %s as one redacted JSON line with the file record and original stream',
+    async (level) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-json-'))
+      initLogger({ logDir, runId: 'console-run', mirrorToConsole: true, consoleFormat: 'json' })
+      const output = { stdout: '', stderr: '' }
+      const capture = (stream: keyof typeof output): Writable =>
+        new Writable({
+          write(chunk, _encoding, callback) {
+            output[stream] += chunk.toString()
+            callback()
+          }
+        })
+      const terminal = new Console({ stdout: capture('stdout'), stderr: capture('stderr') })
+      const method = level === 'debug' ? 'log' : level
+      vi.spyOn(console, method).mockImplementation(terminal[method])
+      runWithDiagnosticCorrelation(() =>
+        createLogger('backend')[level]('first line\nsecond line %s', {
+          apiKey: 'fictional-console-secret',
+          nested: { phase: 'startup', attempts: [1, 2, 3] },
+          error: new Error('multiline\nerror')
+        })
+      )
+      await flushLogs()
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      const stream = level === 'warn' || level === 'error' ? 'stderr' : 'stdout'
+      expect(output[stream]).toBe(file)
+      expect(output[stream === 'stdout' ? 'stderr' : 'stdout']).toBe('')
+      expect(file.trimEnd().split('\n')).toHaveLength(1)
+      expect(file).not.toContain('fictional-console-secret')
+      expect(JSON.parse(file)).toMatchObject({
+        t: expect.any(String),
+        level,
+        scope: 'backend',
+        msg: 'first line\nsecond line %s',
+        runId: 'console-run',
+        correlationId: expect.any(String),
+        data: { nested: { phase: 'startup', attempts: [1, 2, 3] } }
+      })
+    }
+  )
+
+  it('keeps JSON mirroring disabled when requested and text as the default', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-console-mode-'))
+    const mirror = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    initLogger({ logDir, mirrorToConsole: false, consoleFormat: 'json' })
+    createLogger('backend').info('quiet')
+    await flushLogs()
+    expect(mirror).not.toHaveBeenCalled()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('quiet')
+    initLogger({ logDir, mirrorToConsole: true })
+    createLogger('backend').info('readable', { attempt: 1 })
+    await flushLogs()
+    expect(mirror).toHaveBeenCalledWith('[backend] readable', { attempt: 1 })
+  })
+
   it.each(['object', 'JSON', 'Error.message', 'escaped JSON key'] as const)(
     'D01 redacts compound credentials in %s at both output boundaries',
     async (representation) => {

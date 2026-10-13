@@ -1,3 +1,4 @@
+import type { Annotation } from '../../../shared/annotation-contract'
 import {
   createLinearConversationGraph,
   ensureConversationRuntimeSegment,
@@ -5,8 +6,8 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../../shared/conversation-graph'
+import { formatSessionDetailsTitle } from '../../../shared/session-details'
 import type { MessagePart } from '../../../shared/session-persistence'
-import type { Annotation } from '../../../shared/annotations'
 import {
   sanitizeActivityGroup,
   sanitizeToolActivity,
@@ -18,16 +19,13 @@ import {
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../shared/uploads'
+import type { ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
 import {
   hydrateToolActivity,
   stripTransientMessageState,
-  type ChatMessage,
   type ChatMessageRole,
-  type ChatMessageStatus,
-  type ChatSession,
-  type ToolActivity
+  type ChatMessageStatus
 } from './session-store-persistence-owner'
-import { formatSessionDetailsTitle } from '../../../shared/session-details'
 
 export type AppendUserMessageInput = {
   sessionId: string

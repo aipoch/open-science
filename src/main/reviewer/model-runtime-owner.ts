@@ -1,13 +1,14 @@
 import { homedir } from 'node:os'
 
+import { AcpRuntime } from '../acp/runtime'
+import { composeAcpRuntimeBaseOwners } from '../acp/runtime-base-composition'
+import type { AcpRuntimeOptions } from '../acp/runtime-contract'
+import { composeAcpRuntimeSessionOwners } from '../acp/runtime-session-composition'
 import { releaseResolvedAgentBackendLeases, type ResolvedAgentBackend } from '../agent-framework'
 import type {
   AgentBackendResolutionContext,
   ExplicitAgentBackendTarget
 } from '../settings/backend-resolver'
-import { composeAcpRuntimeBaseOwners } from '../acp/runtime-base-composition'
-import { composeAcpRuntimeSessionOwners } from '../acp/runtime-session-composition'
-import { AcpRuntime, type AcpRuntimeOptions } from '../acp/runtime'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 
 type CapturedReviewerModel = Readonly<{

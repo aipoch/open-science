@@ -1,38 +1,32 @@
-import {
-  observeProviderFailure,
-  type ProviderFailureObserver
-} from './provider-failure-observation'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
+import { observeProviderFailure } from './provider-failure-observation'
+import type {
+  ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
+  ResponsesBridgeSkillCandidate,
+  ResponsesBridgeSkillInput,
+  ResponsesBridgeTarget
+} from './responses-bridge-contract'
+export type {
+  ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
+  ResponsesBridgeSkillCandidate,
+  ResponsesBridgeSkillInput,
+  ResponsesBridgeTarget
+} from './responses-bridge-contract'
 
 import { createLogger } from '@aipoch/diagnostics/node'
+import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
+import type { SkillSelectorUsageObservation } from '../agent-framework/types'
 import { appendChatCompletions } from './base-url'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ModelReasoningEffort
-} from '../../shared/reasoning-effort'
-import { responsesToChatRequest } from './responses-request-adapter'
 import {
-  completionToResponse,
-  ResponsesProtocolError,
-  streamChatToResponses,
-  upstreamErrorMessage
-} from './responses-response-adapter'
-import type {
-  ResponsesBridgeNamespacedTool,
-  ResponsesReplyReasoning
-} from './responses-protocol-types'
-import {
-  selectChatSkills,
-  type ChatSkillSelectorCandidate,
-  type ChatSkillSelectorInput
-} from './chat-skill-selector'
-import {
-  ProviderLoopbackHttpHost,
-  writeProviderLoopbackJson as json,
-  type ProviderLoopbackHttpRequest
-} from './provider-loopback-http-host'
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  ResponseBodyLimitError
+} from './bounded-response'
+import { selectChatSkills } from './chat-skill-selector'
 import {
   DeterministicProviderErrorReplay,
   providerErrorClientStatus,
@@ -40,13 +34,22 @@ import {
   readBoundedProviderErrorBody
 } from './provider-error-replay'
 import { fetchProviderRequest } from './provider-fetch'
-import type { SkillSelectorUsageObservation } from '../agent-framework'
-import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import {
-  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-  readBoundedResponseText,
-  ResponseBodyLimitError
-} from './bounded-response'
+  writeProviderLoopbackJson as json,
+  ProviderLoopbackHttpHost,
+  type ProviderLoopbackHttpRequest
+} from './provider-loopback-http-host'
+import type {
+  ResponsesBridgeNamespacedTool,
+  ResponsesReplyReasoning
+} from './responses-protocol-types'
+import { responsesToChatRequest } from './responses-request-adapter'
+import {
+  completionToResponse,
+  ResponsesProtocolError,
+  streamChatToResponses,
+  upstreamErrorMessage
+} from './responses-response-adapter'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -55,44 +58,6 @@ type JsonObject = Record<string, any>
 
 // Diagnostics log only model IDs and tool shapes/counts, never keys, prompts, or arguments.
 const log = createLogger('acp-bridge')
-
-export type ResponsesBridgeTarget = {
-  onProviderFailure?: ProviderFailureObserver
-  baseUrl: string
-  key?: string
-  vendorId?: OfficialVendorId
-  reasoningEffortTransport?: CustomReasoningEffortTransport
-  // Codex uses a catalog model for its local metadata; bridge providers may need a different
-  // upstream model id (for example, DeepSeek's model name).
-  model?: string
-  namespacedTools?: ResponsesBridgeNamespacedTool[]
-  // The active model's resolved API value. This explicitly overrides Codex's transport-model effort,
-  // which may use a smaller vocabulary or emit its own default. Undefined strips the field.
-  reasoningEffort?: ModelReasoningEffort
-  reviewerScope?: {
-    namespacedTools: ResponsesBridgeNamespacedTool[]
-  }
-}
-
-export type ResponsesBridgeModelTarget = Pick<
-  ResponsesBridgeTarget,
-  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort' | 'onProviderFailure'
->
-
-export type ResponsesBridgeConnection = {
-  baseUrl: string
-  token: string
-  // Opaque, non-secret identity for this in-memory bridge instance. Session recovery compares it to
-  // avoid resuming Codex history after the hidden reasoning cache has been lost.
-  continuityToken?: string
-  // Absent is the legacy Chat Completions bridge. Native Responses compatibility stays on the
-  // Responses wire protocol and opts in explicitly so framework config can preserve its model.
-  kind?: 'responses-compatibility'
-}
-
-export type ResponsesBridgeSkillCandidate = ChatSkillSelectorCandidate
-
-export type ResponsesBridgeSkillInput = ChatSkillSelectorInput
 
 export type ResponsesBridgeOptions = {
   maxResponseBytes?: number
@@ -684,6 +649,6 @@ export class ResponsesBridge {
   }
 }
 
-export { chatUrl, completionToResponse, upstreamErrorMessage }
-export { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
 export type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
+export { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
+export { chatUrl, completionToResponse, upstreamErrorMessage }

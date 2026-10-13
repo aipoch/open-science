@@ -26,7 +26,11 @@ const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, maxRetries: 5, retryDelay: 100 }))
+  )
 })
 
 const run = (
@@ -6488,6 +6492,46 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-3']?.state).toBe('unknown')
   })
 
+  it('retains R optimize capture invalidation through four cells and cache reload', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-optimize-'))
+    temporaryRoots.push(storageRoot)
+    const runs: NotebookRunRecord[] = []
+    const repository = { readSessionRuns: async () => runs }
+    const scripts = [
+      'CAPTURE <- 0.3',
+      'objective <- function(rate) (rate - CAPTURE)^2',
+      'fit <- stats::optimize(f = objective, interval = c(0, 1))',
+      'CAPTURE <- 0.7'
+    ]
+    let projection
+    for (const [index, script] of scripts.entries()) {
+      const completedRun = {
+        ...run(`run-${index + 1}`, `cell-${index + 1}`, script, index + 1),
+        kernelKind: 'r' as const,
+        environment: 'default-r'
+      }
+      runs.push(completedRun)
+      // Reconstruct the public analyzer each time to exercise its derived cache.
+      projection = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun,
+        interpreter: unusedR
+      })
+    }
+    expect(projection?.stalenessByRunId['run-3']?.state).toBe('unknown')
+    expect(projection?.dependenciesByRunId?.['run-3']).toBeUndefined()
+    expect(projection?.invalidatedByRunId['run-4']).toContainEqual(
+      expect.objectContaining({
+        runId: 'run-3',
+        cellId: 'cell-3',
+        names: ['CAPTURE'],
+        state: 'unknown'
+      })
+    )
+    expect(projection?.unresolvedFileReadRunIds).toContain('run-3')
+  })
+
   it('uses R parse data to detect dependencies when R is available', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-dependencies-'))
     temporaryRoots.push(storageRoot)
@@ -9516,5 +9560,304 @@ describe('named Python callback container derived cache', () => {
     }).project(fixture.request)
     expect(analyze).toHaveBeenCalled()
     expect(JSON.stringify(await fixture.repository.readSessionRuns())).toBe(before)
+  })
+})
+
+describe('Python call-time binding denial cache contract', () => {
+  const denied = ['decode']
+  const prepare = async (
+    unknown = false
+  ): Promise<{
+    storageRoot: string
+    history: NotebookRunRecord[]
+    repository: { readSessionRuns: () => Promise<NotebookRunRecord[]> }
+    analyze: AnalyzeNotebookScripts
+    request: { projectId: string; sessionId: string }
+    cachePath: string
+  }> => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'python-call-time-denial-cache-'))
+    temporaryRoots.push(storageRoot)
+    const history = [run('run-1', 'call-order', 'probe()\ndef decode(value): return value', 1)]
+    const repository = { readSessionRuns: async () => history }
+    // Supply denial metadata at the cache boundary independently of the source producer.
+    const analyze: AnalyzeNotebookScripts = async (_interpreter, _language, scripts) =>
+      (await analyzePythonSources(scripts)).map((facts) => {
+        const receiverCalls = facts.receiverCalls?.map((call) => ({
+          ...call,
+          unavailablePythonFunctionNames: denied
+        }))
+        return unknown
+          ? { ...facts, state: 'unknown' as const, reasons: ['opaque-call'], receiverCalls }
+          : {
+              ...facts,
+              state: 'available' as const,
+              definedNames: facts.definedNames ?? [],
+              usedNames: facts.usedNames ?? [],
+              mutatedNames: facts.mutatedNames ?? [],
+              receiverCalls
+            }
+      })
+    const request = { projectId: 'p', sessionId: 's' }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository, analyze }).project(request)
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    return { storageRoot, history, repository, analyze, request, cachePath }
+  }
+
+  it.each([false, true])(
+    'roundtrips call-time denial names in unknown=%s facts without reparsing',
+    async (unknown) => {
+      const fixture = await prepare(unknown)
+      const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+      expect(cached.runs['run-1'].facts.state).toBe(unknown ? 'unknown' : 'available')
+      expect(cached.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames).toEqual(
+        denied
+      )
+      delete cached.projectionSnapshots
+      await writeFile(fixture.cachePath, JSON.stringify(cached))
+      const analyze = vi.fn(async () => {
+        throw new Error('bounded call-time denial metadata must be reused')
+      })
+      await new NotebookDependencyAnalyzer({
+        storageRoot: fixture.storageRoot,
+        repository: fixture.repository,
+        analyze
+      }).project(fixture.request)
+      expect(analyze).not.toHaveBeenCalled()
+      const restored = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+      expect(restored.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames).toEqual(
+        denied
+      )
+    }
+  )
+
+  it.each([
+    ['null list', null],
+    ['nonstring name', [17]],
+    ['too many names', Array.from({ length: 513 }, (_, index) => 'helper' + index)],
+    ['oversized name', ['x'.repeat(4097)]]
+  ])('recomputes malformed call-time denial metadata: %s', async (_label, bad) => {
+    const fixture = await prepare(true)
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames = bad
+    delete cached.projectionSnapshots
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalledOnce()
+    const rebuilt = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(rebuilt.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames).toEqual(
+      denied
+    )
+  })
+
+  it('accepts an absent optional current denial field without adding authority', async () => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    delete cached.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames
+    delete cached.projectionSnapshots
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const analyze = vi.fn(async () => {
+      throw new Error('absent optional metadata remains valid')
+    })
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).not.toHaveBeenCalled()
+  })
+
+  it('recomputes revision165 call bindings without rewriting raw execution history', async () => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.analyzerRevision = 'tree-sitter-in-process-165-named-converter-dictionaries'
+    const historicalRun = fixture.history[0]
+    cached.runs['run-1'].checksum = createHash('sha256')
+      .update(
+        JSON.stringify([
+          cached.analyzerVersion,
+          cached.analyzerRevision,
+          historicalRun.kernelKind,
+          historicalRun.environment,
+          historicalRun.kernelEpochId,
+          historicalRun.runtimeId,
+          historicalRun.replPersistentBindings,
+          historicalRun.cwdBefore,
+          historicalRun.cwdAfter,
+          historicalRun.script,
+          historicalRun.fileEvidence?.checksum,
+          historicalRun.helperEvidenceStatus,
+          undefined
+        ])
+      )
+      .digest('hex')
+    delete cached.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames
+    delete cached.projectionSnapshots
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const rawBefore = JSON.stringify(fixture.history)
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalledOnce()
+    const rebuilt = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(rebuilt.analyzerRevision).not.toBe(cached.analyzerRevision)
+    expect(rebuilt.version).toBe(cached.version)
+    expect(rebuilt.analyzerVersion).toBe(cached.analyzerVersion)
+    expect(rebuilt.runs['run-1'].facts.receiverCalls[0].unavailablePythonFunctionNames).toEqual(
+      denied
+    )
+    expect(JSON.stringify(fixture.history)).toBe(rawBefore)
+  })
+})
+
+describe('Python callback dictionary cache contract', () => {
+  const dictionary = [
+    { name: 'converters', callbackNames: ['callback'], container: 'dict' as const }
+  ]
+  const legacyList = [{ name: 'event_callbacks', callbackNames: ['callback'] }]
+  const prepare = async (
+    unknown = false,
+    list = false
+  ): Promise<{
+    storageRoot: string
+    history: NotebookRunRecord[]
+    repository: { readSessionRuns: () => Promise<NotebookRunRecord[]> }
+    analyze: AnalyzeNotebookScripts
+    request: { projectId: string; sessionId: string }
+    cachePath: string
+  }> => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'python-callback-dictionary-cache-'))
+    temporaryRoots.push(storageRoot)
+    const source = [
+      'def callback(value):',
+      '    return value',
+      list ? 'event_callbacks = [callback]' : 'converters = {4: callback}'
+    ].join('\n')
+    const history = [run('run-1', 'callbacks', source, 1)]
+    const repository = { readSessionRuns: async () => history }
+    // Supply the approved descriptor at the existing analysis boundary so these
+    // cache tests do not depend on the independently tested source producer.
+    const analyze: AnalyzeNotebookScripts = async (_interpreter, _language, scripts) => {
+      const facts = (await analyzePythonSources(scripts)).map((item) => ({
+        ...item,
+        pythonCallbackContainerSummaries: list ? legacyList : dictionary
+      }))
+      return unknown
+        ? facts.map((item) => ({ ...item, state: 'unknown' as const, reasons: ['opaque-call'] }))
+        : facts
+    }
+    const request = { projectId: 'p', sessionId: 's' }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository, analyze }).project(request)
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    return { storageRoot, history, repository, analyze, request, cachePath }
+  }
+
+  it.each([false, true])(
+    'roundtrips dict tags in unknown=%s facts after restart',
+    async (unknown) => {
+      const fixture = await prepare(unknown)
+      const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+      expect(cached.runs['run-1'].facts.state).toBe(unknown ? 'unknown' : 'available')
+      expect(cached.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(dictionary)
+      const analyze = vi.fn(async () => {
+        throw new Error('valid tagged callback cache must be reused')
+      })
+      await new NotebookDependencyAnalyzer({
+        storageRoot: fixture.storageRoot,
+        repository: fixture.repository,
+        analyze
+      }).project(fixture.request)
+      expect(analyze).not.toHaveBeenCalled()
+      const restored = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+      expect(restored.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(dictionary)
+    }
+  )
+
+  it.each([
+    { label: 'null', container: null },
+    { label: 'unsupported explicit list', container: 'list' },
+    { label: 'malformed object', container: { kind: 'dict' } }
+  ])('recomputes a cached $label container tag', async ({ container }) => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.runs['run-1'].facts.pythonCallbackContainerSummaries = [
+      { name: 'converters', callbackNames: ['callback'], container }
+    ]
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalled()
+    const rebuilt = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(rebuilt.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(dictionary)
+  })
+
+  it('reuses historical list candidates with no container tag', async () => {
+    const fixture = await prepare(false, true)
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(cached.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(legacyList)
+    const analyze = vi.fn(async () => {
+      throw new Error('an absent tag retains list/tuple compatibility')
+    })
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).not.toHaveBeenCalled()
+    const restored = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(restored.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(legacyList)
+  })
+
+  it('rebuilds revision164 dictionary facts without changing raw runs or cache format', async () => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.analyzerRevision = 'tree-sitter-in-process-164-lambda-creation-file-access'
+    const historicalRun = fixture.history[0]
+    cached.runs['run-1'].checksum = createHash('sha256')
+      .update(
+        JSON.stringify([
+          cached.analyzerVersion,
+          cached.analyzerRevision,
+          historicalRun.kernelKind,
+          historicalRun.environment,
+          historicalRun.kernelEpochId,
+          historicalRun.runtimeId,
+          historicalRun.replPersistentBindings,
+          historicalRun.cwdBefore,
+          historicalRun.cwdAfter,
+          historicalRun.script,
+          historicalRun.fileEvidence?.checksum,
+          historicalRun.helperEvidenceStatus,
+          undefined
+        ])
+      )
+      .digest('hex')
+    delete cached.runs['run-1'].facts.pythonCallbackContainerSummaries
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const rawBefore = JSON.stringify(fixture.history)
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalled()
+    const rebuilt = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(rebuilt.analyzerRevision).not.toBe(cached.analyzerRevision)
+    expect(rebuilt.version).toBe(cached.version)
+    expect(rebuilt.analyzerVersion).toBe(cached.analyzerVersion)
+    expect(rebuilt.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(dictionary)
+    expect(JSON.stringify(fixture.history)).toBe(rawBefore)
   })
 })

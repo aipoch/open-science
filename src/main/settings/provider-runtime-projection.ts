@@ -1,13 +1,9 @@
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
-import type { ChatApiEndpoint, ProviderView } from '../../shared/settings'
 import {
-  isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
-  isXaiSubscriptionProvider,
-  isProviderUsableByFramework,
-  providerEndpoints,
-  requiresChatCompletionsBridge
-} from '../../shared/settings'
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../shared/provider-reasoning-effort'
 import {
   defaultVendorModel,
   getOfficialVendorModelIds,
@@ -20,12 +16,17 @@ import {
   resolveVendorOpenAiBaseUrl,
   resolveVendorResponsesBaseUrl
 } from '../../shared/provider-registry'
-import {
-  resolveProviderEffectiveModel,
-  resolveProviderReasoningEffortProfile
-} from '../../shared/provider-reasoning-effort'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
+import type { ProviderView } from '../../shared/settings'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
+  isXaiSubscriptionProvider,
+  providerEndpoints,
+  requiresChatCompletionsBridge
+} from '../../shared/settings'
 import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'

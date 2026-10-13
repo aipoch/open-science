@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import { realpathSync } from 'node:fs'
 import { join, posix, resolve, win32 } from 'node:path'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 export type NotebookExecutionSurface = NotebookLanguage | 'bash' | 'powershell' | 'repl'
 

@@ -1,22 +1,23 @@
-import { TransferSourceContext, type SourceContext } from './use-annotation-drag'
-import { useContext, useRef, useState, type ReactElement, type PropsWithChildren } from 'react'
-import { ArrowRightLeft, ChevronRight, MessageSquare, Plus } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
 import {
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
-  dialogTitleClassName,
-  dialogHeaderClassName,
-  dialogFooterClassName,
-  dialogDescriptionClassName
+  dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import { validateAnnotations, type Annotation } from '../../../../../shared/annotations'
+import { ArrowRightLeft, ChevronRight, MessageSquare, Plus } from 'lucide-react'
+import { useContext, useRef, useState, type PropsWithChildren, type ReactElement } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { Annotation } from '../../../../../shared/annotation-contract'
+import { validateAnnotations } from '../../../../../shared/annotations'
 import { sideChatSummary } from '../side-chat-summary'
 import { useSideChatTransfers } from '../use-side-chat-controller'
 import { annotationTransfers } from './annotation-transfer'
+import { TransferSourceContext, type SourceContext } from './use-annotation-drag'
 
 const catalog = { move: { labelKey: 'Move to Side chat…', icon: ArrowRightLeft } }
 const recipe = [{ kind: 'action' as const, action: 'move' as const }]

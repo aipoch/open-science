@@ -9,8 +9,8 @@ import type {
   AcpSteerFollowUpResult
 } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
-import type { MessagePart } from '../../shared/session-persistence'
 import type { NotebookPromptInput } from '../../shared/notebook'
+import type { MessagePart } from '../../shared/session-message-contract'
 import type { AgentFrameworkId } from '../../shared/settings'
 import {
   toPersistedUploadedAttachment,
@@ -19,9 +19,7 @@ import {
 } from '../../shared/uploads'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
-import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
-import type { VisionEvidenceSource } from './vision-evidence-repository'
-import { appendNotebookInputPrompt } from './prompt-preparation-owner'
+import type { ImageInputCompatibilityPort } from './image-input-compatibility-port'
 import {
   ACP_STEERING_METHOD,
   ACP_STEERING_TIMEOUT_MS,
@@ -34,14 +32,16 @@ import {
   firstOpenCodeFollowUpText,
   interpretSteerOutcome,
   openCodeHttpFollowUpPath,
-  parseOpenCodeHttpFollowUp,
   parseCodeBuddySteer,
+  parseOpenCodeHttpFollowUp,
   parseSteerOutcome,
   resolveNativeFollowUpRoute,
   steeringPromptFromText,
   type NativeFollowUpTransport,
   type OpenCodeHttpFollowUpPart
 } from './native-follow-up'
+import { appendNotebookInputPrompt } from './prompt-preparation-owner'
+import type { VisionEvidenceSource } from './vision-evidence-repository'
 
 type NativeFollowUpUserMessage = Readonly<{
   sessionId: string
@@ -117,7 +117,7 @@ type NativeFollowUpMediaInput = Readonly<{
   imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
   historyImageCount: number
   signal?: AbortSignal
-  imageCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
+  imageCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
   close?: () => void
 }>
 

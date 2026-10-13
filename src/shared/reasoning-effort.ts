@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from './settings'
+import type { ReasoningEffort } from './model-preference-contract'
 
 export type ModelReasoningEffort =
   'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'

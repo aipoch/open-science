@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { expect } from 'vitest'
-import type { NotebookExecutionResult } from './runtime-service'
+import type { NotebookExecutionResult } from './execution-contract'
 
 export const sha256 = (bytes: Buffer | string): string =>
   createHash('sha256').update(bytes).digest('hex')

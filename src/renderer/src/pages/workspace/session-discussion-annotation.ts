@@ -1,11 +1,11 @@
-import type { TextAnnotation } from '../../../../shared/annotations'
+import type { TextAnnotation } from '../../../../shared/annotation-contract'
 import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
 import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
+import { replayAnnotationId, selectedSessionQuote } from '../../../../shared/replay-reference'
 import { createUploadVersionReference } from '../../../../shared/uploads'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export { replayAnnotationId, replayAnnotationTarget } from '../../../../shared/replay-reference'
-import { replayAnnotationId, selectedSessionQuote } from '../../../../shared/replay-reference'
 
 export const sessionDiscussionQuote = (
   context: SessionDiscussionCapture,

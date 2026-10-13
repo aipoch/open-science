@@ -233,14 +233,28 @@ Electron tests also require an unlocked test Secret Service.
 
 ## Who stops the server
 
-| Action                                        | Result                                                                                                                      |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and await the actual child exit |
-| Quit a desktop attached to a CLI-started Node | Drain this desktop's renderer state and detach; leave server work running                                                   |
-| Close Web, disconnect SDK, finish CLI command | Keep server running                                                                                                         |
-| `open-science stop`                           | Explicitly stop the selected Node server for all clients                                                                    |
-| Desktop crashes, Node survives                | Next desktop attaches as a borrower; use CLI for explicit stop                                                              |
-| Connection is lost                            | Report it; do not restart/retry mutations or kill a rediscovered process                                                    |
+| Action                                        | Result                                                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and await the actual child exit   |
+| Quit a desktop attached to a CLI-started Node | Drain this desktop's renderer state and detach; leave server work running                                                     |
+| Close Web, disconnect SDK, finish CLI command | Keep server running                                                                                                           |
+| `open-science stop`                           | Explicitly stop the selected Node server for all clients                                                                      |
+| Desktop crashes, Node survives                | Next desktop attaches as a borrower; use CLI for explicit stop                                                                |
+| Connection is lost                            | Offer manual reconnection to the same authenticated generation; never replay mutations or restart/kill a rediscovered process |
+
+After a successful desktop startup, unexpected attachment loss displays a recovery notice while
+keeping the renderer and local editor/composer drafts mounted. Reconnect is explicit, single-flight,
+cancelable, and time-bounded. It uses the retained authenticated endpoint, version, generation and
+PID; it does not discover or adopt a replacement server. Owned lifecycle authority still requires
+the original live retained ChildProcess. Borrowed attachments remain borrowed.
+
+Recovery rebuilds native preview/notification adapters and document leases, invalidates queued old
+saves, and waits for live application frames to refresh authoritative state. Events arriving during
+that refresh have bounded retention and are delivered before interaction resumes. Submitted writes
+with lost responses have unknown outcomes and are never automatically retried. A dead or replaced
+backend cannot be resurrected by this flow. The disconnected Quit action asks for confirmation of
+unsaved/unknown work and exits the desktop without claiming that the backend has stopped; normal
+connected Quit retains the owned/borrowed shutdown behavior below.
 
 Closing a window still follows the existing close-to-tray preference; actual application Quit is
 the shutdown boundary. If a Web task must outlive the desktop, start Node with CLI first.
@@ -249,10 +263,13 @@ killing of an external server. Ownership requires the actual retained ChildProce
 authenticated PID/generation match, not a PID read from disk. Failed quit preparation leaves the
 desktop open; exit timeout/error is reported without a SIGKILL fallback.
 
-When the desktop-owned child exits cleanly (code 0, no signal), the desktop follows its normal
-quit flow, including renderer persistence protection. Abnormal exits or a disconnected borrowed
-backend surface failure instead. Electron crashes with a surviving backend require separate
-lifecycle validation; this document does not claim that path is fully certified.
+Outside a committed update or planned relaunch, an owned child exit makes the windowed desktop
+unavailable for recovery, regardless of the child's exit code. The window stays open to show the
+failure and let the user confirm Quit with unsaved or unknown work; it does not automatically run
+the connected persistence/quit flow against a dead backend. Headless desktop mode exits with code 0
+when its owned child exits. A disconnected borrowed backend follows the same visible recovery or
+unavailable state according to its authenticated liveness. Electron crashes with a surviving backend
+require separate lifecycle validation; this document does not claim that path is fully certified.
 
 Native updates use the existing update/handoff gate and stop an owned Node before replacement.
 A borrowed server must be stopped explicitly before desktop update installation. Data-root handoff
@@ -327,6 +344,11 @@ These are retained compatibility paths, not a request to migrate user data:
   removed only by its own generation. The attachment secret is not exposed by Web discovery.
 - Existing `web-token` and `web-service.json` remain the Web discovery/authentication mechanism.
 - Private startup logs (`cli-daemon-<uuid>.log` and `logs/desktop-backend-*.log`) remain for diagnosis.
+  After diagnostics initialization, Node mirrors application records as single-line JSON when stdout
+  is redirected, including these launch files; interactive terminals retain readable text. These
+  captures can still contain raw startup errors and third-party stderr, so they are not strict JSONL
+  files. Use config-root `logs/main.log` for canonical structured records. Existing capture filenames,
+  permissions and retention are unchanged; old captures are not rewritten.
 - Proven-new Windows profiles initialize the existing `Local State.os_crypt.encrypted_key` under
   the bootstrap lock before Chromium starts. No replacement of an existing key is permitted.
 - Linux AppImage cache `~/.cache/open-science/appimage-cli/<sha256>/complete.json` (or XDG cache

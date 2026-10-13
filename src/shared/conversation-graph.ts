@@ -1,10 +1,10 @@
-import type { AgentFrameworkId } from './settings'
+import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 import type {
   PersistedActivityGroup,
   PersistedChatMessage,
   PersistedToolActivity
-} from './session-persistence/message'
-import { parseNestedDelegateInvocationId } from './delegated-caller-source'
+} from './session-message-contract'
+import type { AgentFrameworkId } from './settings'
 
 export type PersistedRuntimeSegment = {
   id: string

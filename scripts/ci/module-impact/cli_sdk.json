@@ -21,7 +21,7 @@
     "packages/open-science/runtime-control.d.mts",
     "packages/open-science/appimage-launcher.mjs",
     "packages/open-science/appimage-launcher.test.ts",
-    "packages/open-science/managed-execution-types.test.ts",
+    "cli/managed-execution-contract.test.ts",
     "packages/open-science/runtime-package.mjs",
     "packages/open-science/locate-backend.test.ts",
     "packages/open-science/test/fixtures.ts"
@@ -48,7 +48,7 @@
       "cli/connector-contract.test.ts",
       "packages/open-science/connector.test.ts",
       "packages/open-science/appimage-launcher.test.ts",
-      "packages/open-science/managed-execution-types.test.ts",
+      "cli/managed-execution-contract.test.ts",
       "packages/open-science/locate-backend.test.ts"
     ],
     "contract": [],

@@ -2,15 +2,21 @@
   "ownerPaths": [
     "src/renderer/src/pages/settings/mirror-view.test.ts",
     "src/renderer/src/pages/settings/mirror-view.ts",
-    "src/renderer/src/pages/settings/settings-navigation.ts"
+    "src/renderer/src/pages/settings/settings-navigation.ts",
+    "src/renderer/src/lib/settings-navigation.ts",
+    "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/mirror-view.ts",
-    "src/renderer/src/pages/settings/settings-navigation.ts"
+    "src/renderer/src/pages/settings/settings-navigation.ts",
+    "src/renderer/src/lib/settings-navigation.ts"
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/renderer/src/pages/settings/mirror-view.test.ts"],
+    "owner": [
+      "src/renderer/src/pages/settings/mirror-view.test.ts",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",
@@ -223,7 +229,10 @@
       "src/renderer/src/stores/settings-preferences-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

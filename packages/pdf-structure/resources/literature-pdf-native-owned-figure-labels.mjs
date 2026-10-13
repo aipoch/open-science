@@ -996,6 +996,8 @@ export function nativeOwnedFigureBottomLabels(
   tokens,
   foreignOwns = () => false
 ) {
+  const cutRow = nativeCutRasterLabelRow(page, caption, captions, tables, rect, tokens, foreignOwns)
+  if (cutRow.length) return cutRow
   const pairedFaces = nativeOwnedPairedFacePanelKeys(
     page,
     caption,
@@ -1103,8 +1105,58 @@ export function nativeOwnedFigureBottomLabels(
         ? [{ token: t, anchor: matches.length === 1 ? matches[0] : undefined }]
         : []
     })
-  if (!keys.length || new Set(keys.map(({ token }) => token.text.trim()[1])).size !== keys.length)
+  // Repeated printed letters are not ambiguous when separate rasters uniquely
+  // own them. Two keys for the same raster (or an unanchored duplicate) remain
+  // ambiguous, regardless of their lettering.
+  if (
+    !keys.length ||
+    keys.some((key, index) =>
+      keys.some(
+        (other, otherIndex) =>
+          index !== otherIndex &&
+          ((key.anchor && key.anchor === other.anchor) ||
+            (key.token.text.trim()[1] === other.token.text.trim()[1] &&
+              (!key.anchor || !other.anchor)))
+      )
+    )
+  )
     return []
+  const keySources = keys.map(({ token, anchor }) => {
+    const parts =
+      /^\([a-z]\)$/.test(token.text.trim()) && anchor
+        ? tokens.filter(
+            (t) =>
+              t !== token &&
+              t.horizontal &&
+              Array.isArray(t.rect) &&
+              t.rect.length === 4 &&
+              t.rect?.every(Number.isFinite) &&
+              t.rect[2] > t.rect[0] &&
+              t.rect[3] > t.rect[1] &&
+              t.height > 0 &&
+              Math.abs(t.height - token.height) < token.height * 0.1 &&
+              Math.abs(t.rect[3] - token.rect[3]) < token.height * 0.1 &&
+              t.rect[0] >= token.rect[2] &&
+              t.rect[0] - token.rect[2] < token.height &&
+              t.rect[2] <= anchor[2] &&
+              t.text.trim() &&
+              !/^\([a-z]\)/.test(t.text.trim())
+          )
+        : []
+    return { token, anchor, parts: parts.length === 1 ? [token, parts[0]] : [token] }
+  })
+  const ownedSources = keySources.flatMap((key) => key.parts)
+  const completeKeys = keySources.map(({ token, anchor, parts }) => ({
+    anchor,
+    token:
+      parts.length === 1
+        ? token
+        : {
+            ...token,
+            text: parts.map((t) => t.text).join(' '),
+            rect: union(parts.map((t) => t.rect))
+          }
+  }))
   const continuations = page.lines
     .filter(
       (l) =>
@@ -1119,7 +1171,7 @@ export function nativeOwnedFigureBottomLabels(
     )
     .filter(
       (l) =>
-        keys.filter(
+        completeKeys.filter(
           ({ token: t, anchor: r }) =>
             r &&
             t.text.trim().length > 3 &&
@@ -1132,7 +1184,7 @@ export function nativeOwnedFigureBottomLabels(
             Math.abs(l.x + l.width / 2 - (t.rect[0] + t.rect[2]) / 2) <= t.height * 2
         ).length === 1
     )
-  const result = [...keys.map(({ token }) => token.rect), ...continuations.map(lineRect)],
+  const result = [...completeKeys.map(({ token }) => token.rect), ...continuations.map(lineRect)],
     b = union([rect, ...result]),
     strip = [b[0], rect[3], b[2], b[3]]
   const normalize = (s) => s.replace(/\s+/g, '')
@@ -1156,7 +1208,7 @@ export function nativeOwnedFigureBottomLabels(
         native.some(
           (t) =>
             intersection(t.rect, strip) > 0 &&
-            !keys.some((k) => k.token === t) &&
+            !ownedSources.includes(t) &&
             intersection(t.rect, rect) / area(t.rect) < 0.999
         )
       )
@@ -1678,4 +1730,397 @@ export function nativeTableDividerGraphic(page, rect, tables, rules) {
     return verticals.length + horizontal.length === 1
   })
   return owners.length === 1
+}
+
+// Restore only a visible filled upper boundary from one mixed-image Form.
+// The Form establishes ownership; its BBox is a clip, never recovered paint.
+export function nativeOwnedFormPaintBounds(page, caption, captions, tables, rect, context) {
+  const nums = (a, n) =>
+    (Array.isArray(a) || ArrayBuffer.isView(a)) && a.length === n && a.every(Number.isFinite)
+  const valid = (r) => nums(r, 4) && r[2] > r[0] && r[3] > r[1]
+  const o = context?.operators,
+    v = context?.viewport
+  if (
+    !valid(rect) ||
+    !valid(caption?.rect) ||
+    !nums(v?.transform, 6) ||
+    v.scale !== 1 ||
+    v.rotation !== 0 ||
+    v.width !== page.width ||
+    v.height !== page.height ||
+    !Array.isArray(o?.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    o.fnArray.length !== o.argsArray.length ||
+    o.fnArray.length > 100000
+  )
+    return
+  const font = Math.max(
+    ...page.lines.filter((l) => intersection(lineRect(l), caption.rect) > 0).map((l) => l.fontSize)
+  )
+  if (!(font > 0) || !Number.isFinite(font)) return
+  let s = {
+      m: [1, 0, 0, 1, 0, 0],
+      clip: [0, 0, page.width, page.height],
+      fill: '#000000',
+      stroke: '#000000',
+      ca: 1,
+      CA: 1,
+      safe: true,
+      width: 1,
+      form: null
+    },
+    pending = false
+  const stack = [],
+    forms = [],
+    paints = [],
+    images = []
+  const box = (b) => {
+    const m = Util.transform(v.transform, s.m),
+      ps = [
+        [b[0], b[1]],
+        [b[2], b[1]],
+        [b[2], b[3]],
+        [b[0], b[3]]
+      ]
+    for (const p of ps) Util.applyTransform(p, m)
+    return [
+      Math.min(...ps.map((p) => p[0])),
+      Math.min(...ps.map((p) => p[1])),
+      Math.max(...ps.map((p) => p[0])),
+      Math.max(...ps.map((p) => p[1]))
+    ]
+  }
+  const clipped = (b) => [
+    Math.max(b[0], s.clip[0]),
+    Math.max(b[1], s.clip[1]),
+    Math.min(b[2], s.clip[2]),
+    Math.min(b[3], s.clip[3])
+  ]
+  const ignored = new Set([
+    OPS.dependency,
+    OPS.beginText,
+    OPS.endText,
+    OPS.setFont,
+    OPS.setTextMatrix,
+    OPS.moveText,
+    OPS.showText,
+    OPS.setCharSpacing,
+    OPS.setWordSpacing,
+    OPS.setHScale,
+    OPS.setLeading,
+    OPS.setTextRenderingMode,
+    OPS.setTextRise,
+    OPS.nextLine,
+    OPS.setLeadingMoveText,
+    OPS.beginMarkedContent,
+    OPS.beginMarkedContentProps,
+    OPS.endMarkedContent,
+    OPS.setLineCap,
+    OPS.setLineJoin,
+    OPS.setMiterLimit,
+    OPS.setDash,
+    OPS.setRenderingIntent,
+    OPS.setFlatness
+  ])
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if (op === OPS.save) stack.push({ state: structuredClone(s), form: false })
+    else if (op === OPS.paintFormXObjectBegin) {
+      if (
+        !Array.isArray(a) ||
+        a.length !== 2 ||
+        !valid(a[1]) ||
+        (a[0] !== null && !nums(a[0], 6)) ||
+        s.form !== null
+      )
+        return
+      stack.push({ state: structuredClone(s), form: true })
+      if (a[0]) s.m = Util.transform(s.m, a[0])
+      if (s.m[1] !== 0 || s.m[2] !== 0) return
+      const bounds = clipped(box(a[1]))
+      if (!valid(bounds)) return
+      s.form = forms.length
+      s.clip = bounds
+      forms.push({ start: i, end: null, rect: bounds })
+    } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      const saved = stack.pop()
+      if (!saved || saved.form !== (op === OPS.paintFormXObjectEnd) || pending) return
+      if (saved.form) forms[s.form].end = i
+      s = saved.state
+    } else if (op === OPS.transform) {
+      if (!nums(a, 6)) return
+      s.m = Util.transform(s.m, a)
+      if (!s.m.every(Number.isFinite)) return
+    } else if (op === OPS.setFillRGBColor || op === OPS.setStrokeRGBColor) {
+      const color = a?.[0]
+      if (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)) return
+      s[op === OPS.setFillRGBColor ? 'fill' : 'stroke'] = color.toLowerCase()
+    } else if (op === OPS.setTextRenderingMode) {
+      if (!Number.isInteger(a?.[0]) || a[0] < 0 || a[0] > 3) return
+    } else if (op === OPS.setFillColorN) s.fill = null
+    else if (op === OPS.setStrokeColorN) s.stroke = null
+    else if (op === OPS.setLineWidth) {
+      if (!Number.isFinite(a?.[0]) || a[0] < 0) return
+      s.width = a[0]
+    } else if (op === OPS.setGState) {
+      if (!Array.isArray(a?.[0])) return
+      for (const [k, value] of a[0]) {
+        if (k === 'ca' || k === 'CA') {
+          if (!Number.isFinite(value) || value < 0 || value > 1) return
+          s[k] = value
+        } else if (k === 'BM') {
+          if (value !== 'source-over') s.safe = false
+        } else if (k === 'SMask') {
+          if (value !== false) s.safe = false
+        } else if (k === 'LW') {
+          if (!Number.isFinite(value) || value < 0) return
+          s.width = value
+        } else if (!['LC', 'LJ', 'ML', 'D', 'RI', 'FL'].includes(k)) return
+      }
+    } else if (op === OPS.clip || op === OPS.eoClip) {
+      if (pending) return
+      pending = true
+    } else if (op === OPS.constructPath) {
+      if (!Array.isArray(a) || !nums(a[2], 4) || !Array.isArray(a[1]) || a[1].length !== 1) return
+      const p = Array.from(a[1][0] ?? []),
+        points = [],
+        b = [Infinity, Infinity, -Infinity, -Infinity]
+      let closed = false,
+        current,
+        start
+      for (let n = 0; n < p.length;) {
+        const c = p[n++],
+          count = c === 0 || c === 1 ? 2 : c === 2 ? 6 : c === 4 ? 0 : -1
+        if (
+          count < 0 ||
+          n + count > p.length ||
+          p.slice(n, n + count).some((x) => !Number.isFinite(x))
+        )
+          return
+        if (c === 4) {
+          if (!current || !start) return
+          closed = true
+          current = start
+        } else if (c === 2) {
+          if (!current) return
+          Util.bezierBoundingBox(...current, ...p.slice(n, n + 6), b)
+          current = p.slice(n + 4, n + 6)
+        } else {
+          if (c === 1 && !current) return
+          current = p.slice(n, n + 2)
+          if (c === 0) start = current
+          points.push(current)
+          b[0] = Math.min(b[0], current[0])
+          b[1] = Math.min(b[1], current[1])
+          b[2] = Math.max(b[2], current[0])
+          b[3] = Math.max(b[3], current[1])
+        }
+        n += count
+      }
+      if (!points.length) return
+      if (b.some((z, n) => Math.abs(z - a[2][n]) > 0.001)) return
+      if (pending) {
+        if (
+          a[0] !== OPS.endPath ||
+          p.length !== 13 ||
+          !closed ||
+          s.m[1] !== 0 ||
+          s.m[2] !== 0 ||
+          points.length !== 4 ||
+          new Set(points.map((q) => q[0])).size !== 2 ||
+          new Set(points.map((q) => q[1])).size !== 2 ||
+          points.some((q, n) => q[0] !== points[(n + 1) % 4][0] && q[1] !== points[(n + 1) % 4][1])
+        )
+          return
+        s.clip = clipped(box(b))
+        pending = false
+        continue
+      }
+      if (a[0] === OPS.endPath) continue
+      const filled = a[0] === OPS.fill || a[0] === OPS.eoFill,
+        stroked = a[0] === OPS.stroke
+      if (!filled && !stroked) return
+      let r = box(b)
+      if (stroked) {
+        const w = s.width * Math.max(Math.hypot(s.m[0], s.m[1]), Math.hypot(s.m[2], s.m[3])) * 5
+        r = [r[0] - w, r[1] - w, r[2] + w, r[3] + w]
+      }
+      r = clipped(r)
+      if (valid(r))
+        paints.push({
+          i,
+          rect: r,
+          form: s.form,
+          fill: filled,
+          closed,
+          color: filled ? s.fill : s.stroke,
+          opaque: s.safe && (filled ? s.ca : s.CA) === 1
+        })
+    } else if (op === OPS.paintImageXObject || op === OPS.paintInlineImageXObject) {
+      const r = clipped(box([0, 0, 1, 1]))
+      if (
+        !valid(r) ||
+        !s.safe ||
+        s.ca !== 1 ||
+        !((s.m[1] === 0 && s.m[2] === 0) || (s.m[0] === 0 && s.m[3] === 0))
+      )
+        return
+      images.push({ i, rect: r, form: s.form })
+    } else if (!ignored.has(op)) return
+  }
+  if (stack.length || pending) return
+  const recorded = (page.graphicsBounds ?? [])
+    .filter((g) => g.kind === 'image')
+    .map((g) => ({
+      i: g.operationIndex,
+      rect: g.normalizedRect?.map((x, n) => x * (n % 2 ? page.height : page.width))
+    }))
+  const epsilon = Math.max(page.width, page.height) / 128
+  if (
+    images.some(
+      (im) =>
+        recorded.filter(
+          (g) =>
+            g.i === im.i &&
+            valid(g.rect) &&
+            g.rect.every((x, n) => Math.abs(x - im.rect[n]) <= epsilon)
+        ).length !== 1
+    )
+  )
+    return
+  const owners = forms
+    .map((f, n) => ({ f, n, images: images.filter((im) => im.form === n) }))
+    .filter(
+      ({ f, images: ims }) =>
+        f.end !== null &&
+        ims.length >= 2 &&
+        ims.every((im) => intersection(im.rect, rect) / area(im.rect) > 0.5) &&
+        ims.filter((im) => intersection(im.rect, rect) / area(im.rect) > 0.9).length >= 2 &&
+        f.rect[3] < caption.rect[1] &&
+        caption.rect[1] - f.rect[3] < font * 3 &&
+        Math.min(f.rect[2], caption.rect[2]) - Math.max(f.rect[0], caption.rect[0]) >
+          Math.min(f.rect[2] - f.rect[0], caption.rect[2] - caption.rect[0]) * 0.7
+    )
+  if (owners.length !== 1) return
+  const { n } = owners[0],
+    candidates = paints.filter(
+      (p) =>
+        p.form === n &&
+        p.fill &&
+        p.closed &&
+        p.opaque &&
+        p.color &&
+        p.color !== '#ffffff' &&
+        p.rect[1] < rect[1] &&
+        p.rect[3] > rect[1] &&
+        p.rect[2] - p.rect[0] > font * 6 &&
+        p.rect[3] - p.rect[1] > font * 4 &&
+        p.rect[0] >= rect[0] - font * 2 &&
+        p.rect[2] <= rect[2] + font * 2
+    )
+  if (!candidates.length) return
+  const top = Math.min(...candidates.map((p) => p.rect[1])),
+    edgeOwners = candidates.filter((p) => Math.abs(p.rect[1] - top) < 0.01)
+  if (
+    edgeOwners.some((p) =>
+      paints.some(
+        (q) =>
+          q.i > p.i &&
+          (!q.opaque || !q.color || q.color === '#ffffff' || q.form !== n) &&
+          intersection(q.rect, [p.rect[0], top, p.rect[2], top + 0.01]) > 0
+      )
+    )
+  )
+    return
+  const result = [rect[0], top, rect[2], rect[3]],
+    added = [rect[0], top, rect[2], rect[1]]
+  if (
+    tables.some((t) => intersection(t, result) > 0) ||
+    captions.some(
+      (c) => c !== caption && c.page === caption.page && intersection(c.rect, result) > 0
+    ) ||
+    page.lines.some((l) => l.text?.length > 60 && intersection(lineRect(l), added) > 0)
+  )
+    return
+  return result
+}
+
+// Complete physical source boxes from a clipped, repeated raster label row.
+// The row touches the cropped image edge (within one tenth of its em height);
+// this cannot claim a detached row farther down in the caption gap.
+function nativeCutRasterLabelRow(page, caption, captions, tables, rect, tokens, foreignOwns) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  if (!valid(rect)) return []
+  const source = tokens.filter((t) => t.text.trim())
+  if (
+    source.some(
+      (t) =>
+        !valid(t.rect) ||
+        !Number.isFinite(t.height) ||
+        t.height <= 0 ||
+        !Number.isFinite(t.baseline)
+    )
+  )
+    return []
+  const row = source.filter(
+    (t) =>
+      t.horizontal &&
+      t.rect[1] < rect[3] + t.height * 0.1 &&
+      t.rect[3] > rect[3] &&
+      t.rect[0] >= rect[0] &&
+      t.rect[2] <= rect[2] &&
+      t.height <= 24
+  )
+  if (
+    row.length < 3 ||
+    row.some(
+      (t) =>
+        t.text.length > 45 ||
+        /[.!?]$/.test(t.text.trim()) ||
+        Math.abs(t.height - row[0].height) > row[0].height * 0.1 ||
+        Math.abs(t.baseline - row[0].baseline) > row[0].height * 0.1 ||
+        foreignOwns(t.rect)
+    )
+  )
+    return []
+  const h = row[0].height,
+    images = (page.graphicsBounds ?? [])
+      .filter((g) => g.kind === 'image' && g.imageHash)
+      .map((g) => g.normalizedRect?.map((x, n) => x * (n % 2 ? page.height : page.width)))
+      .filter(
+        (r) =>
+          valid(r) &&
+          r[2] - r[0] > h * 3 &&
+          r[3] - r[1] > h * 3 &&
+          Math.abs(r[3] - rect[3]) < h + page.height / 128 &&
+          intersection(r, rect) / area(r) > 0.85
+      )
+  if (images.length < 2) return []
+  const owners = row.map((t) =>
+    images.filter(
+      (r) =>
+        t.rect[0] >= r[0] && t.rect[2] <= r[2] && Math.abs(t.rect[1] - r[3]) < h + page.height / 128
+    )
+  )
+  if (owners.some((a) => a.length !== 1) || images.some((im) => !owners.some((a) => a[0] === im)))
+    return []
+  const groups = []
+  for (const t of row.slice().sort((a, b) => a.rect[0] - b.rect[0])) {
+    const prev = groups.at(-1)
+    if (prev && t.rect[0] - prev.at(-1).rect[2] < h * 0.5) prev.push(t)
+    else groups.push([t])
+  }
+  if (groups.length < 3 || groups.some((g) => g.map((t) => t.text).join('').length > 45)) return []
+  const count = images.map((im) => groups.filter((g) => owners[row.indexOf(g[0])][0] === im).length)
+  if (count.some((n) => n !== count[0])) return []
+  const added = [rect[0], rect[3], rect[2], Math.max(...row.map((t) => t.rect[3]))]
+  if (
+    captions.some((c) => c.page === page.pageNumber && intersection(c.rect, added) > 0) ||
+    tables.some((t) => intersection(t, added) > 0) ||
+    source.some((t) => !row.includes(t) && intersection(t.rect, added) > 0)
+  )
+    return []
+  return row.map((t) => t.rect)
 }

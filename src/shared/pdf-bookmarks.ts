@@ -1,10 +1,6 @@
+import type { PdfNormalizedQuad, PdfRegionSelector, PdfTextSelector } from './annotation-contract'
+import { ANNOTATION_LIMITS } from './annotations'
 import { sanitizePdfDocumentSource, type PdfDocumentSource } from './pdf-document-source'
-import {
-  ANNOTATION_LIMITS,
-  type PdfNormalizedQuad,
-  type PdfRegionSelector,
-  type PdfTextSelector
-} from './annotations'
 
 export type PdfBookmarkSource = PdfDocumentSource & Readonly<{ projectId: string }>
 

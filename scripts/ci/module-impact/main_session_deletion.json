@@ -17,6 +17,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-persistence/deletion-integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
+      "src/main/node-entry.test.ts",
       "src/main/composition/artifact-surfaces.test.ts"
     ]
   },

@@ -1,3 +1,6 @@
+import { createSessionEventHydrator } from '../shared/session-event-hydrator'
+import { createRuntimePayloadClient } from '../shared/runtime-payload-client'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
 import { desktopDatabaseStartupSchema, desktopStartupEventSchema } from './desktop-startup-contract'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import type { DesktopLifecycleRequest } from './desktop-runtime-lifecycle'
@@ -25,6 +28,53 @@ import {
 import { parseApplicationCommandError } from '../shared/application-command-contract'
 import { connectToDesktopEndpoint, type DesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
+import { createLogger } from '@aipoch/diagnostics/node'
+
+const logger = createLogger('desktop-runtime-client')
+// Includes cancelled handlers from retired attachments until their real resources settle.
+const unsettledNativeHandlers = new Set<AbortController>()
+const MAX_UNSETTLED_NATIVE_HANDLERS = 64
+
+export type DesktopDeliveryFailure = {
+  kind: 'event' | 'startup' | 'document' | 'upload'
+  clientId?: string
+}
+type DisconnectReason =
+  | 'bootstrap-timeout'
+  | 'invalid-frame'
+  | 'invalid-bootstrap'
+  | 'invalid-event'
+  | 'callback-failure'
+  | 'invalid-native-request'
+  | 'native-capacity'
+  | 'invalid-response'
+  | 'response-identity'
+  | 'event-history'
+  | 'send-failure'
+  | 'transport-close'
+  | 'socket-error'
+  | 'client-close'
+
+type DisconnectPolicyReason =
+  | 'invalid-request'
+  | 'request-order-or-capacity'
+  | 'document-capacity'
+  | 'retired-document-capacity'
+
+function classifyPolicyReason(reason: string): DisconnectPolicyReason | undefined {
+  switch (reason) {
+    case 'Invalid desktop request.':
+      return 'invalid-request'
+    case 'Invalid or excessive desktop requests.':
+      return 'request-order-or-capacity'
+    case 'Too many renderer documents.':
+      return 'document-capacity'
+    case 'Reconnect desktop attachment.':
+      return 'retired-document-capacity'
+    default:
+      return undefined
+  }
+}
 
 // JSON omits an undefined result. The private desktop transport preserves that Electron
 // return value; public Web responses retain their required JSON result contract.
@@ -36,6 +86,7 @@ const responseSchema = z.discriminatedUnion('ok', [
 const bootstrapSchema = webRpcBootstrapSchema
   .pick({
     rpcProtocolVersion: true,
+    rpcCapabilities: true,
     eventStream: true
   })
   .extend({
@@ -59,6 +110,7 @@ export type DesktopRuntimeClient = Readonly<{
   processId(): number
   ownsRuntime(): boolean
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
+  loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
   invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
   invoke(clientId: string, channel: string, args: readonly unknown[]): Promise<unknown>
   release(clientId: string): void
@@ -72,6 +124,7 @@ export type DesktopRuntimeClient = Readonly<{
 // disconnect: the caller must reload current state before deciding whether to submit again.
 export async function connectDesktopRuntime(options: {
   endpoint: DesktopEndpoint
+  signal?: AbortSignal
   // Only the launcher that actually spawned this child may supply its handle.
   startedProcess?: ChildProcess
   onNativeRequest?: DesktopNativeHandler
@@ -79,12 +132,21 @@ export async function connectDesktopRuntime(options: {
   onDocumentEvent?: (event: z.infer<typeof desktopDocumentEventSchema>) => void
   onUploadProgress?: (clientId: string, progress: UploadTransferProgress) => void
   onEvent(event: { channel: string; payload: unknown }): void
+  onDeliveryFailure?: (failure: DesktopDeliveryFailure) => void
   onDisconnect(error: Error): void
 }): Promise<DesktopRuntimeClient> {
-  const socket = await connectToDesktopEndpoint(options.endpoint)
+  const socket = await connectToDesktopEndpoint(options.endpoint, options.signal)
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
   const native = new Map<number, AbortController>()
   let highestNativeId = 0
+  const payloadClients = new Map<
+    string,
+    {
+      controller: AbortController
+      client: ReturnType<typeof createRuntimePayloadClient>
+    }
+  >()
+  let supportsPayload = false
   let requestId = 0
   let channels: readonly string[] = []
   let cursor: { streamId: string; latestSequence: number } | undefined
@@ -94,6 +156,7 @@ export async function connectDesktopRuntime(options: {
   let quitting = false
   let quitPromise: Promise<void> | undefined
   let closed = false
+  let disconnectCause: Error | undefined
   let initialized = false
   let resolveReady!: () => void
   let rejectReady!: (error: Error) => void
@@ -101,37 +164,137 @@ export async function connectDesktopRuntime(options: {
     resolveReady = resolve
     rejectReady = reject
   })
-  const fail = (error: Error): void => {
+  const fail = (
+    error: Error,
+    reason: DisconnectReason,
+    closeCode?: number,
+    policyReason?: DisconnectPolicyReason
+  ): void => {
     if (closed) return
     closed = true
+    disconnectCause = error
+    if (reason !== 'client-close')
+      logger[
+        quitting &&
+        reason === 'transport-close' &&
+        pending.size === 0 &&
+        (closeCode === 1000 || closeCode === 1001 || closeCode === 1006)
+          ? 'info'
+          : 'warn'
+      ]('desktop runtime disconnected', {
+        phase: quitting ? 'shutdown' : initialized ? 'connected' : 'bootstrap',
+        reason,
+        pendingRequests: Math.min(pending.size, 256),
+        pendingNativeOperations: Math.min(native.size, 32),
+        ...(policyReason ? { policyReason } : {}),
+        ...(typeof closeCode === 'number' &&
+        Number.isInteger(closeCode) &&
+        closeCode >= 1000 &&
+        closeCode <= 4999
+          ? { closeCode }
+          : {})
+      })
     clearTimeout(timer)
     rejectReady(error)
-    for (const request of pending.values()) request.reject(error)
+    for (const request of pending.values())
+      request.reject(
+        new Error(
+          'Desktop connection lost. The result of a submitted operation is unknown; it will not be retried.',
+          { cause: error }
+        )
+      )
     pending.clear()
+    for (const document of payloadClients.values()) document.controller.abort(error)
+    payloadClients.clear()
     for (const operation of native.values()) operation.abort()
     native.clear()
     socket.terminate()
     if (initialized && !quitting) options.onDisconnect(error)
   }
-  const timer = setTimeout(() => fail(new Error('Desktop runtime bootstrap timed out.')), 5_000)
+  const timer = setTimeout(
+    () => fail(new Error('Desktop runtime bootstrap timed out.'), 'bootstrap-timeout'),
+    5_000
+  )
   timer.unref()
   const send = (message: unknown): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new Error('Desktop runtime is disconnected.')
+      throw new Error('Desktop runtime is disconnected.', { cause: disconnectCause })
     const serialized = stringifyRpcJson(message)
     if (socket.bufferedAmount + Buffer.byteLength(serialized) > 16 * 1024 * 1024) {
       throw new Error('Desktop runtime request exceeds the transport byte budget.')
     }
     socket.send(serialized)
   }
+  const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
+    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
+    const id = ++requestId
+    const response = new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject })
+      try {
+        send({ ...frame, id })
+      } catch (error) {
+        pending.delete(id)
+        reject(error)
+      }
+    })
+    return { id, response }
+  }
+  const deliver = (failure: DesktopDeliveryFailure, callback: () => void): void => {
+    try {
+      callback()
+    } catch {
+      logger.warn('desktop consumer delivery failed', {
+        reason: 'callback-failure',
+        kind: failure.kind
+      })
+      try {
+        options.onDeliveryFailure?.(failure)
+      } catch {
+        logger.warn('desktop consumer invalidation failed', { reason: 'callback-failure' })
+      }
+    }
+  }
+  const eventController = new AbortController()
+  const eventPayloadClient = createRuntimePayloadClient({
+    invoke: (_channel, args, payloadOptions) =>
+      request({
+        kind: 'session-event-read',
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        args,
+        ...payloadOptions
+      }).response,
+    encode: stringifyRpcJson,
+    decode: parseRpcJson,
+    signal: () => eventController.signal
+  })
+  const eventHydrator = createSessionEventHydrator({
+    load: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
+    deliver: (event) => deliver({ kind: 'event' }, () => options.onEvent(event)),
+    onFailure: () =>
+      deliver({ kind: 'event' }, () => {
+        throw new Error('Session event projection requires reload.')
+      })
+  })
+  socket.once('close', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
+  socket.once('error', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
   socket.on('message', (bytes, binary) => {
+    if (closed) return
+    let failureReason: DisconnectReason = 'invalid-frame'
     try {
       if (binary) throw new Error('Unexpected binary desktop frame.')
       const frame = parseRpcJson(bytes.toString())
       if (!initialized) {
+        failureReason = 'invalid-bootstrap'
         const bootstrap = bootstrapSchema.parse(frame)
         startupState = bootstrap.startup ?? { phase: 'ready' }
         runtimePid = bootstrap.pid
+        supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
         const child = options.startedProcess
@@ -142,11 +305,13 @@ export async function connectDesktopRuntime(options: {
         resolveReady()
         return
       }
+      failureReason = 'invalid-event'
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'startup-state') {
         const event = desktopStartupEventSchema.parse(frame)
         channels = Object.freeze([...event.rpcChannels])
         startupState = event.state
-        options.onStartupState?.(event.state)
+        failureReason = 'callback-failure'
+        deliver({ kind: 'startup' }, () => options.onStartupState?.(event.state))
         return
       }
       if (
@@ -156,7 +321,10 @@ export async function connectDesktopRuntime(options: {
         frame.kind === 'upload-progress'
       ) {
         const event = desktopUploadProgressSchema.parse(frame)
-        options.onUploadProgress?.(event.clientId, event.progress)
+        failureReason = 'callback-failure'
+        deliver({ kind: 'upload', clientId: event.clientId }, () =>
+          options.onUploadProgress?.(event.clientId, event.progress)
+        )
         return
       }
       if (
@@ -166,12 +334,18 @@ export async function connectDesktopRuntime(options: {
         frame.kind === 'document-event'
       ) {
         const event = desktopDocumentEventSchema.parse(frame)
-        options.onDocumentEvent?.(event)
+        failureReason = 'callback-failure'
+        deliver({ kind: 'document', clientId: event.clientId }, () =>
+          options.onDocumentEvent?.(event)
+        )
         return
       }
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'native-cancel') {
         const cancelled = desktopNativeCancelSchema.parse(frame)
-        native.get(cancelled.id)?.abort()
+        const controller = native.get(cancelled.id)
+        // Some native dialogs settle only after user interaction; cancelled work owns no slot.
+        native.delete(cancelled.id)
+        controller?.abort()
         return
       }
       if (
@@ -180,11 +354,26 @@ export async function connectDesktopRuntime(options: {
         'kind' in frame &&
         frame.kind === 'native-request'
       ) {
+        failureReason = 'invalid-native-request'
         const request = desktopNativeRequestSchema.parse(frame)
+        failureReason = native.size >= 32 ? 'native-capacity' : 'invalid-native-request'
         if (request.id <= highestNativeId || native.size >= 32)
           throw new Error('Invalid or excessive native desktop requests.')
         highestNativeId = request.id
+        if (unsettledNativeHandlers.size >= MAX_UNSETTLED_NATIVE_HANDLERS) {
+          send({
+            kind: 'native-response',
+            id: request.id,
+            outcome: {
+              ok: false,
+              message:
+                'Native desktop resources are still busy. Close outstanding native operations and retry.'
+            }
+          })
+          return
+        }
         const controller = new AbortController()
+        unsettledNativeHandlers.add(controller)
         native.set(request.id, controller)
         void (async () => {
           try {
@@ -205,14 +394,19 @@ export async function connectDesktopRuntime(options: {
               })
           } finally {
             native.delete(request.id)
+            unsettledNativeHandlers.delete(controller)
           }
-        })().catch((error) => fail(error instanceof Error ? error : new Error(String(error))))
+        })().catch((error) =>
+          fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
+        )
         return
       }
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'response') {
         const { id, kind: _kind, ...body } = frame as Record<string, unknown>
         void _kind
+        failureReason = 'invalid-response'
         const response = responseSchema.parse(body)
+        failureReason = 'response-identity'
         if (typeof id !== 'number' || !pending.has(id))
           throw new Error('Unexpected desktop response identity.')
         const request = pending.get(id)!
@@ -225,55 +419,58 @@ export async function connectDesktopRuntime(options: {
         return
       }
       const event = eventSchema.parse(frame)
+      failureReason = 'event-history'
       if (event.kind === 'resync-required' || event.streamId !== cursor!.streamId) {
         throw new Error('Desktop runtime event history changed; reload required.')
       }
       if (event.kind === 'event') {
         if (event.sequence <= cursor!.latestSequence) return
         if (event.sequence !== cursor!.latestSequence + 1) {
+          failureReason = 'send-failure'
           send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
           return
         }
-        options.onEvent({ channel: event.channel, payload: event.payload })
+        failureReason = 'callback-failure'
+        eventHydrator.receive(
+          { channel: event.channel, payload: event.payload },
+          Array.isArray(bytes)
+            ? bytes.reduce((total, part) => total + part.byteLength, 0)
+            : bytes.byteLength
+        )
         cursor = { streamId: event.streamId, latestSequence: event.sequence }
       } else if (event.latestSequence > cursor!.latestSequence) {
+        failureReason = 'send-failure'
         send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
       }
     } catch (error) {
-      fail(error instanceof Error ? error : new Error(String(error)))
+      fail(error instanceof Error ? error : new Error(String(error)), failureReason)
     }
   })
-  socket.once('close', (code, reason) => {
+  socket.once('close', (code, reason) =>
     fail(
-      new Error(
-        `Desktop runtime connection closed (${code}${reason.length ? `: ${reason.toString()}` : ''}).`
-      )
+      new Error('Desktop runtime connection closed.'),
+      'transport-close',
+      code,
+      code === 1008 ? classifyPolicyReason(reason.toString()) : undefined
     )
-  })
-  socket.once('error', fail)
+  )
+  socket.once('error', (error) => fail(error, 'socket-error'))
   try {
     send({ kind: 'bootstrap' })
   } catch (error) {
-    fail(error instanceof Error ? error : new Error(String(error)))
+    fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
   }
-  await ready
-  const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
-    if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
-    const id = ++requestId
-    const response = new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
-      try {
-        send({ ...frame, id })
-      } catch (error) {
-        pending.delete(id)
-        reject(error)
-      }
-    })
-    return { id, response }
+  const canceled = (): void => fail(new Error('Desktop attachment canceled.'), 'client-close')
+  options.signal?.addEventListener('abort', canceled, { once: true })
+  if (options.signal?.aborted) canceled()
+  try {
+    await ready
+  } finally {
+    options.signal?.removeEventListener('abort', canceled)
   }
   const close = (): void => {
     initialized = false
-    fail(new Error('Desktop runtime client closed.'))
+    fail(new Error('Desktop runtime client closed.'), 'client-close')
   }
   const quit = async (): Promise<void> => {
     const child = ownedChild
@@ -311,6 +508,10 @@ export async function connectDesktopRuntime(options: {
       shutdownRequestId = shutdown.id
       await Promise.all([shutdown.response, exited])
       close()
+    } catch (error) {
+      // A failed shutdown leaves Electron running; surface any loss suppressed during quit.
+      if (initialized && disconnectCause) options.onDisconnect(disconnectCause)
+      throw error
     } finally {
       clearTimeout(timer)
       child.off('exit', onExit)
@@ -344,6 +545,7 @@ export async function connectDesktopRuntime(options: {
     notificationAction: (token, action) => {
       if (!closed) send({ kind: 'notification-action', token, action })
     },
+    loadSessionForEvent: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
     invokeHost: async (channel, args = []) =>
       request({
         kind: 'host-invoke',
@@ -354,21 +556,45 @@ export async function connectDesktopRuntime(options: {
     invoke: async (clientId, channel, args) => {
       if (!channels.includes(channel))
         throw new Error(`Desktop runtime command is unavailable: ${channel}`)
-      return request({
-        kind: 'invoke',
-        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        clientId,
+      const invoke: Parameters<typeof createRuntimePayloadClient>[0]['invoke'] = (
         channel,
-        args
-      }).response
+        args,
+        payloadOptions
+      ) =>
+        request({
+          kind: 'invoke',
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          clientId,
+          channel,
+          args,
+          ...payloadOptions
+        }).response
+      if (!supportsPayload) return invoke(channel, args)
+      let document = payloadClients.get(clientId)
+      if (!document) {
+        const controller = new AbortController()
+        document = {
+          controller,
+          client: createRuntimePayloadClient({
+            invoke,
+            encode: stringifyRpcJson,
+            decode: parseRpcJson,
+            signal: () => controller.signal
+          })
+        }
+        payloadClients.set(clientId, document)
+      }
+      return document.client.invoke(channel, args)
     },
     release: (clientId) => {
+      payloadClients.get(clientId)?.controller.abort(new Error('Renderer document released.'))
+      payloadClients.delete(clientId)
       if (closed) return
       try {
         send({ kind: 'release', clientId })
       } catch (error) {
         // If one document cannot be revoked reliably, revoke the entire attachment.
-        fail(error instanceof Error ? error : new Error(String(error)))
+        fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
       }
     },
     close,

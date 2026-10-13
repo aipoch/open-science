@@ -5,6 +5,7 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import {
   createPackageTestPlan,
   dedicatedPackageTestRoots,
@@ -253,39 +254,48 @@ it('local module and affected plans obey the same downstream package direction a
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
 })
 
-it('host-only selective plans never include package-owned unit suites', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = loadModuleImpactManifest()
-  let checked = 0
-  for (const [id, module] of Object.entries(manifest.modules) as [
-    string,
-    { ownerPaths: string[] }
-  ][]) {
-    if (module.ownerPaths.some((path) => path.startsWith('packages/'))) continue
-    const source = module.ownerPaths.find(
-      (path) =>
-        path.startsWith('src/') && /\.[cm]?tsx?$/.test(path) && !/\.(test|spec)\./.test(path)
+const hostBoundaryManifest = loadModuleImpactManifest()
+const hostBoundaryCases = (
+  Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][]
+).flatMap(([id, module]) => {
+  if (module.ownerPaths.some((path) => path.startsWith('packages/'))) return []
+  const source = module.ownerPaths.find(
+    (path) => path.startsWith('src/') && /\.[cm]?tsx?$/.test(path) && !/\.(test|spec)\./.test(path)
+  )
+  return source ? [{ id, source }] : []
+})
+
+it('includes host modules with selective test plans', async () => {
+  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+  expect(
+    hostBoundaryCases.some(
+      ({ id }) => createModuleTestPlan(id, hostBoundaryManifest).mode === 'selective'
     )
-    if (!source) continue
+  ).toBe(true)
+})
+
+// Each module keeps its own timeout as the ownership manifest grows.
+it.each(hostBoundaryCases)(
+  'host-only selective plans never include package-owned unit suites: $id',
+  async ({ id, source }) => {
+    const { createAffectedTestPlan, createModuleTestPlan } =
+      await import('./module-test-impact.mjs')
     for (const plan of [
-      createModuleTestPlan(id, manifest),
+      createModuleTestPlan(id, hostBoundaryManifest),
       createAffectedTestPlan(
         [{ path: source, status: 'modified' }],
         { status: 'not-requested', testFiles: [] },
-        manifest
+        hostBoundaryManifest
       )
     ]) {
       if (plan.mode !== 'selective') continue
-      checked += 1
       expect(
         plan.testFiles.filter((path: string) => path.startsWith('packages/')),
         `${id}: ${source}`
       ).toEqual([])
     }
   }
-  expect(checked).toBeGreaterThan(0)
-})
+)
 
 it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')

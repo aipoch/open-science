@@ -23,11 +23,9 @@
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",
-      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/session-package-import-menu-model.test.ts",
-      "src/renderer/src/lib/session-package-import.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
@@ -36,8 +34,6 @@
       "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/EmptyConversationBanner.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/EmptyConversationBanner.render.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",
@@ -101,7 +97,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
-      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
     ]
   },
   "capabilityOverlays": [],

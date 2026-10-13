@@ -99,7 +99,11 @@ export async function listenForDesktop(
   }
 }
 
-export async function connectToDesktopEndpoint(endpoint: DesktopEndpoint): Promise<WebSocket> {
+export async function connectToDesktopEndpoint(
+  endpoint: DesktopEndpoint,
+  signal?: AbortSignal
+): Promise<WebSocket> {
+  signal?.throwIfAborted()
   const socket = new WebSocket('ws://localhost/desktop', {
     createConnection: () => connect(endpoint.path),
     handshakeTimeout: 5_000,
@@ -112,11 +116,17 @@ export async function connectToDesktopEndpoint(endpoint: DesktopEndpoint): Promi
     }
   })
   await new Promise<void>((resolve, reject) => {
+    const aborted = (): void => {
+      socket.terminate()
+      failed(new Error('Desktop attachment canceled.'))
+    }
     const failed = (error: Error): void => {
+      signal?.removeEventListener('abort', aborted)
       socket.removeListener('open', opened)
       reject(error)
     }
     const opened = (): void => {
+      signal?.removeEventListener('abort', aborted)
       socket.removeListener('error', failed)
       // The caller binds its lifecycle handlers before the next socket event.
       socket.on('error', () => socket.terminate())
@@ -124,6 +134,8 @@ export async function connectToDesktopEndpoint(endpoint: DesktopEndpoint): Promi
     }
     socket.once('error', failed)
     socket.once('open', opened)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
   })
   return socket
 }

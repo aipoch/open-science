@@ -1,10 +1,10 @@
 import {
-  type SessionPdfBinding,
-  type SessionPdfContext,
   MAX_SESSION_PDF_CONTEXTS,
-  type MessagePdfContextSnapshot
-} from '../session-runtime-context'
-import { isRecord, asString, asNumber } from './primitives'
+  MessagePdfContextSnapshot,
+  SessionPdfBinding,
+  SessionPdfContext
+} from '../session-pdf-contract'
+import { asNumber, asString, isRecord } from './primitives'
 
 const PDF_CONTEXT_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/
 

@@ -3,13 +3,11 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 
 it('publishes managed execution requests compatible with strict application schemas', () => {
-  const path = resolve('packages/open-science/managed-execution-contract.fixture.ts')
-    .split(sep)
-    .join('/')
+  const path = resolve('cli/managed-execution-contract.fixture.ts').split(sep).join('/')
   const source = `
-    import type * as SDK from './index'
-    import type * as Shared from '../../src/shared/managed-execution'
-    import type { SessionPackagePreview, SessionPackageImportRequest } from '../../src/shared/session-package'
+    import type * as SDK from '../packages/open-science/index'
+    import type * as Shared from '../src/shared/managed-execution'
+    import type { SessionPackagePreview, SessionPackageImportRequest } from '../src/shared/session-package'
     type Assert<T extends true> = T
     type Compatible<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false
     type Create = Assert<Compatible<SDK.CreateManagedSessionRequest, Shared.CreateManagedSessionRequest>>

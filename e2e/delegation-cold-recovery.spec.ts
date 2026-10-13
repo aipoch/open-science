@@ -2,6 +2,8 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROMPT = 'Run delegated cold recovery regression.'
 
@@ -12,18 +14,14 @@ test('continues a child after force quit without rewriting persisted state', asy
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Delegation cold recovery')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Delegation cold recovery')
   const controls = page.getByTestId('composer-controls-trigger')
   if (!(await controls.getAttribute('aria-label'))?.includes('Delegation On')) {
     await controls.click()
     await page.getByRole('menuitem', { name: 'Delegation', exact: true }).click()
     await page.keyboard.press('Escape')
   }
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, PROMPT)
   await expect(page.getByText('Cold recovery ready for exit.', { exact: false })).toBeVisible()
   const { interrupted, dataRoot } = await page.evaluate(async (prompt) => {
     const interrupted = (await window.api.sessions.loadAll()).sessions.find((s) =>

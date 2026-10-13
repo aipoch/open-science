@@ -9,17 +9,22 @@ export const credentialRecoveryMessage = (
   const i18n = createNativeI18n(resolveLocale('system', systemLanguages))
   const translate = i18n.t.bind(i18n)
   const title = translate('Credential storage needs recovery')
-  const description = error.reason.startsWith('linux-')
-    ? translate(
-        'Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.'
-      )
-    : error.reason.includes('unsupported')
+  const description =
+    error.reason === 'unsupported-ciphertext-version'
       ? translate(
-          'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+          'This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.'
         )
-      : translate(
-          'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
-        )
+      : error.reason.startsWith('linux-')
+        ? translate(
+            'Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.'
+          )
+        : error.reason.includes('unsupported')
+          ? translate(
+              'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+            )
+          : translate(
+              'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
+            )
   const code = error.probe?.reason ? `${error.reason} / ${error.probe.reason}` : error.reason
   return `${title}\n\n${description}\n\nCREDENTIAL_IDENTITY: ${code}`
 }

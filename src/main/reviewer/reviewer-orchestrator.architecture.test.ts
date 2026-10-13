@@ -1,3 +1,4 @@
+import { expectModuleBoundary } from '../../../test/module-boundary-assertions'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 
 import {
@@ -405,9 +406,8 @@ describe('Reviewer orchestrator architecture', () => {
 
   it('routes interface changes through every cross-surface and downstream certification suite', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
-    const module = manifest.modules.reviewer_orchestrator
 
-    expect(module).toEqual({
+    expectModuleBoundary(manifest, 'reviewer_orchestrator', {
       ownerPaths: [
         'src/main/reviewer/acp-runtime.ts',
         'src/main/reviewer/orchestrator.ts',
@@ -559,6 +559,39 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
+          'src/main/run-observation/capture-package.integration.test.ts',
+          'src/main/run-observation/recorded-reader.test.ts',
+          'src/main/run-observation/managed-coordinator.test.ts',
+          'src/main/run-observation/managed-port.test.ts',
+          'src/main/project-recordings/managed-adapter.test.ts',
+          'src/main/run-observation-external-port.test.ts',
+          'src/main/browser-recordings/external-port.test.ts',
+          'src/main/runtime-view/browser-host.integration.test.ts',
+          'src/main/replay-viewer/http-host.integration.test.ts',
+          'src/main/browser-recordings/owner.test.ts',
+          'src/main/run-observation/media-collector.test.ts',
+          'src/main/project-recordings/recorder.test.ts',
+          'src/main/run-observation/managed-status.test.ts',
+          'src/main/managed-runtime-views.integration.test.ts',
+          'src/main/observation-desktop/bridge.test.ts',
+          'src/main/composition/artifact-surfaces.test.ts',
+          'src/main/composition/handoff.test.ts',
+          'src/main/composition/managed-execution.integration.test.ts',
+          'src/main/composition/session-packages.test.ts',
+          'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+          'src/main/notebook/managed-auxiliary-output.test.ts',
+          'src/main/notebook/managed-execution-collection.integration.test.ts',
+          'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+          'src/main/notebook/managed-execution-output.test.ts',
+          'src/main/notebook/managed-execution-service.test.ts',
+          'src/main/notebook/managed-nested-generation.integration.test.ts',
+          'src/main/notebook/managed-output-publication.integration.test.ts',
+          'src/main/notebook/research-material-authority.test.ts',
+          'src/main/notebook/screened-auxiliary-output.test.ts',
+          'src/main/notebook/session-operation-owner.integration.test.ts',
+          'src/main/research-execution-profiles/ipc.test.ts',
+          'src/main/session-package/headless.test.ts',
+          'src/main/session-package/research-reproduction.integration.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/composition/reviewer.test.ts',
@@ -864,39 +897,12 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/acp/specialist-switch-recovery.integration.test.ts',
           'src/main/agents/production-completion-handoff.test.ts',
           'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
-          'src/main/session-package/research-reproduction.integration.test.ts',
-          'src/main/composition/artifact-surfaces.test.ts',
-          'src/main/composition/handoff.test.ts',
-          'src/main/composition/managed-execution.integration.test.ts',
-          'src/main/composition/session-packages.test.ts',
-          'src/main/notebook/local-rpc-server.managed-execution.test.ts',
-          'src/main/notebook/managed-auxiliary-output.test.ts',
-          'src/main/notebook/managed-execution-collection.integration.test.ts',
-          'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
-          'src/main/notebook/managed-execution-output.test.ts',
-          'src/main/notebook/managed-execution-service.test.ts',
-          'src/main/notebook/managed-nested-generation.integration.test.ts',
-          'src/main/notebook/managed-output-publication.integration.test.ts',
-          'src/main/notebook/research-material-authority.test.ts',
-          'src/main/notebook/screened-auxiliary-output.test.ts',
-          'src/main/notebook/session-operation-owner.integration.test.ts',
-          'src/main/research-execution-profiles/ipc.test.ts',
-          'src/main/session-package/headless.test.ts',
-          'src/main/run-observation/capture-package.integration.test.ts',
-          'src/main/run-observation/recorded-reader.test.ts',
-          'src/main/run-observation/managed-coordinator.test.ts',
-          'src/main/run-observation/managed-port.test.ts',
-          'src/main/project-recordings/managed-adapter.test.ts',
-          'src/main/run-observation-external-port.test.ts',
-          'src/main/browser-recordings/external-port.test.ts',
-          'src/main/runtime-view/browser-host.integration.test.ts',
-          'src/main/replay-viewer/http-host.integration.test.ts',
-          'src/main/browser-recordings/owner.test.ts',
-          'src/main/run-observation/media-collector.test.ts',
-          'src/main/project-recordings/recorder.test.ts',
-          'src/main/run-observation/managed-status.test.ts',
-          'src/main/managed-runtime-views.integration.test.ts',
-          'src/main/observation-desktop/bridge.test.ts'
+          'src/main/desktop-runtime-backpressure.integration.test.ts',
+          'src/main/desktop-runtime-transport-diagnostics.test.ts',
+          'src/main/node-entry.test.ts',
+          'src/main/desktop-runtime-session-size.integration.test.ts',
+          'src/main/notebook-payload.integration.test.ts',
+          'src/main/web-service/session-payload.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hydrateSession } from '../../stores/session-store-persistence-owner'
 import { usePackageOperationStore } from '../../stores/package-operation-store'
@@ -182,6 +183,7 @@ const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersi
 })
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   resetSessionConversationIntentsForTests()
   useWorkspaceOperationErrors.setState({ errors: {} })
   useSessionStore.setState(createInitialSessionState())
@@ -5476,5 +5478,70 @@ describe('passive summary hydration', () => {
     await save(useSessionStore.getState())
     expect(api.saveSession).not.toHaveBeenCalled()
     expect(api.loadOne).not.toHaveBeenCalled()
+  })
+})
+
+describe('desktop disconnect write admission', () => {
+  it('refreshes authority while retaining the selected unsent conversation and local title draft', async () => {
+    const original = hydrateSession(createPersistedSession())
+    const pending = {
+      ...hydrateSession(createPersistedSession({ id: 'local-draft' })),
+      isPending: true
+    }
+    useSessionStore.setState({
+      sessions: [{ ...original, title: 'Unsubmitted title', unsavedTitle: true }, pending],
+      selectedSessionId: pending.id
+    })
+    await loadPersistedSessions(
+      createApi({
+        loadAll: vi
+          .fn()
+          .mockResolvedValue(
+            createLoadResult([createPersistedSession({ revision: 5, title: 'Backend title' })])
+          )
+      }),
+      () => true,
+      { sessionId: pending.id },
+      true
+    )
+    const state = useSessionStore.getState()
+    expect(state.selectedSessionId).toBe(pending.id)
+    expect(state.sessions.find((session) => session.id === pending.id)).toBe(pending)
+    const restored = state.sessions.find((session) => session.id === original.id)!
+    expect(restored.title).toBe('Unsubmitted title')
+    expect(getExternallyHydratedSessionAuthority(restored)?.title).toBe('Backend title')
+    expect(restored.revision).toBe(5)
+  })
+
+  it('invalidates queued explicit session and manifest writes without replaying a lost save response', async () => {
+    let complete!: (value: PersistedChatSession) => void
+    const saveSession = vi.fn(
+      () =>
+        new Promise<PersistedChatSession>((resolve) => {
+          complete = resolve
+        })
+    )
+    const saveManifest = vi.fn(async () => undefined)
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession, saveManifest }))
+    const snapshot = createPersistedSession()
+    const submitted = persistence.saveSession(snapshot)
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    const queuedSession = persistence.saveSession(snapshot)
+    const queuedManifest = persistence.saveManifest({
+      lastSessionId: snapshot.id
+    })
+    const settled = Promise.allSettled([submitted, queuedSession, queuedManifest])
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    // The server persisted this first request before connection loss. Its late result does not
+    // authorize either queued old snapshot to write through the replacement attachment.
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    complete(snapshot)
+    expect((await settled).map((result) => result.status)).toEqual([
+      'rejected',
+      'rejected',
+      'rejected'
+    ])
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveManifest).not.toHaveBeenCalled()
   })
 })

@@ -11,6 +11,8 @@ import { webcrypto } from 'node:crypto'
 import { X509CertificateGenerator, SubjectAlternativeNameExtension } from '@peculiar/x509'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createNodeRuntimeNetwork } from './runtime-network-node'
+import { configureRuntimeNetwork } from './runtime-network'
+import { checkInternetReachability } from './net/network-info'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -137,6 +139,8 @@ describe('ordinary Node HTTP transport', () => {
     const port = await listen(proxy)
     const transport = network({ HTTPS_PROXY: `http://127.0.0.1:${port}` })
     await expect(transport.fetch('https://example.invalid')).rejects.toThrow()
+    configureRuntimeNetwork(transport)
+    await expect(checkInternetReachability()).resolves.toBe(false)
     await expect(
       transport.setProxy({ mode: 'pac_script', pacScript: 'https://example.invalid/proxy.pac' })
     ).rejects.toThrow('PAC')

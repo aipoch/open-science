@@ -1,4 +1,4 @@
-import type { ChatApiEndpoint } from '../../shared/settings'
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 
 export type ProviderFailureObservation = Readonly<{
   category: 'auth' | 'model-not-found'

@@ -1,4 +1,4 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 import type { PersistedConversationGraph } from '../../../../shared/conversation-graph'
 import { resolveActiveRootMessageIds } from './subagent-release-projection'
 

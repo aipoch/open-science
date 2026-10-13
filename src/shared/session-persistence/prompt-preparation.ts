@@ -1,6 +1,7 @@
-import type { PersistedChatSession, PersistedPromptPreparation } from './session'
-import { asNumber, asString, isRecord } from './primitives'
 import { resolveMessageBranchPath } from '../conversation-graph'
+import { asNumber, asString, isRecord } from './primitives'
+import type { PersistedPromptPreparation } from '../session-run-contract'
+import type { PersistedChatSession } from './session'
 import { isTurnAnchor } from './turn-anchor'
 
 // A display baseline cannot borrow a turn from another Branch. Old files lack this optional

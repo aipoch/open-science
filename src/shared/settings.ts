@@ -1,14 +1,17 @@
+import { ApplicationCommandError } from './application-command-contract'
 import type {
-  SkillPackageFileInfo,
-  SkillReferenceInfo,
-  GitHubRepositorySearchView,
   AgentHomeSkillRef,
-  SkillBundlePreviewResult,
-  SkillReplacementPreview,
-  SkillReference,
+  GitHubRepositorySearchView,
   SkillActivationPolicy,
+  SkillBundlePreviewResult,
+  SkillPackageFileInfo,
+  SkillReference,
+  SkillReferenceInfo,
+  SkillReplacementPreview,
   SkillSource
 } from '@aipoch/skills/document'
+import type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
+export type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
 
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
@@ -16,16 +19,16 @@ import type {
 // masked provider view (never keyRef or plaintext keys) and sends drafts that carry a plaintext key
 // only while the user is actively typing one in.
 
-import type { OfficialVendorId } from './provider-registry'
-import { customProviderRequiresKey } from './provider-base-url'
+import type { PackageMirror } from './mirror'
+import type { NetworkProxySettings } from './network-proxy'
+import type { NotebookNetworkSettings } from './notebook-network-settings'
 import type { PermissionProfileId } from './permission-profiles'
+import { customProviderRequiresKey } from './provider-base-url'
+import type { OfficialVendorId } from './provider-registry'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
 } from './reasoning-effort'
-import type { PackageMirror } from './mirror'
-import type { NetworkProxySettings } from './network-proxy'
-import type { NotebookNetworkSettings } from './notebook-network-settings'
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -144,7 +147,6 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
 // distinct: Codex requires Responses and reaches a Chat Completions provider only through its bridge.
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
-export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
 // Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
 // (they must match a gateway's own documentation); only the surrounding copy is localized per
@@ -439,7 +441,6 @@ export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex' | 'codebuddy
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
 // (low < medium < high < xhigh < max): the active model's static profile maps the level onto its
 // concrete supported rungs (e.g. 'max' becomes the model's top level).
-export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
@@ -1754,3 +1755,38 @@ export type RespondConnectorCredentialRequest = { id: string; configured: boolea
 // src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
 // StoredSettings in src/main structurally satisfies this shape.
 export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }
+
+// Validate the required projection containers before any consumer can render them. Optional
+// preferences retain their established defaults; this does not rewrite the stored document.
+export const parseSettingsSnapshot = (snapshot: unknown): SettingsSnapshot => {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (
+    !record(snapshot) ||
+    !Array.isArray(snapshot.providers) ||
+    !Array.isArray(snapshot.agentFrameworks) ||
+    !record(snapshot.claude) ||
+    !record(snapshot.opencode) ||
+    typeof snapshot.agentFrameworkId !== 'string' ||
+    snapshot.providers.some(
+      (provider) =>
+        !record(provider) ||
+        typeof provider.id !== 'string' ||
+        typeof provider.name !== 'string' ||
+        !Array.isArray(provider.models) ||
+        provider.models.some((model) => typeof model !== 'string')
+    ) ||
+    snapshot.agentFrameworks.some(
+      (framework) =>
+        !record(framework) ||
+        typeof framework.id !== 'string' ||
+        typeof framework.displayName !== 'string'
+    ) ||
+    (snapshot.revision !== undefined &&
+      (typeof snapshot.revision !== 'number' ||
+        !Number.isSafeInteger(snapshot.revision) ||
+        snapshot.revision < 0))
+  )
+    throw new ApplicationCommandError('invalid-command-result', 'Invalid settings snapshot.')
+  return snapshot as SettingsSnapshot
+}

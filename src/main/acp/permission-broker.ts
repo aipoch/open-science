@@ -1,41 +1,21 @@
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
 
-import type {
-  AcpPermissionGrant,
-  AcpPermissionRequest,
-  AcpPermissionResponse,
-  AcpPermissionSettlementState
-} from '../../shared/acp'
-import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import { createLogger } from '@aipoch/diagnostics/node'
+import type { AcpPermissionResponse, AcpPermissionSettlementState } from '../../shared/acp'
+import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type {
   PermissionCapability,
   PermissionGrantRecord,
   PermissionGrantScope
 } from '../../shared/permission-grants'
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
-import type { CommandShellDialect } from '../agent-framework/types'
-import { createLogger } from '@aipoch/diagnostics/node'
-import {
-  logPermissionDiagnostic,
-  type PermissionDiagnostic
-} from '../permission-grants/diagnostics'
-import { extractProviderToolName } from './runtime-events'
-import {
-  isManagedSkillPermission,
-  resolveAutomaticPermissionReason,
-  isNativeWebFetchPermission,
-  isNativeWebSearchPermission,
-  isMcpToolName,
-  resolveMcpProviderLeafIdentity,
-  resolveAutomaticPermission,
-  trustedMcpToolIdentity,
-  type PermissionPolicyContext
-} from './permission-policy'
 import {
   canonicalAppMcpServerName,
   resolveCanonicalMcpToolIdentity
 } from '../agent-framework/app-mcp-names'
+import type { CommandShellDialect } from '../agent-framework/types'
 import {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
@@ -44,7 +24,23 @@ import {
   notebookPermissionRuntimeQualifier
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
+import {
+  logPermissionDiagnostic,
+  type PermissionDiagnostic
+} from '../permission-grants/diagnostics'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import {
+  isManagedSkillPermission,
+  isMcpToolName,
+  isNativeWebFetchPermission,
+  isNativeWebSearchPermission,
+  resolveAutomaticPermission,
+  resolveAutomaticPermissionReason,
+  resolveMcpProviderLeafIdentity,
+  trustedMcpToolIdentity,
+  type PermissionPolicyContext
+} from './permission-policy'
+import { extractProviderToolName } from './runtime-events'
 
 type PendingPermission = {
   request: AcpPermissionRequest
@@ -2011,12 +2007,12 @@ class AcpPermissionBroker {
 }
 
 export {
-  type AppPermissionRequest,
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
-  projectRegistrySessionGrants,
   permissionRequestFingerprint,
+  projectRegistrySessionGrants,
   resolveCategoryKey,
-  resolveNotebookPermissionContext
+  resolveNotebookPermissionContext,
+  type AppPermissionRequest
 }
 export type { DurablePermissionWaitCandidate, PermissionWaitHooks, RestoredPermissionContinuation }

@@ -1,18 +1,18 @@
+import { createLogger } from '@aipoch/diagnostics/node'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
 import type { AgentFrameworkId } from '../../shared/settings'
-import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import { createLogger } from '@aipoch/diagnostics/node'
 import type {
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
-} from '../settings/responses-bridge'
+} from '../settings/responses-bridge-contract'
 import {
   loadSkillDocumentContent,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
 } from '../skills/runtime-mcp-server'
-import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()

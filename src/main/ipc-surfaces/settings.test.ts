@@ -1,3 +1,5 @@
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../../shared/renderer-contract-catalog'
+import { registerApplicationCommandElectronAdapter } from '../application-command-electron-adapter'
 import { createSettingsFileCommands, createSettingsExportFiles } from '../settings/file-commands'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
@@ -132,7 +134,19 @@ describe('Settings Electron surface', () => {
     expect([...native.handlers.keys()]).toEqual(expectedChannels)
     expect(service.getPreflight).not.toHaveBeenCalled()
     await expect(invoke('settings:get-preflight', event)).resolves.toEqual({ needsSetup: false })
-    await expect(invoke('settings:get-settings', event)).resolves.toEqual({ revision: 12 })
+    expect(native.handlers.has('settings:get-settings')).toBe(false)
+    // The validated adapter owns snapshot reads; installing both surfaces must not duplicate IPC.
+    registerApplicationCommandElectronAdapter({
+      commandNames: () => ELECTRON_APPLICATION_COMMAND_CHANNELS,
+      invoke: async (channel) => {
+        expect(channel).toBe('settings:get-settings')
+        return owners.snapshotCommits.readCurrentSnapshot()
+      }
+    })
+    await expect(invoke('settings:get-settings', event)).resolves.toEqual({
+      ok: true,
+      result: { revision: 12 }
+    })
     expect(readCurrentSnapshot).toHaveBeenCalledOnce()
     const request = { id: 'skill-id', enabled: true }
     await invoke('settings:set-skill-enabled', event, request)

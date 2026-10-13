@@ -1,7 +1,6 @@
+import type { LinuxCredentialBackend } from './linux-backend-contract'
 import { CredentialIdentityError } from './selection'
-
-export type LinuxKWalletBackend = 'kwallet' | 'kwallet5' | 'kwallet6'
-export type LinuxCredentialBackend = 'gnome_libsecret' | LinuxKWalletBackend
+export type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend-contract'
 
 // Mirror Chromium's ordered GetDesktopEnvironment/SelectBackend rules. Service availability
 // must never switch the backend: a healthy second store need not contain the original key.

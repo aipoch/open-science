@@ -1,12 +1,16 @@
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages,
+  type PersistedBranchActivity
+} from '../conversation-graph'
+import type { SessionPermissionRuntimeContext } from '../session-runtime-context'
+import type {
+  PersistedActivityGroup,
+  PersistedChatMessage,
+  PersistedToolActivity
+} from '../session-message-contract'
 import { isPreparedSessionRun } from './prompt-preparation'
 import type { PersistedChatSession } from './session'
-import type { SessionPermissionRuntimeContext } from '../session-runtime-context'
-import {
-  resolveActiveConversationMessages,
-  type PersistedBranchActivity,
-  resolveActiveConversationActivities
-} from '../conversation-graph'
-import type { PersistedToolActivity, PersistedChatMessage, PersistedActivityGroup } from './message'
 import { isPersistedNotebookRunActivity } from './tool-activity'
 import { latestTurnAnchor } from './turn-anchor'
 

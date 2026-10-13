@@ -1,9 +1,9 @@
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  type AcpMessageImage,
   type AcpRuntimeEvent
 } from '../../../../shared/acp'
+import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 
 type RuntimeChatRole = 'assistant' | 'user'
 
@@ -54,9 +54,10 @@ const createRuntimeStreamId = (event: RuntimeChatMessageEvent): string =>
 
 export {
   createRuntimeStreamId,
+  getAcpRuntimeEventImage,
+  getAcpRuntimeEventText,
   isAssistantRuntimeChatMessageEvent,
   isBufferableAssistantTextEvent,
   isRuntimeChatMessageEvent
 }
-export { getAcpRuntimeEventImage, getAcpRuntimeEventText }
 export type { RuntimeChatMessageEvent, RuntimeChatRole }

@@ -1,6 +1,5 @@
-import { reportWorkspaceOperationError } from './workspace-operation-error'
-import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
+import type { AcpStateSnapshot } from '../../../../shared/acp'
+import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
@@ -11,6 +10,7 @@ import {
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE
 } from '../../../../shared/run-error-classification'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import {
   projectSessionActionability,
@@ -25,6 +25,7 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import type { useAcpRuntime } from './useAcpRuntime'
+import { reportWorkspaceOperationError } from './workspace-operation-error'
 import {
   acquireWorkspacePromptPreparation,
   isWorkspacePromptPreparationInFlight
@@ -548,4 +549,4 @@ export {
   prepareExistingWorkspacePrompt,
   shutdownNotebookForBranchChange
 }
-export type { PrepareExistingWorkspacePromptRequest, PreparedExistingWorkspacePrompt }
+export type { PreparedExistingWorkspacePrompt, PrepareExistingWorkspacePromptRequest }

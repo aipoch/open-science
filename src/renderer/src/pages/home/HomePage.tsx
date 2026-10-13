@@ -58,7 +58,7 @@ import { APP } from '../../../../shared/app-config'
 import { earliestCurrentDelegatedAttemptStartedAt } from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
-import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
+import { getEnvironmentRepairPanel } from '@/lib/settings-navigation'
 import {
   isSessionWaitReason,
   projectPresentedSessionActionability,
@@ -1002,7 +1002,7 @@ const HomePage = ({
                     onClick={openCreateDialog}
                   >
                     <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    {t('Create project')}
+                    {t('New project')}
                   </Button>
                 </div>
               ) : (

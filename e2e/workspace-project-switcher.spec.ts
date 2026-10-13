@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
+import { homeNewProjectButton } from './fixtures/project'
 
 const createProject = async (
   page: Page,
@@ -19,7 +20,7 @@ const createProject = async (
       .getByRole('menuitem', { name: 'New project', exact: true })
       .click()
   } else {
-    await page.getByRole('button', { name: 'New project', exact: true }).click()
+    await homeNewProjectButton(page).click()
   }
 
   const dialog = page.getByRole('dialog', { name: 'New project' })

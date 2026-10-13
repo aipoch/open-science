@@ -1,26 +1,26 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { z } from 'zod'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
+import { z } from 'zod'
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
 import {
   PACKAGE_MAX_BYTES,
   PACKAGE_RO_CRATE_METADATA,
   type SessionPackageManifest
 } from '../../shared/session-package'
+import { sha256 } from '../artifacts/provenance-canonical'
+import { parseArtifactExecutionSnapshot } from '../artifacts/provenance-execution-snapshot-decoder'
 import {
   buildArtifactVersionRoCrateMetadata,
-  serializeRoCrateMetadata,
   RO_CRATE_CONTEXT,
   RO_CRATE_SPECIFICATION,
+  serializeRoCrateMetadata,
   type RoCrateEntity,
   type RoCrateMetadataDocument
 } from '../artifacts/ro-crate-export'
-import { parseArtifactExecutionSnapshot } from '../artifacts/provenance-execution-snapshot-decoder'
-import { sha256 } from '../artifacts/provenance-canonical'
 import { PACKAGE_MAX_JSON_BYTES, packageEntry, readPackageJson } from './archive'
 import { assertPackageCapacity } from './capacity'
-import type { NativeRow, PackageRecords } from './native-snapshot'
+import type { NativeRow, PackageRecords } from './records-contract'
 
 const reference = (id: string): { '@id': string } => ({ '@id': id })
 const versionId = (id: unknown): string => `urn:open-science:version:${String(id)}`

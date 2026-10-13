@@ -15,6 +15,8 @@ const f = vi.hoisted(() => {
     validate: vi.fn(),
     key: vi.fn(),
     launch: vi.fn(),
+    connect: vi.fn(),
+    lifecycle: vi.fn(),
     diagnostics: vi.fn(),
     report: vi.fn(async () => undefined),
     app: {
@@ -26,6 +28,7 @@ const f = vi.hoisted(() => {
       exit: vi.fn(),
       on: vi.fn(),
       once: vi.fn(),
+      removeListener: vi.fn(),
       getPath: vi.fn(() => '/test/home'),
       getAppPath: () => '/test/app',
       getVersion: () => 'test',
@@ -36,7 +39,7 @@ const f = vi.hoisted(() => {
       whenReady: vi.fn(async () => {}),
       requestSingleInstanceLock: vi.fn(() => true)
     },
-    dialog: { showErrorBox: vi.fn() },
+    dialog: { showErrorBox: vi.fn(), showMessageBox: vi.fn() },
     protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
     handlers: new Map<string, (...args: unknown[]) => unknown>()
   }
@@ -83,6 +86,23 @@ vi.mock('./storage/electron-profile', () => ({
 vi.mock('./desktop-runtime-launcher', () => ({
   desktopBackendPaths: () => ({ command: '/test/node', entry: '/test/backend.cjs' }),
   startOrAttachDesktopBackend: f.launch
+}))
+vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: f.connect }))
+vi.mock('./desktop-runtime-electron-adapter', () => ({
+  installDesktopRuntimeElectronAdapter: () => ({ uninstall: vi.fn() })
+}))
+vi.mock('./cli-install/ipc', () => ({
+  createCliCommandOwner: () => ({ ensureCurrent: vi.fn() }),
+  registerCliInstallIpcHandlers: vi.fn()
+}))
+vi.mock('./update/create-strategy', () => ({ createUpdateStrategy: vi.fn() }))
+vi.mock('./update/ipc', () => ({ registerUpdateIpcHandlers: vi.fn() }))
+vi.mock('./update/scheduler', () => ({ startUpdateScheduler: vi.fn() }))
+vi.mock('./runtime-network-electron', () => ({ installElectronNetwork: vi.fn() }))
+vi.mock('./renderer-broadcast-electron', () => ({ installElectronBroadcast: vi.fn() }))
+vi.mock('./mac-installation', () => ({
+  isReadOnlyMacInstallation: () => false,
+  showMacInstallationGuidance: vi.fn()
 }))
 vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
@@ -151,7 +171,7 @@ vi.mock('./notifications/unread-task-ipc', () => ({
   registerUnreadTaskIpc: () => ({ confirmSessionVisible: vi.fn(), dispose: vi.fn() })
 }))
 vi.mock('./window-close-confirm', () => ({ createElectronCloseConfirm: vi.fn() }))
-vi.mock('./app-lifecycle', () => ({ installAppLifecycle: vi.fn() }))
+vi.mock('./app-lifecycle', () => ({ installAppLifecycle: f.lifecycle }))
 vi.mock('./session-persistence/renderer-flush', () => ({
   createElectronSessionPersistenceFlush: vi.fn(),
   notifyRendererSessionPersistenceFlushAborted: vi.fn(),
@@ -254,3 +274,54 @@ it('flushes startup diagnostics before presenting a post-ready failure and exiti
   finish()
   await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
 })
+
+it.each(['win32', 'linux', 'darwin'] as const)(
+  'keeps a window reachable after canceling disconnected native quit without a tray (%s)',
+  async (platform) => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: platform })
+    try {
+      const destroyedWindow = { isDestroyed: () => true }
+      const showMainWindow = vi.fn()
+      f.lifecycle.mockReturnValue({
+        showMainWindow,
+        getMainWindow: () => destroyedWindow,
+        isMainWindowHidden: () => false,
+        onSystemShutdown: vi.fn()
+      })
+      const client = {
+        ownsRuntime: () => false,
+        processId: () => 123,
+        invokeHost: async () => ({ locale: 'en' }),
+        startupState: () => ({ phase: 'checking' }),
+        close: vi.fn()
+      }
+      let disconnect!: () => void
+      f.connect.mockImplementation(async (options) => {
+        disconnect = options.onDisconnect
+        return client
+      })
+      f.launch.mockResolvedValue({})
+      f.dialog.showMessageBox.mockResolvedValue({ response: 0 })
+      await import('./index')
+      await vi.waitFor(() => {
+        expect(f.report.mock.calls).toEqual([])
+        expect(f.lifecycle).toHaveBeenCalledOnce()
+      })
+      expect(f.app.exit).not.toHaveBeenCalled()
+      disconnect()
+      const quitListeners = f.app.on.mock.calls.filter(([event]) => event === 'before-quit')
+      const onQuit = quitListeners.at(-1)![1]
+      const event = { preventDefault: vi.fn() }
+      onQuit(event)
+      await vi.waitFor(() => expect(f.dialog.showMessageBox).toHaveBeenCalledOnce())
+      expect(event.preventDefault).toHaveBeenCalled()
+      if (platform === 'darwin') expect(showMainWindow).not.toHaveBeenCalled()
+      else await vi.waitFor(() => expect(showMainWindow).toHaveBeenCalledOnce())
+      expect(client.close).not.toHaveBeenCalled()
+      expect(f.app.exit).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform)
+    }
+  }
+)

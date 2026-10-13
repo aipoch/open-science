@@ -1,4 +1,4 @@
-import type { Annotation } from '../../../../../shared/annotations'
+import type { Annotation } from '../../../../../shared/annotation-contract'
 
 export const ANNOTATION_DRAG_TYPE = 'application/x-open-science-annotation'
 export type AnnotationTransfer = Readonly<{

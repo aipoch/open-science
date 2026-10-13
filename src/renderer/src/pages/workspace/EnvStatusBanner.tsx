@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
-import type { ProvisionUiState } from './provisioning-view'
+import type { ProvisionUiState } from '@/lib/notebook-provisioning'
 
 type ProvisionErrorUi = Extract<ProvisionUiState, { kind: 'error' }>
 

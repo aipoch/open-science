@@ -1,9 +1,12 @@
+import { projectRendererFailure } from '../renderer-diagnostics'
+import { readWithDeadline } from '../lib/read-with-deadline'
 import { create } from 'zustand'
 import { useSettingsStore } from './settings-store'
+import { useDesktopRuntimeRecoveryStore } from './desktop-runtime-recovery-store'
 
 // Real end-to-end reachability probed by the main process (the same HTTPS HEAD check the
 // onboarding environment step uses). 'unknown' means a probe is in flight and surfaces render it
-// as "checking"; 'probe-failed' is the terminal recovery state when no prior answer can be restored.
+// as "checking"; 'probe-failed' means the check itself could not finish.
 export type NetworkConnectivity = 'unknown' | 'reachable' | 'unreachable' | 'probe-failed'
 
 type NetworkStore = {
@@ -30,20 +33,12 @@ const MIN_CHECKING_MS = 500
 
 export const useNetworkStore = create<NetworkStore>((set, get) => {
   let probeGeneration = 0
-  let lastKnownConnectivity: Extract<NetworkConnectivity, 'reachable' | 'unreachable'> | undefined
 
-  const probeConnectivity = async ({
-    announce = false,
-    invalidate = false
-  } = {}): Promise<void> => {
+  let inFlight: { generation: number; promise: Promise<void> } | undefined
+
+  const runProbe = async ({ announce = false, invalidate = false } = {}): Promise<void> => {
     const generation = ++probeGeneration
     const startedAt = Date.now()
-    const currentConnectivity = get().connectivity
-    if (invalidate) {
-      lastKnownConnectivity = undefined
-    } else if (currentConnectivity === 'reachable' || currentConnectivity === 'unreachable') {
-      lastKnownConnectivity = currentConnectivity
-    }
 
     const holdAnnouncedState = async (): Promise<void> => {
       if (!announce) return
@@ -53,7 +48,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
       }
     }
 
-    if (announce) set({ connectivity: 'unknown' })
+    if (announce || invalidate) set({ connectivity: 'unknown' })
 
     let reachable: boolean
     if (!navigator.onLine) {
@@ -65,19 +60,27 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         reachable = true
       } else {
         try {
-          reachable = await checkConnectivity()
-        } catch {
-          // Bridge failure keeps the last known reachability rather than crying wolf. When a cold
-          // start has no previous answer, settle to an explicit terminal failure so Checking… never
-          // becomes permanent and the user can retry.
+          if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') {
+            throw new Error('Backend unavailable for network check.')
+          }
+          const epoch = useDesktopRuntimeRecoveryStore.getState().epoch
+          reachable = await readWithDeadline(checkConnectivity, 10_000)
+          if (epoch !== useDesktopRuntimeRecoveryStore.getState().epoch) {
+            throw new Error('Backend connection changed during network check.')
+          }
+        } catch (error) {
+          try {
+            window.api?.diagnostics?.reportRendererFailure(
+              projectRendererFailure('handled-error', error, 'settings', 'network-check')
+            )
+          } catch {
+            /* Diagnostics must not change the probe outcome. */
+          }
+          // A failed check says nothing about registry reachability. Never present an old answer
+          // as the result of this attempt, including silent refreshes after runtime recovery.
           await holdAnnouncedState()
-          const currentState = get()
-          if (
-            probeGeneration === generation &&
-            currentState.isOnline &&
-            currentState.connectivity === 'unknown'
-          ) {
-            set({ connectivity: lastKnownConnectivity ?? 'probe-failed' })
+          if (probeGeneration === generation && get().isOnline) {
+            set({ connectivity: 'probe-failed' })
           }
           return
         }
@@ -87,7 +90,6 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     await holdAnnouncedState()
     if (probeGeneration === generation && (get().isOnline || !reachable)) {
       const connectivity = reachable ? 'reachable' : 'unreachable'
-      lastKnownConnectivity = connectivity
       set({ connectivity })
     }
   }
@@ -95,8 +97,20 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
   return {
     isOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
     connectivity: 'unknown',
-    recheckOnline: () => set({ isOnline: navigator.onLine }),
-    probeConnectivity
+    recheckOnline: () => {
+      if (get().isOnline !== navigator.onLine) probeGeneration++
+      set({ isOnline: navigator.onLine })
+    },
+    probeConnectivity: (options = {}) => {
+      if (!options.invalidate && inFlight?.generation === probeGeneration) return inFlight.promise
+      const promise = runProbe(options)
+      const pending = { generation: probeGeneration, promise }
+      inFlight = pending
+      void promise.finally(() => {
+        if (inFlight === pending) inFlight = undefined
+      })
+      return promise
+    }
   }
 })
 
@@ -125,12 +139,29 @@ export const startNetworkMonitor = (): void => {
     void useNetworkStore.getState().probeConnectivity({ announce: true, invalidate: true })
   })
 
+  useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+    if (
+      state.epoch !== previous.epoch ||
+      (state.phase === 'connected' && previous.phase !== 'connected')
+    ) {
+      void useNetworkStore
+        .getState()
+        .probeConnectivity({ announce: state.phase === 'connected', invalidate: true })
+    }
+  })
+
+  window.api?.network?.onSystemResumed?.(() => {
+    useNetworkStore.getState().recheckOnline()
+    void useNetworkStore.getState().probeConnectivity({ announce: true, invalidate: true })
+  })
+
   window.addEventListener('online', () => {
     useNetworkStore.setState({ isOnline: true })
-    void useNetworkStore.getState().probeConnectivity({ announce: true })
+    void useNetworkStore.getState().probeConnectivity({ announce: true, invalidate: true })
   })
   window.addEventListener('offline', () => {
     // A dropped link is a known-unreachable state, so surfaces can show it immediately.
+    useNetworkStore.getState().recheckOnline()
     useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
   })
 

@@ -1,8 +1,7 @@
-import type { LinuxKWalletBackend } from './linux-backend'
+import type { KWalletProbeResult } from './kwallet-probe-contract'
+import type { LinuxKWalletBackend } from './linux-backend-contract'
 import { callLinuxCredentialMetadata } from './linux-dbus'
-import type { IdentityProbeResult } from './selection'
-
-export type KWalletProbeResult = IdentityProbeResult & Readonly<{ wallet?: string }>
+export type { KWalletProbeResult } from './kwallet-probe-contract'
 
 // Electron's sync OSCrypt uses Chromium's fixed folder/key, with app.getName() only as
 // the authorization identity. This is deliberately not the libsecret application attribute.

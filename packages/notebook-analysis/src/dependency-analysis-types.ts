@@ -49,6 +49,8 @@ type NotebookDependencyReceiverCall = {
   member: string
   conditional?: boolean
   kind?: 'receiver' | 'generic' | 'mutating' | 'callable'
+  // Final bindings established after this call cannot identify its earlier functions.
+  unavailablePythonFunctionNames?: string[]
   argumentNames?: string[]
   receiverChain?: string[]
   receiverChainFirstArgumentNames?: string[][]
@@ -162,6 +164,14 @@ export type NotebookSerializedValue = {
     | 'sklearn.linear_model.LinearRegression'
 }
 
+// Bounded source candidates, never runtime identities or container contents.
+// An absent tag retains the existing list/tuple candidate contract.
+export type NotebookPythonCallbackContainerSummary = {
+  name: string
+  callbackNames: string[]
+  container?: 'dict'
+}
+
 type NotebookRunDependencyFacts =
   | {
       state: 'available'
@@ -175,7 +185,7 @@ type NotebookRunDependencyFacts =
       aliases?: NotebookDependencyAlias[]
       builtinContainerNames?: string[]
       // Source candidates only; never container contents or live callback identities.
-      pythonCallbackContainerSummaries?: Array<{ name: string; callbackNames: string[] }>
+      pythonCallbackContainerSummaries?: NotebookPythonCallbackContainerSummary[]
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]
@@ -208,7 +218,7 @@ type NotebookRunDependencyFacts =
       possiblyMutatedNames?: string[]
       aliases?: NotebookDependencyAlias[]
       builtinContainerNames?: string[]
-      pythonCallbackContainerSummaries?: Array<{ name: string; callbackNames: string[] }>
+      pythonCallbackContainerSummaries?: NotebookPythonCallbackContainerSummary[]
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]

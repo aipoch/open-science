@@ -1,23 +1,23 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
-  AcpPermissionRequest,
   AcpRuntimeEvent,
   AcpRuntimeState,
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import {
+  sanitizeNotebookCodeReviewPayload,
   sanitizeRawToolPayload,
-  sanitizeToolDetailText,
-  sanitizeNotebookCodeReviewPayload
+  sanitizeToolDetailText
 } from '../../shared/tool-detail-sanitizer'
-import { createLogger } from '@aipoch/diagnostics/node'
-import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
   ACP_RUNTIME_EVENT_RETENTION_LIMIT,
   type AcpRuntimeSnapshotOwner,
   type RuntimeEventInput,
   type RuntimeSnapshotProjection
 } from './runtime-snapshot-owner'
+import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 
 // Dev-facing counters for the acp:state window coalescer; a throttled debug summary rides
 // the existing logger level gating (debug is dev-only), leaving production unaffected.

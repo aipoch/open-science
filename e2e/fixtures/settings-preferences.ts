@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 
 // Home and Workspace expose the same Settings action.
-export const openGeneralSettings = async (page: Page): Promise<Locator> => {
+export const openSettingsPage = async (page: Page, section: string): Promise<Locator> => {
   await page.getByRole('button', { name: /^Settings$/ }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
@@ -10,7 +10,12 @@ export const openGeneralSettings = async (page: Page): Promise<Locator> => {
   if (!(await navigation.isVisible())) {
     await settings.getByRole('button', { name: 'Open settings navigation' }).click()
   }
-  await navigation.getByRole('button', { name: 'General', exact: true }).click()
+  await navigation.getByRole('button', { name: section, exact: true }).click()
+  return settings
+}
+
+export const openGeneralSettings = async (page: Page): Promise<Locator> => {
+  const settings = await openSettingsPage(page, 'General')
   await expect(settings.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible()
   return settings
 }
@@ -27,4 +32,13 @@ export const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<voi
   await expect(settings).toBeHidden()
   if (theme === 'Dark') await expect(page.locator('html')).toHaveClass(/dark/)
   else await expect(page.locator('html')).not.toHaveClass(/dark/)
+}
+
+export const selectLanguage = async (page: Page, label: string): Promise<void> => {
+  const settings = await openGeneralSettings(page)
+  await settings.getByRole('combobox', { name: 'Interface language' }).click()
+  await page.getByRole('option', { name: label, exact: true }).click()
+  // The dialog name changes with the locale; use Escape rather than the old English close label.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toBeHidden()
 }

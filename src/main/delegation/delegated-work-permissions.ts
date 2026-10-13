@@ -1,12 +1,11 @@
-import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 import { currentAttempt, sameSession } from './delegated-work-record-invariants'
+import type { DelegatedWorkDurableRecords, DurableSnapshot } from './delegated-work-record-types'
 import type {
-  DelegatedWorkDurableRecords,
-  DurableSnapshot,
   RootDelegatePermissionEvent,
   RootDelegatePermissionRequest,
   RootDelegatePermissionResponse
-} from './durable-delegated-work'
+} from './durable-delegated-work-contract'
+import { DurableDelegatedWorkError } from './durable-delegated-work-error'
 import type { DelegateExecutionEvent, RunningDelegateExecution } from './execution-port'
 
 type Permission = RootDelegatePermissionRequest & Readonly<{ execution: RunningDelegateExecution }>

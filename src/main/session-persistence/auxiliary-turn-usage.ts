@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 
 const SESSION_AUXILIARY_TURN_USAGE_SOURCES = [
   'reviewer',

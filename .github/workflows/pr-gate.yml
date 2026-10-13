@@ -678,7 +678,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # CPU-only verification uses the bundled runtime, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Test CLI and SDK
         id: cli_sdk
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}

@@ -1087,12 +1087,13 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
 })
 
 describe('runVersionProbe', () => {
-  it('spawns the binary with `--version` and a 15s timeout', () => {
+  it('hides the Windows console when probing the binary with `--version`', () => {
     const spawn = vi.fn(() => ({ status: 0 }))
     runVersionProbe('/path/to/opencode', spawn)
     // Locks the exact probe contract: args and the 15s timeout the classifier depends on.
     expect(spawn).toHaveBeenCalledWith('/path/to/opencode', ['--version'], {
       encoding: 'utf8',
+      windowsHide: true,
       timeout: 15000
     })
   })

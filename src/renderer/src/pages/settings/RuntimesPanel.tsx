@@ -4,6 +4,8 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
  * theme: existing Open-Science Settings tokens · enrichment: none · motion: existing controls only
  */
+import * as AlertDialog from '@/components/ui/alert-dialog'
+import * as Dialog from '@/components/ui/dialog'
 import {
   CheckCircle2,
   FolderInput,
@@ -14,8 +16,6 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import * as AlertDialog from '@/components/ui/alert-dialog'
-import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,30 +34,29 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
-import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
-import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
-import { type EnvPackage } from '@aipoch/environment/contracts'
-import { isEnvEnabled, type RuntimeUsage } from '../../../../shared/notebook-runtime'
-import type { NotebookLanguage } from '../../../../shared/notebook'
-import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import { type DiscoveredInterpreter, type EnvPackage } from '@aipoch/environment/contracts'
 import type { ImportArtifactEnvironmentLockResult } from '../../../../shared/artifact-reproducibility'
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
+import { isEnvEnabled, type RuntimeUsage } from '../../../../shared/notebook-runtime'
+import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import { provisionProgressText } from '../workspace/provision-progress-text'
+import { PythonIcon, RIcon } from './language-icons'
+import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
+import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
-import { PythonIcon, RIcon } from './language-icons'
-import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
-import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { useNotebookNetworkStatus } from './use-notebook-network-status'
 import { WslLocalShellSection } from './WslLocalShellSection'
-import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
-import { provisionProgressText } from '../workspace/provision-progress-text'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
 // be enabled/disabled (the agent only ever sees enabled envs); external envs additionally expose a

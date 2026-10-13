@@ -1,3 +1,7 @@
+import {
+  getDesktopRuntimeEpoch,
+  registerDesktopRecoveryReader
+} from '../../stores/desktop-runtime-recovery-store'
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
@@ -190,6 +194,17 @@ const useAcpRuntime = (): {
       setState(snapshot)
     },
     [runtimeEventOwner]
+  )
+
+  useEffect(
+    () =>
+      registerDesktopRecoveryReader(async () => {
+        const epoch = getDesktopRuntimeEpoch()
+        const snapshot = await window.api.acp.getState()
+        if (epoch !== getDesktopRuntimeEpoch()) throw new Error('Desktop recovery changed.')
+        applySnapshot(snapshot)
+      }),
+    [applySnapshot]
   )
 
   // Loads the initial snapshot and keeps state fresh through runtime broadcasts.

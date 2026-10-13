@@ -1,13 +1,13 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server, type Socket } from 'node:net'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process'
+import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
-  NOTEBOOK_TEXT_LIMIT_BYTES,
   NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES,
+  NOTEBOOK_TEXT_LIMIT_BYTES,
   limitUtf8
 } from './content-limits'
-import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 
 type Launch = (
   request: NotebookShellProcessRequest,
