@@ -145,6 +145,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
+    "Select one or more options": "하나 이상의 옵션 선택",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
     "Query miRNA target evidence.": "miRNA 표적 근거 조회.",
     "Query RNA–RNA interaction evidence.": "RNA–RNA 상호작용 근거 조회.",

@@ -148,6 +148,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
+    "Select one or more options": "Выберите один или несколько вариантов",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Взаимодействия РНК, регуляторные данные и массовые наборы данных ENCORI.",
     "Query miRNA target evidence.": "Запросить данные о мишенях miRNA.",
     "Query RNA–RNA interaction evidence.": "Запросить данные о взаимодействиях РНК–РНК.",

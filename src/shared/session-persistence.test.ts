@@ -4926,6 +4926,70 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
+  it.each([false, true])(
+    'round-trips delegated question drafts and answers (multiSelect: %s)',
+    (multiSelect) => {
+      const labels = Array.from({ length: 16 }, (_, index) => `Option ${index + 1}`)
+      const answer = multiSelect ? [labels[0], labels[15]] : labels[0]
+      const pending = {
+        requestId: 'question-multi',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: 'child-1',
+        sourceAttemptId: 'attempt-1',
+        sourceRuntimeSegmentId: 'runtime-1',
+        sourceMessageBranchId: 'child-branch',
+        rootOriginMessageId: 'root-prompt',
+        rootBranchId: 'root-branch',
+        sourceName: 'Researcher',
+        questions: [
+          {
+            question: 'Which outputs?',
+            ...(multiSelect ? { multiSelect: true } : {}),
+            options: labels.map((label) => ({ label }))
+          }
+        ],
+        askedAt: 1,
+        status: 'pending',
+        draftAnswers: [{ questionIndex: 0, value: answer }],
+        draftQuestionIndex: 0
+      }
+      for (const question of [
+        pending,
+        {
+          ...pending,
+          status: 'confirmed',
+          answers: pending.draftAnswers,
+          respondedAt: 2,
+          continuationAttemptId: 'attempt-2'
+        }
+      ]) {
+        const context = {
+          version: 1,
+          revision: 3,
+          delegatedWork: { records: [], questionRequests: [question] }
+        }
+        expect(
+          sanitizeSessionRuntimeContext(JSON.parse(JSON.stringify(context)))?.delegatedWork
+        ).toEqual(context.delegatedWork)
+      }
+      for (const value of [
+        [],
+        ['unknown'],
+        [labels[0], labels[0]],
+        ...(multiSelect ? [] : [[labels[0]]])
+      ]) {
+        const question = { ...pending, draftAnswers: [{ questionIndex: 0, value }] }
+        expect(
+          sanitizeSessionRuntimeContext({
+            version: 1,
+            revision: 3,
+            delegatedWork: { records: [], questionRequests: [question] }
+          })?.delegatedWork
+        ).toEqual({ records: [], questionRequestsQuarantine: [question] })
+      }
+    }
+  )
+
   it('accepts equal or missing question sequences and narrowly recovers a wholly valid quarantine', () => {
     const question = (
       requestId: string,

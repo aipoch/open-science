@@ -2057,7 +2057,7 @@ class AcpRuntime {
             id: `question_${questionIndex}`,
             label: question.header ?? `Question ${questionIndex + 1}`,
             description: question.question,
-            kind: 'single-select' as const,
+            kind: question.multiSelect ? ('multi-select' as const) : ('single-select' as const),
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
@@ -2090,14 +2090,27 @@ class AcpRuntime {
         [
           `question_${questionIndex}`,
           {
-            type: 'string',
             ...(question.header ? { title: question.header } : {}),
             description: question.question,
-            oneOf: question.options.map((option) => ({
-              const: option.label,
-              title: option.label,
-              ...(option.description ? { description: option.description } : {})
-            }))
+            ...(question.multiSelect
+              ? {
+                  type: 'array',
+                  items: {
+                    anyOf: question.options.map((option) => ({
+                      const: option.label,
+                      title: option.label,
+                      ...(option.description ? { description: option.description } : {})
+                    }))
+                  }
+                }
+              : {
+                  type: 'string',
+                  oneOf: question.options.map((option) => ({
+                    const: option.label,
+                    title: option.label,
+                    ...(option.description ? { description: option.description } : {})
+                  }))
+                })
           }
         ],
         [
@@ -2185,7 +2198,7 @@ class AcpRuntime {
             ? selectedAnswer.trim()
             : Array.isArray(selectedAnswer) &&
                 selectedAnswer.every((value): value is string => typeof value === 'string')
-              ? selectedAnswer.join(', ')
+              ? JSON.stringify(selectedAnswer)
               : undefined
       return answer
         ? [

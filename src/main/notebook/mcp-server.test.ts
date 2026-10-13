@@ -10,6 +10,11 @@ import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
+import {
+  sanitizeAgentUserChoiceRequest,
+  sanitizeAgentUserChoiceAnswer
+} from '../../shared/elicitation'
+
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
 import {
   memoryAgentRememberMcpOutputSchema,
@@ -793,7 +798,7 @@ describe('ask_user_question tool', () => {
         questions: [
           {
             question: 'Which path?',
-            options: [option('A'), option('B'), option('C'), option('D'), option('E')]
+            options: Array.from({ length: 17 }, (_, index) => option(String(index)))
           }
         ]
       })
@@ -808,6 +813,71 @@ describe('ask_user_question tool', () => {
         ]
       })
     ).toThrow()
+  })
+
+  it.each([5, 16])(
+    'preserves all %i options and explicit multi-select through the RPC contract',
+    (count) => {
+      const question = {
+        question: 'Which outputs?',
+        multiSelect: true,
+        options: Array.from({ length: count }, (_, index) => ({ label: `Option ${index + 1}` }))
+      }
+      const parsed = z.object(tool!.inputSchema).parse({ questions: [question] })
+      expect(parsed).toEqual({ questions: [question] })
+      expect(sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', ...parsed })).toEqual({
+        sessionId: 'session-1',
+        questions: [question]
+      })
+      expect(tool!.description).toContain('2-16')
+      expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('multiSelect:true')
+    }
+  )
+
+  it('keeps legacy single-choice input unchanged and rejects invalid mode/capacity', () => {
+    const question = { question: 'Which outputs?', options: [{ label: 'A' }, { label: 'B' }] }
+    const request = { sessionId: 'session-1', questions: [question] }
+    expect(sanitizeAgentUserChoiceRequest(request)).toEqual(request)
+    for (const multiSelect of ['true', 1, null]) {
+      expect(
+        z.object(tool!.inputSchema).safeParse({ questions: [{ ...question, multiSelect }] }).success
+      ).toBe(false)
+      expect(
+        sanitizeAgentUserChoiceRequest({ ...request, questions: [{ ...question, multiSelect }] })
+      ).toBeUndefined()
+    }
+    expect(
+      sanitizeAgentUserChoiceRequest({
+        ...request,
+        questions: [
+          { ...question, options: Array.from({ length: 17 }, (_, i) => ({ label: String(i) })) }
+        ]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeAgentUserChoiceRequest({
+        ...request,
+        questions: [{ ...question, multiSelect: false }]
+      })?.questions[0].multiSelect
+    ).toBe(false)
+  })
+
+  it('validates multiple answers without losing label boundaries or custom text', () => {
+    const labels = ['A, B', 'A', 'Quote " and newline\nend']
+    const question = {
+      question: 'Which outputs?',
+      multiSelect: true,
+      options: labels.map((label) => ({ label }))
+    }
+    expect(sanitizeAgentUserChoiceAnswer(question, [...labels].reverse())).toEqual(labels)
+    expect(sanitizeAgentUserChoiceAnswer(question, [labels[0]])).toEqual([labels[0]])
+    expect(sanitizeAgentUserChoiceAnswer(question, ' Custom answer ')).toBe('Custom answer')
+    for (const value of [[], ['unknown'], [labels[0], labels[0]], [1]]) {
+      expect(sanitizeAgentUserChoiceAnswer(question, value)).toBeUndefined()
+    }
+    expect(
+      sanitizeAgentUserChoiceAnswer({ ...question, multiSelect: false }, labels)
+    ).toBeUndefined()
   })
 
   it('returns only the choice outcome within the shared control-tool result budget', () => {

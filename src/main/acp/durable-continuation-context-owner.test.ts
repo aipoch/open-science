@@ -516,122 +516,137 @@ describe('AcpDurableContinuationContextOwner', () => {
     ).rejects.toThrow('pending Session activity')
   })
 
-  it('validates an inherited revision fork and creates Main-owned identities', async () => {
-    const prompt = message('prompt-active', 'Choose an approach.')
-    const preamble: PersistedChatMessage = {
-      id: 'agent-question-preamble',
-      role: 'agent',
-      content: 'Please choose one option.',
-      status: 'complete',
-      responseToMessageId: prompt.id,
-      eventIds: [],
-      createdAt: 2,
-      updatedAt: 2
-    }
-    let durable = createSession([prompt, preamble])
-    const answeredChoice = pendingChoice({
-      status: 'completed',
-      elicitation: {
-        ...pendingChoice().elicitation!,
-        state: 'answered',
-        answers: [{ fieldId: 'question_0', value: 'Minimal' }]
-      }
-    })
-    setActivities(durable, [answeredChoice])
-    const graph = durable.conversationGraph!
-    const frame = graph.frames[0]
-    const rootBranch = graph.branches[0]
-    graph.branches.push({
-      id: 'message-branch-intermediate',
-      agentFrameId: frame.id,
-      parentBranchId: rootBranch.id,
-      forkMessageId: preamble.id,
-      headMessageId: preamble.id,
-      createdAt: 3,
-      updatedAt: 3
-    })
-    frame.activeBranchId = 'message-branch-intermediate'
-    durable.conversationGraph = forkConversationAfterActivity(
-      graph,
-      preamble.id,
-      answeredChoice.id,
-      'message-branch-revision',
-      4
-    )
-    durable.activities = []
-    durable.status = 'idle'
-    const revisionInput = {
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      requestId: 'choice-1',
-      toolCallId: 'renderer-forged-revision-tool',
-      action: 'accept' as const,
-      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
-      replacePreviousAnswer: true
-    }
-    const invalidActivityOwner = structuredClone(durable)
-    invalidActivityOwner.conversationGraph!.activities.find(
-      (activity) => activity.id === 'tool-choice-1'
-    )!.messageBranchId = 'message-branch-revision'
-    await expect(
-      createOwner(invalidActivityOwner).prepareElicitation(revisionInput)
-    ).rejects.toThrow('active Session Branch')
-
-    const appendUserMessageToInteraction = async (
-      command: Parameters<SessionPersistenceCoordinator['appendUserMessageToInteraction']>[0]
-    ): Promise<PersistedChatMessage> => {
-      const staleAuthority = structuredClone(durable)
-      staleAuthority.conversationGraph!.activities.find(
-        (activity) => activity.id === 'tool-choice-1'
-      )!.elicitation!.fields[0].label = 'Changed concurrently'
-      expect(() => command.beforePersist?.(staleAuthority)).toThrow(
-        'revision authority changed before commit'
-      )
-      command.beforePersist?.(structuredClone(durable))
-      const revisedPrompt: PersistedChatMessage = {
-        id: 'prompt-revision',
-        role: 'user',
-        content: command.content,
+  it.each([false, true])(
+    'validates an inherited revision fork and creates Main-owned identities (multiSelect: %s)',
+    async (multiSelect) => {
+      const prompt = message('prompt-active', 'Choose an approach.')
+      const preamble: PersistedChatMessage = {
+        id: 'agent-question-preamble',
+        role: 'agent',
+        content: 'Please choose one option.',
         status: 'complete',
-        responseToMessageId: command.interactionId,
+        responseToMessageId: prompt.id,
         eventIds: [],
-        createdAt: 4,
-        updatedAt: 4
+        createdAt: 2,
+        updatedAt: 2
       }
-      durable = {
-        ...durable,
-        messages: [...durable.messages, revisedPrompt],
-        conversationGraph: synchronizeActiveConversationMessages(
-          durable.conversationGraph!,
-          [...durable.messages, revisedPrompt],
-          4
-        ),
-        updatedAt: 4
+      let durable = createSession([prompt, preamble])
+      const answeredChoice = pendingChoice({
+        status: 'completed',
+        elicitation: {
+          ...pendingChoice().elicitation!,
+          state: 'answered',
+          answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+        }
+      })
+      const selected = ['A, B', 'Quote " and newline\nend']
+      if (multiSelect) {
+        answeredChoice.elicitation!.fields[0] = {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'multi-select',
+          options: selected.map((label) => ({ label, value: label }))
+        }
+        answeredChoice.elicitation!.answers = [{ fieldId: 'question_0', value: [selected[0]] }]
       }
-      return structuredClone(revisedPrompt)
+      setActivities(durable, [answeredChoice])
+      const graph = durable.conversationGraph!
+      const frame = graph.frames[0]
+      const rootBranch = graph.branches[0]
+      graph.branches.push({
+        id: 'message-branch-intermediate',
+        agentFrameId: frame.id,
+        parentBranchId: rootBranch.id,
+        forkMessageId: preamble.id,
+        headMessageId: preamble.id,
+        createdAt: 3,
+        updatedAt: 3
+      })
+      frame.activeBranchId = 'message-branch-intermediate'
+      durable.conversationGraph = forkConversationAfterActivity(
+        graph,
+        preamble.id,
+        answeredChoice.id,
+        'message-branch-revision',
+        4
+      )
+      durable.activities = []
+      durable.status = 'idle'
+      const revisionInput = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        requestId: 'choice-1',
+        toolCallId: 'renderer-forged-revision-tool',
+        action: 'accept' as const,
+        answers: [{ fieldId: 'question_0', value: multiSelect ? selected : 'Expanded' }],
+        replacePreviousAnswer: true
+      }
+      const invalidActivityOwner = structuredClone(durable)
+      invalidActivityOwner.conversationGraph!.activities.find(
+        (activity) => activity.id === 'tool-choice-1'
+      )!.messageBranchId = 'message-branch-revision'
+      await expect(
+        createOwner(invalidActivityOwner).prepareElicitation(revisionInput)
+      ).rejects.toThrow('active Session Branch')
+
+      const appendUserMessageToInteraction = async (
+        command: Parameters<SessionPersistenceCoordinator['appendUserMessageToInteraction']>[0]
+      ): Promise<PersistedChatMessage> => {
+        const staleAuthority = structuredClone(durable)
+        staleAuthority.conversationGraph!.activities.find(
+          (activity) => activity.id === 'tool-choice-1'
+        )!.elicitation!.fields[0].label = 'Changed concurrently'
+        expect(() => command.beforePersist?.(staleAuthority)).toThrow(
+          'revision authority changed before commit'
+        )
+        command.beforePersist?.(structuredClone(durable))
+        const revisedPrompt: PersistedChatMessage = {
+          id: 'prompt-revision',
+          role: 'user',
+          content: command.content,
+          status: 'complete',
+          responseToMessageId: command.interactionId,
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+        durable = {
+          ...durable,
+          messages: [...durable.messages, revisedPrompt],
+          conversationGraph: synchronizeActiveConversationMessages(
+            durable.conversationGraph!,
+            [...durable.messages, revisedPrompt],
+            4
+          ),
+          updatedAt: 4
+        }
+        return structuredClone(revisedPrompt)
+      }
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: vi.fn(async () => structuredClone(durable)),
+        appendUserMessageToInteraction: vi.fn(appendUserMessageToInteraction)
+      })
+
+      const prepared = await owner.prepareElicitation(revisionInput)
+
+      expect(prepared.request).toMatchObject({
+        requestId: 'choice-1',
+        sessionId: 'session-1',
+        toolCallId: expect.stringMatching(/^ask-user-question-revision-/),
+        durable: { promptMessageId: 'prompt-revision' }
+      })
+      expect(prepared.request.toolCallId).not.toBe('renderer-forged-revision-tool')
+      expect(prepared.provenanceContext).toMatchObject({
+        messageBranchId: 'message-branch-revision',
+        promptMessageId: 'prompt-revision'
+      })
+      expect(durable.messages.at(-1)).toMatchObject({
+        id: 'prompt-revision',
+        responseToMessageId: 'agent-question-preamble',
+        content: expect.stringContaining(
+          multiSelect ? `Approach: ${JSON.stringify(selected)}` : 'Approach: Expanded'
+        )
+      })
     }
-    const owner = new AcpDurableContinuationContextOwner({
-      loadSessionForContinuation: vi.fn(async () => structuredClone(durable)),
-      appendUserMessageToInteraction: vi.fn(appendUserMessageToInteraction)
-    })
-
-    const prepared = await owner.prepareElicitation(revisionInput)
-
-    expect(prepared.request).toMatchObject({
-      requestId: 'choice-1',
-      sessionId: 'session-1',
-      toolCallId: expect.stringMatching(/^ask-user-question-revision-/),
-      durable: { promptMessageId: 'prompt-revision' }
-    })
-    expect(prepared.request.toolCallId).not.toBe('renderer-forged-revision-tool')
-    expect(prepared.provenanceContext).toMatchObject({
-      messageBranchId: 'message-branch-revision',
-      promptMessageId: 'prompt-revision'
-    })
-    expect(durable.messages.at(-1)).toMatchObject({
-      id: 'prompt-revision',
-      responseToMessageId: 'agent-question-preamble',
-      content: expect.stringContaining('Approach: Expanded')
-    })
-  })
+  )
 })
