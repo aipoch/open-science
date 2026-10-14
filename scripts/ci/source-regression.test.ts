@@ -76,6 +76,10 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
+    'scripts/ci/package-boundaries.test.ts',
+    'src/main/desktop-startup-recovery.test.ts',
+    'src/main/update/installation-protection.test.ts',
+    'src/main/update/deb-systemd-gate.test.ts',
     'src/main/session-diagnostics/collector.test.ts',
     'src/main/literature/smart-collections.test.ts',
     'src/main/literature/pdf-structure/owner.test.ts',
@@ -83,6 +87,12 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   ])
     expect(step.run).toContain(path)
   expect(step.run).toContain('--testNamePattern')
+  for (const name of [
+    'persisted path spelling',
+    'queued automatic inference',
+    'startup Recover settles'
+  ])
+    expect(step.run).toContain(name)
   expect(step.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
   expect(step.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
 })

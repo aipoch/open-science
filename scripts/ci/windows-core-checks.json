@@ -33,6 +33,10 @@
   },
   "windows_regressions": {
     "tests": [
+      "scripts/ci/package-boundaries.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/deb-systemd-gate.test.ts",
       "src/main/session-diagnostics/collector.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/literature/pdf-structure/owner.test.ts",
