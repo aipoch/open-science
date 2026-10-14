@@ -1,4 +1,5 @@
-import type { ReasoningEffort, ResolvedReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 
 import type { AgentFrameworkId } from '../../shared/settings'
 

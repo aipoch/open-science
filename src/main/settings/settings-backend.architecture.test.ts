@@ -879,20 +879,25 @@ describe('Settings backend ownership architecture', () => {
       )
     )
     expectBoundaryPaths(manifest, 'providers_package', [
-      'packages/providers/src/provider-registry.ts',
-      'packages/providers/src/reasoning-effort.ts',
-      'packages/providers/src/model-preference-contract.ts',
-      'packages/providers/src/provider-base-url.ts',
-      'packages/providers/src/provider-text-generation-failure.ts',
-      'packages/providers/src/base-url.ts',
-      'packages/providers/src/provider-fetch.ts',
-      'packages/providers/src/bounded-response.ts',
-      'packages/providers/src/openai-chat-usage.ts',
-      'packages/providers/src/reasoning-transport.ts',
-      'packages/providers/src/responses-request-adapter.ts',
-      'packages/providers/src/responses-response-adapter.ts',
-      'packages/providers/src/responses-protocol-types.ts',
-      'packages/providers/src/provider-text-generation.ts'
+      'packages/providers/src/providers/lookup.ts',
+      'packages/providers/src/errors.ts',
+      'packages/providers/src/protocols/endpoints.ts',
+      'packages/providers/src/transport/request.ts',
+      'packages/providers/src/transport/body.ts',
+      'packages/providers/src/protocols/usage.ts',
+      'packages/providers/src/protocols/reasoning.ts',
+      'packages/providers/src/responses/request.ts',
+      'packages/providers/src/responses/response.ts',
+      'packages/providers/src/responses/types.ts',
+      'packages/providers/src/text/generate.ts'
+    ])
+    expectBoundaryPaths(manifest, 'shared_application_contracts', [
+      'src/shared/reasoning-effort.ts',
+      'src/shared/model-preference-contract.ts',
+      'src/shared/provider-url-policy.ts',
+      'src/shared/provider-model-policy.ts',
+      'src/shared/provider-bridge-policy.ts',
+      'src/shared/provider-error.ts'
     ])
     expectBoundaryPaths(
       manifest,

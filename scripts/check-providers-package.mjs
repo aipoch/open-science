@@ -117,44 +117,56 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
 import { sep } from 'node:path'
-import * as catalog from '@aipoch/providers/catalog'
+import * as providers from '@aipoch/providers'
 import * as protocol from '@aipoch/providers/protocol'
 import * as client from '@aipoch/providers/client'
+import * as errors from '@aipoch/providers/errors'
+import * as transport from '@aipoch/providers/transport'
 const require = createRequire(import.meta.url)
-for (const [entry, esm] of Object.entries({ catalog, protocol, client })) {
-  assert.ok(realpathSync(require.resolve('@aipoch/providers/' + entry)).startsWith(realpathSync('.') + sep))
-  const cjs = require('@aipoch/providers/' + entry)
+for (const [entry, esm] of Object.entries({ '': providers, '/protocol': protocol, '/client': client, '/errors':errors, '/transport':transport })) {
+  assert.ok(realpathSync(require.resolve('@aipoch/providers' + entry)).startsWith(realpathSync('.') + sep))
+  const cjs = require('@aipoch/providers' + entry)
   for (const key of Object.keys(cjs)) assert.equal(cjs[key], (esm as Record<string, unknown>)[key])
 }
-for (const entry of ['', '/package.json', '/dist/client.js', '/src/provider-registry', '/provider-text-generation']) {
+for (const entry of ['/providers', '/catalog', '/package.json', '/dist/client.js', '/src/provider-registry', '/provider-text-generation']) {
   assert.throws(() => require('@aipoch/providers' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
   await assert.rejects(import('@aipoch/providers' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
 }
-assert.equal(catalog.getOfficialVendor('openai')?.id, 'openai')
-assert.equal(catalog.isSecureProviderUrl(new URL('http://example.test')), false)
+assert.equal(providers.getOfficialVendor('openai')?.id, 'openai')
+assert.equal(transport.isSecureProviderUrl(new URL('http://example.test')), false)
 assert.equal(protocol.openAiChatCompletionsUrl({ baseUrl: 'https://example.test/proxy' }), 'https://example.test/proxy/v1/chat/completions')
-assert.equal(protocol.responsesToChatRequest({input:'Hello'}, 'model').model, 'model')
+assert.equal(protocol.convertResponsesRequest({body:{input:'Hello'}, model:'model'}).model, 'model')
 assert.deepEqual(protocol.normalizeOpenAiChatModelStepUsage({prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: {cached_tokens: 3}}), {inputTokens:7,cacheTokens:3,cachedReadTokens:3,cachedWriteTokens:0,outputTokens:2})
-const target: client.ProviderTextGenerationTarget = {providerId:'local',model:'m',provider:{type:'custom',baseUrl:'http://127.0.0.1:9090',apiEndpoints:['openai']}}
-const service = new client.ProviderTextGenerationService(async (url, init) => {
+const target: client.ProviderTextGenerationTarget = {protocol:'openai',model:'m',url:'http://127.0.0.1:9090/v1/chat/completions'}
+const service = client.createTextGenerationClient(async (url, init) => {
   assert.equal(url, 'http://127.0.0.1:9090/v1/chat/completions'); assert.equal(init?.redirect,'manual')
   return Response.json({choices:[{finish_reason:'stop',message:{content:'Installed consumer'}}]})
 })
 assert.deepEqual(await service.run({target,systemPrompt:'Answer',prompt:'Hello',signal:new AbortController().signal,maxOutputTokens:16,outputLimitBytes:1024}),{text:'Installed consumer',stopReason:'end_turn'})
-assert.equal(client.providerTextGenerationTargetKey(target).length,64)
+const adapter = protocol.createResponsesAdapter()
+const turn=adapter.prepare({scope:'a',body:{input:'Hello',stream:false}})
+const result=await (await turn.convert(Response.json({id:'installed',model:'m',choices:[{finish_reason:'stop',message:{content:'Answer',reasoning_content:'private'}}]}))).json()
+assert.equal(result.output[0].content[0].text,'Answer')
+assert.equal(adapter.prepare({scope:'a',body:{input:result.output}}).request.messages[0].reasoning_content,'private')
+assert.equal(adapter.prepare({scope:'b',body:{input:result.output}}).request.messages[0].reasoning_content,undefined)
+adapter.clear()
+assert.equal(adapter.prepare({scope:'a',body:{input:result.output}}).request.messages[0].reasoning_content,undefined)
+adapter.dispose()
+assert.throws(()=>adapter.prepare({body:{input:'hello'}}),/disposed/)
+assert.equal(typeof errors.providerTextGenerationFailure, 'function')
 const body = new Response('bounded')
-assert.equal(await protocol.readBoundedResponseText(body, 32, 'consumer'), 'bounded')
+assert.equal(await transport.readBoundedResponseText(body, 32, 'consumer'), 'bounded')
 console.log('PASS installed providers CJS/ESM identities, exports, types, protocol and client')
 `
   )
   writeFileSync(
     join(consumer, 'consumer.cts'),
     `
-import catalog = require('@aipoch/providers/catalog')
+import providers = require('@aipoch/providers')
 import protocol = require('@aipoch/providers/protocol')
 import client = require('@aipoch/providers/client')
-const endpoint: catalog.ChatApiEndpoint = 'openai'
-const config: client.ProviderTextGenerationConfiguration = { type:'custom', apiEndpoints:[endpoint] }
+const endpoint: providers.ChatApiEndpoint = 'openai'
+const config: client.ProviderTextGenerationTarget = { protocol:endpoint, model:'m',url:'https://example.test/v1/chat/completions' }
 const usage: protocol.ProviderTokenUsage = {inputTokens:1,cacheTokens:0,outputTokens:2}
 void config; void usage
 `
@@ -176,7 +188,7 @@ void config; void usage
   )
   writeFileSync(
     join(consumer, 'browser.mjs'),
-    `import { getOfficialVendor, providerTextGenerationFailure, resolveReasoningEffortValue } from '@aipoch/providers/catalog'; globalThis.providerCatalog = {getOfficialVendor,providerTextGenerationFailure,resolveReasoningEffortValue};`
+    `import { getOfficialVendor, getVendorModelReasoningCapability } from '@aipoch/providers'; import { providerTextGenerationFailure } from '@aipoch/providers/errors'; import { isSecureProviderUrl } from '@aipoch/providers/transport'; globalThis.providerDefinitions = {getOfficialVendor,providerTextGenerationFailure,getVendorModelReasoningCapability}; if(!isSecureProviderUrl(new URL('https://example.test')))throw new Error('Browser transport URL helper failed');`
   )
   run(
     [

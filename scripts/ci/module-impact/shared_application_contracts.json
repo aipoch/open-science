@@ -161,7 +161,17 @@
     "src/shared/runtime-payload-client.test.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
-    "src/shared/runtime-startup.ts"
+    "src/shared/runtime-startup.ts",
+    "src/shared/model-preference-contract.ts",
+    "src/shared/provider-bridge-policy.ts",
+    "src/shared/provider-error.ts",
+    "src/shared/provider-model-policy.test.ts",
+    "src/shared/provider-model-policy.ts",
+    "src/shared/provider-presentation-policy.test.ts",
+    "src/shared/provider-url-policy.ts",
+    "src/shared/reasoning-effort-presets.test.ts",
+    "src/shared/reasoning-effort.test.ts",
+    "src/shared/reasoning-effort.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -243,7 +253,13 @@
     "src/shared/runtime-payload-transfer.ts",
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
-    "src/shared/runtime-startup.ts"
+    "src/shared/runtime-startup.ts",
+    "src/shared/model-preference-contract.ts",
+    "src/shared/provider-bridge-policy.ts",
+    "src/shared/provider-error.ts",
+    "src/shared/provider-model-policy.ts",
+    "src/shared/provider-url-policy.ts",
+    "src/shared/reasoning-effort.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -294,7 +310,11 @@
       "src/shared/pdf-text.test.ts",
       "src/shared/pdf-translation.test.ts",
       "src/shared/runtime-payload-client.test.ts",
-      "src/shared/session-event-hydrator.test.ts"
+      "src/shared/session-event-hydrator.test.ts",
+      "src/shared/provider-model-policy.test.ts",
+      "src/shared/provider-presentation-policy.test.ts",
+      "src/shared/reasoning-effort-presets.test.ts",
+      "src/shared/reasoning-effort.test.ts"
     ],
     "contract": [],
     "consumer": [

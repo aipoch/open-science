@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 import {
   isAppIconVariant,

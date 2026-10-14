@@ -1,11 +1,11 @@
 import { z } from 'zod'
+import { type ReasoningEffort } from '../../shared/model-preference-contract'
 import {
-  type ReasoningEffort,
   usesVendorAnthropicApiKeyHeader,
-  resolveReasoningEffortValue,
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
+import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
 
 import {
   canUseClaudeProviderTransport,

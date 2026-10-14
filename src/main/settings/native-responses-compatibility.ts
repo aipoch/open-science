@@ -8,6 +8,10 @@ import {
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 import {
+  normalizeOpenAiChatModelStepUsage,
+  type ResponsesBridgeNamespacedTool
+} from '@aipoch/providers/protocol'
+import {
   consumeBoundedResponseBody,
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
@@ -15,10 +19,8 @@ import {
   readBoundedResponseBytes,
   readBoundedResponseText,
   ResponseBodyLimitError,
-  normalizeOpenAiChatModelStepUsage,
-  fetchProviderRequest,
-  type ResponsesBridgeNamespacedTool
-} from '@aipoch/providers/protocol'
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
 
 import {
   DeterministicProviderErrorReplay,

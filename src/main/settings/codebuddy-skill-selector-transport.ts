@@ -1,4 +1,4 @@
-import type { ModelReasoningEffort } from '@aipoch/providers/catalog'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { openAiCompletionsBase } from '@aipoch/providers/protocol'
 import type { ProviderRuntimeTarget } from './provider-accounts'

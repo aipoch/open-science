@@ -1,0 +1,110 @@
+import { fetchProviderRequest } from '../transport/request'
+import { readBoundedResponseText, ResponseBodyLimitError } from '../transport/body'
+import { ProviderTextGenerationError, providerErrorDetails, providerHttpFailure } from '../errors'
+import { openaiTextCodec } from '../protocols/openai-chat'
+import { responsesTextCodec } from '../protocols/openai-responses'
+import { anthropicTextCodec } from '../protocols/anthropic-messages'
+import type { ProviderTextGenerationRequest, TextCodec } from '../protocols/text-types'
+
+const codecs = {
+  openai: openaiTextCodec,
+  responses: responsesTextCodec,
+  anthropic: anthropicTextCodec
+} satisfies Record<string, TextCodec>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export function createTextGenerationClient(fetchImpl: typeof fetch = globalThis.fetch): {
+  run(input: ProviderTextGenerationRequest): Promise<{ text: string; stopReason: 'end_turn' }>
+} {
+  return {
+    async run(input) {
+      input.signal.throwIfAborted()
+      const target = input.target
+      const codec = codecs[target.protocol]
+      if (!codec || !target.model || !target.url)
+        throw new ProviderTextGenerationError(
+          'unsupported-target',
+          'Text generation is unavailable.'
+        )
+      if (
+        !Number.isSafeInteger(input.maxOutputTokens) ||
+        input.maxOutputTokens <= 0 ||
+        !Number.isSafeInteger(input.outputLimitBytes) ||
+        input.outputLimitBytes <= 0 ||
+        (target.maxOutputTokens !== undefined &&
+          (!Number.isSafeInteger(target.maxOutputTokens) || target.maxOutputTokens <= 0))
+      )
+        throw new ProviderTextGenerationError('invalid-request', 'Invalid text generation limits.')
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        ...(target.protocol === 'anthropic'
+          ? {
+              'anthropic-version': '2023-06-01',
+              ...(target.key ? { 'x-api-key': target.key } : {})
+            }
+          : target.key
+            ? { authorization: 'Bearer ' + target.key }
+            : {})
+      }
+      let response: Response
+      let raw: string
+      try {
+        response = await fetchProviderRequest(fetchImpl, target.url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(codec.encode(input)),
+          signal: input.signal
+        })
+        // Preserve complete billing already received before caller cancellation. The injected
+        // fetch owns network cancellation; the bounded payload is accounted before throwing.
+        raw = await readBoundedResponseText(
+          response,
+          input.outputLimitBytes,
+          'Provider text response'
+        )
+      } catch (error) {
+        input.signal.throwIfAborted()
+        if (error instanceof ResponseBodyLimitError) throw error
+        throw new ProviderTextGenerationError(
+          'network-error',
+          providerErrorDetails(error, [target.key ?? '']),
+          undefined,
+          { kind: 'network' }
+        )
+      }
+      let payload: unknown
+      try {
+        payload = JSON.parse(raw)
+      } catch {
+        /* Invalid JSON follows the same bounded answer validation below. */
+      }
+      const usage = codec.usage(isRecord(payload) ? payload.usage : undefined)
+      if (usage) input.onUsage?.(usage)
+      input.signal.throwIfAborted()
+      if (!response.ok)
+        throw new ProviderTextGenerationError(
+          'http-error',
+          `Provider returned HTTP ${response.status}.\n${providerErrorDetails(isRecord(payload) && payload.error !== undefined ? JSON.stringify(payload.error, null, 2) : raw, [target.key ?? ''])}`,
+          response.status,
+          providerHttpFailure(
+            response.status,
+            isRecord(payload) && isRecord(payload.error)
+              ? String(payload.error.code ?? payload.error.type ?? '')
+              : undefined
+          )
+        )
+      let text: string
+      try {
+        text = codec.text(payload)
+        if (!text.trim()) throw new Error('Empty output')
+      } catch {
+        throw new ProviderTextGenerationError(
+          'incomplete-output',
+          'The model did not return a complete text response.'
+        )
+      }
+      return { text: text.trim(), stopReason: 'end_turn' }
+    }
+  }
+}

@@ -2,7 +2,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { Buffer } from 'node:buffer'
 
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   findFirstSessionDetailsMessage,
   formatFallbackSessionDetails,

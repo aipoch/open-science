@@ -1,17 +1,13 @@
 {
   "name": "@aipoch/providers",
   "version": "0.1.0",
-  "description": "Provider catalog, protocol conversion and bounded direct text generation",
+  "description": "Provider definitions, protocol conversion and bounded direct text generation",
   "license": "Apache-2.0",
   "type": "commonjs",
   "engines": {
     "node": ">=22.13.0"
   },
   "exports": {
-    "./catalog": {
-      "types": "./dist/catalog.d.ts",
-      "default": "./dist/catalog.js"
-    },
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
@@ -19,6 +15,18 @@
     "./client": {
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    ".": {
+      "types": "./dist/providers.d.ts",
+      "default": "./dist/providers.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./transport": {
+      "types": "./dist/transport.d.ts",
+      "default": "./dist/transport.js"
     }
   },
   "files": [

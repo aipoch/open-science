@@ -2,7 +2,7 @@ import type {
   OfficialVendorId,
   CustomReasoningEffortTransport,
   ModelReasoningEffort
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
 
 import type { ProviderFailureObserver } from './provider-failure-observation'
 import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'

@@ -31,7 +31,8 @@ it('injects host network policy into the package text client at the composition 
   expect(
     imports.some(
       (statement) =>
-        statement.moduleSpecifier.getText(source) === "'@aipoch/providers/client'" &&
+        statement.moduleSpecifier.getText(source) ===
+          "'../literature/pdf-translation/text-generation'" &&
         statement.importClause?.getText(source).includes('ProviderTextGenerationService')
     )
   ).toBe(true)

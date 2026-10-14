@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { capturePdfTranslationApiTarget } from './api-target'
-import { ProviderTextGenerationService } from '@aipoch/providers/client'
+import { ProviderTextGenerationService } from './text-generation'
 vi.mock('electron', () => ({ net: {} }))
 import type { SettingsSnapshot, ProviderView } from '../../../shared/settings'
 

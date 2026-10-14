@@ -4,10 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  getOfficialVendorModelIds,
-  resolveVendorModelApiEndpoints
-} from '@aipoch/providers/catalog'
+import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'

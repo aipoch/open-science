@@ -1,5 +1,5 @@
 import type { AgentUserChoicePrompt } from './elicitation'
-import type { ResolvedReasoningEffort } from '@aipoch/providers/catalog'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { AgentFrameworkId } from './settings'
 
 export type DelegatedWorkAttemptStatus = 'running' | 'completed' | 'cancelled' | 'error'

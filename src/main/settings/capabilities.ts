@@ -1,5 +1,5 @@
 import type { PackageMirror } from '../../shared/mirror'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'

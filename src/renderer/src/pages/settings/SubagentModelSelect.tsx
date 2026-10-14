@@ -16,11 +16,11 @@ import {
   parseConfiguredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
-  type ReasoningEffort,
   projectReasoningEffortIntent,
   resolveReasoningEffortControl
-} from '@aipoch/providers/catalog'
+} from '../../../../shared/reasoning-effort'
 import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
 
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'

@@ -29,7 +29,7 @@ import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
-import { resolveReasoningEffortControl } from '@aipoch/providers/catalog'
+import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
 import { incompatibilityReason, modelUnavailableReason } from './composer-model-picker-utils'
 
 const triggerClassName =

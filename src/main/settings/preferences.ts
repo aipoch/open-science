@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   getDefaultPermissionProfile,
   type PermissionProfileId

@@ -6,31 +6,17 @@ export {
   appendChatCompletions,
   openAiCompletionsBase,
   openAiChatCompletionsUrl
-} from './base-url'
-export { fetchProviderRequest } from './provider-fetch'
-export {
-  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-  DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
-  DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
-  ResponseBodyLimitError,
-  consumeBoundedResponseBody,
-  readBoundedResponseBytes,
-  readBoundedResponseText
-} from './bounded-response'
-export { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
-export type { ProviderTokenUsage } from './openai-chat-usage'
-export { resolveChatReasoningTransport } from './reasoning-transport'
-export type { ChatReasoningTransport } from './reasoning-transport'
-export { inputToMessages, toolsToChat, responsesToChatRequest } from './responses-request-adapter'
-export type { ResponsesRequestAdapterOptions } from './responses-request-adapter'
-export {
-  ResponsesProtocolError,
-  upstreamErrorMessage,
-  completionToResponse,
-  streamChatToResponses
-} from './responses-response-adapter'
-export type { ResponsesStreamWriter } from './responses-response-adapter'
+} from './protocols/endpoints'
+export { normalizeOpenAiChatModelStepUsage } from './protocols/usage'
+export type { ProviderTokenUsage } from './protocols/usage'
+export { resolveChatReasoningTransport } from './protocols/reasoning'
+export type { ChatReasoningTransport } from './protocols/reasoning'
+export { createResponsesAdapter, convertResponsesRequest } from './responses/adapter'
 export type {
-  ResponsesReplyReasoning,
-  ResponsesBridgeNamespacedTool
-} from './responses-protocol-types'
+  ResponsesAdapterOptions,
+  ResponsesTurnInput,
+  ResponsesTurn,
+  ResponsesAdapter
+} from './responses/adapter'
+export { ResponsesProtocolError, upstreamErrorMessage } from './responses/response'
+export type { ResponsesBridgeNamespacedTool } from './responses/types'

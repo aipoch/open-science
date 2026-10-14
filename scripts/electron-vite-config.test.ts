@@ -35,7 +35,7 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/connector-mcp-client/oauth-redirect',
         '@aipoch/compute',
         '@aipoch/diagnostics',
-        '@aipoch/providers/catalog',
+        '@aipoch/providers',
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
         '@aipoch/environment/contracts',
@@ -56,7 +56,7 @@ describe('electron-vite renderer dependency optimization', () => {
       ]
     })
     expect(webConfig.optimizeDeps?.include).toContain('@aipoch/compute')
-    expect(webConfig.optimizeDeps?.include).toContain('@aipoch/providers/catalog')
+    expect(webConfig.optimizeDeps?.include).toContain('@aipoch/providers')
     expect(resolvedConfig.renderer?.optimizeDeps).toBeUndefined()
     expect(dev.renderer?.build).toEqual(resolvedConfig.renderer?.build)
     expect(dev.renderer?.worker).toEqual(resolvedConfig.renderer?.worker)
@@ -168,8 +168,8 @@ describe('linked Providers package browser consumption', () => {
             load: (id) =>
               normalizePath(id) === normalizePath(entry)
                 ? `
-          import { getOfficialVendor, resolveReasoningEffortValue, reasoningEffortProfile } from '@aipoch/providers/catalog'
-          export const actual = [getOfficialVendor('openai').id, resolveReasoningEffortValue('max', reasoningEffortProfile('none-high'))]
+          import { getOfficialVendor, getVendorModelReasoningCapability } from '@aipoch/providers'
+          export const actual = [getOfficialVendor('openai').id, getVendorModelReasoningCapability('openai', 'gpt-6.1-sol').values[2]]
         `
                 : undefined
           }

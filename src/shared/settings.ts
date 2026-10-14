@@ -12,13 +12,14 @@ import type {
 } from '@aipoch/skills/document'
 import {
   type ChatApiEndpoint,
-  type ReasoningEffort,
-  customProviderRequiresKey,
   type OfficialVendorId,
-  type CustomReasoningEffortTransport,
-  type ReasoningEffortPresetSetting
-} from '@aipoch/providers/catalog'
-export type { ChatApiEndpoint, ReasoningEffort } from '@aipoch/providers/catalog'
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { type ReasoningEffort } from './model-preference-contract'
+import { customProviderRequiresKey } from './provider-url-policy'
+import { type ReasoningEffortPresetSetting } from './reasoning-effort'
+export type { ChatApiEndpoint } from '@aipoch/providers'
+export type { ReasoningEffort } from './model-preference-contract'
 
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //

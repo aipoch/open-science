@@ -13,7 +13,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
-import type { ModelReasoningEffort } from '@aipoch/providers/catalog'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import {
   anthropicMessagesBase,
   openAiCompletionsBase,

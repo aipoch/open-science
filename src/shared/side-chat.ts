@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineApplicationCommandContract } from './application-command-contract'
 import type { PersistedConversationGraph } from './conversation-graph'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from './model-preference-contract'
 import { isReasoningEffort } from './settings'
 import type { SideChatEntry } from './side-chat-entry-contract'
 export { type SideChatEntry } from './side-chat-entry-contract'

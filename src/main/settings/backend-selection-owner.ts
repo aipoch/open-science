@@ -1,8 +1,6 @@
-import {
-  type ReasoningEffort,
-  resolveReasoningEffortValue,
-  type ResolvedReasoningEffort
-} from '@aipoch/providers/catalog'
+import { type ReasoningEffort } from '../../shared/model-preference-contract'
+import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
+import { type ResolvedReasoningEffort } from '@aipoch/providers'
 
 import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
 import { DEFAULT_REASONING_EFFORT } from '../../shared/settings'

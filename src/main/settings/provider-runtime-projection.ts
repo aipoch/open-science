@@ -1,18 +1,20 @@
 import {
   type ChatApiEndpoint,
-  getCustomProviderBaseUrlError,
-  defaultVendorModel,
-  getOfficialVendorModelIds,
-  isModelBridgeSupported,
   isVendorModelMultimodal,
-  resolveCustomModelContextWindow,
-  resolveModelContextWindow,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl,
-  resolveVendorResponsesBaseUrl,
-  type ReasoningEffortProfile
-} from '@aipoch/providers/catalog'
+  resolveVendorResponsesBaseUrl
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  getOfficialVendorModelIds,
+  resolveCustomModelContextWindow,
+  resolveModelContextWindow
+} from '../../shared/provider-model-policy'
+import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
+import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
 
 import {
   resolveProviderEffectiveModel,
