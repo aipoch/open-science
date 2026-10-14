@@ -2053,8 +2053,8 @@ class AcpRuntimeCoordinator {
   private admissionClosedError(reason: 'quit' | 'settling'): Error {
     return new Error(
       reason === 'quit'
-        ? 'ACP prompt admission is closed because the app is quitting.'
-        : 'ACP prompt admission is paused while a shutdown or update check finishes.'
+        ? 'Open-Science is quitting, so new messages cannot be sent.'
+        : 'Open-Science is finishing a background cleanup. Try sending again in a moment.'
     )
   }
 

@@ -6724,7 +6724,7 @@ describe('bounded ACP admission fences', () => {
       })
       void shutdown.runForUpdateGate(10_000)
       await vi.advanceTimersByTimeAsync(5_000)
-      await expect(coordinator.createSession()).rejects.toThrow('admission is paused')
+      await expect(coordinator.createSession()).rejects.toThrow('finishing a background cleanup')
     } finally {
       await vi.advanceTimersByTimeAsync(60_000)
       vi.useRealTimers()
