@@ -76,6 +76,7 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
+    'src/main/database/migration-service.test.ts',
     'scripts/ci/package-boundaries.test.ts',
     'src/main/desktop-startup-recovery.test.ts',
     'src/main/update/installation-protection.test.ts',
@@ -88,6 +89,7 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
     expect(step.run).toContain(path)
   expect(step.run).toContain('--testNamePattern')
   for (const name of [
+    'fills derived literature text',
     'persisted path spelling',
     'queued automatic inference',
     'startup Recover settles'

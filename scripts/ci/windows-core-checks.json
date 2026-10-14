@@ -33,6 +33,7 @@
   },
   "windows_regressions": {
     "tests": [
+      "src/main/database/migration-service.test.ts",
       "scripts/ci/package-boundaries.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/update/installation-protection.test.ts",

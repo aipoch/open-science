@@ -68,6 +68,8 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
 
 export function windowsTestShard(path: string): number {
   const normalized = path.replaceAll('\\', '/')
+  // Run 38536308322: this 14-minute suite pushed shard 2 past 60 minutes; shard 5 used 16.
+  if (normalized === 'src/main/database/migration-service.test.ts') return 5
   const group = WINDOWS_TEST_MODULE_GROUPS.findIndex((prefixes) =>
     prefixes.some((prefix) => normalized.startsWith(prefix))
   )
