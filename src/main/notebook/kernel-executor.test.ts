@@ -4814,8 +4814,12 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       }
       const ledger = join(cwdDir, 'runtime', 'kernel-processes')
       try {
-        await executor.execute({ ...request, code: "console.log('warm')" })
-        const [oldReceipt] = await readdir(ledger)
+        await expect(
+          executor.execute({ ...request, code: "console.log('warm')" })
+        ).resolves.toMatchObject({ status: 'completed', stdout: expect.stringContaining('warm') })
+        const receipts = await readdir(ledger)
+        expect(receipts).toHaveLength(1)
+        const [oldReceipt] = receipts
         await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
         await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
         expect(await readdir(ledger)).toEqual([oldReceipt])
