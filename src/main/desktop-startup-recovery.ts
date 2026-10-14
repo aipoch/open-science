@@ -29,6 +29,19 @@ export class DesktopRuntimeStartupError extends Error {
     this.name = 'DesktopRuntimeStartupError'
   }
 
+  withRetryDiagnostics(diagnostics: string): DesktopRuntimeStartupError {
+    return new DesktopRuntimeStartupError(
+      {
+        ...this.issue,
+        diagnostics
+      },
+      'Startup recovery was not confirmed.',
+      () => this.stopAndContinue(),
+      () => this.recover(),
+      this.startupOptions
+    )
+  }
+
   async recover(): Promise<void> {
     if (!this.issue.canRecover || !this.recheck) throw this
     await this.recheck()

@@ -219,3 +219,29 @@ it('offers an available retry when stopping is unsupported', async () => {
   expect(stop).not.toHaveBeenCalled()
   expect(document.querySelector('[data-testid="runtime-startup-confirmation-S17"]')).toBeNull()
 })
+
+it('keeps confirmation and retry available after a modern stop returns a diagnosed failure', async () => {
+  await render()
+  const blocked: RuntimeStartupState = {
+    phase: 'blocked',
+    issue: {
+      reason: 'version-mismatch',
+      desktopVersion: '2',
+      canStop: true,
+      canRecover: false,
+      diagnostics: 'Shutdown was not accepted.'
+    }
+  }
+  stop.mockResolvedValueOnce(blocked)
+  await click('Continue')
+  await click('Continue')
+  expect(document.body.textContent).toContain('The app could not be checked. Try again.')
+  expect(document.querySelector('[data-testid="workspace"]')).toBeNull()
+  stop.mockResolvedValueOnce({ phase: 'ready' })
+  await click('Continue')
+  expect(stop).toHaveBeenCalledOnce()
+  expect(document.querySelector('[data-testid="runtime-startup-confirmation-S17"]')).not.toBeNull()
+  await click('Continue')
+  expect(stop).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
+})
