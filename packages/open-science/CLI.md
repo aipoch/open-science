@@ -250,8 +250,8 @@ Use the installation channel that owns the CLI: Homebrew for a Formula, the new 
 package for deb/rpm or a local npm tarball, or a verified new Release archive in a new directory
 with PATH/the symlink updated. npm registry publication remains deferred.
 The desktop update UI discovers and downloads packages. Automatic replacement remains closed for
-macOS ZIP, Windows NSIS, Linux AppImage and Debian until each channel passes complete installed-package
-acceptance; artifact checks and same-version copy tests do not certify a cross-version upgrade.
+macOS ZIP, Linux AppImage and Debian until each channel passes complete installed-package
+acceptance. Windows automatic installation remains disabled; artifact checks and same-version copy tests do not certify a cross-version upgrade.
 For an accepted channel, use the desktop application's native update UI. A Desktop
 that adopts an orphaned Desktop-launched Runtime can stop it through the normal update gate.
 For a CLI-launched service, explicitly confirm stopping the service and switching to Desktop;

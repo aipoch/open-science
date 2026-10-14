@@ -297,8 +297,9 @@ Data-root handoff retains the existing task/persistence gates. Relaunch requires
 exit and the matching clean record; missing/failed evidence enters recovery rather than installation.
 
 Production automatic replacement is gated by `src/main/update/channel-certification.ts`.
-The macOS ZIP, Windows per-user NSIS, Linux stable-name AppImage and Linux Debian entries are
-currently closed pending complete native installed-package acceptance. Downloads and update status
+The macOS ZIP, Linux stable-name AppImage and Linux Debian entries are
+currently closed pending complete native installed-package acceptance. Windows automatic installation
+is not implemented in this change and remains disabled. Downloads and update status
 remain available; attempting installation fails before the Runtime stop gate. There is no user
 environment-variable override and no automatic fallback to a manual installer. Isolated acceptance
 fixtures can supply evidence directly to the source API. Enabling a production entry requires a

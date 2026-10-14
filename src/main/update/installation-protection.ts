@@ -54,7 +54,7 @@ export type InstallationUpdateRecord = {
   stoppedClean?: boolean
   preparedDebGate?: DebSystemdGate
   executor?: {
-    channel: 'supervised-mac' | 'supervised-appimage' | 'supervised-nsis' | 'supervised-deb'
+    channel: 'supervised-mac' | 'supervised-appimage' | 'supervised-deb'
     directory: string
     requestSha256: string
   }

@@ -28,7 +28,7 @@ import {
   session
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
@@ -41,7 +41,6 @@ import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
   prepareSupervisedAppImageInstallation,
-  prepareSupervisedNsisInstallation,
   prepareSupervisedDebInstallation,
   launchPreparedMacInstaller,
   type PreparedMacInstallation
@@ -1231,8 +1230,8 @@ async function startDesktop(): Promise<void> {
       }
       if (
         status.artifactSha512 &&
-        (process.platform === 'win32' ||
-          (process.platform === 'linux' && status.localPath.toLowerCase().endsWith('.deb')))
+        process.platform === 'linux' &&
+        status.localPath.toLowerCase().endsWith('.deb')
       ) {
         if (preparedMacInstallation) {
           await discardPreparedMacInstallation(preparedMacInstallation)
@@ -1247,21 +1246,7 @@ async function startDesktop(): Promise<void> {
           currentExecutable: process.execPath,
           signal
         }
-        preparedMacInstallation =
-          process.platform === 'win32'
-            ? await prepareSupervisedNsisInstallation({
-                ...installerOptions,
-                nativeBinding: join(
-                  dirname(dirname(dirname(backendPaths.entry))),
-                  'node_modules',
-                  '@aipoch',
-                  'process-tree-native',
-                  'build',
-                  'Release',
-                  'process_tree_native.node'
-                )
-              })
-            : await prepareSupervisedDebInstallation(installerOptions)
+        preparedMacInstallation = await prepareSupervisedDebInstallation(installerOptions)
         return preparedMacInstallation.manifest
       }
       throw new UpdateLifecycleError(

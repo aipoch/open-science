@@ -189,19 +189,6 @@ napi_value ExitCode(napi_env env, napi_callback_info info) {
   }
   napi_value result; napi_get_null(env, &result); return result;
 }
-// Non-destructive settlement proof. Missing or inaccessible Job is unknown, never empty.
-napi_value ActiveProcesses(napi_env env, napi_callback_info info) {
-  napi_value args[1]; std::wstring name;
-  if (!Arguments(env, info, 1, args) || !Text(env, args[0], name) || !JobName(name)) {
-    napi_throw_type_error(env, nullptr, "Invalid owned Job name"); return nullptr;
-  }
-  Handle job; job.value = OpenJobObjectW(JOB_OBJECT_QUERY, FALSE, name.c_str());
-  JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
-  if (!job.value || !QueryInformationJobObject(job.value, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr)) {
-    napi_value result; napi_get_null(env, &result); return result;
-  }
-  return Number(env, accounting.ActiveProcesses);
-}
 napi_value Reap(napi_env env, napi_callback_info info) {
   napi_value args[1]; std::wstring name;
   if (!Arguments(env, info, 1, args) || !Text(env, args[0], name) || !JobName(name)) {
@@ -228,9 +215,8 @@ void RegisterWindowsOwnedProcess(napi_env env, napi_value exports) {
   napi_property_descriptor functions[] = {
     {"spawnWindowsOwnedProcess", nullptr, Spawn, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsOwnedProcessExitCode", nullptr, ExitCode, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"reapWindowsOwnedJob", nullptr, Reap, nullptr, nullptr, nullptr, napi_default, nullptr},
-    {"windowsOwnedJobActiveProcesses", nullptr, ActiveProcesses, nullptr, nullptr, nullptr, napi_default, nullptr}
+    {"reapWindowsOwnedJob", nullptr, Reap, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
-  napi_define_properties(env, exports, 4, functions);
+  napi_define_properties(env, exports, 3, functions);
 #endif
 }

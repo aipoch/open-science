@@ -164,82 +164,6 @@ export async function inspectDebUpdateArtifact(
   }
 }
 
-/** NSIS embeds a prebuilt app archive and a signed uninstaller; neither is executed here. */
-export async function inspectNsisUpdateArtifact(
-  archive: string,
-  targetVersion: string,
-  sevenZip: string,
-  signal?: AbortSignal
-): Promise<InstallationManifest> {
-  const { cp, mkdir } = installationFs.promises
-  const directory = await mkdtemp(join(tmpdir(), 'open-science-nsis-'))
-  const outer = join(directory, 'installer'),
-    payload = join(directory, 'application')
-  const run = (args: string[]): ReturnType<typeof runVerificationProcess> =>
-    runVerificationProcess(sevenZip, args, { signal, cwd: directory })
-  async function safeExtract(source: string, target: string): Promise<void> {
-    const listing = await run(['l', '-slt', '--', source])
-    const paths = listing.stdout
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('Path = '))
-      .slice(1)
-      .map((line) => line.slice(7))
-    if (
-      !paths.length ||
-      paths.some(
-        (path) => /^(?:[/\\]|[A-Za-z]:)/.test(path) || path.split(/[/\\]/).includes('..')
-      ) ||
-      /^(?:Symbolic Link|Hard Link) = .+/m.test(listing.stdout)
-    )
-      throw new UpdateLifecycleError(
-        'install-failed',
-        'The installer contains unsafe archive paths.'
-      )
-    await run(['x', '-y', `-o${target}`, '--', source])
-  }
-  try {
-    await safeExtract(archive, outer)
-    const archives: string[] = []
-    async function find(directory: string): Promise<void> {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const path = join(directory, entry.name)
-        if (entry.isDirectory()) await find(path)
-        else if (/^app-(?:64|arm64)\.7z$/.test(entry.name)) archives.push(path)
-      }
-    }
-    await find(outer)
-    const selected = archives.filter((path) =>
-      path.endsWith(process.arch === 'arm64' ? 'app-arm64.7z' : 'app-64.7z')
-    )
-    if (selected.length !== 1)
-      throw new UpdateLifecycleError(
-        'install-failed',
-        'The installer does not contain exactly one matching application payload.'
-      )
-    await mkdir(payload)
-    await safeExtract(selected[0], payload)
-    // electron-builder installer.nsh copies this prebuilt, signed binary alongside the payload.
-    const uninstallers = (await readdir(outer)).filter((name) => /^Uninstall .+\.exe$/i.test(name))
-    if (uninstallers.length !== 1)
-      throw new UpdateLifecycleError(
-        'install-failed',
-        'The installer uninstaller could not be verified.'
-      )
-    await cp(join(outer, uninstallers[0]), join(payload, uninstallers[0]))
-    for (const name of await readdir(outer))
-      if (name === 'uninstallerIcon.ico') await cp(join(outer, name), join(payload, name))
-    if ((await readPackagedVersion(payload)) !== targetVersion)
-      throw new UpdateLifecycleError(
-        'install-failed',
-        'The Windows application version differs from the offered update.'
-      )
-    return await captureInstallationManifestAsync(payload, targetVersion, signal)
-  } finally {
-    if (verificationDirectoryIsSettled(directory))
-      await rm(directory, { recursive: true, force: true })
-  }
-}
-
 export async function inspectUpdateArtifact(options: {
   archive: string
   targetVersion: string
@@ -247,7 +171,6 @@ export async function inspectUpdateArtifact(options: {
   sha512?: string
   signal?: AbortSignal
   platform?: NodeJS.Platform
-  sevenZip?: string
 }): Promise<InstallationManifest> {
   const platform = options.platform ?? process.platform
   const signal = options.signal
@@ -275,20 +198,7 @@ export async function inspectUpdateArtifact(options: {
       options.installationRoot,
       signal
     )
-  if (platform === 'win32' && options.archive.toLowerCase().endsWith('.exe')) {
-    const { access } = installationFs.promises
-    const sevenZip =
-      options.sevenZip ?? join(process.env.ProgramFiles ?? 'C:\\Program Files', '7-Zip', '7z.exe')
-    try {
-      await access(sevenZip)
-    } catch {
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Automatic verification requires the 7-Zip archive reader. Keep the download and update using the original installer.'
-      )
-    }
-    return inspectNsisUpdateArtifact(options.archive, options.targetVersion, sevenZip, signal)
-  }
+
   throw new UpdateLifecycleError(
     'installation-busy',
     'This package format requires its original installation channel.'
