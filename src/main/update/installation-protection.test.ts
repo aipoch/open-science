@@ -94,7 +94,7 @@ beforeEach(() => {
   )
 })
 afterEach(() => {
-  vi.mocked(installationFs.promises.realpath).mockReset()
+  vi.mocked(installationFs.promises.realpath).mockReset().mockImplementation(realpath)
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
