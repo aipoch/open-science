@@ -711,26 +711,6 @@ describe('PR Gate workflow', () => {
     }
   })
 
-  it('runs the dependency-free change-impact guard in every policy job', () => {
-    const policy = workflow.jobs.policy
-    const steps = policy.steps ?? []
-    const guard = steps.find((step) => step.run === 'node scripts/ci/check-change-impact.mjs')
-
-    expect(manifest.alwaysLanes).toContain('policy')
-    expect(manifest.laneBundles.policy).toBe('policy')
-    expect(guard).toBeDefined()
-    expect(guard?.if).toBeUndefined()
-    expect(guard?.['continue-on-error']).toBeUndefined()
-    expect(steps.findIndex((step) => step.uses?.startsWith('actions/setup-node@'))).toBeLessThan(
-      steps.indexOf(guard!)
-    )
-    expect(steps.indexOf(guard!)).toBeLessThan(
-      steps.findIndex((step) => step.name === 'Review dependency changes')
-    )
-    expect(steps.some((step) => /npm (ci|install)|npm-ci\.mjs/.test(step.run ?? ''))).toBe(false)
-    expect(workflow.jobs.gate.needs).toContain('policy')
-  })
-
   it('does not make the renderer layout pilot an unrelated blocking check', () => {
     const macos = workflow.jobs.macos_e2e.steps?.find(
       ({ name }) => name === 'Run renderer layout pilot'
@@ -918,6 +898,7 @@ describe('PR Gate workflow', () => {
         env: {
           ...process.env,
           PREFLIGHT_RESULT: 'success',
+          REGISTRATION_RESULT: 'success',
           RUNTIME_REQUIRED: 'false',
           RUNTIME_RESULT: 'skipped',
           PACKAGE_RESULT: 'skipped',
@@ -2337,6 +2318,7 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
         env: {
           ...process.env,
           PREFLIGHT_RESULT: 'success',
+          REGISTRATION_RESULT: 'success',
           EVENT_NAME: 'merge_group',
           RUNTIME_REQUIRED: 'true',
           RUNTIME_RESULT: 'success',

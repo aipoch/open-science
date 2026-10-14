@@ -124,19 +124,30 @@ reply/failure waits and scenario-specific assertions in the caller. The explicit
 `activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
 state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
 
-## Fast change-impact routing check
+## Fast impact-registration gate
 
-Run `node scripts/ci/check-change-impact.mjs` from the repository root to check Windows
-runtime routing without installing dependencies, building packages or running Vitest.
-The command scans production `.ts`/`.tsx` files under `src/main`, `src/preload` and `src/shared`
-for the existing Windows runtime signals and reports paths missing `windows_sensitive` or its
-functional/workspace Windows E2E lanes in `scripts/ci/change-impact.json`. Test/spec files are
-excluded. This preserves the classifier suite's existing invariant; it is not a general platform
-behavior check or a replacement for module ownership and consumer-evidence validation below.
+After dependencies are installed, run this fixed registration suite from the repository root:
 
-The always-selected PR policy job runs this check before dependency review on PRs and merge
-groups, independently of affected-test selection. Failure blocks PR Gate even when no classifier
-tests are selected. Fix the reported registrations in the same change as the source.
+```bash
+npx vitest run --config scripts/ci/vitest.registration.config.ts
+```
+
+It checks module schema and path references, exact source/test ownership, test consumer evidence
+(including declared runtime-loading edges), package dependency registration, classifier invariants
+and platform/core-check selection. This includes the Windows source-signal check that otherwise
+could be missed by selective test execution. The explicit inventory is independent of
+`change-impact.json` and module registration data; it does not run application behavior tests.
+
+PR Gate runs it in the independent **Impact registration** job on every PR and merge group,
+including documentation-only and full-fallback plans. The job installs the locked parsing/test
+toolchain with lifecycle scripts disabled, as CI Integrity does; this is not an application
+installation. The dedicated Vitest config needs no app setup, Prisma generation, package build,
+Electron or browser launch. The final PR Gate requires success even if affected tests would not
+select these suites. Failure, cancellation, skipping or a missing result blocks admission.
+
+The gate catches violations of the existing registration rules. It cannot infer arbitrary IPC,
+events or filesystem relationships; those still require the explicit contracts described below.
+Behavior tests and trusted-base Integrity preservation checks remain separate requirements.
 
 ## Module-impact registration
 
