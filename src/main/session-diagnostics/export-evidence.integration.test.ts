@@ -1,5 +1,5 @@
 import { createAcpHandlerWorkflows } from '../acp/handler-workflows'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -175,6 +175,11 @@ it('exports separate Desktop and Runtime logs with transport budgets and redacte
   const desktopDir = join(root, 'profile', 'desktop-logs')
   const runtimeDir = join(root, 'runtime-logs')
   await mkdir(configRoot)
+  await mkdir(join(root, 'profile', 'logs'), { recursive: true })
+  await writeFile(
+    join(root, 'profile', 'logs', 'main.log'),
+    JSON.stringify({ level: 'error', msg: 'earlier desktop failure' }) + '\n'
+  )
   initLogger({ logDir: desktopDir, mirrorToConsole: false })
   createLogger('desktop').error('desktop operation failed', {
     error: { message: 'Stop failed api_key=private-canary', code: 'EIO' }
@@ -204,14 +209,16 @@ it('exports separate Desktop and Runtime logs with transport budgets and redacte
       dataRoot: join(root, 'data'),
       logPath: join(runtimeDir, 'main.log'),
       desktopLogPath: join(desktopDir, 'main.log'),
+      legacyDesktopLogPath: join(root, 'profile', 'logs', 'main.log'),
       appVersion: 'test'
     },
     {
       projectId: 'project',
       sessionId: 'session',
-      selectedItems: ['log:main.log', 'desktop-log:main.log']
+      selectedItems: ['log:main.log', 'desktop-log:main.log', 'desktop-legacy-log:main.log']
     }
   )
+  expect(files['logs/desktop-legacy/main.log']).toContain('earlier desktop failure')
   const desktop = files['logs/desktop/main.log']
   expect(desktop).toContain('Stop failed')
   expect(desktop).toContain('EIO')

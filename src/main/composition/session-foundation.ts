@@ -1,5 +1,4 @@
-import { join } from 'node:path'
-import { resolveElectronProfile } from '../storage/electron-profile'
+import { resolveDesktopLogPaths } from '../session-diagnostics/desktop-log-paths'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata } from '../runtime-metadata'
 
@@ -132,20 +131,11 @@ export async function composeSessionFoundation({
           dataRoot: resolveDataRoot(),
           configRoot: resolveConfigRoot(),
           logPath: getLogFilePath(),
-          desktopLogPath: join(
-            resolveElectronProfile({
-              configRoot: resolveConfigRoot(),
-              packaged: runtimeMetadata().packaged,
-              appData:
-                process.platform === 'win32'
-                  ? process.env.APPDATA || join(runtimeMetadata().homePath, 'AppData', 'Roaming')
-                  : process.platform === 'darwin'
-                    ? join(runtimeMetadata().homePath, 'Library', 'Application Support')
-                    : process.env.XDG_CONFIG_HOME || join(runtimeMetadata().homePath, '.config')
-            }),
-            'desktop-logs',
-            'main.log'
-          ),
+          ...resolveDesktopLogPaths({
+            configRoot: resolveConfigRoot(),
+            packaged: runtimeMetadata().packaged,
+            homePath: runtimeMetadata().homePath
+          }),
           appVersion: runtimeMetadata().version,
           sensitiveContent: sensitiveContent?.failure,
           sensitiveContentSources: sensitiveContent?.sources
