@@ -290,12 +290,21 @@ test('captures all runtime update states in isolated Electron (presentation-only
         !(await page.getByTestId('runtime-update-dialog').isVisible())
       )
         await page.locator('button.update-reminder').first().click()
-      if (['S02', 'S03'].includes(id)) await expect(page.getByRole('alertdialog')).toBeVisible()
-      else if (['S15', 'S27', 'S28'].includes(id))
+      if (['S02', 'S03'].includes(id)) {
+        await expect(page.getByRole('dialog')).toHaveCount(1)
+        await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '更新', exact: true })).toBeVisible()
+      } else if (['S15', 'S27', 'S28'].includes(id))
         await expect(
           page.locator(`[data-runtime-update-state="${id}"] [role="status"]`)
         ).toBeVisible()
       else await expect(page.locator(`[data-runtime-update-state="${id}"]`).first()).toBeVisible()
+      if (await page.getByTestId('runtime-update-dialog').isVisible()) {
+        await expect(page.getByRole('dialog')).toHaveCount(1)
+        await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        const footer = page.getByTestId('runtime-update-dialog').locator(':scope > div').last()
+        expect(await footer.getByRole('button').count()).toBeLessThanOrEqual(2)
+      }
       await capture(id)
       if (['S13', 'S14', 'S23', 'S24', 'S25'].includes(id)) {
         await page.keyboard.press('Escape')
@@ -316,7 +325,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
             globalThis as unknown as { __runtimeUiPresentation: { failRecheck: boolean } }
           ).__runtimeUiPresentation.failRecheck = true
         })
-        await page.getByRole('button', { name: '重新检查', exact: true }).click()
+        await page.getByRole('button', { name: '重试', exact: true }).click()
         await expect(page.getByText('操作未能完成，请重试。')).toBeVisible()
         await page.getByText('诊断', { exact: true }).click()
         await expect(page.locator('pre')).toContainText('fixture recheck unavailable')
@@ -340,7 +349,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
             globalThis as unknown as { __runtimeUiPresentation: { failRecheck: boolean } }
           ).__runtimeUiPresentation.failRecheck = false
         })
-        await page.getByRole('button', { name: '重新检查', exact: true }).click()
+        await page.getByRole('button', { name: '重试', exact: true }).click()
         await expect(page.getByText('操作未能完成，请重试。')).toHaveCount(0)
         await page.getByText('诊断', { exact: true }).click()
         await capture('S06-retried')
@@ -350,21 +359,16 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
         await capture(`${id}-reopened`)
       }
-      if (id === 'S14') await page.getByRole('button', { name: '检查安装', exact: true }).click()
+      if (id === 'S14') await page.getByRole('button', { name: '重试', exact: true }).click()
       if (['S02', 'S03'].includes(id)) {
         const before = await applyCount()
-        await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: '取消', exact: true })
-          .click()
+        await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
         expect(await applyCount()).toBe(before)
-        await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
+        await expect(page.getByTestId('runtime-update-dialog')).toHaveCount(0)
         const cliConfirmation = { ...status.cliConfirmation!, token: `${id}-confirmed` }
         await update({ ...status, cliConfirmation })
-        await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: '停止服务、更新并改用桌面应用', exact: true })
-          .click()
+        await page.locator('button.update-reminder').first().click()
+        await page.getByRole('dialog').getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(before + 1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
@@ -376,16 +380,11 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.getByTestId('runtime-force-confirmation-S05')).toBeVisible()
         await capture('S05')
         const before = await applyCount()
-        await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: '取消', exact: true })
-          .click()
+        await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
         expect(await applyCount()).toBe(before)
+        await page.getByText('更多选项', { exact: true }).click()
         await page.getByRole('button', { name: '强制更新…', exact: true }).click()
-        await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: '强制更新', exact: true })
-          .click()
+        await page.getByRole('dialog').getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(before + 1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
@@ -416,9 +415,15 @@ test('captures all runtime update states in isolated Electron (presentation-only
     for (const [id, state] of Object.entries(startupStates)) {
       await startup(state)
       await expect(page.locator(`[data-runtime-startup-state="${id}"]`)).toBeVisible()
+      if (await page.getByTestId('runtime-update-dialog').isVisible()) {
+        await expect(page.getByRole('dialog')).toHaveCount(1)
+        await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        const footer = page.getByTestId('runtime-update-dialog').locator(':scope > div').last()
+        expect(await footer.getByRole('button').count()).toBeLessThanOrEqual(2)
+      }
       await capture(id)
       if (id === 'S16') {
-        await page.getByRole('button', { name: '停止服务并继续', exact: true }).click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
         await expect(page.getByTestId('runtime-startup-confirmation-S17')).toBeVisible()
         await capture('S17')
         const countStop = async (): Promise<number> =>
@@ -426,14 +431,14 @@ test('captures all runtime update states in isolated Electron (presentation-only
             .length
         const before = await countStop()
         await page
-          .getByRole('alertdialog')
+          .getByTestId('runtime-startup-confirmation-S17')
           .getByRole('button', { name: '取消', exact: true })
           .click()
         expect(await countStop()).toBe(before)
-        await page.getByRole('button', { name: '停止服务并继续', exact: true }).click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
         await page
-          .getByRole('alertdialog')
-          .getByRole('button', { name: '停止服务', exact: true })
+          .getByTestId('runtime-startup-confirmation-S17')
+          .getByRole('button', { name: '继续', exact: true })
           .click()
         await expect.poll(countStop).toBe(before + 1)
         expect(
@@ -472,7 +477,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
       ipcMain.removeHandler('runtime-startup:get-state')
       ipcMain.handle('runtime-startup:get-state', () => ({ phase: 'ready' }))
     })
-    await page.getByRole('button', { name: '重新检查', exact: true }).click()
+    await page.getByRole('button', { name: '重试', exact: true }).click()
     await expect(
       page.locator('header').getByRole('button', { name: '新建项目', exact: true })
     ).toBeVisible()

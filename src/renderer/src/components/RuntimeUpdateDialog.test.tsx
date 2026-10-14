@@ -99,14 +99,17 @@ describe('runtime update operation boundaries', () => {
       }
     })
     render()
-    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    expect(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).toHaveLength(1)
+    expect(buttons('Cancel')).toHaveLength(1)
+    expect(buttons('Update')).toHaveLength(1)
+    expect(buttons('Restart to update')).toHaveLength(0)
     expect(document.body.textContent).toContain('/isolated/service')
-    expect(document.body.textContent).toContain('standalone installation stays')
+    expect(document.body.textContent).toContain('separate installation will not be updated')
     expect(apply).not.toHaveBeenCalled()
-    await act(async () => buttons('Stop server, update, and use Desktop')[0].click())
+    await act(async () => buttons('Update')[0].click())
     expect(apply).toHaveBeenCalledWith({ force: false, cliConsentToken: 'reviewed' })
   })
-  it('returns CLI cancellation to the update page without applying', async () => {
+  it('closes CLI cancellation without applying', async () => {
     const apply = vi.fn(async () => {}),
       cancel = vi.fn(async () => {})
     useUpdateStore.setState({
@@ -127,13 +130,14 @@ describe('runtime update operation boundaries', () => {
       }
     })
     render()
-    const dialog = document.querySelector('[role="alertdialog"]')!
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.querySelectorAll('button')).toHaveLength(3)
     await act(async () =>
-      [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
     expect(cancel).toHaveBeenCalledOnce()
     expect(apply).not.toHaveBeenCalled()
-    expect(useUpdateStore.getState().isDialogOpen).toBe(true)
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
   })
   it('does not expose install or Escape dismissal for incomplete files', async () => {
     const cancel = vi.fn(async () => {})
@@ -154,7 +158,7 @@ describe('runtime update operation boundaries', () => {
     })
     render()
     expect(buttons('Restart to update')).toHaveLength(0)
-    expect(buttons('Check installation')).toHaveLength(1)
+    expect(buttons('Retry')).toHaveLength(1)
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
@@ -176,13 +180,11 @@ it('preserves exact-token legacy record recovery on the structured update surfac
     }
   })
   render()
-  act(() => buttons('Back up records and retry')[0].click())
+  act(() => buttons('Continue')[0].click())
   expect(apply).not.toHaveBeenCalled()
-  const confirmation = document.querySelector('[role="alertdialog"]')!
+  const confirmation = document.querySelector('[role="dialog"]')!
   await act(async () =>
-    [...confirmation.querySelectorAll('button')]
-      .find((b) => b.textContent === 'Back up records and retry')!
-      .click()
+    [...confirmation.querySelectorAll('button')].find((b) => b.textContent === 'Update')!.click()
   )
   expect(apply).toHaveBeenCalledWith({ legacyShellRecoveryToken: 'records-snapshot' })
 })
@@ -289,7 +291,7 @@ it('reports a real store recheck rejection, redacts diagnostics, and clears stal
   window.api = { update: { recheck } } as unknown as typeof window.api
   useUpdateStore.setState({ ...original, status, isDialogOpen: true })
   await act(async () => root.render(<UpdateDialog />))
-  await act(async () => buttons('Check again')[0].click())
+  await act(async () => buttons('Retry')[0].click())
   expect(document.body.textContent).toContain('The operation could not be completed.')
   expect(document.querySelector('pre')?.textContent).toContain('probe connection failed')
   expect(document.querySelector('pre')?.textContent).not.toContain('fixture-secret')
@@ -298,11 +300,11 @@ it('reports a real store recheck rejection, redacts diagnostics, and clears stal
       (d) => d.querySelector('summary')?.textContent === 'Diagnostics'
     )?.open
   ).toBe(false)
-  await act(async () => buttons('Check again')[0].click())
+  await act(async () => buttons('Retry')[0].click())
   expect(useUpdateStore.getState().status.error).toBeUndefined()
   expect(document.body.textContent).not.toContain('The operation could not be completed.')
   await act(async () => resolve(status))
-  expect(buttons('Check again')[0].disabled).toBe(false)
+  expect(buttons('Retry')[0].disabled).toBe(false)
   expect(
     [...document.querySelectorAll('details')].find(
       (d) => d.querySelector('summary')?.textContent === 'Diagnostics'
@@ -373,7 +375,7 @@ it('reopens after a completed recovery without retaining a failed-recovery warni
   } as unknown as typeof window.api
   useUpdateStore.setState({ ...original, status: blocked, isDialogOpen: true })
   await act(async () => root.render(<UpdateDialog />))
-  await act(async () => buttons('Check and reopen app')[0].click())
+  await act(async () => buttons('Retry')[0].click())
   expect(useUpdateStore.getState().status.outcome).toBe('recovered')
   await act(async () => useUpdateStore.getState().openDialog())
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
@@ -397,9 +399,9 @@ it.each([
     })
     render()
     expect(buttons('Restart to update')).toHaveLength(0)
-    expect(buttons('Check again')).toHaveLength(1)
-    expect(buttons('Check again')[0].parentElement?.className).toContain('border-t')
-    await act(async () => buttons('Check again')[0].click())
+    expect(buttons('Retry')).toHaveLength(1)
+    expect(buttons('Retry')[0].parentElement?.className).toContain('border-t')
+    await act(async () => buttons('Retry')[0].click())
     expect(recheck).toHaveBeenCalledOnce()
   }
 )
@@ -417,7 +419,7 @@ it('checks incomplete installation through recovery without attempting repair or
     }
   })
   render()
-  await act(async () => buttons('Check installation')[0].click())
+  await act(async () => buttons('Retry')[0].click())
   expect(recover).toHaveBeenCalledOnce()
   expect(apply).not.toHaveBeenCalled()
   expect(document.body.textContent).toContain('it does not repair them')
@@ -436,7 +438,7 @@ it('offers only quit when main cannot perform recovery', async () => {
     }
   })
   render()
-  expect(buttons('Check installation')).toHaveLength(0)
+  expect(buttons('Retry')).toHaveLength(0)
   expect(buttons('Quit')).toHaveLength(1)
   await act(async () => buttons('Quit')[0].click())
   expect(quit).toHaveBeenCalledOnce()

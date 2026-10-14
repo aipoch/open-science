@@ -180,18 +180,18 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
     const originalOwner = await readFile(join(config, 'runtime-owner.json'), 'utf8')
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
-    await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeVisible({
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
       timeout: 30000
     })
-    await page.getByRole('button', { name: 'Check again', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
     expect(requests.every((request) => request === 'GET /owner')).toBe(true)
     expect(await readFile(join(config, 'runtime-owner.json'), 'utf8')).toBe(originalOwner)
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
     const replacement = app.waitForEvent('window')
-    await page.getByRole('button', { name: 'Check again', exact: true }).click()
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
     const workspace = await replacement
     await expect
       .poll(() => workspace.evaluate(() => window.api?.runtimeStartup?.getState()), {
@@ -291,7 +291,7 @@ async function main() {
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
     const continueButton = page.getByRole('button', {
-      name: '停止服务并继续',
+      name: '继续',
       exact: true
     })
     await expect(continueButton).toBeVisible()
@@ -308,7 +308,7 @@ async function main() {
     })
     expect(service.exitCode).toBeNull()
     await continueButton.click()
-    await page.getByRole('button', { name: '停止服务', exact: true }).click()
+    await page.getByRole('button', { name: '继续', exact: true }).click()
     await expect
       .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
       .toBe('1')
@@ -317,11 +317,11 @@ async function main() {
       page.getByText('无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。', { exact: true })
     ).toBeVisible()
     await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '重新检查', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
     const replacement = app.waitForEvent('window')
     await continueButton.click()
-    await page.getByRole('button', { name: '停止服务', exact: true }).click()
+    await page.getByRole('button', { name: '继续', exact: true }).click()
     await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath('real-stopping.png'),

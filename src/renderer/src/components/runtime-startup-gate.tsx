@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, LoaderCircle } from 'lucide-react'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { ErrorNotice } from '@/components/error-notice'
-import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { RuntimeDiagnostics } from './runtime-diagnostics'
 import type { RuntimeStartupState } from '../../../shared/runtime-startup'
 
@@ -53,7 +52,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
             title={t("Open-Science couldn't start")}
             description={t('The app could not be checked. Try again.')}
             primaryButton={{
-              label: t('Check again'),
+              label: t('Retry'),
               onClick: () => {
                 setFailed(false)
                 setAttempt((value) => value + 1)
@@ -94,6 +93,8 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
       setPending(false)
     }
   }
+  const canProceed = issue.canRecover || (!recovery && issue.canStop)
+  const retryOnly = recovery || !issue.canStop
   const stopping = state.phase === 'stopping'
   const checking = state.phase === 'recovering' || (pending && !stopping)
   const title = stopping
@@ -133,52 +134,76 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
         state.phase === 'stopping' ? 'S26' : recovery ? 'S18' : legacy ? 'S19' : 'S16'
       }
     >
-      <div className="w-full max-w-lg">
+      <div
+        className="w-full max-w-lg"
+        data-testid={confirmation ? 'runtime-startup-confirmation-S17' : undefined}
+      >
         <ErrorNotice
           fullPage
           icon={busy ? LoaderCircle : AlertTriangle}
           iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
           tone="amber"
-          title={title}
-          description={description}
+          title={confirmation ? t('Continue opening Open-Science?') : title}
+          description={
+            confirmation
+              ? legacyService
+                ? t(
+                    'Running tasks will stop and other connections will close. Unsaved work may be lost. Saved projects will open with this app’s settings; custom command-line options will not be kept.'
+                  )
+                : t(
+                    'Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.'
+                  )
+              : description
+          }
           secondaryButton={
-            busy || legacy
-              ? undefined
-              : legacyService
-                ? {
-                    label: t('Check again'),
-                    variant: 'ghost',
-                    disabled: busy,
-                    onClick: () => {
-                      if (api) void perform(api.recover)
+            confirmation
+              ? {
+                  label: t('Cancel'),
+                  variant: 'ghost',
+                  onClick: () => setConfirmation(false)
+                }
+              : busy || legacy || !canProceed
+                ? undefined
+                : legacyService && issue.canStop
+                  ? {
+                      label: t('Retry'),
+                      variant: 'ghost',
+                      disabled: busy,
+                      onClick: () => {
+                        if (api) void perform(api.recover)
+                      }
                     }
-                  }
-                : {
-                    label: t('Quit', { context: 'verb', ns: 'common' }),
-                    variant: 'ghost',
-                    disabled: busy,
-                    onClick: () => void api?.quit()
-                  }
+                  : {
+                      label: t('Quit', { context: 'verb', ns: 'common' }),
+                      variant: 'ghost',
+                      disabled: busy,
+                      onClick: () => void api?.quit()
+                    }
           }
           primaryButton={
             busy
               ? undefined
               : {
-                  label: legacy
-                    ? t('Quit', { context: 'verb', ns: 'common' })
-                    : recovery
-                      ? t('Check and reopen app')
-                      : t('Stop service and continue'),
-                  disabled: legacy ? false : recovery ? !issue.canRecover : !issue.canStop,
+                  label:
+                    legacy || !canProceed
+                      ? t('Quit', { context: 'verb', ns: 'common' })
+                      : retryOnly
+                        ? t('Retry')
+                        : t('Continue'),
+                  disabled: false,
                   onClick: () => {
-                    if (legacy) void api?.quit()
-                    else if (recovery && api) void perform(api.recover)
+                    if (confirmation) {
+                      setConfirmation(false)
+                      if (api && issue.canStop) void perform(api.stopAndContinue)
+                    } else if (legacy || !canProceed) void api?.quit()
+                    else if (retryOnly && api) void perform(api.recover)
                     else setConfirmation(true)
                   }
                 }
           }
         >
-          {failed || (legacyService && state.phase === 'blocked' && issue.diagnostics) ? (
+          {!confirmation &&
+          (failed || (legacyService && state.phase === 'blocked' && issue.diagnostics)) ? (
             <p role="status" className="mt-3 text-sm">
               {legacyService
                 ? t(
@@ -189,27 +214,6 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
           ) : null}
           <RuntimeDiagnostics text={issue.diagnostics ?? JSON.stringify(issue, null, 2)} />
         </ErrorNotice>
-        <ConfirmActionDialog
-          testId="runtime-startup-confirmation-S17"
-          open={confirmation}
-          title={t('Stop the old service?')}
-          description={
-            legacyService
-              ? t(
-                  'Running tasks will be interrupted and other connections will close. Unsaved work may be lost. After the older version exits, this app will open your saved projects using its current settings. Custom command-line options will not be kept.'
-                )
-              : t(
-                  'Stopping interrupts its tasks and disconnects other clients. Not all work is confirmed saved. This Desktop will run the service with the preserved settings and data locations, and quitting Desktop will stop it. The old service will not restart automatically.'
-                )
-          }
-          cancelLabel={t('Cancel')}
-          confirmLabel={t('Stop service')}
-          onCancel={() => setConfirmation(false)}
-          onConfirm={() => {
-            setConfirmation(false)
-            if (api && issue.canStop) void perform(api.stopAndContinue)
-          }}
-        />
       </div>
     </main>
   )
