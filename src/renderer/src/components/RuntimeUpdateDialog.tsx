@@ -58,6 +58,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel = !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? !busy)
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
+  const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
@@ -153,8 +154,16 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
               icon={busy ? LoaderCircle : AlertTriangle}
               iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
-              title={copy.title}
-              description={copy.description}
+              title={
+                legacyRecords ? t('Old Shell launch records are blocking this update.') : copy.title
+              }
+              description={
+                legacyRecords
+                  ? t(
+                      'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+                    )
+                  : copy.description
+              }
             />
             {status.error ? (
               <ErrorNotice

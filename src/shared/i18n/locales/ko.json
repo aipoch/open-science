@@ -7267,6 +7267,6 @@
     "The running version differs from this app. Finish any work in other Open-Science windows, then stop the service to continue.": "실행 중인 버전이 이 앱과 다릅니다. 다른 Open-Science 창에서 작업을 마친 후 서비스를 중지하고 계속하세요.",
     "Running tasks will be interrupted and other connections will close. Unsaved work may be lost. After the older version exits, this app will open your saved projects using its current settings. Custom command-line options will not be kept.": "실행 중인 작업이 중단되고 다른 연결이 끊어집니다. 저장하지 않은 작업이 손실될 수 있습니다. 이전 버전이 종료되면 이 앱의 현재 설정으로 저장된 프로젝트를 엽니다. 사용자 지정 명령줄 옵션은 유지되지 않습니다.",
     "The connection cannot be restored. Quit and reopen the app, then check your tasks. Submitted operations may have completed and will not be retried automatically.": "다시 연결할 수 없습니다. 앱을 종료하고 다시 연 후 작업 상태를 확인하세요. 제출한 작업은 이미 완료되었을 수 있으며 자동으로 재시도되지 않습니다.",
-    "The app closed and the update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.": "앱이 종료되어 업데이트가 일시 중지되었습니다. 앱을 확인하고 다시 연 후 작업 상태를 확인하세요. 중단된 작업은 자동으로 다시 시작되지 않습니다."
+    "The update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.": "업데이트가 일시 중지되었습니다. 앱을 확인하고 다시 연 후 작업 상태를 확인하세요. 중단된 작업은 자동으로 다시 시작되지 않습니다."
   }
 }

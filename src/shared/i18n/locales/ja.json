@@ -7269,6 +7269,6 @@
     "The running version differs from this app. Finish any work in other Open-Science windows, then stop the service to continue.": "実行中のバージョンがこのアプリと異なります。他の Open-Science ウィンドウでの作業を終え、サービスを停止して続行してください。",
     "Running tasks will be interrupted and other connections will close. Unsaved work may be lost. After the older version exits, this app will open your saved projects using its current settings. Custom command-line options will not be kept.": "実行中のタスクが中断され、他の接続が切断されます。未保存の作業が失われる可能性があります。古いバージョンの終了後、このアプリの現在の設定で保存済みプロジェクトを開きます。独自のコマンドラインオプションは引き継がれません。",
     "The connection cannot be restored. Quit and reopen the app, then check your tasks. Submitted operations may have completed and will not be retried automatically.": "再接続できません。アプリを終了して再度開き、タスクを確認してください。送信済みの操作は完了している可能性があり、自動再試行されません。",
-    "The app closed and the update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.": "アプリが終了したため更新を一時停止しました。確認してアプリを再度開き、タスクを確認してください。中断したタスクは自動再開されません。"
+    "The update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.": "更新を一時停止しました。確認してアプリを再度開き、タスクを確認してください。中断したタスクは自動再開されません。"
   }
 }

@@ -56,7 +56,7 @@ export const runtimeUpdateCopy = (
       return {
         title: t('Some work may not have been saved'),
         description: t(
-          'The app closed and the update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.'
+          'The update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.'
         )
       }
     case 'S12':
