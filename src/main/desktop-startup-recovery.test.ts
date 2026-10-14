@@ -128,6 +128,7 @@ it('offers startup Recover after a real executor rollback and retains its config
   advanceInstallationUpdate(location, record.operationId, 'stopped', true)
   advanceInstallationUpdate(location, record.operationId, 'handoff')
   const bytes = JSON.stringify({
+    channel: 'supervised-mac',
     operationId: record.operationId,
     recordPath: join(installationStateDirectory(location), 'update-in-progress.json'),
     installationRoot: record.installationRoot,

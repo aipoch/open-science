@@ -364,7 +364,7 @@ for (const borrowed of [false, true])
       await app.evaluate(({ dialog }) => {
         dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
       })
-      await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+      await page.getByRole('button', { name: 'Quit', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ closing: false, phase: 'disconnected' })
@@ -712,16 +712,15 @@ test('exits from the recovery notice when the original backend has really stoppe
     expect(
       await readFile(join(roots.storageRoot, 'unexpected-error-box.txt'), 'utf8').catch(() => '')
     ).toBe('')
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
     await expect
       .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
       .toMatchObject({ phase: 'unavailable' })
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0)
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
     })
     const desktopProcess = app.process()
-    await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+    await page.getByRole('button', { name: 'Quit', exact: true }).click()
     await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
     app = undefined
   } finally {

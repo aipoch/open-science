@@ -220,7 +220,7 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}) => {
+test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}, testInfo) => {
   test.skip(
     process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
@@ -242,6 +242,8 @@ test('guides legacy shutdown through cancellation, retry and opening the saved p
     const project = await page.evaluate(() =>
       window.api.projects.create({ name: 'Saved before upgrade' })
     )
+    await page.evaluate(() => window.api.settings.markOnboardingComplete())
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
     await app.close()
     app = undefined
     const entry = join(root, 'service.cjs')
@@ -263,7 +265,7 @@ async function main() {
   await writeFile(join(root,'shutdown-attempts'),String(++attempts));
   if(attempts===1){res.writeHead(503).end();return;}
   res.writeHead(202).end();
-  server.close(async()=>{await control.close();lease.release();});
+  setTimeout(()=>server.close(async()=>{await control.close();lease.release();}),1200);
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const port=server.address().port;
@@ -289,33 +291,42 @@ async function main() {
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
     const continueButton = page.getByRole('button', {
-      name: 'Stop service and continue',
+      name: '停止服务并继续',
       exact: true
     })
     await expect(continueButton).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('real-startup.png'), animations: 'disabled' })
     await continueButton.click()
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.screenshot({ path: testInfo.outputPath('real-confirm.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+    await page.screenshot({
+      path: testInfo.outputPath('real-cancelled.png'),
+      animations: 'disabled'
+    })
     await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
     expect(service.exitCode).toBeNull()
     await continueButton.click()
-    await page.getByRole('button', { name: 'Stop service', exact: true }).click()
+    await page.getByRole('button', { name: '停止服务', exact: true }).click()
     await expect
       .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
       .toBe('1')
     await expect(continueButton).toBeEnabled()
     await expect(
-      page.getByText(
-        'The service could not be stopped or checked. Try again, or save diagnostics for help.',
-        { exact: true }
-      )
+      page.getByText('无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。', { exact: true })
     ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Recover app', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '重新检查', exact: true })).toBeEnabled()
+    await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
     const replacement = app.waitForEvent('window')
     await continueButton.click()
-    await page.getByRole('button', { name: 'Stop service', exact: true }).click()
+    await page.getByRole('button', { name: '停止服务', exact: true }).click()
+    await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
+    await page.screenshot({
+      path: testInfo.outputPath('real-stopping.png'),
+      animations: 'disabled'
+    })
     const workspace = await replacement
     await expect.poll(() => service!.exitCode).toBe(0)
     await expect
@@ -330,6 +341,16 @@ async function main() {
       )
     ).toBe(true)
     expect(await readFile(join(config, 'shutdown-attempts'), 'utf8')).toBe('2')
+    await expect(
+      workspace.locator('header').getByRole('button', { name: '新建项目', exact: true })
+    ).toBeVisible()
+    await expect(workspace.getByText('Saved before upgrade', { exact: true }).first()).toBeVisible()
+    await workspace.getByText('Saved before upgrade', { exact: true }).first().click()
+    await expect(workspace.getByRole('button', { name: '所有项目', exact: true })).toBeVisible()
+    await workspace.screenshot({
+      path: testInfo.outputPath('real-project.png'),
+      animations: 'disabled'
+    })
     expect(app.process().exitCode).toBeNull()
   } finally {
     await app?.close()

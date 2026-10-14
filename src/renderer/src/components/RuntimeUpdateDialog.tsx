@@ -29,7 +29,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const [cancelPending, setCancelPending] = useState(false)
   const [dismissedCliToken, setDismissedCliToken] = useState<string>()
   const [requestPending, setRequestPending] = useState(false)
-  const [recheckAttempted, setRecheckAttempted] = useState(false)
   const [recoveryAttempted, setRecoveryAttempted] = useState(false)
   useEffect(
     () =>
@@ -40,7 +39,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           (next.status.state === 'applying' && previous.status.state !== 'applying')
         ) {
           setRecoveryAttempted(false)
-          setRecheckAttempted(false)
         }
       }),
     []
@@ -57,17 +55,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   useEffect(() => {
     if (!isDialogOpen || completed) forceIntent.current = false
   }, [isDialogOpen, completed])
-  const copy = runtimeUpdateCopy(
-    ['S25', 'S29'].includes(id) && status.recovery
-      ? runtimeUpdateState({
-          ...status,
-          state: 'error',
-          recovery: { ...status.recovery, phase: 'preparing' }
-        })
-      : id,
-    t,
-    status.recovery?.detail === 'occupancy-unknown'
-  )
+  const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel = !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? !busy)
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const open = active && (isDialogOpen || recovery || progress)
@@ -151,9 +139,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           }}
         >
           <div className={dialogHeaderClassName}>
-            <Dialog.Title className={dialogTitleClassName}>
-              {recovery ? t('Recover app') : progress ? copy.title : t('Prepare to install update')}
-            </Dialog.Title>
+            <Dialog.Title className={dialogTitleClassName}>{t('Update')}</Dialog.Title>
             <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
               {t('v{{current}} → v{{latest}}', {
                 current: status.current,
@@ -166,6 +152,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               role={blocked || recovery ? 'alert' : 'status'}
               level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
               icon={busy ? LoaderCircle : AlertTriangle}
+              iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
               title={copy.title}
               description={copy.description}
             />
@@ -174,35 +161,13 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 className="mt-3"
                 role="alert"
                 level="warning"
-                description={t(
-                  'The operation could not be completed. Review diagnostics and try again.'
-                )}
+                description={t('The operation could not be completed. Try again.')}
               />
             ) : null}
-            {id === 'S25' ? (
+            {recoveryAttempted && recovery && !busy && !status.error ? (
               <p role="status" className="mt-3 text-sm">
-                {t('Checking whether the app can recover…')}
+                {t('The app is not ready yet. Try again after completing the action above.')}
               </p>
-            ) : null}
-            {recoveryAttempted && recovery && !busy ? (
-              <p role="status" className="mt-3 text-sm">
-                {t(
-                  'Recovery has not been confirmed. Review the steps below or save diagnostics for help.'
-                )}
-              </p>
-            ) : null}
-            {blocked && !recovery && !['S08', 'S32'].includes(id) ? (
-              <Button
-                variant="outline"
-                className="mt-3"
-                disabled={busy}
-                onClick={() => {
-                  setRecheckAttempted(true)
-                  void request(recheck)
-                }}
-              >
-                {busy ? t('Checking…') : t('Recheck')}
-              </Button>
             ) : null}
             {id === 'S04' && status.blockedTasks?.length ? (
               <ul className="mt-3 space-y-2">
@@ -246,35 +211,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                   .join(', ')}
               </p>
             ) : null}
-            {blocked || recovery ? (
-              <details
-                className="mt-4 text-sm"
-                open={
-                  Boolean(status.error) || recheckAttempted || recoveryAttempted || id === 'S14'
-                }
-              >
-                <summary className="cursor-pointer font-medium">{t('How to fix')}</summary>
-                <p className="mt-2 text-muted-foreground">
-                  {['S13', 'S14', 'S32'].includes(id)
-                    ? t(
-                        'Wait for any installer to finish. If it fails, quit Desktop and repair or update through the original installation method. Keep configuration and data folders, then reopen the app to verify the result.'
-                      )
-                    : copy.description}
-                </p>
-              </details>
-            ) : null}
-            {status.legacyShellRecovery && !recovery && !progress ? (
-              <ErrorNotice
-                className="mt-4"
-                level="warning"
-                description={t('Old Shell launch records are blocking this update.')}
-                primaryButton={{
-                  label: t('Back up records and retry'),
-                  disabled: busy,
-                  onClick: () => setLegacyToken(status.legacyShellRecovery?.token)
-                }}
-              />
-            ) : null}
             <RuntimeDiagnostics text={diagnostics} />
             {id === 'S04' && status.canForce === true ? (
               <details className="mt-4 text-sm">
@@ -285,44 +221,63 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </details>
             ) : null}
           </div>
-          <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
-            {recovery ? (
-              <>
-                <Button variant="ghost" disabled={busy} onClick={quit}>
-                  {t('Quit', { context: 'verb', ns: 'common' })}
-                </Button>
-                <Button
-                  disabled={busy || !status.recovery?.canRecover}
-                  onClick={() => {
-                    setRecoveryAttempted(true)
-                    void request(recover)
-                  }}
-                >
-                  {busy ? t('Recovering…') : t('Recover app')}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  disabled={!canCancel || cancelPending}
-                  onClick={cancelUpdate}
-                >
-                  {t('Cancel')}
-                </Button>
-                {!progress ? (
+          {!busy || canCancel ? (
+            <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
+              {recovery && !busy ? (
+                <>
+                  {status.recovery?.canRecover ? (
+                    <Button variant="ghost" onClick={quit}>
+                      {t('Quit', { context: 'verb', ns: 'common' })}
+                    </Button>
+                  ) : null}
                   <Button
-                    disabled={busy || (blocked && !cli)}
+                    disabled={busy}
                     onClick={() => {
-                      void request(() => apply())
+                      if (!status.recovery?.canRecover) {
+                        quit()
+                        return
+                      }
+                      setRecoveryAttempted(true)
+                      void request(recover)
                     }}
                   >
-                    {t('Restart to update')}
+                    {!status.recovery?.canRecover
+                      ? t('Quit', { context: 'verb', ns: 'common' })
+                      : ['S13', 'S14'].includes(id)
+                        ? t('Check installation')
+                        : t('Check and reopen app')}
                   </Button>
-                ) : null}
-              </>
-            )}
-          </div>
+                </>
+              ) : (
+                <>
+                  {canCancel && !recovery ? (
+                    <Button variant="ghost" disabled={cancelPending} onClick={cancelUpdate}>
+                      {t('Cancel')}
+                    </Button>
+                  ) : null}
+                  {!progress && !recovery && id !== 'S29' ? (
+                    <Button
+                      disabled={busy}
+                      onClick={() => {
+                        if (status.legacyShellRecovery)
+                          setLegacyToken(status.legacyShellRecovery.token)
+                        else if (blocked && !cli) void request(recheck)
+                        else void request(() => apply())
+                      }}
+                    >
+                      {busy
+                        ? t('Checking…')
+                        : status.legacyShellRecovery
+                          ? t('Back up records and retry')
+                          : blocked && !cli
+                            ? t('Check again')
+                            : t('Restart to update')}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
       <ConfirmActionDialog
@@ -381,14 +336,17 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     'The standalone installation stays on its current version. Before using it again, verify that it can read data written by the updated app.'
                   )}
             </p>
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 break-all text-xs text-muted-foreground">
-              <dt>{t('Source')}</dt>
-              <dd>{cli.source === 'this-installation' ? t('This app') : cli.entryPath}</dd>
-              <dt>{t('PID / port')}</dt>
-              <dd>
-                {cli.pid} / {cli.port}
-              </dd>
-            </dl>
+            <details>
+              <summary className="cursor-pointer font-medium">{t('Diagnostics')}</summary>
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 break-all text-xs text-muted-foreground">
+                <dt>{t('Source')}</dt>
+                <dd>{cli.source === 'this-installation' ? t('This app') : cli.entryPath}</dd>
+                <dt>{t('PID / port')}</dt>
+                <dd>
+                  {cli.pid} / {cli.port}
+                </dd>
+              </dl>
+            </details>
           </section>
         ) : null}
       </ConfirmActionDialog>

@@ -71,7 +71,7 @@ describe('runtime update operation boundaries', () => {
         }
       })
       render()
-      expect(buttons('Cancel')[0].disabled).toBe(true)
+      expect(buttons('Cancel')).toHaveLength(0)
       await act(async () =>
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       )
@@ -154,7 +154,7 @@ describe('runtime update operation boundaries', () => {
     })
     render()
     expect(buttons('Restart to update')).toHaveLength(0)
-    expect(buttons('Recover app')).toHaveLength(1)
+    expect(buttons('Check installation')).toHaveLength(1)
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
@@ -289,25 +289,25 @@ it('reports a real store recheck rejection, redacts diagnostics, and clears stal
   window.api = { update: { recheck } } as unknown as typeof window.api
   useUpdateStore.setState({ ...original, status, isDialogOpen: true })
   await act(async () => root.render(<UpdateDialog />))
-  await act(async () => buttons('Recheck')[0].click())
+  await act(async () => buttons('Check again')[0].click())
   expect(document.body.textContent).toContain('The operation could not be completed.')
   expect(document.querySelector('pre')?.textContent).toContain('probe connection failed')
   expect(document.querySelector('pre')?.textContent).not.toContain('fixture-secret')
   expect(
     [...document.querySelectorAll('details')].find(
-      (d) => d.querySelector('summary')?.textContent === 'How to fix'
+      (d) => d.querySelector('summary')?.textContent === 'Diagnostics'
     )?.open
-  ).toBe(true)
-  await act(async () => buttons('Recheck')[0].click())
+  ).toBe(false)
+  await act(async () => buttons('Check again')[0].click())
   expect(useUpdateStore.getState().status.error).toBeUndefined()
   expect(document.body.textContent).not.toContain('The operation could not be completed.')
   await act(async () => resolve(status))
-  expect(buttons('Recheck')[0].disabled).toBe(false)
+  expect(buttons('Check again')[0].disabled).toBe(false)
   expect(
     [...document.querySelectorAll('details')].find(
-      (d) => d.querySelector('summary')?.textContent === 'How to fix'
+      (d) => d.querySelector('summary')?.textContent === 'Diagnostics'
     )?.open
-  ).toBe(true)
+  ).toBe(false)
 })
 
 it('presents a second completed cancellation after reopening and starting another apply', async () => {
@@ -373,7 +373,7 @@ it('reopens after a completed recovery without retaining a failed-recovery warni
   } as unknown as typeof window.api
   useUpdateStore.setState({ ...original, status: blocked, isDialogOpen: true })
   await act(async () => root.render(<UpdateDialog />))
-  await act(async () => buttons('Recover app')[0].click())
+  await act(async () => buttons('Check and reopen app')[0].click())
   expect(useUpdateStore.getState().status.outcome).toBe('recovered')
   await act(async () => useUpdateStore.getState().openDialog())
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
@@ -381,4 +381,64 @@ it('reopens after a completed recovery without retaining a failed-recovery warni
   await act(async () => buttons('Restart to update')[0].click())
   expect(document.querySelector('[data-runtime-update-state="S11"]')).not.toBeNull()
   expect(document.body.textContent).not.toContain('Recovery has not been confirmed')
+})
+
+it.each([
+  'runtime-not-controlled',
+  'runtime-configuration-unsupported',
+  'installation-busy'
+] as const)(
+  'puts the available check action in the footer for %s without offering installation',
+  async (reason) => {
+    const recheck = vi.fn(async () => {})
+    useUpdateStore.setState({
+      recheck,
+      status: { state: 'ready', current: '1', reason, recovery: r() }
+    })
+    render()
+    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Check again')).toHaveLength(1)
+    expect(buttons('Check again')[0].parentElement?.className).toContain('border-t')
+    await act(async () => buttons('Check again')[0].click())
+    expect(recheck).toHaveBeenCalledOnce()
+  }
+)
+
+it('checks incomplete installation through recovery without attempting repair or install', async () => {
+  const recover = vi.fn(async () => {}),
+    apply = vi.fn(async () => {})
+  useUpdateStore.setState({
+    recover,
+    apply,
+    status: {
+      state: 'error',
+      current: '1',
+      recovery: r({ installation: 'incomplete', canRecover: true, canCancel: false })
+    }
+  })
+  render()
+  await act(async () => buttons('Check installation')[0].click())
+  expect(recover).toHaveBeenCalledOnce()
+  expect(apply).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('it does not repair them')
+})
+
+it('offers only quit when main cannot perform recovery', async () => {
+  const quit = vi.fn(async () => {}),
+    recover = vi.fn(async () => {})
+  window.api = { runtimeStartup: { quit } } as unknown as typeof window.api
+  useUpdateStore.setState({
+    recover,
+    status: {
+      state: 'error',
+      current: '1',
+      recovery: r({ installation: 'incomplete', canRecover: false, canCancel: false })
+    }
+  })
+  render()
+  expect(buttons('Check installation')).toHaveLength(0)
+  expect(buttons('Quit')).toHaveLength(1)
+  await act(async () => buttons('Quit')[0].click())
+  expect(quit).toHaveBeenCalledOnce()
+  expect(recover).not.toHaveBeenCalled()
 })

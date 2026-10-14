@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import type { ElectronApplication } from 'playwright'
 import {
   launchOpenScience,
@@ -23,6 +23,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
   await mkdir(output, { recursive: true })
   let application: ElectronApplication | undefined
   const capturedStates: string[] = []
+  const views: { id: string; text: string; buttons: string[] }[] = []
   try {
     application = await launchOpenScience(
       {
@@ -134,6 +135,17 @@ test('captures all runtime update states in isolated Electron (presentation-only
     const capture = async (id: string): Promise<void> => {
       await page.screenshot({ path: join(output, `${id}.png`), animations: 'disabled' })
       capturedStates.push(id)
+      const surface = page
+        .locator(
+          '[role="alertdialog"]:visible, [data-testid="runtime-update-dialog"]:visible, [data-runtime-startup-state]:visible, [data-runtime-update-state] [role="status"]:visible'
+        )
+        .last()
+      const visibleSurface = (await surface.count()) ? surface : page.locator('main').last()
+      views.push({
+        id,
+        text: await visibleSurface.innerText(),
+        buttons: await visibleSurface.locator('button:visible').allTextContents()
+      })
     }
     await update(base)
     await page.locator('button.update-reminder').first().click()
@@ -146,7 +158,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
           pid: 4218,
           port: 2026,
           source: 'another-installation',
-          entryPath: join(root, 'standalone/backend/index.cjs')
+          entryPath: '/example/standalone/backend/index.cjs'
         }
       },
       S03: {
@@ -155,7 +167,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
           pid: 4218,
           port: 2026,
           source: 'this-installation',
-          entryPath: resolve('out/backend/index.cjs')
+          entryPath: '/example/app/backend/index.cjs'
         }
       },
       S04: {
@@ -290,7 +302,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
       }
       if (['S23', 'S24'].includes(id))
-        await expect(page.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
       if (id === 'S01') {
         await page.getByRole('button', { name: '重启以更新', exact: true }).click()
         await expect.poll(applyCount).toBe(1)
@@ -304,8 +316,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
             globalThis as unknown as { __runtimeUiPresentation: { failRecheck: boolean } }
           ).__runtimeUiPresentation.failRecheck = true
         })
-        await page.getByRole('button', { name: '重新检测', exact: true }).click()
-        await expect(page.getByText('操作未能完成。请查看诊断并重试。')).toBeVisible()
+        await page.getByRole('button', { name: '重新检查', exact: true }).click()
+        await expect(page.getByText('操作未能完成，请重试。')).toBeVisible()
         await page.getByText('诊断', { exact: true }).click()
         await expect(page.locator('pre')).toContainText('fixture recheck unavailable')
         await expect(page.locator('pre')).not.toContainText('fixture-secret')
@@ -328,15 +340,17 @@ test('captures all runtime update states in isolated Electron (presentation-only
             globalThis as unknown as { __runtimeUiPresentation: { failRecheck: boolean } }
           ).__runtimeUiPresentation.failRecheck = false
         })
-        await page.getByRole('button', { name: '重新检测', exact: true }).click()
-        await expect(page.getByText('操作未能完成。请查看诊断并重试。')).toHaveCount(0)
+        await page.getByRole('button', { name: '重新检查', exact: true }).click()
+        await expect(page.getByText('操作未能完成，请重试。')).toHaveCount(0)
+        await page.getByText('诊断', { exact: true }).click()
+        await capture('S06-retried')
       }
       if (['S15', 'S28'].includes(id)) {
         await page.locator('button.update-reminder').first().click()
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
         await capture(`${id}-reopened`)
       }
-      if (id === 'S14') await page.getByRole('button', { name: '恢复应用', exact: true }).click()
+      if (id === 'S14') await page.getByRole('button', { name: '检查安装', exact: true }).click()
       if (['S02', 'S03'].includes(id)) {
         const before = await applyCount()
         await page
@@ -404,7 +418,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
       await expect(page.locator(`[data-runtime-startup-state="${id}"]`)).toBeVisible()
       await capture(id)
       if (id === 'S16') {
-        await page.getByRole('button', { name: '继续', exact: true }).click()
+        await page.getByRole('button', { name: '停止服务并继续', exact: true }).click()
         await expect(page.getByTestId('runtime-startup-confirmation-S17')).toBeVisible()
         await capture('S17')
         const countStop = async (): Promise<number> =>
@@ -416,7 +430,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
           .getByRole('button', { name: '取消', exact: true })
           .click()
         expect(await countStop()).toBe(before)
-        await page.getByRole('button', { name: '继续', exact: true }).click()
+        await page.getByRole('button', { name: '停止服务并继续', exact: true }).click()
         await page
           .getByRole('alertdialog')
           .getByRole('button', { name: '停止服务', exact: true })
@@ -429,7 +443,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         ).toEqual([])
       }
       if (id === 'S26') {
-        await expect(page.getByRole('button', { name: '取消', exact: true })).toBeDisabled()
+        await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
         await page.keyboard.press('Escape')
         await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
       }
@@ -438,6 +452,63 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await expect(
       page.locator('header').getByRole('button', { name: '新建项目', exact: true })
     ).toBeVisible()
+    await startup({
+      phase: 'recovering',
+      issue: { ...issue, reason: 'startup-recovery-required', canStop: false, canRecover: true }
+    })
+    await expect(page.getByText('检查中…', { exact: true })).toBeVisible()
+    await capture('startup-checking')
+    await startup({ phase: 'ready' })
+    await application.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('runtime-startup:get-state')
+      ipcMain.handle('runtime-startup:get-state', () => {
+        throw new Error('fixture status unavailable')
+      })
+    })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('无法检查应用状态，请重试。', { exact: true })).toBeVisible()
+    await capture('startup-read-error')
+    await application.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('runtime-startup:get-state')
+      ipcMain.handle('runtime-startup:get-state', () => ({ phase: 'ready' }))
+    })
+    await page.getByRole('button', { name: '重新检查', exact: true }).click()
+    await expect(
+      page.locator('header').getByRole('button', { name: '新建项目', exact: true })
+    ).toBeVisible()
+    // Connection surfaces use the real mounted app; only connection observations are injected.
+    await application.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('desktop-runtime:reconnect')
+      ipcMain.handle('desktop-runtime:reconnect', () => ({
+        phase: 'disconnected',
+        epoch: 99,
+        closing: false
+      }))
+      ipcMain.removeHandler('desktop-runtime:reconciled')
+      ipcMain.handle('desktop-runtime:reconciled', () => undefined)
+    })
+    for (const phase of ['disconnected', 'reconnecting', 'reconciling', 'unavailable'] as const) {
+      await application.evaluate(({ BrowserWindow }, phase) => {
+        BrowserWindow.getAllWindows()[0].webContents.send('desktop-runtime:state-changed', {
+          phase,
+          epoch: 99,
+          closing: false
+        })
+      }, phase)
+      await expect(page.getByRole('alertdialog')).toBeVisible()
+      if (phase === 'disconnected')
+        await expect(page.getByRole('button', { name: '重新连接', exact: true })).toBeVisible()
+      else await expect(page.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0)
+      await capture(`connection-${phase}`)
+    }
+    await application.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('desktop-runtime:state-changed', {
+        phase: 'connected',
+        epoch: 99,
+        closing: false
+      })
+    })
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
     await update({
       ...base,
       reason: 'install-failed',
@@ -465,6 +536,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
     expect(calls.some((call) => call.action === 'update:cancel')).toBe(true)
     expect(calls.some((call) => call.action === 'update:recheck')).toBe(true)
     expect(calls.some((call) => call.action === 'update:recover')).toBe(true)
+    await writeFile(join(output, 'views.json'), JSON.stringify(views, null, 2))
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id))).toHaveLength(34)
   } finally {

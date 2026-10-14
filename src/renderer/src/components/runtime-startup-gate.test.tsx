@@ -61,7 +61,7 @@ const click = async (label: string): Promise<void> => {
 it('requires confirmation before authenticated startup stop', async () => {
   await render()
   expect(document.querySelector('[data-testid="workspace"]')).toBeNull()
-  await click('Continue')
+  await click('Stop service and continue')
   expect(stop).not.toHaveBeenCalled()
   expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
     'Not all work is confirmed saved'
@@ -88,13 +88,13 @@ it('keeps startup blocked until authoritative readiness', async () => {
     })
   )
   expect(document.querySelector('[data-testid="workspace"]')).toBeNull()
-  expect(document.body.textContent).toContain('Starting')
+  expect(document.body.textContent).toContain('Stopping the service…')
   expect(document.body.textContent).not.toContain('Service version mismatch')
   expect(
     [...document.querySelectorAll('button')]
       .filter((b) => b.textContent !== 'Save diagnostics')
       .map((b) => b.textContent)
-  ).toEqual(['Cancel'])
+  ).toEqual([])
   for (const b of document.querySelectorAll('button'))
     if (b.textContent !== 'Save diagnostics') expect(b.disabled).toBe(true)
   await act(async () => emit({ phase: 'ready' }))
@@ -112,11 +112,12 @@ it('retains the original issue after a failed recovery', async () => {
   }
   recover.mockRejectedValueOnce(new Error('offline'))
   await render()
-  await click('Recover app')
-  expect(document.body.textContent).toContain('The old service stopped')
-  expect(document.body.textContent).toContain('Recovery has not been confirmed')
+  await click('Check and reopen app')
+  expect(document.body.textContent).toContain('The previous session')
+  expect(document.body.textContent).toContain('The app could not be checked')
   expect(
-    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Recover app')?.disabled
+    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Check and reopen app')
+      ?.disabled
   ).toBe(false)
 })
 
@@ -146,7 +147,7 @@ it('keeps recheck available without stopping a legacy service', async () => {
   await render()
   expect(document.body.textContent).not.toContain('restart the computer')
   expect(document.body.textContent).toContain('Stop service and continue')
-  expect(document.body.textContent).not.toContain('Recover app')
+  expect(document.body.textContent).not.toContain('Check and reopen app')
   await click('Check again')
   expect(recover).toHaveBeenCalledOnce()
   expect(stop).not.toHaveBeenCalled()
@@ -171,7 +172,7 @@ it('allows cancelling and retrying a failed legacy shutdown without leaving the 
   await render()
   await click('Stop service and continue')
   expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-    'Command-line launch options are not carried over'
+    'Custom command-line options will not be kept'
   )
   await click('Cancel')
   expect(stop).not.toHaveBeenCalled()
@@ -179,10 +180,22 @@ it('allows cancelling and retrying a failed legacy shutdown without leaving the 
   await click('Stop service and continue')
   await click('Stop service')
   expect(document.body.textContent).toContain('The service could not be stopped or checked')
-  expect(document.body.textContent).not.toContain('Recover app')
+  expect(document.body.textContent).not.toContain('Check and reopen app')
   stop.mockResolvedValueOnce({ phase: 'ready' })
   await click('Stop service and continue')
   await click('Stop service')
   expect(stop).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
+})
+
+it('allows retrying startup status retrieval without directing users to nonexistent steps', async () => {
+  window.api.runtimeStartup!.getState = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({ phase: 'ready' })
+  await render()
+  expect(document.body.textContent).toContain('The app could not be checked. Try again.')
+  expect(document.body.textContent).not.toContain('steps below')
+  await click('Check again')
   expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
 })

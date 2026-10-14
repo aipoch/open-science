@@ -6,6 +6,12 @@ export const runtimeUpdateCopy = (
   unknownOccupancy = false
 ): { title: string; description: string } => {
   switch (id) {
+    case 'S25':
+    case 'S29':
+      return {
+        title: t('Checking…'),
+        description: t('Checking whether the app can safely continue. Please wait.')
+      }
     case 'S04':
       return {
         title: t('Tasks are still running'),
@@ -27,16 +33,16 @@ export const runtimeUpdateCopy = (
       }
     case 'S08':
       return {
-        title: t('Cannot preserve the service settings'),
+        title: t('The app cannot update automatically'),
         description: t(
-          'The service settings cannot be safely preserved. The service is unchanged; manage it through its original installation.'
+          'The update cannot keep your current settings. Cancel to continue working, or check again after updating Open-Science separately.'
         )
       }
     case 'S09':
       return {
-        title: t('Service shutdown is not confirmed'),
+        title: t('The app has not finished closing'),
         description: t(
-          'The service did not stop within 15 seconds. The update has not been installed. Recover the app before continuing.'
+          'The app did not finish closing. The update has not started. Check and reopen the app before trying to update again.'
         )
       }
     case 'S10':
@@ -48,30 +54,30 @@ export const runtimeUpdateCopy = (
       }
     case 'S11':
       return {
-        title: t('Normal shutdown could not be confirmed'),
+        title: t('Some work may not have been saved'),
         description: t(
-          'The service exited, but not all work is confirmed saved. Installation is paused until the app can recover safely.'
+          'The app closed and the update is paused. Check and reopen the app, then review your tasks. Interrupted tasks will not restart automatically.'
         )
       }
     case 'S12':
       return {
-        title: t('The service has not recovered'),
+        title: t('The app is not ready to reopen'),
         description: t(
-          'Previous background operations have not been confirmed finished. The update has not continued.'
+          'Previous operations have not finished or their results could not be checked. The update is paused. Wait a moment, then check again.'
         )
       }
     case 'S13':
       return {
         title: t('Installation result is unknown'),
         description: t(
-          'Recover the app to check the installation. An unverified installation cannot be started or installed again here.'
+          'Wait for the installer to finish, then check the installation. The app will reopen only after verification succeeds.'
         )
       }
     case 'S14':
       return {
         title: t('Application files are incomplete'),
         description: t(
-          'Repair the app through its original installation method, then recover the app to check the result. Keep your configuration and data folders.'
+          'Reinstall Open-Science using its installer or package manager, then check the installation. This button checks files; it does not repair them. Keep your configuration and data folders.'
         )
       }
     case 'S20':
@@ -112,17 +118,17 @@ export const runtimeUpdateCopy = (
         title: t('Service stopped; installation is blocked'),
         description: unknownOccupancy
           ? t(
-              'The service stopped, but installation conditions could not be confirmed. Recover the app before continuing.'
+              'The update cannot start yet. Check and reopen the app before trying to update again.'
             )
           : t(
-              'Other services are using the application files. Installation has not started. Recover the app before addressing the other services.'
+              'Application files are still in use. The update has not started. Check and reopen the app to continue working.'
             )
       }
     case 'S32':
       return {
         title: t('Manual update required'),
         description: t(
-          'This installation method does not support protected in-app updates. The app and service are unchanged. Update through the original installation method.'
+          'Update Open-Science using its installer or package manager, then check again. You can cancel to continue working with this version.'
         )
       }
     case 'S33':
