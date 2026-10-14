@@ -888,6 +888,38 @@ it('connects committed deletion to the same credential broker used by approval s
   })
   expect(() => result.abortQuitPreparation()).toThrow('abort failed')
   expect(resumeAfterHandoff).toHaveBeenCalledOnce()
+
+  const { trackLifecycleSettlement, waitForLifecycleSettlement } =
+    await import('./lifecycle-settlement')
+  let finishCleanup!: () => void
+  trackLifecycleSettlement(
+    new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+  )
+  result.abortQuitPreparation()
+  expect(runtime.abortQuitPreparation).toHaveBeenCalledTimes(2)
+  expect(resumeAfterHandoff).toHaveBeenCalledOnce()
+  finishCleanup()
+  await waitForLifecycleSettlement()
+  await Promise.resolve()
+  expect(resumeAfterHandoff).toHaveBeenCalledTimes(2)
+
+  let finishOldCleanup!: () => void
+  trackLifecycleSettlement(
+    new Promise<void>((resolve) => {
+      finishOldCleanup = resolve
+    })
+  )
+  result.abortQuitPreparation()
+  // A later preparation owns the admission hold, even if an earlier abort is still queued.
+  await result.prepareForQuit()
+  finishOldCleanup()
+  await waitForLifecycleSettlement()
+  await Promise.resolve()
+  expect(resumeAfterHandoff).toHaveBeenCalledTimes(2)
+  result.abortQuitPreparation()
+  expect(resumeAfterHandoff).toHaveBeenCalledTimes(3)
   const operation = vi.fn(async () => 'available')
   expect(
     await result.electronAdapters.acp.sessionAdmission.withSessionAvailableById(

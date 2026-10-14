@@ -2,6 +2,7 @@ import { assertInstallationChannelCertified } from './update/channel-certificati
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import {
   DesktopRuntimeStartupError,
+  connectDesktopRuntimeForStartup,
   resolveDesktopInstallationStartup
 } from './desktop-startup-recovery'
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../shared/runtime-startup'
@@ -635,6 +636,26 @@ async function startDesktop(): Promise<void> {
     runtimeStartupState = next
     broadcast(RUNTIME_STARTUP_CHANNELS.onStateChanged, next)
   }
+  const waitForStartupRetry = async (failure: DesktopRuntimeStartupError): Promise<void> => {
+    startupBlocked = true
+    startupFailure = failure
+    publishRuntimeStartup({ phase: 'blocked', issue: failure.issue })
+    if (!startupWindow) {
+      const window = createMainWindow(undefined, translate)
+      startupWindow = window
+      window.once('closed', () => {
+        if (startupWindow === window) app.exit(0)
+      })
+    }
+    showMainWindow = () => {
+      startupWindow!.show()
+      return startupWindow!
+    }
+    await new Promise<void>((resolve) => {
+      continueStartup = resolve
+    })
+    continueStartup = undefined
+  }
   const validatePreservedConfiguration = (config: RuntimeStartupOptions): void => {
     if (
       config.configRoot !== configRoot ||
@@ -737,7 +758,6 @@ async function startDesktop(): Promise<void> {
       break
     } catch (error) {
       if (!(error instanceof DesktopRuntimeStartupError)) throw error
-      startupBlocked = true
       startupFailure = error
       if (error.startupOptions) {
         try {
@@ -749,22 +769,7 @@ async function startDesktop(): Promise<void> {
           )
         }
       }
-      publishRuntimeStartup({ phase: 'blocked', issue: startupFailure.issue })
-      if (!startupWindow) {
-        const window = createMainWindow(undefined, translate)
-        startupWindow = window
-        window.once('closed', () => {
-          if (startupWindow === window) app.exit(0)
-        })
-      }
-      showMainWindow = () => {
-        startupWindow!.show()
-        return startupWindow!
-      }
-      await new Promise<void>((resolve) => {
-        continueStartup = resolve
-      })
-      continueStartup = undefined
+      await waitForStartupRetry(startupFailure)
     }
   }
   // Let Node finish credential validation before Chromium opens its cookie databases. On Windows
@@ -912,7 +917,17 @@ async function startDesktop(): Promise<void> {
     })
     return attached
   }
-  client = await attach()
+  while (true) {
+    try {
+      client = await connectDesktopRuntimeForStartup({ connect: attach, version: app.getVersion() })
+      startupBlocked = false
+      startupFailure = undefined
+      break
+    } catch (error) {
+      if (!(error instanceof DesktopRuntimeStartupError)) throw error
+      await waitForStartupRetry(error)
+    }
+  }
   const makeRecovery = (): ReturnType<typeof createDesktopRuntimeRecovery> =>
     createDesktopRuntimeRecovery({
       client: client!,
@@ -1466,7 +1481,14 @@ async function startDesktop(): Promise<void> {
       return () => {
         recovery!.setClosing(false)
         if (!runtimeStopped && client!.ownsRuntime() && ready)
-          void client!.lifecycle({ operation: 'release' }).catch(reportError)
+          void client!.lifecycle({ operation: 'release' }).catch((error) => {
+            // Rollback is best effort during OS-owned exit; a native modal must not prevent exit.
+            if (currentApplicationShutdownTrigger() === 'system')
+              bootstrapLog.error('quit admission release failed', {
+                error: projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
+              })
+            else reportError(error)
+          })
       }
     },
     prepareForQuit: async () => {

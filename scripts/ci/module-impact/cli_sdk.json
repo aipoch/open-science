@@ -55,6 +55,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "cli/config-root.test.ts",
       "cli/index.test.ts",
       "cli/lifecycle.test.ts",

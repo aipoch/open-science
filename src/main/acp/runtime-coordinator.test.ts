@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +26,10 @@ import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { ApplicationEventHub } from '../application-events'
+import { connectDesktopRuntime } from '../desktop-runtime-client'
+import { createDesktopRuntimeLifecycle } from '../desktop-runtime-lifecycle'
+import { startDesktopRuntimeTransport } from '../desktop-runtime-transport'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -6369,6 +6374,106 @@ it('queries Side chat interaction authority on the session owner after framework
   oldPrompt.resolve({ stopReason: 'end_turn' })
   await turn
 })
+
+it.each(['timeout', 'thrown preparation', 'rejected cancellation'] as const)(
+  'resumes ACP prompts through desktop transport after aborting %s with late cancellation',
+  async (outcome) => {
+    const { hasPendingLifecycleSettlement, waitForLifecycleSettlement } =
+      await import('../lifecycle-settlement')
+    const prompt = createDeferred<{ stopReason: string }>()
+    const cancellation = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        callbacks,
+        frameworkId: 'opencode',
+        sessionIds: ['desktop-existing', 'desktop-new'],
+        prompt: () => prompt.promise
+      })
+      fake.cancelPrompt.mockImplementation(async () => {
+        try {
+          await cancellation.promise
+          return fake.runtime.getSnapshot()
+        } finally {
+          prompt.resolve({ stopReason: 'cancelled' })
+        }
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    const releaseAdmission = vi.fn()
+    const abortPreparation = vi.fn(() => coordinator.abortQuitPreparation())
+    const host = await startDesktopRuntimeTransport({
+      version: 'test',
+      launch: 'desktop',
+      events: new ApplicationEventHub(),
+      commands: {
+        commandNames: () => ['acp:send-prompt'],
+        invoke: async (_name, invocation) =>
+          coordinator.sendPrompt(invocation.args[0] as AcpPromptRequest)
+      },
+      createLifecycle: () =>
+        createDesktopRuntimeLifecycle({
+          detectActiveSessions: () => [],
+          hasActiveReviewerWork: () => false,
+          getActiveSettingsInstallId: () => undefined,
+          isMigrationInProgress: () => false,
+          hasActivePackageTransfer: () => false,
+          holdSettingsInstallAdmission: () => releaseAdmission,
+          prepareForQuit: async () => {
+            const result = await coordinator.prepareForQuit(10)
+            if (outcome === 'thrown preparation') throw new Error('quit persistence failed')
+            return result
+          },
+          abortQuitPreparation: abortPreparation
+        })
+    })
+    let client: Awaited<ReturnType<typeof connectDesktopRuntime>> | undefined
+    let turn: Promise<unknown> | undefined
+    try {
+      client = await connectDesktopRuntime({
+        endpoint: host.endpoint,
+        onEvent: vi.fn(),
+        onDisconnect: vi.fn()
+      })
+      const clientId = randomUUID()
+      const send = (text: string): Promise<unknown> =>
+        client!.invoke(clientId, 'acp:send-prompt', [{ sessionId: session.sessionId, text }])
+      turn = send('work before quit')
+      await vi.waitFor(() => expect(created[0].sendPrompt).toHaveBeenCalledOnce())
+      await client.lifecycle({ operation: 'hold' })
+      const work = (await client.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+      const preparation = client.lifecycle({ operation: 'prepare', fingerprint: work.fingerprint })
+      if (outcome !== 'thrown preparation') await expect(preparation).resolves.toBe('timeout')
+      else await expect(preparation).rejects.toThrow('quit persistence failed')
+      expect(hasPendingLifecycleSettlement()).toBe(true)
+      await expect(client.lifecycle({ operation: 'abort' })).resolves.toBeNull()
+      expect(abortPreparation).toHaveBeenCalledOnce()
+      expect(releaseAdmission).not.toHaveBeenCalled()
+      await expect(send('blocked during late cancellation')).rejects.toThrow('quitting')
+      expect(created[0].sendPrompt).toHaveBeenCalledOnce()
+      if (outcome === 'rejected cancellation') cancellation.reject(new Error('late cancel failed'))
+      else cancellation.resolve()
+      await turn
+      await waitForLifecycleSettlement()
+      await vi.waitFor(() => expect(releaseAdmission).toHaveBeenCalledOnce())
+      await expect(send('continue after cancelled quit')).resolves.toMatchObject({
+        stopReason: 'cancelled'
+      })
+      expect(created[0].sendPrompt).toHaveBeenCalledTimes(2)
+      expect(coordinator.getSnapshot().sessionIds).toContain(session.sessionId)
+      await expect(coordinator.createSession()).resolves.toMatchObject({ sessionId: 'desktop-new' })
+    } finally {
+      cancellation.resolve()
+      prompt.resolve({ stopReason: 'cancelled' })
+      await turn?.catch(() => undefined)
+      await waitForLifecycleSettlement()
+      client?.close()
+      await host.close()
+    }
+  }
+)
 
 it('does not reopen a newer quit when an older cancelled cleanup settles', async () => {
   const { trackLifecycleSettlement, waitForLifecycleSettlement } =

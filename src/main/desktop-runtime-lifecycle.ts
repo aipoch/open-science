@@ -1,4 +1,4 @@
-import { waitForLifecycleSettlement } from './lifecycle-settlement'
+import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ActiveSessionInfo } from '../shared/storage'
@@ -56,8 +56,13 @@ export function createDesktopRuntimeLifecycle(deps: {
     }
   }
   const release = (): void => {
-    releaseAdmission?.()
+    // A timeout only ends the Desktop's wait. Keep installations fenced until the underlying
+    // cleanup settles, and capture this hold so late release cannot reopen a newer quit's hold.
+    const releaseCurrent = releaseAdmission
     releaseAdmission = undefined
+    if (!releaseCurrent) return
+    if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(releaseCurrent)
+    else releaseCurrent()
   }
   const abort = (): void => {
     if (prepared || preparing) deps.abortQuitPreparation()
@@ -107,9 +112,11 @@ export function createDesktopRuntimeLifecycle(deps: {
               )
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             preparing = true
+            // Preparation can close ACP admission and then reject. That attempt still needs an
+            // abort, just like a timeout or a completed preparation followed by a refused quit.
+            prepared = true
             try {
               const result = await deps.prepareForQuit()
-              prepared = true
               if (disconnected) throw new Error('Desktop disconnected during quit preparation.')
               return result
             } finally {

@@ -74,6 +74,28 @@ const composeAcpRuntimePromptOwners = (
   host: AcpRuntimePromptHost
 ) => {
   const callbacks = options.callbacks ?? {}
+  // Connection teardown may release an interaction before its finalizer unwinds. Keep callback
+  // ownership separate from terminal outcomes so every published start has exactly one end.
+  const startedPromptTurns = new Map<string, string>()
+  const endPromptTurn = (sessionId: string, turnToken: string): void => {
+    if (startedPromptTurns.get(turnToken) !== sessionId) return
+    startedPromptTurns.delete(turnToken)
+    for (const cleanup of [
+      () => session.sessionUpdateProjector.clearAssistantOutput(sessionId),
+      () => host.onPromptEnded?.(sessionId, turnToken),
+      () => callbacks.onPromptEnded?.(sessionId, turnToken)
+    ]) {
+      try {
+        cleanup()
+      } catch (error) {
+        safeLogError('prompt-end callback failed', error)
+      }
+    }
+  }
+  const releasePromptTurns = (): void => {
+    for (const [turnToken, sessionId] of [...startedPromptTurns])
+      endPromptTurn(sessionId, turnToken)
+  }
   const activeSession = (sessionId: string) =>
     session.sessionRegistry.lookup(sessionId)?.attachment?.session
   const currentFramework = () => base.backendGeneration.current.framework
@@ -386,11 +408,7 @@ const composeAcpRuntimePromptOwners = (
               options.runtimeSessions!.retryTerminalCommits(sessionId)
           }
         : {}),
-      onPromptEnded: (sessionId, turnToken) => {
-        session.sessionUpdateProjector.clearAssistantOutput(sessionId)
-        host.onPromptEnded?.(sessionId, turnToken)
-        callbacks.onPromptEnded?.(sessionId, turnToken)
-      },
+      onPromptEnded: endPromptTurn,
       generationActivityChanged: base.notifyGenerationActivityChanged,
       autoCompact: (sessionId, active, interaction) =>
         contextCompactionWorkflow.compactAutomatic({
@@ -462,12 +480,14 @@ const composeAcpRuntimePromptOwners = (
             options.runtimeSessions!.assertAdmissionAvailable(sessionId)
         }
       : {}),
-    onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
-      callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
+    onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
+      startedPromptTurns.set(turnToken, sessionId)
+      callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
+    },
     emitState
   })
 
-  return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })
+  return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow, releasePromptTurns })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */
 

@@ -18,9 +18,15 @@ afterEach(async () => {
   }
   if (root) await rm(root, { recursive: true, force: true })
 })
-it.each([true, false])(
-  'gracefully stops a mismatched service with its supported protocol (modern: %s)',
-  async (modern) => {
+it.each([
+  { modern: true, alreadyStopped: false, cleanExit: true },
+  { modern: false, alreadyStopped: false, cleanExit: true },
+  { modern: true, alreadyStopped: true, cleanExit: true },
+  { modern: true, alreadyStopped: true, cleanExit: false },
+  { modern: false, alreadyStopped: true, cleanExit: true }
+])(
+  'gracefully stops a mismatched service (modern: $modern, already stopped: $alreadyStopped, clean: $cleanExit)',
+  async ({ modern, alreadyStopped, cleanExit }) => {
     root = await mkdtemp(join(tmpdir(), 'startup-recovery-'))
     const entry = join(root, 'fixture.ts')
     const output = join(root, 'fixture.cjs')
@@ -43,7 +49,7 @@ async function main(){
   if(req.url!='/api/shutdown'||req.headers.authorization!=='Bearer '+token){res.writeHead(403);res.end();return;}
   await writeFile(join(root,'shutdown-observed'),'yes');
   res.writeHead(202);res.end();
-  server.close(async()=>{await control.close();if(${modern})await writeRuntimeExit(root,{generation,pid:process.pid,outcome:'clean'});lease.release();});
+  server.close(async()=>{await control.close();if(${modern})await writeRuntimeExit(root,{generation,pid:process.pid,outcome:'${cleanExit ? 'clean' : 'failed'}'});lease.release();});
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  await writeFile(join(root,'web-service.json'),JSON.stringify({pid:process.pid,port:server.address().port}));
@@ -73,6 +79,26 @@ async function main(){
     const error = await discoverDesktopBackend(root, 'new').catch((error) => error)
     expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
     expect(error.issue.canStop).toBe(true)
+    if (alreadyStopped) {
+      // Another client can stop the service while the Desktop confirmation stays open.
+      const service = JSON.parse(await readFile(join(root, 'web-service.json'), 'utf8'))
+      const token = (await readFile(join(root, 'web-token'), 'utf8')).trim()
+      const exited = once(child, 'exit')
+      const response = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` }
+      })
+      expect(response.ok).toBe(true)
+      await response.arrayBuffer()
+      await exited
+      if (cleanExit || !modern) await expect(error.stopAndContinue()).resolves.toBeUndefined()
+      else
+        await expect(error.stopAndContinue()).rejects.toMatchObject({
+          code: 'runtime-stop-unclean'
+        })
+      acquireRuntimeDirectorySync(root).release()
+      return
+    }
     if (modern) {
       expect(error.issue.reason).toBe('version-mismatch')
       expect(error.startupOptions.configRoot).toBe(root)

@@ -115,14 +115,15 @@ export async function discoverDesktopBackend(
       issue,
       'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
       async () => {
-        // An older service may have exited while its confirmation was open. Confirm the
-        // released directory before continuing; never signal a PID read from the state file.
-        if (legacy && !isRuntimeProcessAlive(owner.pid)) {
+        // The service may have exited while its confirmation was open. Confirm the
+        // released directory and, for modern services, the exact clean-exit receipt.
+        // Never signal a PID read from the state file.
+        if (!isRuntimeProcessAlive(owner.pid)) {
           const lease = await waitForRuntimeStopped({
             configRoot,
             generation: owner.desktop!.generation,
             pid: owner.pid,
-            requireCleanExit: false
+            requireCleanExit: !legacy
           })
           lease.release()
           return

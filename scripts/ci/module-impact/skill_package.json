@@ -1345,6 +1345,7 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-client-diagnostics.test.ts",
       "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/main/node-entry.test.ts",

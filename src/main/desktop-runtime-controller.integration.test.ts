@@ -70,15 +70,31 @@ it('retains controller until a timed-out underlying teardown really settles', as
   const actual = new Promise<void>((resolve) => {
     finish = resolve
   })
+  cleanup.push(finish)
   lifecycle.request.mockImplementationOnce(async () => {
     trackLifecycleSettlement(actual)
     return null
   })
   const first = await attach(randomUUID())
   await first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
-  await expect(first.lifecycle({ operation: 'abort' })).rejects.toMatchObject({
+  await expect(first.lifecycle({ operation: 'abort' })).resolves.toBeNull()
+  await expect(first.lifecycle({ operation: 'release' })).resolves.toBeNull()
+  // Rolling back the current quit must not authorize new preparation or an update before the
+  // underlying teardown settles, nor allow a competing Desktop to release the owner's holds.
+  for (const operation of ['hold', 'prepare'] as const)
+    await expect(
+      first.lifecycle(
+        operation === 'prepare' ? { operation, fingerprint: 'a'.repeat(64) } : { operation }
+      )
+    ).rejects.toMatchObject({ code: 'command-unavailable' })
+  await expect(first.invokeHost('desktop:update-gate')).rejects.toMatchObject({
     code: 'command-unavailable'
   })
+  const competitor = await attach(randomUUID())
+  for (const operation of ['abort', 'release'] as const)
+    await expect(competitor.lifecycle({ operation })).rejects.toMatchObject({
+      code: 'command-unavailable'
+    })
   first.close()
   const held = await attach(randomUUID())
   expect(held.runtimeInfo().control).toBe('held')
@@ -88,6 +104,30 @@ it('retains controller until a timed-out underlying teardown really settles', as
   const next = await attach(randomUUID())
   expect(next.runtimeInfo().control).toBe('granted')
   await next.lifecycle({ operation: 'hold' })
+})
+
+it('does not overlap rollback with an active lifecycle request, even on another owner socket', async () => {
+  const { attach, lifecycle } = await fixture()
+  const preparation = Promise.withResolvers<null>()
+  lifecycle.request.mockImplementationOnce(() => preparation.promise)
+  const id = randomUUID()
+  const first = await attach(id)
+  const second = await attach(id)
+  const pending = first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
+  try {
+    await vi.waitFor(() => expect(lifecycle.request).toHaveBeenCalledOnce())
+    for (const client of [first, second])
+      for (const operation of ['abort', 'release'] as const)
+        await expect(client.lifecycle({ operation })).rejects.toMatchObject({
+          code: 'command-unavailable'
+        })
+    expect(lifecycle.request).toHaveBeenCalledOnce()
+  } finally {
+    preparation.resolve(null)
+    await pending
+  }
+  await second.lifecycle({ operation: 'abort' })
+  await first.lifecycle({ operation: 'release' })
 })
 
 it('delivers events to every attachment and retains controller documents after a spectator closes', async () => {

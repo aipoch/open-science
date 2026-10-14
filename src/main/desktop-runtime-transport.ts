@@ -452,9 +452,16 @@ export async function startDesktopRuntimeTransport(options: {
             (request.kind === 'lifecycle' && request.request.operation !== 'inspect') ||
             (request.kind === 'host-invoke' &&
               ['desktop:update-gate', 'desktop:update-abort'].includes(request.channel))
+          // The current controller must be able to cancel a refused quit while its timed-out
+          // cleanup is still settling. The lifecycle owner defers reopening admission until it is
+          // safe; this does not authorize another controller or overlap an active lifecycle RPC.
+          const rollsBackQuit =
+            request.kind === 'lifecycle' && ['abort', 'release'].includes(request.request.operation)
           if (
             requiresControl &&
-            (!controls() || Boolean(controller?.operations.size) || hasPendingLifecycleSettlement())
+            (!controls() ||
+              Boolean(controller?.operations.size) ||
+              (!rollsBackQuit && hasPendingLifecycleSettlement()))
           ) {
             respond({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,

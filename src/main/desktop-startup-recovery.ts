@@ -4,6 +4,8 @@ import { acquireRuntimeDirectorySync } from './runtime-ownership'
 import { waitForRuntimeStopped } from './runtime-stop-confirmation'
 import type { RuntimeStartupIssue } from '../shared/runtime-startup'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
+import type { DesktopRuntimeClient } from './desktop-runtime-client'
+import { waitForDesktopRuntimeControl } from './desktop-runtime-recovery'
 import {
   checkInstallationResultAsync,
   finishInstallationRecoveryAsync,
@@ -39,6 +41,36 @@ export class DesktopRuntimeStartupError extends Error {
       throw error
     })
     await this.stopOperation
+  }
+}
+
+/** Retry the original endpoint only; a failed attachment never authorizes a replacement service. */
+export async function connectDesktopRuntimeForStartup(options: {
+  connect(signal: AbortSignal): Promise<DesktopRuntimeClient>
+  version: string
+  timeoutMs?: number
+}): Promise<DesktopRuntimeClient> {
+  let candidate: DesktopRuntimeClient | undefined
+  try {
+    const signal = AbortSignal.timeout(options.timeoutMs ?? 12_000)
+    candidate = await options.connect(signal)
+    await waitForDesktopRuntimeControl(candidate, signal)
+    return candidate
+  } catch (error) {
+    candidate?.close()
+    throw new DesktopRuntimeStartupError(
+      {
+        reason: 'startup-recovery-required',
+        desktopVersion: options.version,
+        canStop: false,
+        canRecover: true,
+        diagnostics: error instanceof Error ? error.message : 'Desktop attachment failed.'
+      },
+      'The Runtime connection or control could not be confirmed.',
+      undefined,
+      // The startup owner retries connection and control verification before exposing any work.
+      async () => {}
+    )
   }
 }
 

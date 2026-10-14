@@ -3,6 +3,7 @@ import {
   createDesktopRuntimeLifecycle,
   type DesktopShutdownWork
 } from './desktop-runtime-lifecycle'
+import { trackLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function fixture() {
   const release = vi.fn()
@@ -70,4 +71,47 @@ describe('Node desktop quit coordination', () => {
     expect(deps.abortQuitPreparation).toHaveBeenCalled()
     await expect(owner.request({ operation: 'inspect' })).rejects.toThrow('closed')
   })
+
+  it('rolls back preparation that throws after closing admission', async () => {
+    const { owner, deps, release } = fixture()
+    const observed = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
+    deps.prepareForQuit.mockRejectedValueOnce(
+      new Error('preparation failed after admission closed')
+    )
+    await owner.request({ operation: 'hold' })
+    await expect(
+      owner.request({ operation: 'prepare', fingerprint: observed.fingerprint })
+    ).rejects.toThrow('preparation failed')
+    await owner.request({ operation: 'abort' })
+    await owner.request({ operation: 'abort' })
+    await owner.request({ operation: 'release' })
+    expect(deps.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it.each(['abort', 'release'] as const)(
+    'accepts %s without reopening installation admission before late cleanup settles',
+    async (operation) => {
+      const { owner, deps, release } = fixture()
+      const cleanup = Promise.withResolvers<void>()
+      const releaseNewHold = vi.fn()
+      deps.holdSettingsInstallAdmission.mockReturnValueOnce(release).mockReturnValue(releaseNewHold)
+      await owner.request({ operation: 'hold' })
+      trackLifecycleSettlement(cleanup.promise)
+      try {
+        await owner.request({ operation })
+        await owner.request({ operation: 'release' })
+        expect(release).not.toHaveBeenCalled()
+        // A delayed release belongs only to its captured hold, never to a subsequent hold.
+        await owner.request({ operation: 'hold' })
+      } finally {
+        cleanup.resolve()
+        await waitForLifecycleSettlement()
+      }
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      expect(releaseNewHold).not.toHaveBeenCalled()
+      await owner.request({ operation: 'release' })
+      expect(releaseNewHold).toHaveBeenCalledOnce()
+    }
+  )
 })

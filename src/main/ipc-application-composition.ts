@@ -1,3 +1,4 @@
+import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
 import type { SessionSummary } from '../shared/session-persistence'
@@ -811,6 +812,7 @@ export const createApplicationModules = async (
     declareElectronAdapter
   })
   composition.phase('commands')
+  let quitPreparationGeneration = 0
 
   return {
     fetchPreview: createManagedPreviewProtocolHandler(managedFiles.previewResources),
@@ -896,6 +898,7 @@ export const createApplicationModules = async (
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
     prepareForQuit: async () => {
+      quitPreparationGeneration += 1
       const outcome = await agentRuntime.runtime.prepareForQuit()
       if (outcome !== 'completed') return outcome
       return handoff.shutdownCoordinator.runForQuitPreparation()
@@ -904,7 +907,13 @@ export const createApplicationModules = async (
       try {
         agentRuntime.runtime.abortQuitPreparation()
       } finally {
-        sideChat.sideChatRuntime.resumeAfterHandoff()
+        const generation = quitPreparationGeneration
+        const resume = (): void => {
+          if (generation === quitPreparationGeneration)
+            sideChat.sideChatRuntime.resumeAfterHandoff()
+        }
+        if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(resume)
+        else resume()
       }
     },
     electronAdapters: {

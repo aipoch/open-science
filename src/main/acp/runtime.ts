@@ -508,8 +508,7 @@ class AcpRuntime {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
-      onPromptEnded: (sessionId, turnToken) =>
-        this.nativeFollowUp.releaseTurn(sessionId, turnToken),
+      releasePromptTurns: prompt.releasePromptTurns,
       clearPromptResources: () => this.nativeFollowUp.clear(),
       openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
@@ -1679,7 +1678,8 @@ class AcpRuntime {
           onAccepted,
           onTimeout: () => {
             this.pushEvent({
-              kind: 'error',
+              // This is a teardown diagnostic; disconnect owns the resumable turn terminal.
+              kind: 'system',
               level: 'error',
               sessionId: request.sessionId,
               title: 'Prompt cancellation timed out',
