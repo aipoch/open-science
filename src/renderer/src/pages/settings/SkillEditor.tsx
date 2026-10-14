@@ -12,7 +12,7 @@ import type { SkillDetailView } from '../../../../shared/settings'
 import type { SkillPackageFileInfo, SkillReference } from '@aipoch/skills/document'
 import { serializePersonalSkillDocument } from '@aipoch/skills/document'
 import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
-import { parseSkillDocument } from '@aipoch/skills/document'
+import { parseSkillDocument, parseSkillDocumentWithStatus } from '@aipoch/skills/document'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
@@ -188,6 +188,9 @@ const SkillEditor = ({
   const [body, setBody] = useState(initial.body)
   const [metadata, setMetadata] = useState(initial.metadata)
   const [frontmatterImportMode, setFrontmatterImportMode] = useState(false)
+  const lastValidImportedIdentity = useRef<{ name?: string; description?: string } | undefined>(
+    undefined
+  )
   const [contentMode, setContentMode] = useState<'write' | 'upload'>('write')
   const [references, setReferences] = useState<SkillEditorReference[]>(() =>
     (initial.references ?? []).map((ref) => ({
@@ -293,15 +296,35 @@ const SkillEditor = ({
     !addingReferences
 
   // Plain textarea edits are always literal body content and keep the separately displayed metadata.
-  // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
+  // In import mode changed frontmatter fields sync identity; removing it clears derived metadata.
   const handleBodyChange = (value: string): void => {
     if (frontmatterImportMode) {
-      const parsed = parseSkillDocument(value)
+      const parsed = parseSkillDocumentWithStatus(value)
       if (parsed.hasFrontmatter) {
-        if (isCreate && parsed.name !== undefined) setName(parsed.name)
-        if (parsed.description !== undefined) setDescription(parsed.description)
+        if (parsed.frontmatterValid) {
+          // A transient YAML error must not erase the comparison baseline for untouched fields.
+          const previous = lastValidImportedIdentity.current
+          if (
+            isCreate &&
+            parsed.name !== undefined &&
+            (previous ? parsed.name !== previous.name : !name.trim())
+          ) {
+            setName(parsed.name)
+          }
+          if (
+            parsed.description !== undefined &&
+            (previous ? parsed.description !== previous.description : !description.trim())
+          ) {
+            setDescription(parsed.description)
+          }
+          lastValidImportedIdentity.current = {
+            name: parsed.name,
+            description: parsed.description
+          }
+        }
         setMetadata(parsed.metadata)
       } else {
+        lastValidImportedIdentity.current = undefined
         setMetadata(undefined)
         setFrontmatterImportMode(false)
       }
@@ -312,7 +335,11 @@ const SkillEditor = ({
   // Explicit paste/upload/drop imports opt into frontmatter semantics. The raw block remains visible
   // in the textarea so users can edit or remove it; it is stripped only from the persisted body.
   const importContent = (value: string): void => {
-    const parsed = parseSkillDocument(value)
+    const parsed = parseSkillDocumentWithStatus(value)
+    lastValidImportedIdentity.current =
+      parsed.hasFrontmatter && parsed.frontmatterValid
+        ? { name: parsed.name, description: parsed.description }
+        : undefined
     if (parsed.hasFrontmatter) {
       if (isCreate && parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)

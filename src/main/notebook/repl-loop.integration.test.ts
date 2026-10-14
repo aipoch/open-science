@@ -3003,8 +3003,10 @@ describe('repl_loop local RPC transport', () => {
           params: { op: 'delete', name: 'declined-demo', session_id: 'session-1' }
         }
       ])
-      expect(JSON.stringify(result)).not.toContain('old_string')
-      expect(JSON.stringify(result)).not.toContain('body')
+      const serialized = JSON.stringify({ ...result, cwd: undefined })
+      expect(serialized).not.toContain('old_string')
+      expect(serialized).not.toContain('new body')
+      expect(serialized).not.toContain('old body')
 
       const publicError = await send(
         "try { await host.skills.edit('demo', 'SKILL.md', 'new body', '') } " +
@@ -3013,7 +3015,7 @@ describe('repl_loop local RPC transport', () => {
       expect(publicError.result).toBe(
         'host.skills.edit: oldString must be a non-empty string when provided'
       )
-      expect(JSON.stringify(publicError)).not.toContain('old_string')
+      expect(JSON.stringify({ ...publicError, cwd: undefined })).not.toContain('old_string')
       expect(requests).toHaveLength(7)
     } finally {
       child.kill()
