@@ -1087,7 +1087,9 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/channel-certification.test.ts",
-      "src/main/update/blocked-tasks.test.ts"
+      "src/main/update/blocked-tasks.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": [

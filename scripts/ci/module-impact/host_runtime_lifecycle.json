@@ -916,7 +916,8 @@
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
-      "src/main/runtime-control.integration.test.ts"
+      "src/main/runtime-control.integration.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

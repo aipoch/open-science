@@ -42,7 +42,9 @@
     "src/main/update/installation-reboot-recovery.test.ts",
     "src/main/update/installation-reboot-recovery.ts",
     "src/main/update/verification-process.test.ts",
-    "src/main/update/verification-process.ts"
+    "src/main/update/verification-process.ts",
+    "src/main/update/installation-occupancy.test.ts",
+    "src/main/update/installation-preparation.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -86,7 +88,9 @@
       "src/main/update/installation-formats.test.ts",
       "src/main/update/installation-protection.test.ts",
       "src/main/update/installation-reboot-recovery.test.ts",
-      "src/main/update/verification-process.test.ts"
+      "src/main/update/verification-process.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

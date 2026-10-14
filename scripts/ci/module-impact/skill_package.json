@@ -1373,7 +1373,9 @@
       "src/main/update/installation-executor.test.ts",
       "src/main/update/installation-protection.test.ts",
       "src/main/update/installation-reboot-recovery.test.ts",
-      "src/main/update/installation-artifact.test.ts"
+      "src/main/update/installation-artifact.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
