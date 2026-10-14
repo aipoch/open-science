@@ -9,7 +9,7 @@ export const desktopRuntimeInfoSchema = z
   .object({
     launch: z.enum(['desktop', 'cli']),
     control: z.enum(['granted', 'held']),
-    controlReason: z.enum(['controller-held', 'operation-pending']).optional(),
+    controlReason: z.enum(['controller-held', 'operation-pending', 'runtime-stopping']).optional(),
     generation: z.string().uuid(),
     entryPath: root,
     startupOptions: runtimeStartupOptionsSchema
