@@ -5,7 +5,7 @@ import {
 } from './desktop-runtime-lifecycle'
 import { trackLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function fixture() {
+function fixture(options: { disconnectWaitMs?: number } = {}) {
   const release = vi.fn()
   const deps = {
     detectActiveSessions: vi.fn(() => []),
@@ -17,7 +17,7 @@ function fixture() {
     prepareForQuit: vi.fn(async () => 'completed' as const),
     abortQuitPreparation: vi.fn()
   }
-  return { deps, release, owner: createDesktopRuntimeLifecycle(deps) }
+  return { deps, release, owner: createDesktopRuntimeLifecycle(deps, options) }
 }
 describe('Node desktop quit coordination', () => {
   it('revalidates the observed work before stopping any producer', async () => {
@@ -114,4 +114,24 @@ describe('Node desktop quit coordination', () => {
       expect(releaseNewHold).toHaveBeenCalledOnce()
     }
   )
+  it('releases installation admission even when late cleanup never settles', async () => {
+    const { owner, release } = fixture()
+    await owner.request({ operation: 'hold' })
+    trackLifecycleSettlement(new Promise<void>(() => {}), { abandonAfterMs: 80 })
+    await owner.request({ operation: 'release' })
+    expect(release).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce(), { timeout: 2000 })
+  })
+
+  it('finishes disconnect cleanup even when an in-flight operation never settles', async () => {
+    const { owner, deps, release } = fixture({ disconnectWaitMs: 50 })
+    deps.prepareForQuit.mockImplementation(() => new Promise<never>(() => {}))
+    await owner.request({ operation: 'hold' })
+    const work = (await owner.request({ operation: 'inspect' })) as { fingerprint: string }
+    void owner.request({ operation: 'prepare', fingerprint: work.fingerprint }).catch(() => {})
+    await vi.waitFor(() => expect(deps.prepareForQuit).toHaveBeenCalledOnce())
+    await owner.disconnect()
+    expect(deps.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  })
 })

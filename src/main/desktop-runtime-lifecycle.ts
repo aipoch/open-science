@@ -16,6 +16,7 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('abort') }).strict(),
   z.object({ operation: z.literal('release') }).strict()
 ])
+const DISCONNECT_WAIT_MS = 10_000
 export type DesktopLifecycleRequest = z.infer<typeof desktopLifecycleRequestSchema>
 export type DesktopShutdownWork = {
   sessions: ActiveSessionInfo[]
@@ -26,17 +27,23 @@ export type DesktopShutdownWork = {
   fingerprint: string
 }
 
-export function createDesktopRuntimeLifecycle(deps: {
-  detectActiveSessions(): ActiveSessionInfo[]
-  hasActiveReviewerWork(): boolean
-  getActiveSettingsInstallId(): string | undefined
-  isMigrationInProgress(): boolean
-  cancelMigrationForQuit?(): Promise<void>
-  hasActivePackageTransfer(): boolean
-  holdSettingsInstallAdmission(): () => void
-  prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
-  abortQuitPreparation(): void
-}): { request(operation: DesktopLifecycleRequest): Promise<unknown>; disconnect(): Promise<void> } {
+export function createDesktopRuntimeLifecycle(
+  deps: {
+    detectActiveSessions(): ActiveSessionInfo[]
+    hasActiveReviewerWork(): boolean
+    getActiveSettingsInstallId(): string | undefined
+    isMigrationInProgress(): boolean
+    cancelMigrationForQuit?(): Promise<void>
+    hasActivePackageTransfer(): boolean
+    holdSettingsInstallAdmission(): () => void
+    prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
+    abortQuitPreparation(): void
+  },
+  options: { disconnectWaitMs?: number } = {}
+): {
+  request(operation: DesktopLifecycleRequest): Promise<unknown>
+  disconnect(): Promise<void>
+} {
   let releaseAdmission: (() => void) | undefined
   let preparing = false
   let prepared = false
@@ -72,8 +79,18 @@ export function createDesktopRuntimeLifecycle(deps: {
   return {
     disconnect: async () => {
       disconnected = true
-      await inFlight?.catch(() => undefined)
-      await waitForLifecycleSettlement()
+      // Cleanup is bounded: an operation that never settles must not keep the Desktop fenced out.
+      const wait = options.disconnectWaitMs ?? DISCONNECT_WAIT_MS
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight?.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, wait)
+          timer.unref?.()
+        })
+      ])
+      clearTimeout(timer)
+      await waitForLifecycleSettlement({ timeoutMs: wait })
       abort()
     },
     request: (operation) => {

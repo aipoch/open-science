@@ -920,6 +920,12 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(resumeAfterHandoff).toHaveBeenCalledTimes(2)
   result.abortQuitPreparation()
   expect(resumeAfterHandoff).toHaveBeenCalledTimes(3)
+
+  // A teardown that never settles is abandoned, so Side Chat still resumes.
+  trackLifecycleSettlement(new Promise<void>(() => {}), { abandonAfterMs: 50 })
+  result.abortQuitPreparation()
+  expect(resumeAfterHandoff).toHaveBeenCalledTimes(3)
+  await vi.waitFor(() => expect(resumeAfterHandoff).toHaveBeenCalledTimes(4), { timeout: 2000 })
   const operation = vi.fn(async () => 'available')
   expect(
     await result.electronAdapters.acp.sessionAdmission.withSessionAvailableById(
