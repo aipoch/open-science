@@ -11,6 +11,24 @@ afterEach(async () => {
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
 })
+function proof(
+  root: string,
+  owner: { generation: string; pid: number; desktop: { generation: string } }
+): object {
+  return {
+    generation: owner.generation,
+    pid: owner.pid,
+    desktopGeneration: owner.desktop.generation,
+    startupOptions: {
+      configRoot: root,
+      dataRoot: root,
+      profilePath: root,
+      port: 0,
+      host: '127.0.0.1',
+      credentialStore: 'os'
+    }
+  }
+}
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'desktop-launch-'))
@@ -32,8 +50,8 @@ async function fixture() {
   await writeFile(join(root, 'web-token'), 'b'.repeat(43))
   const fetcher = vi
     .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
+    .mockImplementation(
+      async () => new Response(JSON.stringify(proof(root, owner)))
     )
   vi.stubGlobal('fetch', fetcher)
   return { root, owner, fetcher }
@@ -70,10 +88,19 @@ describe('desktop backend discovery', () => {
       await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)
     }
   )
+  it('reports a same-version service that predates startup options as a legacy service', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
+    )
+    await expect(discoverDesktopBackend(root, 'test')).rejects.toMatchObject({
+      issue: { reason: 'legacy-service', canStop: true, canRecover: true }
+    })
+  })
   it('rejects an authenticated server version mismatch and a legacy Electron writer', async () => {
     const { root, owner, fetcher } = await fixture()
     await expect(discoverDesktopBackend(root, 'different')).rejects.toMatchObject({
-      issue: { reason: 'legacy-service', canStop: true }
+      issue: { reason: 'version-mismatch', canStop: true }
     })
     await writeFile(
       join(root, 'runtime-owner.json'),
@@ -83,6 +110,18 @@ describe('desktop backend discovery', () => {
       new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
     )
     await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow('older desktop runtime')
+  })
+  it('names the failing control step and manual recovery when a service refuses shutdown', async () => {
+    const { root, owner, fetcher } = await fixture()
+    owner.pid = process.pid
+    await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
+    const error = await discoverDesktopBackend(root, 'different').catch((error) => error)
+    fetcher.mockImplementation(async (url: string) =>
+      url.endsWith('/owner')
+        ? new Response(JSON.stringify(proof(root, owner)))
+        : new Response(null, { status: 404 })
+    )
+    await expect(error.stopAndContinue()).rejects.toThrow(/HTTP 404.*quit it manually/s)
   })
   it('does not stop a replacement owner after the confirmation was opened', async () => {
     const { root, owner, fetcher } = await fixture()

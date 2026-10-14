@@ -91,17 +91,18 @@ export async function discoverDesktopBackend(
       },
       'An older desktop runtime owns this data folder. Quit that application before opening this version.'
     )
-  if (owner.desktop.version !== version) {
-    const startup = z
-      .object({
-        desktopGeneration: z.literal(owner.desktop.generation),
-        startupOptions: runtimeStartupOptionsSchema
-      })
-      .safeParse(proof)
-    const startupOptions =
-      startup.success && startup.data.startupOptions.configRoot === configRoot
-        ? startup.data.startupOptions
-        : undefined
+  // A service that predates startup-option proofs is legacy even when its version string matches.
+  const startup = z
+    .object({
+      desktopGeneration: z.literal(owner.desktop.generation),
+      startupOptions: runtimeStartupOptionsSchema
+    })
+    .safeParse(proof)
+  const startupOptions =
+    startup.success && startup.data.startupOptions.configRoot === configRoot
+      ? startup.data.startupOptions
+      : undefined
+  if (owner.desktop.version !== version || !startupOptions) {
     const legacy = !startupOptions
     const issue = {
       reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
@@ -179,7 +180,9 @@ export async function discoverDesktopBackend(
           signal: AbortSignal.timeout(5000),
           redirect: 'error'
         })
-        if (!started.ok) throw new Error('The server shutdown endpoint is unavailable.')
+        if (!started.ok) throw new Error(
+            `The server refused the Web control request (HTTP ${started.status}). Its process cannot be stopped from here; quit it manually, then check again.`
+          )
         const service = z
           .object({ pid: z.literal(owner.pid), port: z.number().int().min(1).max(65535) })
           .parse(JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8')))
@@ -189,7 +192,9 @@ export async function discoverDesktopBackend(
           signal: AbortSignal.timeout(5000),
           redirect: 'error'
         })
-        if (!stopped.ok) throw new Error('The server did not accept the shutdown request.')
+        if (!stopped.ok) throw new Error(
+            `The server did not accept the shutdown request (HTTP ${stopped.status}). Quit it manually, then check again.`
+          )
         await stopped.arrayBuffer()
         const lease = await waitForRuntimeStopped({
           configRoot,
