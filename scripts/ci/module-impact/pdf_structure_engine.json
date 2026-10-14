@@ -1746,7 +1746,9 @@
     "packages/pdf-structure/test/wrapped-mean-se.test.ts",
     "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
     "packages/pdf-structure/tsconfig.json",
-    "packages/pdf-structure/vitest.config.ts"
+    "packages/pdf-structure/vitest.config.ts",
+    "packages/pdf-structure/resources/literature-pdf-figure-panel-paragraphs.mjs",
+    "packages/pdf-structure/test/figure-panel-paragraphs.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2268,7 +2270,8 @@
       "packages/pdf-structure/test/wrapped-figure-reference.test.ts",
       "packages/pdf-structure/test/wrapped-group-heading.test.ts",
       "packages/pdf-structure/test/wrapped-mean-se.test.ts",
-      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts"
+      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
+      "packages/pdf-structure/test/figure-panel-paragraphs.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -2579,6 +2582,8 @@
       "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive"],
+  "capabilityOverlays": [
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }
