@@ -1010,7 +1010,8 @@
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/desktop-startup-recovery.integration.test.ts"
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/session-diagnostics/desktop-log-paths.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

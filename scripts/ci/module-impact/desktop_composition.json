@@ -152,6 +152,8 @@
     "scripts/stage-node-runtime.test.ts",
     "build/node-runtime.json",
     "src/main/desktop-runtime-launcher.ts",
+    "src/main/legacy-service-termination.ts",
+    "src/main/legacy-service-termination.test.ts",
     "src/main/desktop-runtime-launcher.test.ts",
     "src/main/desktop-preview-proxy.ts",
     "src/main/desktop-runtime-launcher.integration.test.ts",
@@ -367,7 +369,8 @@
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/main/runtime-network-node.test.ts"
+      "src/main/runtime-network-node.test.ts",
+      "src/main/legacy-service-termination.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

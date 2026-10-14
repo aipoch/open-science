@@ -15,6 +15,7 @@
     "src/main/runtime-stop-confirmation.ts",
     "src/main/system-boot-identity.test.ts",
     "src/main/system-boot-identity.ts",
+    "src/main/system-boot-identity.windows.test.ts",
     "src/main/runtime-startup-options.ts"
   ],
   "interfacePaths": [
@@ -37,7 +38,8 @@
       "src/main/runtime-ownership.integration.test.ts",
       "src/main/runtime-shutdown-lifetime.test.ts",
       "src/main/runtime-stop-confirmation.integration.test.ts",
-      "src/main/system-boot-identity.test.ts"
+      "src/main/system-boot-identity.test.ts",
+      "src/main/system-boot-identity.windows.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -917,7 +919,8 @@
       "src/main/desktop-runtime-controller.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/runtime-control.integration.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/legacy-service-termination.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
