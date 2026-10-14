@@ -1,7 +1,12 @@
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
-import { isRuntimeProcessAlive, waitForRuntimeStopped } from './runtime-stop-confirmation'
 import {
+  isRuntimeProcessAlive,
+  RuntimeStopError,
+  waitForRuntimeStopped
+} from './runtime-stop-confirmation'
+import {
+  defaultLegacyTerminationDeps,
   terminateVerifiedLegacyRuntime,
   type LegacyTerminationDeps
 } from './legacy-service-termination'
@@ -35,6 +40,17 @@ const ownerSchema = z
       .optional()
   })
   .strict()
+
+/** The recorded runtime is alive but already stopping; it must never be adopted. */
+export class DesktopRuntimeStoppingError extends Error {
+  constructor(
+    readonly pid: number,
+    readonly generation: string
+  ) {
+    super('The running Open-Science server is already shutting down.')
+    this.name = 'DesktopRuntimeStoppingError'
+  }
+}
 
 export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?: ChildProcess }
 
@@ -85,6 +101,8 @@ export async function discoverDesktopBackend(
     proof.pid !== owner.pid
   )
     return undefined
+  if ('stopping' in proof && proof.stopping === true && owner.desktop)
+    throw new DesktopRuntimeStoppingError(owner.pid, owner.desktop.generation)
   if (owner.host !== 'node' || !owner.desktop)
     throw new DesktopRuntimeStartupError(
       {
@@ -266,6 +284,47 @@ export function desktopBackendPaths(options: {
       }
 }
 
+const OWNERSHIP_RELEASE_WAIT_MS = 20_000
+const MAX_OWNERSHIP_RESPAWNS = 2
+
+// A stopping runtime is waited out; if it does not exit, only an identity-verified runtime is stopped.
+async function settleStoppingRuntime(
+  configRoot: string,
+  stopping: DesktopRuntimeStoppingError,
+  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+): Promise<void> {
+  try {
+    const lease = await waitForRuntimeStopped({
+      configRoot,
+      generation: stopping.generation,
+      pid: stopping.pid,
+      requireCleanExit: false,
+      timeoutMs: options.waitMs
+    })
+    lease.release()
+  } catch (error) {
+    if (!(error instanceof RuntimeStopError)) throw error
+    await terminateVerifiedLegacyRuntime(
+      { configRoot, generation: stopping.generation, pid: stopping.pid },
+      options.terminationDeps
+    )
+  }
+}
+
+async function discoverOrWaitForStop(
+  configRoot: string,
+  version: string,
+  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+): Promise<DesktopEndpoint | undefined> {
+  try {
+    return await discoverDesktopBackend(configRoot, version, options.terminationDeps)
+  } catch (error) {
+    if (!(error instanceof DesktopRuntimeStoppingError)) throw error
+    await settleStoppingRuntime(configRoot, error, options)
+    return discoverDesktopBackend(configRoot, version, options.terminationDeps)
+  }
+}
+
 export async function startOrAttachDesktopBackend(options: {
   configRoot: string
   profilePath: string
@@ -275,9 +334,17 @@ export async function startOrAttachDesktopBackend(options: {
   packaged: boolean
   args?: readonly string[]
   timeoutMs?: number
+  // Bounds for waiting out a stopping runtime or a lock still held after exit 75.
+  ownershipWaitMs?: number
+  terminationDeps?: Partial<LegacyTerminationDeps>
+  respawnAttempt?: number
   onStatus?: (status: BackendStartupStatus & { elapsedMs: number }) => void
 }): Promise<DesktopBackendLaunch> {
-  const existing = await discoverDesktopBackend(options.configRoot, options.version)
+  const wait = {
+    waitMs: options.ownershipWaitMs ?? OWNERSHIP_RELEASE_WAIT_MS,
+    terminationDeps: options.terminationDeps
+  }
+  const existing = await discoverOrWaitForStop(options.configRoot, options.version, wait)
   if (existing) return { endpoint: existing }
   await Promise.all([access(options.command), access(options.entry)])
   const logs = join(options.configRoot, 'logs')
@@ -343,7 +410,29 @@ export async function startOrAttachDesktopBackend(options: {
   try {
     while (Date.now() < deadline) {
       if (failure) throw failure
-      if (child.signalCode || (child.exitCode !== null && child.exitCode !== 75))
+      if (child.exitCode === 75) {
+        // RuntimeOwnershipConflict: another process holds the data directory. Wait for it to either
+        // publish a usable endpoint or release the lock, then spawn once more instead of idling.
+        const lockHeld = options.terminationDeps?.lockHeld ?? defaultLegacyTerminationDeps.lockHeld
+        const releaseDeadline = Date.now() + wait.waitMs
+        while (Date.now() < releaseDeadline) {
+          const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
+          if (endpoint) return { endpoint }
+          if (!lockHeld(options.configRoot)) break
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        const attempt = options.respawnAttempt ?? 0
+        if (lockHeld(options.configRoot) || attempt >= MAX_OWNERSHIP_RESPAWNS)
+          throw new DesktopBackendStartupError(
+            `The data folder is still owned by another process (exit 75). See ${logs}.`,
+            status?.stage ?? 'bootstrap',
+            true,
+            logs,
+            status
+          )
+        return startOrAttachDesktopBackend({ ...options, respawnAttempt: attempt + 1 })
+      }
+      if (child.signalCode || child.exitCode !== null)
         throw new DesktopBackendStartupError(
           `Node backend exited during startup (${child.signalCode ?? child.exitCode}). See ${logs}.`,
           status?.stage ?? 'bootstrap',
@@ -351,7 +440,7 @@ export async function startOrAttachDesktopBackend(options: {
           logs,
           status
         )
-      const endpoint = await discoverDesktopBackend(options.configRoot, options.version)
+      const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
       if (endpoint && status?.kind !== 'failed') return { endpoint, startedProcess: child }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }

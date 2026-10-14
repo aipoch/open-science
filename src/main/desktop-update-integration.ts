@@ -381,7 +381,8 @@ export function createDesktopUpdateIntegration(options: {
               canCancel: true,
               canRecover: false,
               canRetryInstall: false,
-              detail: info.controlReason ?? 'controller-held'
+              detail:
+                info.controlReason === 'operation-pending' ? 'operation-pending' : 'controller-held'
             }
           )
         options.validateConfiguration(info.startupOptions)
@@ -639,7 +640,10 @@ export function createDesktopUpdateIntegration(options: {
                 canCancel: true,
                 canRecover: false,
                 canRetryInstall: false,
-                detail: info.controlReason ?? 'controller-held'
+                detail:
+                  info.controlReason === 'operation-pending'
+                    ? 'operation-pending'
+                    : 'controller-held'
               }
             }
           if (

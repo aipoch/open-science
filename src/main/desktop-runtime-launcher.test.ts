@@ -3,7 +3,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { discoverDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
+import {
+  discoverDesktopBackend,
+  desktopBackendPaths,
+  DesktopRuntimeStoppingError
+} from './desktop-runtime-launcher'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 const directories: string[] = []
 afterEach(async () => {
@@ -175,6 +179,15 @@ describe('desktop backend discovery', () => {
     )
     await expect(error.stopAndContinue()).rejects.toThrow('server changed')
     expect(fetcher.mock.calls.every(([, init]) => !init.method)).toBe(true)
+  })
+  it('refuses to adopt a runtime that reports it is already stopping', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ ...proof(root, owner), stopping: true }))
+    )
+    await expect(discoverDesktopBackend(root, 'test')).rejects.toBeInstanceOf(
+      DesktopRuntimeStoppingError
+    )
   })
   it('locates the bundled ordinary Node without a PATH or Electron fallback', () => {
     const paths = desktopBackendPaths({

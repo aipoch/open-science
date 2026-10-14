@@ -25,7 +25,8 @@ export async function startRuntimeControl(
   host: RuntimeOwnerRecord['host'],
   ensureWeb: (port: number) => Promise<unknown>,
   desktop?: DesktopEndpoint,
-  startupOptions?: RuntimeStartupOptions
+  startupOptions?: RuntimeStartupOptions,
+  isStopping?: () => boolean
 ): Promise<{ close(): Promise<void> }> {
   const verifiedOptions = startupOptions
     ? runtimeStartupOptionsSchema.parse(startupOptions)
@@ -52,6 +53,7 @@ export async function startRuntimeControl(
         JSON.stringify({
           generation,
           pid: process.pid,
+          ...(isStopping?.() ? { stopping: true } : {}),
           ...(verifiedOptions && desktop
             ? {
                 startupOptions: verifiedOptions,

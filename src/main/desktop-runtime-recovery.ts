@@ -123,15 +123,25 @@ export function createDesktopRuntimeRecovery(options: {
   }
 }
 
+/** The attached Runtime has started stopping and must be replaced, never reused. */
+export class RuntimeStoppingError extends Error {
+  constructor() {
+    super('The Runtime is shutting down and cannot be reused.')
+    this.name = 'RuntimeStoppingError'
+  }
+}
+
 /** Refresh only attachment authority; never replay a command or bypass a live controller. */
 export async function waitForDesktopRuntimeControl(
   client: DesktopRuntimeClient,
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted()
+  if (client.runtimeInfo().controlReason === 'runtime-stopping') throw new RuntimeStoppingError()
   while (client.runtimeInfo().controlReason === 'operation-pending') {
     await delay(100, undefined, { signal })
     await abortable(client.refreshControl(), signal)
+    if (client.runtimeInfo().controlReason === 'runtime-stopping') throw new RuntimeStoppingError()
   }
   signal.throwIfAborted()
 }

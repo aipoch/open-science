@@ -958,7 +958,23 @@ async function startDesktop(): Promise<void> {
   }
   while (true) {
     try {
-      client = await connectDesktopRuntimeForStartup({ connect: attach, version: app.getVersion() })
+      client = await connectDesktopRuntimeForStartup({
+        connect: attach,
+        version: app.getVersion(),
+        replaceRuntime: async () => {
+          // The old Runtime is waited out (or stopped after identity proof) by the launcher.
+          launch = await startOrAttachDesktopBackend({
+            onStatus: (status) => bootstrapLog.info('backend startup status', status),
+            configRoot,
+            profilePath,
+            version: app.getVersion(),
+            ...initialBackendPaths,
+            packaged: app.isPackaged,
+            args: credentialArgs
+          })
+          startedBackend = launch.startedProcess
+        }
+      })
       startupBlocked = false
       startupFailure = undefined
       break

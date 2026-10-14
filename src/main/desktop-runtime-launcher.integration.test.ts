@@ -45,6 +45,57 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it('re-spawns after an ownership conflict exit once the lock is released', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    const marker = join(root, 'first-attempt')
+    await writeFile(
+      entry,
+      `{const f=require('node:fs');
+if(!f.existsSync(${JSON.stringify(marker)})){f.writeFileSync(${JSON.stringify(marker)},'1');process.exit(75)}}
+${fixtureSource}`
+    )
+    let locked = true
+    const launched = await startOrAttachDesktopBackend({
+      configRoot: root,
+      profilePath: join(root, 'original-profile'),
+      version: 'test',
+      command: process.execPath,
+      entry,
+      packaged: true,
+      timeoutMs: 10000,
+      ownershipWaitMs: 3000,
+      terminationDeps: {
+        lockHeld: () => {
+          const held = locked
+          locked = false
+          return held
+        }
+      }
+    })
+    expect(launched.startedProcess?.pid).toBeGreaterThan(0)
+    expect(children.length).toBe(2)
+  })
+  it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(entry, 'process.exit(75)')
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: join(root, 'original-profile'),
+        version: 'test',
+        command: process.execPath,
+        entry,
+        packaged: true,
+        timeoutMs: 10000,
+        ownershipWaitMs: 300,
+        terminationDeps: { lockHeld: () => true }
+      })
+    ).rejects.toThrow('still owned by another process')
+  })
   it('reports a backend that exits cleanly before publishing an endpoint instead of a startup timeout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-clean-exit-'))
     roots.push(root)

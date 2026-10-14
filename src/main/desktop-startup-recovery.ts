@@ -5,7 +5,7 @@ import { waitForRuntimeStopped } from './runtime-stop-confirmation'
 import type { RuntimeStartupIssue } from '../shared/runtime-startup'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
-import { waitForDesktopRuntimeControl } from './desktop-runtime-recovery'
+import { RuntimeStoppingError, waitForDesktopRuntimeControl } from './desktop-runtime-recovery'
 import {
   checkInstallationResultAsync,
   finishInstallationRecoveryAsync,
@@ -49,13 +49,34 @@ export async function connectDesktopRuntimeForStartup(options: {
   connect(signal: AbortSignal): Promise<DesktopRuntimeClient>
   version: string
   timeoutMs?: number
+  // Replaces a Runtime that is stopping with a fresh one. Without it, a stopping Runtime is only
+  // reported as a recoverable failure.
+  replaceRuntime?: () => Promise<void>
 }): Promise<DesktopRuntimeClient> {
   let candidate: DesktopRuntimeClient | undefined
-  try {
+  let needsReplacement = false
+  const attempt = async (): Promise<DesktopRuntimeClient> => {
     const signal = AbortSignal.timeout(options.timeoutMs ?? 12_000)
     candidate = await options.connect(signal)
     await waitForDesktopRuntimeControl(candidate, signal)
     return candidate
+  }
+  const replace = async (): Promise<void> => {
+    if (!options.replaceRuntime) throw new Error('The Runtime is shutting down.')
+    await options.replaceRuntime()
+  }
+  try {
+    try {
+      return await attempt()
+    } catch (error) {
+      // A Runtime that already began shutting down is never reused: stop it and launch a fresh one.
+      if (!(error instanceof RuntimeStoppingError) || !options.replaceRuntime) throw error
+      needsReplacement = true
+      candidate?.close()
+      candidate = undefined
+      await replace()
+      return await attempt()
+    }
   } catch (error) {
     candidate?.close()
     throw new DesktopRuntimeStartupError(
@@ -68,8 +89,10 @@ export async function connectDesktopRuntimeForStartup(options: {
       },
       'The Runtime connection or control could not be confirmed.',
       undefined,
-      // The startup owner retries connection and control verification before exposing any work.
-      async () => {}
+      // Recovery does real work: replace a stopping Runtime; the startup owner then re-verifies.
+      async () => {
+        if (needsReplacement || error instanceof RuntimeStoppingError) await replace()
+      }
     )
   }
 }

@@ -454,3 +454,30 @@ it('releases the controller fence when a controller operation never settles', as
     { timeout: 3000 }
   )
 })
+
+it('does not grant control of a runtime that is already stopping', async () => {
+  let stopping = false
+  const host = await startDesktopRuntimeTransport({
+    version: 'test',
+    launch: 'desktop',
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub(),
+    isStopping: () => stopping,
+    createLifecycle: () => ({ request: vi.fn(async () => null), disconnect: vi.fn() })
+  })
+  cleanup.push(host.close)
+  const connect = async (): Promise<DesktopRuntimeClient> => {
+    const client = await connectDesktopRuntime({
+      endpoint: host.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanup.push(client.close)
+    return client
+  }
+  expect((await connect()).runtimeInfo().control).toBe('granted')
+  stopping = true
+  const late = await connect()
+  expect(late.runtimeInfo()).toMatchObject({ control: 'held', controlReason: 'runtime-stopping' })
+})
