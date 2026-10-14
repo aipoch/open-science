@@ -26,6 +26,17 @@ export function looksLikeOpenScienceRuntime(commandLine: string): boolean {
   )
 }
 
+/** Matches the main process of an installed Open-Science desktop app, never its helpers. */
+export function looksLikeOpenScienceDesktop(commandLine: string): boolean {
+  const normalized = commandLine.replace(/\\/g, '/')
+  if (/\s--type=/.test(normalized)) return false
+  return /(?:Open[- ]Science(?: \(DEV\))?\.app\/Contents\/MacOS\/Open[- ]Science|\/Open[- ]Science\.exe|\/open-science)(?:["']|\s|$)/i.test(
+    normalized
+  )
+}
+
+export type LegacyServiceKind = 'node' | 'electron'
+
 async function inspectProcess(pid: number): Promise<InspectedProcess | undefined> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   try {
@@ -102,10 +113,16 @@ export class LegacyTerminationError extends Error {
  * that currently holds the runtime lock. Returns once the lock is acquirable again.
  */
 export async function terminateVerifiedLegacyRuntime(
-  options: { configRoot: string; generation: string; pid: number },
+  options: { configRoot: string; generation: string; pid: number; kind?: LegacyServiceKind },
   overrides: Partial<LegacyTerminationDeps> = {}
 ): Promise<void> {
-  const deps = { ...defaultLegacyTerminationDeps, ...overrides }
+  const deps = {
+    ...defaultLegacyTerminationDeps,
+    ...(options.kind === 'electron' ? { graceMs: 15_000 } : {}),
+    ...overrides
+  }
+  const matches =
+    options.kind === 'electron' ? looksLikeOpenScienceDesktop : looksLikeOpenScienceRuntime
   const logger = createLogger('desktop-runtime-client')
   const { configRoot, pid } = options
   const released = async (timeoutMs: number): Promise<boolean> => {
@@ -125,7 +142,7 @@ export async function terminateVerifiedLegacyRuntime(
     pid !== deps.selfPid &&
     info !== undefined &&
     info.parentPid !== deps.selfPid &&
-    looksLikeOpenScienceRuntime(info.commandLine) &&
+    matches(info.commandLine) &&
     deps.lockHeld(configRoot)
   if (!proven) {
     logger.warn('legacy-stop', { step: 'identity', result: 'unproven', runtimePid: pid })
@@ -138,7 +155,7 @@ export async function terminateVerifiedLegacyRuntime(
   if (await released(deps.graceMs)) return
   // Re-prove identity: the PID must not have been recycled while waiting.
   const again = await deps.inspect(pid)
-  if (again && looksLikeOpenScienceRuntime(again.commandLine)) {
+  if (again && matches(again.commandLine)) {
     logger.warn('legacy-stop', { step: 'kill', runtimePid: pid })
     await deps.signal(pid, 'kill')
   }

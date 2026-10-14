@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  looksLikeOpenScienceDesktop,
   looksLikeOpenScienceRuntime,
   terminateVerifiedLegacyRuntime,
   type LegacyTerminationDeps
@@ -14,6 +15,8 @@ afterEach(() => {
 })
 const RUNTIME =
   '/Applications/Open-Science.app/Contents/Resources/node-runtime/node /Applications/Open-Science.app/Contents/Resources/backend/out/backend/index.cjs --desktop --serve'
+
+const DESKTOP = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
 
 function setup(overrides: Partial<LegacyTerminationDeps> = {}): {
   options: { configRoot: string; generation: string; pid: number }
@@ -52,6 +55,57 @@ describe('verified legacy runtime termination', () => {
     ).toBe(true)
     expect(looksLikeOpenScienceRuntime('/usr/bin/node /home/u/app/server.js')).toBe(false)
     expect(looksLikeOpenScienceRuntime('vim backend/index.cjs.bak')).toBe(false)
+  })
+  it('recognizes only the main process of an Open-Science desktop app', () => {
+    expect(looksLikeOpenScienceDesktop(DESKTOP)).toBe(true)
+    expect(
+      looksLikeOpenScienceDesktop(
+        'C:\\Users\\a\\AppData\\Local\\Programs\\Open-Science\\Open-Science.exe'
+      )
+    ).toBe(true)
+    expect(looksLikeOpenScienceDesktop(`${DESKTOP} --type=renderer`)).toBe(false)
+    expect(looksLikeOpenScienceDesktop('/Applications/Safari.app/Contents/MacOS/Safari')).toBe(
+      false
+    )
+    expect(looksLikeOpenScienceDesktop(RUNTIME)).toBe(false)
+  })
+  describe('Electron-hosted service', () => {
+    it('waits 15 seconds for the graceful close and then force-stops after re-verifying', async () => {
+      const { options, deps, signal } = setup({
+        inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 })
+      })
+      await terminateVerifiedLegacyRuntime({ ...options, kind: 'electron' }, deps)
+      expect(signal.mock.calls.map(([, mode]) => mode)).toEqual(['terminate', 'kill'])
+    })
+    it.each<[string, Partial<LegacyTerminationDeps>]>([
+      ['a Node runtime', { inspect: async () => ({ commandLine: RUNTIME, parentPid: 1 }) }],
+      [
+        'a helper process',
+        { inspect: async () => ({ commandLine: `${DESKTOP} --type=gpu-process`, parentPid: 1 }) }
+      ],
+      [
+        'this Desktop under its own path',
+        { selfPid: 424242, inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 }) }
+      ],
+      [
+        'a child of this Desktop',
+        { selfPid: 7, inspect: async () => ({ commandLine: DESKTOP, parentPid: 7 }) }
+      ],
+      [
+        'an unlocked directory',
+        {
+          inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 }),
+          lockHeld: () => false,
+          isAlive: () => true
+        }
+      ]
+    ])('never signals %s', async (_name, override) => {
+      const { options, deps, signal } = setup(override)
+      await expect(
+        terminateVerifiedLegacyRuntime({ ...options, kind: 'electron' }, deps)
+      ).rejects.toMatchObject({ code: 'identity-unproven' })
+      expect(signal).not.toHaveBeenCalled()
+    })
   })
   it('terminates a proven runtime and then kills it when it ignores the request', async () => {
     const { options, deps, signal } = setup()

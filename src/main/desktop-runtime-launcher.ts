@@ -103,17 +103,35 @@ export async function discoverDesktopBackend(
     return undefined
   if ('stopping' in proof && proof.stopping === true && owner.desktop)
     throw new DesktopRuntimeStoppingError(owner.pid, owner.desktop.generation)
-  if (owner.host !== 'node' || !owner.desktop)
+  if (owner.host !== 'node' || !owner.desktop) {
+    // An older Electron-hosted (or desktop-less) owner has no startup proof to compare. Stopping it
+    // relies on the process identity checks alone; the authenticated owner response above only
+    // establishes that the recorded generation and PID are current.
+    const recheck = async (): Promise<void> => {
+      await discoverDesktopBackend(configRoot, version, terminationDeps)
+    }
     throw new DesktopRuntimeStartupError(
       {
-        reason: 'legacy-host',
+        reason: 'legacy-service',
         desktopVersion: version,
         pid: owner.pid,
-        canStop: false,
-        canRecover: false
+        canStop: true,
+        canRecover: true
       },
-      'An older desktop runtime owns this data folder. Quit that application before opening this version.'
+      'An older Open-Science app is running. It must be closed before opening this version.',
+      () =>
+        terminateVerifiedLegacyRuntime(
+          {
+            configRoot,
+            generation: owner.generation,
+            pid: owner.pid,
+            kind: owner.host === 'electron' ? 'electron' : 'node'
+          },
+          terminationDeps
+        ),
+      recheck
     )
+  }
   // A service that predates startup-option proofs is legacy even when its version string matches.
   const startup = z
     .object({

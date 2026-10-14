@@ -114,7 +114,9 @@ describe('desktop backend discovery', () => {
     fetcher.mockResolvedValueOnce(
       new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
     )
-    await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow('older desktop runtime')
+    await expect(discoverDesktopBackend(root, 'test')).rejects.toMatchObject({
+      issue: { reason: 'legacy-service', canStop: true, canRecover: true }
+    })
   })
   it('force-stops a verified legacy service when graceful control is unavailable', async () => {
     const { root, owner, fetcher } = await fixture()
@@ -165,6 +167,34 @@ describe('desktop backend discovery', () => {
     )
     await expect(error.stopAndContinue()).rejects.toMatchObject({ code: 'identity-unproven' })
     expect(signals).toEqual([])
+  })
+  it('force-stops an Electron-hosted legacy app only after verifying its executable', async () => {
+    const { root, owner, fetcher } = await fixture()
+    owner.pid = process.pid
+    await writeFile(
+      join(root, 'runtime-owner.json'),
+      JSON.stringify({ ...owner, host: 'electron', desktop: undefined })
+    )
+    fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
+    let alive = true
+    const signals: string[] = []
+    const error = await discoverDesktopBackend(root, 'test', {
+      selfPid: -1,
+      inspect: async () => ({
+        commandLine: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
+        parentPid: 1
+      }),
+      isAlive: () => alive,
+      lockHeld: () => alive,
+      signal: async (_pid, mode) => {
+        signals.push(mode)
+        if (mode === 'kill') alive = false
+      },
+      graceMs: 100,
+      settleMs: 100
+    }).catch((error) => error)
+    await expect(error.stopAndContinue()).resolves.toBeUndefined()
+    expect(signals).toEqual(['terminate', 'kill'])
   })
   it('does not stop a replacement owner after the confirmation was opened', async () => {
     const { root, owner, fetcher } = await fixture()
