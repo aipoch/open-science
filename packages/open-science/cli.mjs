@@ -820,9 +820,11 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     deps.warn(
       'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
     )
-  const installationLease = protectInstallationStartup(backend.entry, configRoot)
+  let installationLease
+  let logClosed = false
   let startup
   try {
+    installationLease = protectInstallationStartup(backend.entry, configRoot)
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
       stdio: ['ignore', logFd, logFd],
@@ -832,10 +834,12 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     const startupPromise = waitForStartup(configRoot, child, deps)
     child.unref()
     closeSync(logFd)
+    logClosed = true
 
     startup = await startupPromise
   } finally {
-    installationLease.release()
+    if (!logClosed) closeSync(logFd)
+    installationLease?.release()
   }
   if (startup.kind !== 'ready') {
     const logTail = await readLogTail(logPath)

@@ -11,6 +11,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { readdirSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from './test/fixtures'
@@ -20,7 +21,8 @@ import {
   parseCliArgs,
   reportCliError,
   runCli,
-  runTaskCommand
+  runTaskCommand,
+  startCommand
 } from './cli.mjs'
 
 const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
@@ -185,6 +187,40 @@ describe('task CLI', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'closes the launch log descriptor when installation protection fails',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-start-protection-'))
+      const stateFile = join(root, 'state-file')
+      await writeFile(stateFile, '')
+      vi.stubEnv('OPEN_SCIENCE_INSTALLATION_STATE_ROOT', stateFile)
+      const openDescriptors = (): number => readdirSync('/dev/fd').length
+      const before = openDescriptors()
+      try {
+        await expect(
+          startCommand(
+            { configRoot: join(root, 'profile'), port: 1 },
+            {
+              log: vi.fn(),
+              warn: vi.fn(),
+              findServiceState: vi.fn().mockResolvedValue(undefined),
+              fetch: vi.fn().mockRejectedValue(new Error('offline')),
+              locateBackend: vi.fn().mockResolvedValue({
+                development: false,
+                command: process.execPath,
+                entry: join(root, 'backend/out/backend/index.cjs')
+              })
+            }
+          )
+        ).rejects.toThrow()
+        expect(openDescriptors()).toBe(before)
+      } finally {
+        vi.unstubAllEnvs()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('requires JSON output for doctor', () => {
     expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')

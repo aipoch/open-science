@@ -127,6 +127,7 @@ export function completeInstallationStartup(
 
 // This location is shared across config roots and is deliberately outside replacement resources.
 export { installationRootForEntry } from '../../../packages/open-science/installation-startup.cjs'
+import { reapStaleRegistrations } from '../../../packages/open-science/installation-startup.cjs'
 export function installationStateDirectory(location: InstallationLocation): string {
   // Resolve existing parents too: recovery must find the record when resources are missing.
   let root = resolve(location.installationRoot)
@@ -291,6 +292,7 @@ export function registerInstallationRuntime(
   return coordinated(options, (directory) => {
     if (readRecord(directory))
       throw new UpdateLifecycleError('installation-busy', 'An installation update is in progress.')
+    reapStaleRegistrations(directory)
     const id = randomUUID()
     const helperToken = randomUUID()
     const unlock = acquireLock(join(directory, `${id}.sqlite`))
@@ -322,6 +324,7 @@ export function registerInstallationRuntime(
 }
 function occupants(directory: string): InstallationRuntime[] {
   const live: InstallationRuntime[] = []
+  reapStaleRegistrations(directory)
   for (const name of readdirSync(directory).filter((name) => /^[\da-f-]{36}\.json$/.test(name))) {
     let unlock: (() => void) | undefined
     try {

@@ -13,3 +13,4 @@ export function protectInstallationStartup(
   isHeld(): boolean
   release(): void
 }
+export function reapStaleRegistrations(directory: string): number

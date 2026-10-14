@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  realpathSync,
+  readdirSync,
+  existsSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
@@ -18,8 +26,10 @@ import {
   inspectInstallationStartup,
   completeInstallationStartup,
   installationRootForEntry,
+  installationStateDirectory,
   registerInstallationRuntime
 } from './installation-protection'
+import { protectInstallationStartup } from '../../../packages/open-science/installation-startup.cjs'
 
 const directories: string[] = []
 const fixture = (): {
@@ -338,4 +348,84 @@ it('admits authenticated current-runtime helpers before the gate but blocks hand
     if (previous === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_OWNER
     else process.env.OPEN_SCIENCE_INSTALLATION_OWNER = previous
   }
+})
+
+describe('stale registration garbage collection', () => {
+  const registrations = (directory: string): string[] =>
+    readdirSync(directory).filter((name) => /^[\da-f-]{36}\.(json|sqlite)$/.test(name))
+  const leaveStale = (f: ReturnType<typeof fixture>, count: number): void => {
+    for (let i = 0; i < count; i += 1)
+      protectInstallationStartup(f.entry, 'profile', f.location.stateRoot).release()
+  }
+
+  it('removes released registrations when a runtime registers and keeps live ones', () => {
+    const f = fixture()
+    const live = protectInstallationStartup(f.entry, 'live', f.location.stateRoot)
+    const directory = installationStateDirectory(f.location)
+    for (let i = 0; i < 5; i += 1) {
+      const id = `00000000-0000-0000-0000-00000000000${i}`
+      writeFileSync(join(directory, `${id}.sqlite`), '')
+      writeFileSync(join(directory, `${id}.json`), '{}')
+    }
+    expect(registrations(directory)).toHaveLength(12)
+    const runtime = registerInstallationRuntime({ ...f.location, ...f.runtime })
+    const left = registrations(directory)
+    expect(left).toHaveLength(4)
+    expect(left.some((name) => name.startsWith(live.identity.generation))).toBe(true)
+    runtime.release()
+    live.release()
+  })
+
+  it('collects stale registrations during backend startup before scanning helpers', () => {
+    const f = fixture()
+    leaveStale(f, 4)
+    const directory = installationStateDirectory(f.location)
+    const lease = protectInstallationStartup(f.entry, 'next', f.location.stateRoot)
+    expect(registrations(directory)).toHaveLength(2)
+    lease.release()
+  })
+
+  it('reclaims unreadable registrations whose lock is free and never blocks startup on them', () => {
+    const f = fixture()
+    leaveStale(f, 1)
+    const directory = installationStateDirectory(f.location)
+    const orphan = '11111111-1111-1111-1111-111111111111'
+    writeFileSync(join(directory, `${orphan}.json`), '')
+    writeFileSync(join(directory, '22222222-2222-2222-2222-222222222222.json'), '{broken')
+    writeFileSync(join(directory, '33333333-3333-3333-3333-333333333333.sqlite'), '')
+    const previous = process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+    const argv = [...process.argv]
+    process.env.OPEN_SCIENCE_INSTALLATION_OWNER = JSON.stringify({
+      pid: 1,
+      generation: 'x',
+      configRoot: 'c',
+      token: 't'
+    })
+    process.argv.push('--open-science-artifact-mcp')
+    try {
+      expect(() => protectInstallationStartup(f.entry, 'default', f.location.stateRoot)).toThrow(
+        'no longer valid'
+      )
+    } finally {
+      process.argv.splice(0, process.argv.length, ...argv)
+      if (previous === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+      else process.env.OPEN_SCIENCE_INSTALLATION_OWNER = previous
+    }
+    expect(existsSync(join(directory, `${orphan}.json`))).toBe(false)
+    expect(registrations(directory)).toHaveLength(0)
+    writeFileSync(join(directory, `${orphan}.json`), '')
+    const record = beginInstallationUpdate(f.options)
+    expect(existsSync(join(directory, `${orphan}.json`))).toBe(false)
+    finishInstallationRecovery(f.location, record.operationId, 'cancel')
+  })
+
+  it('keeps the update gate blocked by a live registration with an unreadable record', () => {
+    const f = fixture()
+    const live = protectInstallationStartup(f.entry, 'live', f.location.stateRoot)
+    const directory = installationStateDirectory(f.location)
+    writeFileSync(join(directory, `${live.identity.generation}.json`), '{broken')
+    expect(() => beginInstallationUpdate(f.options)).toThrow()
+    expect(existsSync(join(directory, `${live.identity.generation}.sqlite`))).toBe(true)
+    live.release()
+  })
 })
