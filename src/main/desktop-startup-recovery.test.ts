@@ -21,6 +21,12 @@ import {
   resolveDesktopInstallationStartup
 } from './desktop-startup-recovery'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
+// Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
+vi.mock('./system-boot-identity', async (original) => ({
+  ...(await original<typeof import('./system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
+
 const roots: string[] = []
 afterEach(() => {
   vi.restoreAllMocks()

@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises'
+import { installationFs } from './installation-filesystem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   mkdtempSync,
@@ -6,7 +8,8 @@ import {
   rmSync,
   realpathSync,
   readdirSync,
-  existsSync
+  existsSync,
+  symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,12 +27,26 @@ import {
   inspectInstallationUpdate,
   inspectInstallationAvailability,
   inspectInstallationStartup,
+  inspectInstallationStartupAsync,
   completeInstallationStartup,
   installationRootForEntry,
   installationStateDirectory,
   registerInstallationRuntime
 } from './installation-protection'
 import { protectInstallationStartup } from '../../../packages/open-science/installation-startup.cjs'
+
+vi.mock('./installation-filesystem', async (original) => {
+  const { installationFs: fs } = await original<typeof import('./installation-filesystem')>()
+  return {
+    installationFs: { ...fs, promises: { ...fs.promises, realpath: vi.fn(fs.promises.realpath) } }
+  }
+})
+
+// Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
 
 const directories: string[] = []
 const fixture = (): {
@@ -77,6 +94,8 @@ beforeEach(() => {
   )
 })
 afterEach(() => {
+  vi.mocked(installationFs.promises.realpath).mockReset()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
@@ -269,6 +288,24 @@ describe('installation protection', () => {
     expect(inspectInstallationUpdate(f.location)?.operationId).toBe(record.operationId)
     finishInstallationRecovery(f.location, record.operationId, 'cancel')
   }, 15000)
+})
+
+it('uses the persisted path spelling when native realpath expands a Windows short name', async () => {
+  const f = fixture()
+  const record = beginInstallationUpdate(f.options)
+  finishInstallationRecovery(f.location, record.operationId, 'cancel')
+  const ticket = inspectInstallationStartup(f.location)
+  // fs.promises.realpath uses the native resolver; fs.realpathSync preserves 8.3 names.
+  const nativeRoot = join(f.directory, 'expanded-native-name')
+  symlinkSync(f.location.installationRoot, nativeRoot, 'junction')
+  const persistedRoot = record.installationRoot
+  vi.mocked(installationFs.promises.realpath).mockImplementation(async (path) => {
+    const resolved = await realpath(path)
+    return resolved.startsWith(persistedRoot)
+      ? nativeRoot + resolved.slice(persistedRoot.length)
+      : resolved
+  })
+  await expect(inspectInstallationStartupAsync(f.location)).resolves.toEqual(ticket)
 })
 
 it('cancels streaming verification without clearing update protection', async () => {

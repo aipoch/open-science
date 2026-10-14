@@ -698,8 +698,9 @@ export async function inspectInstallationStartupAsync(
 ): Promise<InstallationStartupTicket | undefined> {
   const ticket = coordinated(location, readStartupTicket)
   if (!ticket) return undefined
+  // Match the writer's path spelling: native realpath expands Windows 8.3 names.
   if (
-    ticket.installationRoot !== (await realpath(location.installationRoot)) ||
+    ticket.installationRoot !== realpathSync(location.installationRoot) ||
     !(await verifyInstallationManifestAsync(location.installationRoot, ticket.manifest, signal))
   )
     throw new UpdateLifecycleError(

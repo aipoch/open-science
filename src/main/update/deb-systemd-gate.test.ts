@@ -16,13 +16,21 @@ import {
   parseSystemdProperties,
   type DebSystemdGate
 } from './deb-systemd-gate'
+// Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
+
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   return {
     ...fs,
     lstat: async (...args: Parameters<typeof fs.lstat>) => {
       const stat = await fs.lstat(...args)
-      Object.defineProperty(stat, 'uid', { value: 0 }) // fixture receipt only; no privileged files
+      // Model the trusted Linux receipt metadata without creating privileged files.
+      Object.defineProperty(stat, 'uid', { value: 0 })
+      Object.defineProperty(stat, 'mode', { value: 0o40755 })
       return stat
     }
   }
@@ -98,7 +106,8 @@ it('does not treat a written installed state as terminal while the unit still ha
     'installed'
   )
 })
-it.each(['cancel', 'commit', 'checksum'] as const)(
+// The fixed Debian shell and directory fsync require a POSIX host.
+it.skipIf(process.platform === 'win32').each(['cancel', 'commit', 'checksum'] as const)(
   'executes an isolated nonprivileged fixed shell gate: %s',
   async (mode) => {
     const gate = fixture()
@@ -162,41 +171,49 @@ it.each(['cancel', 'commit', 'checksum'] as const)(
   }
 )
 
-it('retires a denied authorization without interpreting an arbitrary missing unit as settled', async () => {
-  const gate = fixture(),
-    directory = join(gate.directory, 'executor-denied')
-  mkdirSync(directory)
-  const run = vi.fn(async (command: string) => {
-    if (command === '/usr/bin/pkexec') throw new VerificationProcessExitError(command, 126)
-    return { stdout: 'LoadState=not-found', stderr: '' }
-  })
-  await expect(
-    createDebSystemdGate(
-      {
-        directory,
-        archive: join(directory, 'payload'),
-        sha512: Buffer.alloc(64).toString('base64'),
-        installationRoot: '/fixture/app',
-        targetVersion: '2'
-      },
-      run
+it.skipIf(process.platform === 'win32')(
+  'retires a denied authorization without interpreting an arbitrary missing unit as settled',
+  async () => {
+    const gate = fixture(),
+      directory = join(gate.directory, 'executor-denied')
+    mkdirSync(directory)
+    const run = vi.fn(async (command: string) => {
+      if (command === '/usr/bin/pkexec') throw new VerificationProcessExitError(command, 126)
+      return { stdout: 'LoadState=not-found', stderr: '' }
+    })
+    await expect(
+      createDebSystemdGate(
+        {
+          directory,
+          archive: join(directory, 'payload'),
+          sha512: Buffer.alloc(64).toString('base64'),
+          installationRoot: '/fixture/app',
+          targetVersion: '2'
+        },
+        run
+      )
+    ).rejects.toThrow('exit 126')
+    expect(readFileSync(join(directory, 'authorization-rejected.json'), 'utf8')).toContain(
+      'binding'
     )
-  ).rejects.toThrow('exit 126')
-  expect(readFileSync(join(directory, 'authorization-rejected.json'), 'utf8')).toContain('binding')
-  await cancelUnclaimedDebGates(gate.directory, run)
-  expect(existsSync(join(directory, 'deb-gate.json'))).toBe(false)
-  await cancelUnclaimedDebGates(gate.directory, run)
-  const ambiguous = { ...gate, unit: 'unknown.service' }
-  expect(await inspectDebSystemdGate(ambiguous, manager({ LoadState: 'not-found' }))).toBe(
-    'starting'
-  )
-  expect(DEB_AUTHORIZATION_SCRIPT).toContain('exit 200')
-})
-it('does not reobserve a settled cancellation after the transient unit disappears', async () => {
-  const gate = fixture()
-  writeFileSync(join(gate.stateDirectory, 'state'), 'cancelled')
-  await cancelDebSystemdGate(gate, manager({ SubState: 'exited', MainPID: '0' }))
-  const absent = manager({ LoadState: 'not-found' })
-  await cancelDebSystemdGate(gate, absent)
-  expect(absent).not.toHaveBeenCalled()
-})
+    await cancelUnclaimedDebGates(gate.directory, run)
+    expect(existsSync(join(directory, 'deb-gate.json'))).toBe(false)
+    await cancelUnclaimedDebGates(gate.directory, run)
+    const ambiguous = { ...gate, unit: 'unknown.service' }
+    expect(await inspectDebSystemdGate(ambiguous, manager({ LoadState: 'not-found' }))).toBe(
+      'starting'
+    )
+    expect(DEB_AUTHORIZATION_SCRIPT).toContain('exit 200')
+  }
+)
+it.skipIf(process.platform === 'win32')(
+  'does not reobserve a settled cancellation after the transient unit disappears',
+  async () => {
+    const gate = fixture()
+    writeFileSync(join(gate.stateDirectory, 'state'), 'cancelled')
+    await cancelDebSystemdGate(gate, manager({ SubState: 'exited', MainPID: '0' }))
+    const absent = manager({ LoadState: 'not-found' })
+    await cancelDebSystemdGate(gate, absent)
+    expect(absent).not.toHaveBeenCalled()
+  }
+)
