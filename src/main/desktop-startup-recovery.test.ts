@@ -76,7 +76,10 @@ it('retains installation protection through early resolution and rechecks integr
   expect(recovery.startupOptions).toEqual(options)
   expect(inspectInstallationUpdate(location)).toBeDefined()
   writeFileSync(join(installationRoot, 'program'), 'partial')
-  await expect(recovery.completeBeforeLaunch()).rejects.toThrow('integrity')
+  await expect(recovery.completeBeforeLaunch()).rejects.toMatchObject({
+    name: 'DesktopRuntimeStartupError',
+    issue: { reason: 'startup-recovery-required', canRecover: true }
+  })
   expect(inspectInstallationUpdate(location)).toBeDefined()
   writeFileSync(join(installationRoot, 'program'), 'new')
   await recovery.completeBeforeLaunch()

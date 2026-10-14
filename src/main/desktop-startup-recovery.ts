@@ -138,6 +138,19 @@ export async function resolveDesktopInstallationStartup(
         }
       }
     )
+  // Launch-time verification failures are recoverable startup states, never fatal errors.
+  const recoverable = async (verify: () => Promise<void>): Promise<void> => {
+    try {
+      await verify()
+    } catch (error) {
+      if (error instanceof DesktopRuntimeStartupError) throw error
+      throw blocked(
+        error instanceof Error
+          ? `The installation could not be verified before launch: ${error.message}`
+          : 'The installation could not be verified before launch.'
+      )
+    }
+  }
   try {
     const record = inspectInstallationUpdate(options)
     if (!record) {
@@ -149,9 +162,10 @@ export async function resolveDesktopInstallationStartup(
         startupOptions: ticket.startupOptions,
         operationId: ticket.operationId,
         outcome: ticket.intent === 'complete' ? 'installed' : 'recovered',
-        completeBeforeLaunch: async () => {
-          await inspectInstallationStartupAsync(options)
-        },
+        completeBeforeLaunch: () =>
+          recoverable(async () => {
+            await inspectInstallationStartupAsync(options)
+          }),
         completeAfterReady: () => completeInstallationStartupAsync(options, ticket.operationId)
       }
     }
@@ -168,10 +182,11 @@ export async function resolveDesktopInstallationStartup(
       startupOptions: record.startupOptions,
       operationId: record.operationId,
       outcome: 'installed',
-      completeBeforeLaunch: async () => {
-        // Re-check the exact operation and the complete target manifest at launch time.
-        await finishInstallationRecoveryAsync(options, record.operationId, 'complete')
-      },
+      completeBeforeLaunch: () =>
+        recoverable(async () => {
+          // Re-check the exact operation and the complete target manifest at launch time.
+          await finishInstallationRecoveryAsync(options, record.operationId, 'complete')
+        }),
       completeAfterReady: () => completeInstallationStartupAsync(options, record.operationId)
     }
   } catch (error) {
