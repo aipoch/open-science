@@ -180,7 +180,8 @@ export async function discoverDesktopBackend(
           signal: AbortSignal.timeout(5000),
           redirect: 'error'
         })
-        if (!started.ok) throw new Error(
+        if (!started.ok)
+          throw new Error(
             `The server refused the Web control request (HTTP ${started.status}). Its process cannot be stopped from here; quit it manually, then check again.`
           )
         const service = z
@@ -192,7 +193,8 @@ export async function discoverDesktopBackend(
           signal: AbortSignal.timeout(5000),
           redirect: 'error'
         })
-        if (!stopped.ok) throw new Error(
+        if (!stopped.ok)
+          throw new Error(
             `The server did not accept the shutdown request (HTTP ${stopped.status}). Quit it manually, then check again.`
           )
         await stopped.arrayBuffer()

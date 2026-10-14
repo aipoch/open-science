@@ -50,9 +50,7 @@ async function fixture() {
   await writeFile(join(root, 'web-token'), 'b'.repeat(43))
   const fetcher = vi
     .fn()
-    .mockImplementation(
-      async () => new Response(JSON.stringify(proof(root, owner)))
-    )
+    .mockImplementation(async () => new Response(JSON.stringify(proof(root, owner))))
   vi.stubGlobal('fetch', fetcher)
   return { root, owner, fetcher }
 }
