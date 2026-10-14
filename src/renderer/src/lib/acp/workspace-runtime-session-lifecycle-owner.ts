@@ -317,6 +317,19 @@ const resumeInterruptedWorkspaceSession = async (
     return removedPromptSettled ? { ...current, resumeRecovery: undefined } : current
   }
 
+  // Commit pending preferences before attachment/preparation returns an authoritative snapshot.
+  // Otherwise that snapshot can restore an older auto-review setting before continuation.
+  try {
+    await (options?.flushPersistence ?? flushSessionPersistence)()
+    if (!currentRecoverySession()) return
+  } catch (error) {
+    reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
+      operation: 'resume',
+      rawError: error
+    })
+    return
+  }
+
   if (runtimeAlreadyAttached) {
     try {
       await drainRuntimeEvents?.(sessionId)

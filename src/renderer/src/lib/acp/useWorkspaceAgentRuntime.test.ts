@@ -9253,6 +9253,64 @@ describe('resuming an interrupted session on demand', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])(
+    'flushes preferences before Resume authority can replace them (attached=%s)',
+    async (attached) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Resume with review disabled',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        permissionProfile: 'ask'
+      })
+      useSessionStore.getState().markDisconnected('session-1')
+      useSessionStore.getState().setAutoReviewEnabled('session-1', false)
+      const gate = createDeferred<void>()
+      const flushPersistence = vi.fn(() => gate.promise)
+      const runtime = {
+        state: createSnapshot(attached ? ['session-1'] : []),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+        resetSessionContext: vi.fn(),
+        continueInterruptedTurn: vi.fn(acceptTestMainContinuation),
+        sendPrompt: vi.fn()
+      }
+      const resume = resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+        historyReplayDescriptor: { target: 'codex-bridge' },
+        flushPersistence
+      })
+      await vi.waitFor(() => expect(flushPersistence).toHaveBeenCalledOnce())
+      expect(runtime.resumeSession).not.toHaveBeenCalled()
+      expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
+      gate.resolve()
+      await resume
+      expect(runtime.resumeSession).toHaveBeenCalledTimes(attached ? 0 : 1)
+      expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
+      expect(useSessionStore.getState().sessions[0].autoReviewEnabled).toBe(false)
+    }
+  )
+
+  it('leaves Resume retryable when its preference flush fails', async () => {
+    seedDetachedSession()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      flushPersistence: async () => {
+        throw new Error('Preference save failed')
+      }
+    })
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].status).toBe('error')
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toContain(
+      'Preference save failed'
+    )
+  })
+
   it('coalesces repeated Resume clicks while preserving the originally selected target', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

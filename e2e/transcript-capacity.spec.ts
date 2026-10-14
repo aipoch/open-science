@@ -391,9 +391,11 @@ for (const { count, contextLines } of [
       await app.markResourceProfilePhase('seeded-cold')
       const openedAt = performance.now()
       await openProjectSession(page, projectName, session.title)
+      // The cold 1,000-run fixture loads a 26 MB transcript before rendering (22s locally).
+      // Keep this profiling wait separate from ordinary interaction budgets and record the time.
       await expect(
         page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-      ).toBeVisible()
+      ).toBeVisible({ timeout: 60_000 })
       metrics.firstViewMs = performance.now() - openedAt
       metrics.mountedMessages = await page.locator('[data-message-id]').count()
       expect(metrics.mountedMessages).toBeLessThanOrEqual(160)
