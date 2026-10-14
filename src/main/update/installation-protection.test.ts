@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
   advanceInstallationUpdate,
   advanceInstallationUpdateAsync,
@@ -59,9 +59,98 @@ const fixture = (): {
   }
   return { directory, entry, location, runtime, options }
 }
+beforeEach(() => {
+  vi.stubEnv('OPEN_SCIENCE_INSTALLATION_OWNER', process.env.OPEN_SCIENCE_INSTALLATION_OWNER)
+  vi.stubEnv(
+    'OPEN_SCIENCE_INSTALLATION_STATE_ROOT',
+    process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT
+  )
+})
 afterEach(() => {
+  vi.unstubAllEnvs()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
+
+it.each(['home', 'explicit', 'environment', 'e2e'] as const)(
+  'keeps the %s installation state root when MCP helpers isolate their home',
+  (source) => {
+    const f = fixture()
+    const hostHome = join(f.directory, 'host-home')
+    const isolatedHome = join(f.directory, 'codex-home')
+    const stateRoot =
+      source === 'home'
+        ? join(hostHome, '.open-science', 'installations')
+        : source === 'e2e'
+          ? join(f.directory, 'e2e', 'installations')
+          : f.location.stateRoot
+    vi.stubEnv('HOME', hostHome)
+    vi.stubEnv('USERPROFILE', hostHome)
+    vi.stubEnv('OPEN_SCIENCE_INSTALLATION_OWNER', undefined)
+    vi.stubEnv(
+      'OPEN_SCIENCE_INSTALLATION_STATE_ROOT',
+      source === 'environment' ? stateRoot : undefined
+    )
+    vi.stubEnv(
+      'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+      source === 'e2e' ? join(f.directory, 'e2e') : undefined
+    )
+    const runtime = registerInstallationRuntime({
+      installationRoot: f.location.installationRoot,
+      ...(source === 'explicit' ? { stateRoot } : {}),
+      ...f.runtime
+    })
+    const launch = (flag: string): SpawnSyncReturns<string> =>
+      spawnSync(
+        process.execPath,
+        [
+          '-e',
+          `
+      process.argv.push(${JSON.stringify(flag)});
+      const { protectInstallationStartup } = require(${JSON.stringify(join(process.cwd(), 'packages/open-science/installation-startup.cjs'))});
+      const lease = protectInstallationStartup(${JSON.stringify(f.entry)}, 'bootstrap');
+      process.stdout.write(JSON.stringify(lease.identity));
+      lease.release();
+    `
+        ],
+        {
+          encoding: 'utf8',
+          timeout: 5000,
+          env: {
+            ...process.env,
+            HOME: isolatedHome,
+            USERPROFILE: isolatedHome,
+            CODEX_HOME: isolatedHome
+          }
+        }
+      )
+    try {
+      for (const flag of [
+        '--open-science-artifact-mcp',
+        '--open-science-notebook-mcp',
+        '--open-science-reviewer-mcp-proxy',
+        '--open-science-skill-import-mcp',
+        '--open-science-skill-runtime-mcp',
+        '--open-science-plan-mcp'
+      ]) {
+        const result = launch(flag)
+        expect(result.status, result.stderr).toBe(0)
+        expect(JSON.parse(result.stdout).configRoot).toBe(f.runtime.configRoot)
+      }
+      expect(process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT).toBe(stateRoot)
+      const update = beginInstallationUpdate({ ...f.options, stateRoot })
+      const blocked = launch('--open-science-notebook-mcp')
+      expect(blocked.status).not.toBe(0)
+      expect(blocked.stderr).toContain('Installation update requires recovery')
+      finishInstallationRecovery({ ...f.location, stateRoot }, update.operationId, 'cancel')
+      runtime.release()
+      const stale = launch('--open-science-notebook-mcp')
+      expect(stale.status).not.toBe(0)
+      expect(stale.stderr).toContain('runtime helper installation capability is no longer valid')
+    } finally {
+      runtime.release()
+    }
+  }
+)
 
 describe('installation protection', () => {
   it('preserves verified configuration across cancellation until successful startup consumes its operation', () => {

@@ -305,6 +305,8 @@ export function registerInstallationRuntime(
       unlock()
       throw error
     }
+    // Agent homes may be isolated; helpers must still validate against this installation's leases.
+    process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = resolve(dirname(directory))
     process.env.OPEN_SCIENCE_INSTALLATION_OWNER = JSON.stringify({
       pid: options.pid ?? process.pid,
       generation: options.generation,
