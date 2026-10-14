@@ -213,7 +213,7 @@ async function startDesktop(): Promise<void> {
     initialRecoveryError = error
   }
   const completeVerifiedStartup = installationStartup?.completeAfterReady
-  const verifiedStartupOutcome = installationStartup?.outcome ?? 'recovered'
+  const verifiedStartupOutcome = installationStartup?.outcome
   let preservedStartupOptions = installationStartup?.startupOptions
   const credentialArgs = preservedStartupOptions
     ? [
@@ -1563,12 +1563,14 @@ async function startDesktop(): Promise<void> {
     try {
       await verifyDesktopRecoveryReadiness(client, preservedStartupOptions)
       await completeVerifiedStartup?.()
-      update.publishLifecycleStatus?.({
-        outcome: verifiedStartupOutcome,
-        reason: undefined,
-        recovery: undefined,
-        error: undefined
-      })
+      // Stopping an older service is not an installation recovery; publish only a real outcome.
+      if (verifiedStartupOutcome)
+        update.publishLifecycleStatus?.({
+          outcome: verifiedStartupOutcome,
+          reason: undefined,
+          recovery: undefined,
+          error: undefined
+        })
       publishRuntimeStartup({ phase: 'ready' })
     } catch (error) {
       const issue = {

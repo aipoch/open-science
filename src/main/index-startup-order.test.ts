@@ -18,6 +18,10 @@ describe('single Node runtime production startup', () => {
     expect(initialAttachment).toContain('await waitForStartupRetry(error)')
     expect(initialAttachment).not.toContain('startOrAttachDesktopBackend')
   })
+  it('publishes an installation outcome only when an installation recovery actually ran', () => {
+    expect(mainSource).not.toContain("installationStartup?.outcome ?? 'recovered'")
+    expect(mainSource).toContain('if (verifiedStartupOutcome)')
+  })
   it('hands a second shell to its owner before reading Chromium-locked credentials', () => {
     before("app.setPath('userData', profilePath)", 'app.requestSingleInstanceLock()')
     before('app.requestSingleInstanceLock()', 'prepareCredentialValidation(identity,')
