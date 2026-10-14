@@ -9280,12 +9280,14 @@ describe('resuming an interrupted session on demand', () => {
         flushPersistence
       })
       await vi.waitFor(() => expect(flushPersistence).toHaveBeenCalledOnce())
+      expect(flushPersistence).toHaveBeenCalledWith('session:session-1')
       expect(runtime.resumeSession).not.toHaveBeenCalled()
       expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
       gate.resolve()
       await resume
       expect(runtime.resumeSession).toHaveBeenCalledTimes(attached ? 0 : 1)
       expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
+      expect(flushPersistence.mock.calls).toEqual([['session:session-1'], ['session:session-1']])
       expect(useSessionStore.getState().sessions[0].autoReviewEnabled).toBe(false)
     }
   )
