@@ -468,6 +468,8 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
+      - name: Check change-impact Windows runtime routing
+        run: node scripts/ci/check-change-impact.mjs
       - name: Review dependency changes
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0

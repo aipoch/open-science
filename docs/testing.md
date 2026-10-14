@@ -124,6 +124,20 @@ reply/failure waits and scenario-specific assertions in the caller. The explicit
 `activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
 state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
 
+## Fast change-impact routing check
+
+Run `node scripts/ci/check-change-impact.mjs` from the repository root to check Windows
+runtime routing without installing dependencies, building packages or running Vitest.
+The command scans production `.ts`/`.tsx` files under `src/main`, `src/preload` and `src/shared`
+for the existing Windows runtime signals and reports paths missing `windows_sensitive` or its
+functional/workspace Windows E2E lanes in `scripts/ci/change-impact.json`. Test/spec files are
+excluded. This preserves the classifier suite's existing invariant; it is not a general platform
+behavior check or a replacement for module ownership and consumer-evidence validation below.
+
+The always-selected PR policy job runs this check before dependency review on PRs and merge
+groups, independently of affected-test selection. Failure blocks PR Gate even when no classifier
+tests are selected. Fix the reported registrations in the same change as the source.
+
 ## Module-impact registration
 
 Module registration is part of the same change as the source and tests, not a follow-up after CI

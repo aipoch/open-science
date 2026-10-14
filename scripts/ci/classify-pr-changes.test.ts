@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -12,6 +12,7 @@ import {
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { findWindowsRoutingGaps } from './check-change-impact.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
@@ -26,15 +27,6 @@ it.each([
 ])('runs the Windows Specialist recovery contract for %s', (path) => {
   expect(classifyChanges([{ path, status: 'modified' }]).lanes).toContain('windows_runtime')
 })
-
-const listSourceFiles = (directory: string): string[] =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(directory, entry.name)
-    return entry.isDirectory() ? listSourceFiles(path) : [path]
-  })
-
-const windowsRuntimeSignal =
-  /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
 describe('declared test evidence without source ownership', () => {
   const path = 'scripts/unowned-consumer.test.ts'
@@ -866,21 +858,6 @@ describe('pull request change classification', () => {
   })
 
   it('covers every production source file with an explicit Windows runtime signal', () => {
-    const sourceFiles = ['src/main', 'src/preload', 'src/shared']
-      .flatMap((directory) => listSourceFiles(resolve(directory)))
-      .filter((path) => /\.(?:ts|tsx)$/.test(path) && !/\.(?:test|spec)\.(?:ts|tsx)$/.test(path))
-      .filter((path) => windowsRuntimeSignal.test(readFileSync(path, 'utf8')))
-      .map((path) => relative(process.cwd(), path).replaceAll('\\', '/'))
-
-    const uncoveredFiles = sourceFiles.filter((path) => {
-      const plan = classifyChanges([{ path, status: 'modified' }])
-      return (
-        !plan.roots.includes('windows_sensitive') ||
-        !plan.lanes.includes('e2e_functional_windows') ||
-        !plan.lanes.includes('e2e_workspace_windows')
-      )
-    })
-
-    expect(uncoveredFiles).toEqual([])
+    expect(findWindowsRoutingGaps()).toEqual([])
   })
 })

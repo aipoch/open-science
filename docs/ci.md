@@ -8,6 +8,11 @@ meet the [PR requirements](../CONTRIBUTING.md#pull-requests) and follow the
 
 ### Pull requests
 
+The always-selected PR policy job runs the dependency-free
+[change-impact Windows routing check](testing.md#fast-change-impact-routing-check) before
+dependency review, for both PRs and merge groups. A missing registration fails PR Gate without
+waiting for dependency installation or the complete portable suite.
+
 PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
