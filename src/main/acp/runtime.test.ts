@@ -29509,6 +29509,86 @@ describe('Specialist Skill scoping', () => {
     expect(startedTurnTokens).toEqual([startedTurnTokens[0], startedTurnTokens[0]])
   })
 
+  it.each([
+    ['codex-responses', false],
+    ['codex-responses', true],
+    ['codex-bridge', false],
+    ['codex-bridge', true]
+  ] as const)(
+    'restores the %s attachment when retrying a failed Specialist switch (scoped loader: %s)',
+    async (modelRoute, scopedLoader) => {
+      const process = new FakeAgentProcess()
+      const resumedIds: string[] = []
+      const agent = startFakeAgent(
+        process,
+        ['codex-specialist-original', 'failed-replacement', 'codex-specialist-replacement'],
+        {
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+          onResumeRequest: ({ sessionId }) => {
+            resumedIds.push(sessionId)
+            throw acp.RequestError.internalError()
+          },
+          onNewSession: ({ index }) => {
+            if (index === 1) throw acp.RequestError.internalError()
+          }
+        }
+      )
+      const publishedSessionIds: string[][] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onStateChanged: (state) => publishedSessionIds.push(state.sessionIds) },
+        resolveBackend: () => ({
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          modelRoute,
+          executablePath: '/bin/codex-acp',
+          env: {},
+          ...(scopedLoader
+            ? {
+                sessionOptions: {
+                  openScienceSkillRuntime: {
+                    command: '/node',
+                    entryPath: '/main.js',
+                    root: '/codex',
+                    skillsDirectory: '/codex/skills'
+                  }
+                }
+              }
+            : {}),
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        }),
+        resolveSpecialistIdentity: async () => ({ append: '', prefix: 'New Specialist identity' })
+      })
+      try {
+        const { sessionId } = await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project'
+        })
+        await expect(runtime.switchSpecialist(sessionId, 'new')).rejects.toThrow()
+        // Recovery failure must still reject: the binding transaction must not clear pending.
+        await expect(runtime.switchSpecialist(sessionId, 'new')).rejects.toThrow()
+        expect(agent.prompts).toHaveLength(0)
+        publishedSessionIds.length = 0
+        await expect(runtime.switchSpecialist(sessionId, 'new')).resolves.toEqual({
+          contextReset: true
+        })
+        expect(publishedSessionIds.at(-1)).toContain(sessionId)
+        expect(runtime.liveSessionProjectId(sessionId)).toBe('project')
+        await expect(
+          runtime.sendPrompt({ sessionId, text: 'Continue after the switch' })
+        ).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(resumedIds).toEqual([sessionId])
+        expect(agent.newSessions).toHaveLength(3)
+        expect(agent.prompts[0]?.sessionId).toBe('codex-specialist-replacement')
+        expect(agent.prompts[0]?.text).toContain('New Specialist identity')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('updates Codex native Skill selection to the switched specialist, including mcp-* connectors', async () => {
     const process = new FakeAgentProcess()
     let receivedPrompt: ContentBlock[] = []
