@@ -675,16 +675,25 @@ async function startDesktop(): Promise<void> {
             : new DesktopRuntimeStartupError(
                 {
                   ...failure.issue,
-                  reason: 'startup-recovery-required',
-                  canStop: false,
-                  canRecover: recover && failure.issue.canRecover,
+                  reason:
+                    failure.issue.reason === 'legacy-service'
+                      ? 'legacy-service'
+                      : 'startup-recovery-required',
+                  canStop: failure.issue.reason === 'legacy-service' && failure.issue.canStop,
+                  canRecover:
+                    (recover || failure.issue.reason === 'legacy-service') &&
+                    failure.issue.canRecover,
                   diagnostics: JSON.stringify(
                     projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
                   )
                 },
                 'Startup recovery was not confirmed.',
-                undefined,
-                recover ? () => failure.recover() : undefined
+                failure.issue.reason === 'legacy-service'
+                  ? () => failure.stopAndContinue()
+                  : undefined,
+                recover || failure.issue.reason === 'legacy-service'
+                  ? () => failure.recover()
+                  : undefined
               )
         publishRuntimeStartup({ phase: 'blocked', issue: startupFailure.issue })
       }

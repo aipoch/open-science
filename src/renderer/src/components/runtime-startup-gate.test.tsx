@@ -132,20 +132,20 @@ it('does not mount backend-dependent children before startup hydration', async (
   expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
 })
 
-it('rechecks a legacy service without offering or invoking shutdown', async () => {
+it('keeps recheck available without stopping a legacy service', async () => {
   state = {
     phase: 'blocked',
     issue: {
       reason: 'legacy-service',
       desktopVersion: '2',
       runtimeVersion: '1',
-      canStop: false,
+      canStop: true,
       canRecover: true
     }
   }
   await render()
-  expect(document.body.textContent).toContain('restart the computer')
-  expect(document.body.textContent).not.toContain('Continue')
+  expect(document.body.textContent).not.toContain('restart the computer')
+  expect(document.body.textContent).toContain('Stop service and continue')
   expect(document.body.textContent).not.toContain('Recover app')
   await click('Check again')
   expect(recover).toHaveBeenCalledOnce()
@@ -154,5 +154,35 @@ it('rechecks a legacy service without offering or invoking shutdown', async () =
   expect(document.querySelector('[data-testid="workspace"]')).toBeNull()
   recover.mockResolvedValueOnce({ phase: 'ready' })
   await click('Check again')
+  expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
+})
+
+it('allows cancelling and retrying a failed legacy shutdown without leaving the upgrade page', async () => {
+  state = {
+    phase: 'blocked',
+    issue: {
+      reason: 'legacy-service',
+      desktopVersion: '2',
+      runtimeVersion: '1',
+      canStop: true,
+      canRecover: true
+    }
+  }
+  await render()
+  await click('Stop service and continue')
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+    'Command-line launch options are not carried over'
+  )
+  await click('Cancel')
+  expect(stop).not.toHaveBeenCalled()
+  stop.mockRejectedValueOnce(new Error('temporarily unavailable'))
+  await click('Stop service and continue')
+  await click('Stop service')
+  expect(document.body.textContent).toContain('The service could not be stopped or checked')
+  expect(document.body.textContent).not.toContain('Recover app')
+  stop.mockResolvedValueOnce({ phase: 'ready' })
+  await click('Stop service and continue')
+  await click('Stop service')
+  expect(stop).toHaveBeenCalledTimes(2)
   expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
 })

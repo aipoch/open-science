@@ -1,6 +1,6 @@
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
-import { waitForRuntimeStopped } from './runtime-stop-confirmation'
+import { isRuntimeProcessAlive, waitForRuntimeStopped } from './runtime-stop-confirmation'
 import { randomUUID } from 'node:crypto'
 import {
   backendStartupStatusSchema,
@@ -102,36 +102,31 @@ export async function discoverDesktopBackend(
       startup.success && startup.data.startupOptions.configRoot === configRoot
         ? startup.data.startupOptions
         : undefined
-    // Older protocols cannot preserve launch options or prove a clean shutdown. Leave the
-    // original service usable instead of stopping it and creating a recovery-only dead end.
-    if (!startupOptions)
-      throw new DesktopRuntimeStartupError(
-        {
-          reason: 'legacy-service',
-          desktopVersion: version,
-          runtimeVersion: owner.desktop.version,
-          pid: owner.pid,
-          canStop: false,
-          canRecover: true
-        },
-        'Quit the original app before opening this version. If the old service remains running, restart the computer.',
-        undefined,
-        async () => {
-          await discoverDesktopBackend(configRoot, version)
-        }
-      )
+    const legacy = !startupOptions
     const issue = {
-      reason: 'version-mismatch' as const,
+      reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
       desktopVersion: version,
       runtimeVersion: owner.desktop.version,
       pid: owner.pid,
       canStop: true,
-      canRecover: false
+      canRecover: legacy
     }
     throw new DesktopRuntimeStartupError(
       issue,
       'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
       async () => {
+        // An older service may have exited while its confirmation was open. Confirm the
+        // released directory before continuing; never signal a PID read from the state file.
+        if (legacy && !isRuntimeProcessAlive(owner.pid)) {
+          const lease = await waitForRuntimeStopped({
+            configRoot,
+            generation: owner.desktop!.generation,
+            pid: owner.pid,
+            requireCleanExit: false
+          })
+          lease.release()
+          return
+        }
         // A button may remain open for minutes: authenticate the exact owner again before acting.
         const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
           headers: {
@@ -144,13 +139,33 @@ export async function discoverDesktopBackend(
         const current = response.ok ? await response.json() : undefined
         if (current?.pid !== owner.pid || current?.generation !== owner.generation)
           throw new DesktopRuntimeStartupError(
-            { ...issue, reason: 'startup-recovery-required', canStop: false },
-            'The running server changed. Quit and reopen to verify its identity.'
+            {
+              ...issue,
+              reason: legacy ? 'legacy-service' : 'startup-recovery-required',
+              canStop: false
+            },
+            'The running server changed. Check again to verify its identity.',
+            undefined,
+            legacy
+              ? async () => {
+                  await discoverDesktopBackend(configRoot, version)
+                }
+              : undefined
           )
         if (JSON.stringify(current.startupOptions) !== JSON.stringify(startupOptions))
           throw new DesktopRuntimeStartupError(
-            { ...issue, reason: 'startup-recovery-required', canStop: false },
-            'The server configuration changed. Quit and reopen to verify it.'
+            {
+              ...issue,
+              reason: legacy ? 'legacy-service' : 'startup-recovery-required',
+              canStop: false
+            },
+            'The server configuration changed. Check again to verify it.',
+            undefined,
+            legacy
+              ? async () => {
+                  await discoverDesktopBackend(configRoot, version)
+                }
+              : undefined
           )
         // The owner endpoint is distinct from the Web service port. Start Web through its
         // authenticated control endpoint, then bind shutdown to that process's service record.
@@ -179,11 +194,17 @@ export async function discoverDesktopBackend(
           configRoot,
           generation: owner.desktop!.generation,
           pid: owner.pid,
-          requireCleanExit: true
+          // Legacy CLI shutdown predates clean-exit receipts. This user-confirmed startup
+          // transition waits for process exit and directory release, not installation authority.
+          requireCleanExit: !legacy
         })
         lease.release()
       },
-      undefined,
+      legacy
+        ? async () => {
+            await discoverDesktopBackend(configRoot, version)
+          }
+        : undefined,
       startupOptions
     )
   }

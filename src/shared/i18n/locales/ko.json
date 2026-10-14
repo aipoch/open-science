@@ -7265,6 +7265,10 @@
     "Update cancelled. The service is still running and the download is kept.": "업데이트가 취소되었습니다. 서비스는 계속 실행 중이며 다운로드는 유지됩니다.",
     "View task": "작업 보기",
     "The operation could not be completed. Review diagnostics and try again.": "작업을 완료하지 못했습니다. 진단 정보를 확인하고 다시 시도하세요.",
-    "Finish your work and quit the original Open-Science app, then check again. If its service remains running, restart the computer and reopen this app. Your saved data and settings will be kept.": "작업을 마치고 기존 Open-Science 앱을 종료한 후 다시 확인하세요. 서비스가 계속 실행 중이면 컴퓨터를 다시 시작하고 이 앱을 다시 여세요. 저장된 데이터와 설정은 유지됩니다."
+    "An older service is still running": "이전 백그라운드 서비스가 실행 중입니다",
+    "Open-Science can stop the older background service and open this version. Finish any work in other clients before continuing.": "Open-Science에서 이전 백그라운드 서비스를 중지하고 이 버전을 열 수 있습니다. 계속하기 전에 다른 클라이언트에서 작업을 마무리하세요.",
+    "Stop service and continue": "서비스 중지 후 계속",
+    "This will ask the older service to shut down and disconnect its clients. Open-Science will wait for it to exit, then open your saved data using this Desktop’s settings. Command-line launch options are not carried over.": "이전 서비스에 종료를 요청하고 클라이언트 연결을 끊습니다. Open-Science는 서비스가 종료될 때까지 기다린 다음 이 데스크톱 앱의 설정으로 저장된 데이터를 엽니다. 명령줄 시작 옵션은 이어받지 않습니다.",
+    "The service could not be stopped or checked. Try again, or save diagnostics for help.": "서비스를 중지하거나 확인하지 못했습니다. 다시 시도하거나 진단 정보를 저장하여 도움을 요청하세요."
   }
 }
