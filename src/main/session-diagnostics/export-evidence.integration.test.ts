@@ -167,3 +167,63 @@ it('exports the actual failed resume operation with session identity and redacte
     operationId: expect.any(String)
   })
 })
+
+it('exports separate Desktop and Runtime logs with transport budgets and redacted failures', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-runtime-diagnostics-'))
+  roots.push(root)
+  const configRoot = join(root, 'config')
+  const desktopDir = join(root, 'profile', 'desktop-logs')
+  const runtimeDir = join(root, 'runtime-logs')
+  await mkdir(configRoot)
+  initLogger({ logDir: desktopDir, mirrorToConsole: false })
+  createLogger('desktop').error('desktop operation failed', {
+    error: { message: 'Stop failed api_key=private-canary', code: 'EIO' }
+  })
+  createLogger('desktop').info('runtime-attach', {
+    mode: 'adopted',
+    launch: 'desktop',
+    control: 'granted',
+    runtimePid: 123,
+    generation: 'test-generation'
+  })
+  await flushLogs()
+  initLogger({ logDir: runtimeDir, mirrorToConsole: false })
+  const budgets = {
+    queuedBytes: 21,
+    queuedFrames: 2,
+    frameBytes: 13,
+    bufferedBytes: 8,
+    byteBudget: 34,
+    frameBudget: 5
+  }
+  createLogger('desktop-transport').warn('transport failed', budgets)
+  await flushLogs()
+  const files = await exportDiagnosticFiles(
+    {
+      configRoot,
+      dataRoot: join(root, 'data'),
+      logPath: join(runtimeDir, 'main.log'),
+      desktopLogPath: join(desktopDir, 'main.log'),
+      appVersion: 'test'
+    },
+    {
+      projectId: 'project',
+      sessionId: 'session',
+      selectedItems: ['log:main.log', 'desktop-log:main.log']
+    }
+  )
+  const desktop = files['logs/desktop/main.log']
+  expect(desktop).toContain('Stop failed')
+  expect(desktop).toContain('EIO')
+  expect(desktop).toContain('adopted')
+  expect(desktop).not.toContain('private-canary')
+  expect(desktop).not.toContain('transport failed')
+  const runtime = files['logs/main.log']
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  expect(runtime.find((line) => line.event === 'transport failed').diagnostics).toMatchObject(
+    budgets
+  )
+  expect(files['logs/main.log']).not.toContain('runtime-attach')
+})

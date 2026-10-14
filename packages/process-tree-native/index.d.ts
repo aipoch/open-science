@@ -27,3 +27,6 @@ export function spawnWindowsOwnedProcess(
 ): { handle: object; pid: number; fds: [number, number, number] }
 export function windowsOwnedProcessExitCode(handle: object): number | null
 export function reapWindowsOwnedJob(jobName: string): boolean
+
+// Null means inaccessible/unknown; only zero proves a still-owned Job has no writers.
+export function windowsOwnedJobActiveProcesses(jobName: string): number | null

@@ -1193,7 +1193,13 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/internal-web-event-stream.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
+      "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
+      "src/renderer/src/components/UpdateDialog.render.test.tsx",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

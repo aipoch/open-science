@@ -183,7 +183,19 @@
     "src/main/backend-startup-recovery.test.ts",
     "src/main/node-entry.test.ts",
     "src/main/desktop-recovery-event-buffer.ts",
-    "src/main/desktop-runtime-session-size.integration.test.ts"
+    "src/main/desktop-runtime-session-size.integration.test.ts",
+    "src/main/desktop-recovery-readiness.test.ts",
+    "src/main/desktop-recovery-readiness.ts",
+    "src/main/desktop-runtime-adoption.integration.test.ts",
+    "src/main/desktop-runtime-controller.integration.test.ts",
+    "src/main/desktop-runtime-info.ts",
+    "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+    "src/main/desktop-startup-recovery.integration.test.ts",
+    "src/main/desktop-startup-recovery.test.ts",
+    "src/main/desktop-startup-recovery.ts",
+    "src/main/desktop-update-integration.test.ts",
+    "src/main/desktop-update-integration.ts",
+    "src/main/runtime-network-node.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -243,7 +255,11 @@
     "src/main/composition/notebook-approvals.ts",
     "src/main/websocket-frame-sender.ts",
     "src/main/backend-startup.ts",
-    "src/main/backend-startup-recovery.ts"
+    "src/main/backend-startup-recovery.ts",
+    "src/main/desktop-recovery-readiness.ts",
+    "src/main/desktop-runtime-info.ts",
+    "src/main/desktop-startup-recovery.ts",
+    "src/main/desktop-update-integration.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -341,7 +357,15 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/backend-startup-recovery.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/desktop-runtime-session-size.integration.test.ts"
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/runtime-network-node.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1174,7 +1198,13 @@
       "src/main/windows-executable-trust.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/runtime-payload-transfers.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/update/installation-reboot-recovery.test.ts",
+      "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-formats.test.ts",
+      "src/main/update/deb-gate-recovery.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/installation-artifact.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

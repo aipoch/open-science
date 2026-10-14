@@ -208,6 +208,20 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
       output: `logs/${name}`
     })
   }
+  if (input.desktopLogPath) {
+    for (let index = 0; index < 3; index++) {
+      const name = index === 0 ? 'main.log' : `main.${index}.log`
+      sources.push({
+        id: `desktop-log:${name}`,
+        name: `Desktop: ${name}`,
+        kind: 'log',
+        available: false,
+        root: dirname(input.desktopLogPath),
+        path: join(dirname(input.desktopLogPath), name),
+        output: `logs/desktop/${name}`
+      })
+    }
+  }
   sources.push({
     id: 'database',
     name: 'Session database records',
@@ -813,7 +827,7 @@ export async function runSessionDiagnosticWorker(
     await writeBestEffort(
       'README.txt',
       () =>
-        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json and logs/main*.log. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
+        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
       undefined,
       true
     )

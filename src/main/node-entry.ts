@@ -1,3 +1,11 @@
+import { withRuntimeShutdownLifetime } from './runtime-shutdown-lifetime'
+import {
+  installationRootForEntry,
+  registerInstallationRuntime
+} from './update/installation-protection'
+import { randomUUID } from 'node:crypto'
+import { writeRuntimeExit } from './runtime-stop-confirmation'
+import { resolveDataRoot } from './storage-root'
 import { createBackendStartupReporter } from './backend-startup'
 import {
   buildStartupDiagnostics,
@@ -6,7 +14,7 @@ import {
   errorLogFields,
   flushLogs
 } from '@aipoch/diagnostics/node'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -96,6 +104,13 @@ async function main(): Promise<void> {
   // Helpers never acquire business ownership or construct a second application runtime.
   if (await runRuntimeHelper(process.argv)) return
   const configRoot = resolveBootstrapConfigRoot(home, packaged)
+  const generation = randomUUID()
+  const installationLease = registerInstallationRuntime({
+    installationRoot: installationRootForEntry(mainEntryPath),
+    configRoot,
+    generation,
+    pid: process.pid
+  })
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
@@ -114,6 +129,7 @@ async function main(): Promise<void> {
   let restartRequested = false
   let desktopWillRestart = false
   let stopRequested = false
+  let profilePath: string | undefined
   let credentialFailure: CredentialIdentityError | undefined
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
@@ -126,7 +142,7 @@ async function main(): Promise<void> {
   const stop = (): Promise<void> => {
     stopRequested = true
     startupCancellation.abort()
-    return (stopping ??= (async () => {
+    return (stopping ??= withRuntimeShutdownLifetime(async () => {
       await startupFinished
       let failed = false
       try {
@@ -139,6 +155,7 @@ async function main(): Promise<void> {
           diagnosticErrorFields(error)
         )
       }
+      let shutdownStep = 0
       for (const close of [
         () => remoteAccess?.shutdown(),
         () => control?.close(),
@@ -150,16 +167,52 @@ async function main(): Promise<void> {
         () => flushLogs()
       ]) {
         try {
+          createLogger('node-runtime').info('shutdown step started', { step: shutdownStep })
           await close()
+          createLogger('node-runtime').info('shutdown step completed', { step: shutdownStep })
         } catch (error) {
           failed = true
           createLogger('node-runtime').error('shutdown failed', diagnosticErrorFields(error))
+        } finally {
+          shutdownStep += 1
         }
       }
-      unsubscribeLocale?.()
-      cipher?.dispose()
+      try {
+        unsubscribeLocale?.()
+        cipher?.dispose()
+      } catch {
+        failed = true
+      }
+      try {
+        await writeRuntimeExit(configRoot, {
+          generation,
+          pid: process.pid,
+          outcome: failed || credentialFailure ? 'failed' : 'clean'
+        })
+      } catch {
+        failed = true
+      }
       // A failed child-process drain must not release ownership while this process remains alive.
-      if (!failed) await ownership.close()
+      if (!failed) {
+        try {
+          await ownership.close()
+          installationLease.release()
+        } catch (error) {
+          failed = true
+          createLogger('node-runtime').error(
+            'shutdown ownership release failed',
+            diagnosticErrorFields(error)
+          )
+          try {
+            await writeRuntimeExit(configRoot, { generation, pid: process.pid, outcome: 'failed' })
+          } catch (recordError) {
+            createLogger('node-runtime').error(
+              'shutdown failure record failed',
+              diagnosticErrorFields(recordError)
+            )
+          }
+        }
+      }
       process.exitCode = failed || credentialFailure ? 1 : 0
       if (restartRequested && !desktopWillRestart && !failed) {
         const { spawn } = await import('node:child_process')
@@ -174,7 +227,7 @@ async function main(): Promise<void> {
         })
         child.unref()
       }
-    })())
+    }))
   }
   process.once('SIGINT', () => {
     void stop()
@@ -210,6 +263,13 @@ async function main(): Promise<void> {
     const passwordStore = process.argv
       .find((arg) => arg.startsWith('--password-store='))
       ?.slice('--password-store='.length)
+    const appData =
+      process.platform === 'win32'
+        ? process.env.APPDATA || join(home, 'AppData', 'Roaming')
+        : process.platform === 'darwin'
+          ? join(home, 'Library', 'Application Support')
+          : process.env.XDG_CONFIG_HOME || join(home, '.config')
+    profilePath = resolveElectronProfile({ appData, configRoot, packaged })
     const credentialBootstrapLease = acquireRuntimeDirectorySync(
       join(home, '.open-science-credential-bootstrap')
     )
@@ -221,13 +281,6 @@ async function main(): Promise<void> {
         credentialStore: getCredentialStore(),
         linuxPasswordStore: passwordStore
       })
-      const appData =
-        process.platform === 'win32'
-          ? process.env.APPDATA || join(home, 'AppData', 'Roaming')
-          : process.platform === 'darwin'
-            ? join(home, 'Library', 'Application Support')
-            : process.env.XDG_CONFIG_HOME || join(home, '.config')
-      const profilePath = resolveElectronProfile({ appData, configRoot, packaged })
       ownership.acquireSync(profilePath)
       const validateCredentials = prepareCredentialValidation(identity, { configRoot, profilePath })
       if (identity.backend === 'windows-dpapi') await initializeNodeWindowsProfileKey(profilePath)
@@ -314,8 +367,21 @@ async function main(): Promise<void> {
         }
       }
     }
+    const runtimeStartupOptions: import('./desktop-runtime-info').RuntimeStartupOptions = {
+      configRoot,
+      dataRoot: resolveDataRoot(),
+      profilePath: profilePath!,
+      port: parseWebModeOptions(process.argv).port,
+      host: '127.0.0.1',
+      credentialStore: getCredentialStore(),
+      ...(passwordStore ? { passwordStore } : {})
+    }
     desktop = await startDesktopRuntimeTransport({
       version: metadata.version,
+      generation,
+      launch: process.argv.includes('--desktop') ? 'desktop' : 'cli',
+      entryPath: realpathSync(mainEntryPath),
+      startupOptions: runtimeStartupOptions,
       createLifecycle: () => {
         let lifecycle: ReturnType<typeof createDesktopRuntimeLifecycle> | undefined
         return {
@@ -328,7 +394,10 @@ async function main(): Promise<void> {
             })
             return lifecycle.request(operation)
           },
-          disconnect: () => lifecycle?.disconnect()
+          disconnect: async () => {
+            await lifecycle?.disconnect()
+            runtime?.abortDesktopUpdate()
+          }
         }
       },
       startup: databaseStartup,
@@ -344,17 +413,22 @@ async function main(): Promise<void> {
       hostCommands: {
         commandNames: () => [
           'desktop:update-gate',
+          'desktop:update-inspect',
           'desktop:update-abort',
           'desktop:open-session',
           'locale:snapshot',
           'desktop:tray-sessions',
           'desktop:open-package',
           'settings:get-settings',
+          'storage:get-status',
+          'sessions:list',
+          'projects:list',
           'settings:set-close-preference'
         ],
         invoke: async (channel, invocation) => {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
+          if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z
@@ -385,7 +459,15 @@ async function main(): Promise<void> {
             runtime.openSessionPackageFile(path)
             return null
           }
-          if (channel !== 'settings:get-settings' && channel !== 'settings:set-close-preference')
+          if (
+            ![
+              'settings:get-settings',
+              'settings:set-close-preference',
+              'storage:get-status',
+              'sessions:list',
+              'projects:list'
+            ].includes(channel)
+          )
             throw new Error('Unknown desktop host command.')
           return runtime.applicationCommands.desktop.invoke(channel, invocation)
         }
@@ -429,7 +511,8 @@ async function main(): Promise<void> {
         if (!web) throw new Error('The runtime is still starting.')
         return web.ensureStarted(port, { attached: false })
       },
-      desktop.endpoint
+      desktop.endpoint,
+      runtimeStartupOptions
     )
     startupReporter.phase('database')
     const state = await databaseStartup.start()

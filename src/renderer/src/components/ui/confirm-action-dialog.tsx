@@ -17,6 +17,7 @@ type ConfirmActionDialogProps = {
   open: boolean
   title: string
   description: string
+  children?: React.ReactNode
   cancelLabel: string
   confirmLabel: string
   loadingLabel?: string
@@ -33,6 +34,7 @@ const ConfirmActionDialog = ({
   open,
   title,
   description,
+  children,
   cancelLabel,
   confirmLabel,
   loadingLabel,
@@ -75,6 +77,7 @@ const ConfirmActionDialog = ({
           <AlertDialog.Description className={dialogDescriptionClassName}>
             {description}
           </AlertDialog.Description>
+          {children}
         </div>
         <div className={dialogFooterClassName}>
           <AlertDialog.Cancel asChild>

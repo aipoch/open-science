@@ -1,3 +1,4 @@
+import { RuntimeStartupGate } from '@/components/runtime-startup-gate'
 import { DesktopRuntimeRecovery } from '@/components/desktop-runtime-recovery'
 import './assets/main.css'
 
@@ -74,10 +75,12 @@ const startRenderer = (): void => {
     <StrictMode>
       <WindowsTitleBar>
         <ApplicationErrorBoundary>
-          <DatabaseStartupGate>
-            <App />
-            <DesktopRuntimeRecovery />
-          </DatabaseStartupGate>
+          <RuntimeStartupGate>
+            <DatabaseStartupGate>
+              <App />
+              <DesktopRuntimeRecovery />
+            </DatabaseStartupGate>
+          </RuntimeStartupGate>
         </ApplicationErrorBoundary>
       </WindowsTitleBar>
     </StrictMode>

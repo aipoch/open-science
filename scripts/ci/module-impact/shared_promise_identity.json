@@ -554,6 +554,7 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
       "src/main/diagnostics/ipc-rejection.test.ts",
       "src/main/diagnostics/privacy-canary.test.ts",
       "src/main/diagnostics/startup.test.ts",

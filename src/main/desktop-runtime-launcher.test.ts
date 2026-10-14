@@ -72,7 +72,9 @@ describe('desktop backend discovery', () => {
   )
   it('rejects an authenticated server version mismatch and a legacy Electron writer', async () => {
     const { root, owner, fetcher } = await fixture()
-    await expect(discoverDesktopBackend(root, 'different')).rejects.toThrow('different version')
+    await expect(discoverDesktopBackend(root, 'different')).rejects.toMatchObject({
+      issue: { reason: 'legacy-service', canStop: false }
+    })
     await writeFile(
       join(root, 'runtime-owner.json'),
       JSON.stringify({ ...owner, host: 'electron', desktop: undefined })

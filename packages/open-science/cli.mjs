@@ -16,6 +16,7 @@ import { findServiceState, readWebToken, resolveConfigRoot } from './config-root
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
+import { protectInstallationStartup } from './installation-startup.cjs'
 import { requestExistingRuntimeWeb } from './runtime-control.mjs'
 
 const DEFAULT_PORT = 44100
@@ -819,17 +820,23 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     deps.warn(
       'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
     )
-  const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
-    detached: true,
-    stdio: ['ignore', logFd, logFd],
-    windowsHide: true,
-    env: childEnv
-  })
-  const startupPromise = waitForStartup(configRoot, child, deps)
-  child.unref()
-  closeSync(logFd)
+  const installationLease = protectInstallationStartup(backend.entry, configRoot)
+  let startup
+  try {
+    const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      windowsHide: true,
+      env: childEnv
+    })
+    const startupPromise = waitForStartup(configRoot, child, deps)
+    child.unref()
+    closeSync(logFd)
 
-  const startup = await startupPromise
+    startup = await startupPromise
+  } finally {
+    installationLease.release()
+  }
   if (startup.kind !== 'ready') {
     const logTail = await readLogTail(logPath)
     if (startup.kind !== 'timeout') {

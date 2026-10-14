@@ -30,7 +30,16 @@
     "src/renderer/src/hooks/useApplicationEventBindings.ts",
     "src/renderer/src/hooks/useApplicationStartup.ts",
     "src/renderer/src/hooks/useLifecycleSync.ts",
-    "src/renderer/src/hooks/useQuitPersistenceFlush.ts"
+    "src/renderer/src/hooks/useQuitPersistenceFlush.ts",
+    "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+    "src/renderer/src/components/RuntimeUpdateDialog.tsx",
+    "src/renderer/src/components/runtime-diagnostics.tsx",
+    "src/renderer/src/components/runtime-startup-gate.test.tsx",
+    "src/renderer/src/components/runtime-startup-gate.tsx",
+    "src/renderer/src/components/runtime-update-copy.ts",
+    "src/renderer/src/components/runtime-update-outcome-notice.tsx",
+    "src/renderer/src/components/runtime-update-view.test.ts",
+    "src/renderer/src/components/runtime-update-view.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
@@ -97,7 +106,13 @@
     "src/renderer/src/hooks/useProjectFormDialog.ts",
     "src/renderer/src/hooks/useQuitPersistenceFlush.ts",
     "src/renderer/src/hooks/useUnreadTaskViewSync.ts",
-    "src/renderer/src/hooks/useWindowFindAppearanceSync.ts"
+    "src/renderer/src/hooks/useWindowFindAppearanceSync.ts",
+    "src/renderer/src/components/RuntimeUpdateDialog.tsx",
+    "src/renderer/src/components/runtime-diagnostics.tsx",
+    "src/renderer/src/components/runtime-startup-gate.tsx",
+    "src/renderer/src/components/runtime-update-copy.ts",
+    "src/renderer/src/components/runtime-update-outcome-notice.tsx",
+    "src/renderer/src/components/runtime-update-view.ts"
   ],
   "consumerModules": ["renderer_hooks"],
   "testFiles": {
@@ -112,7 +127,10 @@
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
       "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
-      "src/renderer/src/components/UpdateDialog.render.test.tsx"
+      "src/renderer/src/components/UpdateDialog.render.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
+      "src/renderer/src/components/runtime-update-view.test.ts"
     ],
     "contract": [],
     "consumer": [

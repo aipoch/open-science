@@ -1,3 +1,6 @@
+import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
+import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
+import { waitForRuntimeStopped } from './runtime-stop-confirmation'
 import { randomUUID } from 'node:crypto'
 import {
   backendStartupStatusSchema,
@@ -78,13 +81,112 @@ export async function discoverDesktopBackend(
   )
     return undefined
   if (owner.host !== 'node' || !owner.desktop)
-    throw new Error(
+    throw new DesktopRuntimeStartupError(
+      {
+        reason: 'legacy-host',
+        desktopVersion: version,
+        pid: owner.pid,
+        canStop: false,
+        canRecover: false
+      },
       'An older desktop runtime owns this data folder. Quit that application before opening this version.'
     )
-  if (owner.desktop.version !== version)
-    throw new Error(
-      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.'
+  if (owner.desktop.version !== version) {
+    const startup = z
+      .object({
+        desktopGeneration: z.literal(owner.desktop.generation),
+        startupOptions: runtimeStartupOptionsSchema
+      })
+      .safeParse(proof)
+    const startupOptions =
+      startup.success && startup.data.startupOptions.configRoot === configRoot
+        ? startup.data.startupOptions
+        : undefined
+    // Older protocols cannot preserve launch options or prove a clean shutdown. Leave the
+    // original service usable instead of stopping it and creating a recovery-only dead end.
+    if (!startupOptions)
+      throw new DesktopRuntimeStartupError(
+        {
+          reason: 'legacy-service',
+          desktopVersion: version,
+          runtimeVersion: owner.desktop.version,
+          pid: owner.pid,
+          canStop: false,
+          canRecover: true
+        },
+        'Quit the original app before opening this version. If the old service remains running, restart the computer.',
+        undefined,
+        async () => {
+          await discoverDesktopBackend(configRoot, version)
+        }
+      )
+    const issue = {
+      reason: 'version-mismatch' as const,
+      desktopVersion: version,
+      runtimeVersion: owner.desktop.version,
+      pid: owner.pid,
+      canStop: true,
+      canRecover: false
+    }
+    throw new DesktopRuntimeStartupError(
+      issue,
+      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
+      async () => {
+        // A button may remain open for minutes: authenticate the exact owner again before acting.
+        const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          },
+          signal: AbortSignal.timeout(1500),
+          redirect: 'error'
+        })
+        const current = response.ok ? await response.json() : undefined
+        if (current?.pid !== owner.pid || current?.generation !== owner.generation)
+          throw new DesktopRuntimeStartupError(
+            { ...issue, reason: 'startup-recovery-required', canStop: false },
+            'The running server changed. Quit and reopen to verify its identity.'
+          )
+        if (JSON.stringify(current.startupOptions) !== JSON.stringify(startupOptions))
+          throw new DesktopRuntimeStartupError(
+            { ...issue, reason: 'startup-recovery-required', canStop: false },
+            'The server configuration changed. Quit and reopen to verify it.'
+          )
+        // The owner endpoint is distinct from the Web service port. Start Web through its
+        // authenticated control endpoint, then bind shutdown to that process's service record.
+        const started = await fetch(`http://127.0.0.1:${owner.port}/web/start?port=0`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          },
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error'
+        })
+        if (!started.ok) throw new Error('The server shutdown endpoint is unavailable.')
+        const service = z
+          .object({ pid: z.literal(owner.pid), port: z.number().int().min(1).max(65535) })
+          .parse(JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8')))
+        const stopped = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error'
+        })
+        if (!stopped.ok) throw new Error('The server did not accept the shutdown request.')
+        await stopped.arrayBuffer()
+        const lease = await waitForRuntimeStopped({
+          configRoot,
+          generation: owner.desktop!.generation,
+          pid: owner.pid,
+          requireCleanExit: true
+        })
+        lease.release()
+      },
+      undefined,
+      startupOptions
     )
+  }
   return owner.desktop
 }
 

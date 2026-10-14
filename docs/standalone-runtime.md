@@ -241,20 +241,21 @@ Electron tests also require an unlocked test Secret Service.
 
 ## Who stops the server
 
-| Action                                        | Result                                                                                                                        |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and await the actual child exit   |
-| Quit a desktop attached to a CLI-started Node | Drain this desktop's renderer state and detach; leave server work running                                                     |
-| Close Web, disconnect SDK, finish CLI command | Keep server running                                                                                                           |
-| `open-science stop`                           | Explicitly stop the selected Node server for all clients                                                                      |
-| Desktop crashes, Node survives                | Next desktop attaches as a borrower; use CLI for explicit stop                                                                |
-| Connection is lost                            | Offer manual reconnection to the same authenticated generation; never replay mutations or restart/kill a rediscovered process |
+| Action                                        | Result                                                                                                                                                                  |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and verify PID exit, directory ownership and the matching clean-exit record |
+| Quit a desktop attached to a CLI-started Node | Drain this desktop's renderer state and detach; leave server work running                                                                                               |
+| Close Web, disconnect SDK, finish CLI command | Keep server running                                                                                                                                                     |
+| `open-science stop`                           | Explicitly stop the selected Node server for all clients                                                                                                                |
+| Desktop crashes, Node survives                | Next same-version desktop may claim controller authority for a Desktop-launched Runtime                                                                                 |
+| Connection is lost                            | Offer manual reconnection to the same authenticated generation; never replay mutations or restart/kill a rediscovered process                                           |
 
 After a successful desktop startup, unexpected attachment loss displays a recovery notice while
 keeping the renderer and local editor/composer drafts mounted. Reconnect is explicit, single-flight,
 cancelable, and time-bounded. It uses the retained authenticated endpoint, version, generation and
-PID; it does not discover or adopt a replacement server. Owned lifecycle authority still requires
-the original live retained ChildProcess. Borrowed attachments remain borrowed.
+PID; it does not discover or adopt a replacement server. Lifecycle authority belongs to the
+authenticated Desktop instance granted controller status. A CLI-launched Runtime remains borrowed
+even when that Desktop is controller. Another controller or unsettled teardown blocks handover.
 
 Recovery rebuilds native preview/notification adapters and document leases, invalidates queued old
 saves, and waits for live application frames to refresh authoritative state. Events arriving during
@@ -266,9 +267,9 @@ connected Quit retains the owned/borrowed shutdown behavior below.
 
 Closing a window still follows the existing close-to-tray preference; actual application Quit is
 the shutdown boundary. If a Web task must outlive the desktop, start Node with CLI first.
-There is no client voting, last-client shutdown, idle timeout, ownership transfer or automatic
-killing of an external server. Ownership requires the actual retained ChildProcess and an
-authenticated PID/generation match, not a PID read from disk. Failed quit preparation leaves the
+There is no client voting, last-client shutdown, idle timeout or automatic killing of an external
+server. A Desktop-launched Runtime can be adopted after its previous controller disconnects and
+old lifecycle work settles. A PID or installation path alone never grants this authority. Failed quit preparation leaves the
 desktop open; exit timeout/error is reported without a SIGKILL fallback.
 
 Outside a committed update or planned relaunch, an owned child exit makes the windowed desktop
@@ -280,9 +281,34 @@ unavailable state according to its authenticated liveness. Electron crashes with
 require separate lifecycle validation; this document does not claim that path is fully certified.
 
 Native updates use the existing update/handoff gate and stop an owned Node before replacement.
-A borrowed server must be stopped explicitly before desktop update installation. Data-root handoff
-keeps the existing admission, cancellation, persistence and relaunch owners; desktop relaunch
-starts a replacement child only after its owned child exits.
+A CLI server requires explicit consent before Desktop stops it for an update and takes over the
+same configuration. Cancel leaves the service running. Unsupported configurations are refused
+before stopping. Standalone program files are not updated; an older standalone installation may
+not be compatible with data written by the newer Desktop. Installation occupancy and a durable
+update record protect participating startup entrypoints across profiles. Unknown occupancy,
+unverified installation integrity or an uncertified channel blocks automatic replacement.
+Data-root handoff retains the existing task/persistence gates. Relaunch requires confirmed Runtime
+exit and the matching clean record; missing/failed evidence enters recovery rather than installation.
+
+Production automatic replacement is gated by `src/main/update/channel-certification.ts`.
+The macOS ZIP, Windows per-user NSIS, Linux stable-name AppImage and Linux Debian entries are
+currently closed pending complete native installed-package acceptance. Downloads and update status
+remain available; attempting installation fails before the Runtime stop gate. There is no user
+environment-variable override and no automatic fallback to a manual installer. Isolated acceptance
+fixtures can supply evidence directly to the source API. Enabling a production entry requires a
+reviewed evidence ledger for the exact platform/architecture and channel: normal installed upgrade,
+CLI consent/switch, cancellation, delayed writer settlement, crash/rollback, original-configuration
+restart and first successful data read. Artifact signature/hash verification alone is insufficient.
+
+An unknown native installer result is never retried implicitly by Recover. For operations recorded
+with a trustworthy kernel boot UUID, an explicit recovery after repairing via the original channel
+and restarting the OS can verify the exact original or target installation, empty installation
+occupancy, executor lock and original config/data/profile locks. It then writes a request-bound
+settlement receipt and verified startup ticket. A failed or missing Runtime stop record can use the
+same changed-boot proof only to cancel/recover the unchanged original installation; it does not
+become a clean stop and cannot authorize installation. Readiness must still succeed before the
+ticket is consumed. Same-boot, malformed/old time-derived identities, incomplete files or occupied
+locks remain protected. Native Windows/Linux execution of these protocols remains unvalidated.
 
 Directory ownership is a kernel-backed SQLite exclusive transaction covering the configuration,
 selected data directory and credential profile before business writes. Concurrent starts reuse

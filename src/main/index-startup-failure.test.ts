@@ -292,6 +292,7 @@ it.each(['win32', 'linux', 'darwin'] as const)(
       const client = {
         ownsRuntime: () => false,
         processId: () => 123,
+        runtimeInfo: () => ({ generation: 'disconnected-quit-test' }),
         invokeHost: async () => ({ locale: 'en' }),
         startupState: () => ({ phase: 'checking' }),
         close: vi.fn()

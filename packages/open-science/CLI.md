@@ -249,8 +249,16 @@ Stop the backend before upgrading an installation, then restart it with the same
 Use the installation channel that owns the CLI: Homebrew for a Formula, the new downloaded
 package for deb/rpm or a local npm tarball, or a verified new Release archive in a new directory
 with PATH/the symlink updated. npm registry publication remains deferred.
-Use the desktop application's native update UI for desktop installations. If desktop is borrowing
-an independently started backend, stop that backend explicitly before applying a desktop update.
+The desktop update UI discovers and downloads packages. Automatic replacement remains closed for
+macOS ZIP, Windows NSIS, Linux AppImage and Debian until each channel passes complete installed-package
+acceptance; artifact checks and same-version copy tests do not certify a cross-version upgrade.
+For an accepted channel, use the desktop application's native update UI. A Desktop
+that adopts an orphaned Desktop-launched Runtime can stop it through the normal update gate.
+For a CLI-launched service, explicitly confirm stopping the service and switching to Desktop;
+all connected clients will disconnect, and future Desktop Quit stops the replacement Runtime.
+Cancel keeps the service running. The switch preserves supported configuration and refuses
+unsupported credential/profile settings before stopping. It does not upgrade standalone files.
+Installation recovery may require the original installer when file integrity cannot be verified.
 
 ## Codex subscription sign-in
 

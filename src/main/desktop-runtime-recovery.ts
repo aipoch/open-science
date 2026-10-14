@@ -1,3 +1,4 @@
+import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import type { ChildProcess } from 'node:child_process'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { DesktopRuntimeRecoveryState } from '../shared/desktop-runtime-recovery'
@@ -22,7 +23,7 @@ export function createDesktopRuntimeRecovery(options: {
   setClosing(closing: boolean): void
 } {
   const processId = options.client.processId()
-  const owned = options.client.ownsRuntime()
+  const generation = options.client.runtimeInfo().generation
   let current = options.client
   let pendingCandidate: DesktopRuntimeClient | undefined
   let state: DesktopRuntimeRecoveryState = { phase: 'connected', epoch: 0, closing: false }
@@ -32,13 +33,7 @@ export function createDesktopRuntimeRecovery(options: {
     state = next
     options.onState(next)
   }
-  const childAlive = (): boolean =>
-    !owned ||
-    Boolean(
-      options.startedProcess &&
-      options.startedProcess.exitCode === null &&
-      options.startedProcess.signalCode === null
-    )
+  const childAlive = (): boolean => isRuntimeProcessAlive(processId)
   return {
     state: () => state,
     disconnect: (client) => {
@@ -82,7 +77,7 @@ export function createDesktopRuntimeRecovery(options: {
           if (controller.signal.aborted) throw new Error('Desktop reconnect canceled.')
           if (
             candidate.processId() !== processId ||
-            candidate.ownsRuntime() !== owned ||
+            candidate.runtimeInfo().generation !== generation ||
             !childAlive()
           ) {
             publish({ ...state, phase: 'unavailable' })

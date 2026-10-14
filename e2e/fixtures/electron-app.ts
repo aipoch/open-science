@@ -405,6 +405,34 @@ const launchEnvironment = (
     if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
   }
 
+  if (inheritedEnvironment.OPEN_SCIENCE_E2E_ISOLATE_HOME === '1') {
+    // Acceptance processes must not discover the operator's provider credentials, home files,
+    // or shared credential-bootstrap lock. Keep only OS launch inputs and fixture controls.
+    const osInputs = new Set([
+      'path',
+      'pathext',
+      'systemroot',
+      'windir',
+      'comspec',
+      'temp',
+      'tmp',
+      'number_of_processors',
+      'processor_architecture',
+      'systemdrive'
+    ])
+    for (const key of Object.keys(environment)) {
+      if (!osInputs.has(key.toLowerCase()) && !key.startsWith('OPEN_SCIENCE_E2E_'))
+        delete environment[key]
+    }
+    const fixtureHome = join(dirname(storageRoot), 'isolated home')
+    environment.HOME = fixtureHome
+    environment.USERPROFILE = fixtureHome
+    environment.APPDATA = join(fixtureHome, 'AppData', 'Roaming')
+    environment.LOCALAPPDATA = join(fixtureHome, 'AppData', 'Local')
+    environment.XDG_CONFIG_HOME = join(fixtureHome, '.config')
+    environment.XDG_DATA_HOME = join(fixtureHome, '.local', 'share')
+  }
+  environment.OPEN_SCIENCE_INSTALLATION_STATE_ROOT ??= join(storageRoot, 'installation-state')
   environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
   environment.OPEN_SCIENCE_USER_DATA = join(dirname(storageRoot), 'electron-profile')
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot

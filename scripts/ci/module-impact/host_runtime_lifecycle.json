@@ -7,21 +7,37 @@
     "src/main/lifecycle-shutdown.ts",
     "src/main/runtime-lifecycle.ts",
     "src/main/runtime-ownership.integration.test.ts",
-    "src/main/runtime-ownership.ts"
+    "src/main/runtime-ownership.ts",
+    "src/main/lifecycle-settlement.ts",
+    "src/main/runtime-shutdown-lifetime.test.ts",
+    "src/main/runtime-shutdown-lifetime.ts",
+    "src/main/runtime-stop-confirmation.integration.test.ts",
+    "src/main/runtime-stop-confirmation.ts",
+    "src/main/system-boot-identity.test.ts",
+    "src/main/system-boot-identity.ts",
+    "src/main/runtime-startup-options.ts"
   ],
   "interfacePaths": [
     "src/main/application-runtime.ts",
     "src/main/application-shutdown-trigger.ts",
     "src/main/lifecycle-shutdown.ts",
     "src/main/runtime-lifecycle.ts",
-    "src/main/runtime-ownership.ts"
+    "src/main/runtime-ownership.ts",
+    "src/main/lifecycle-settlement.ts",
+    "src/main/runtime-shutdown-lifetime.ts",
+    "src/main/runtime-stop-confirmation.ts",
+    "src/main/system-boot-identity.ts",
+    "src/main/runtime-startup-options.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/application-runtime.test.ts",
       "src/main/lifecycle-shutdown.test.ts",
-      "src/main/runtime-ownership.integration.test.ts"
+      "src/main/runtime-ownership.integration.test.ts",
+      "src/main/runtime-shutdown-lifetime.test.ts",
+      "src/main/runtime-stop-confirmation.integration.test.ts",
+      "src/main/system-boot-identity.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -882,7 +898,24 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/update/installation-reboot-recovery.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-formats.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/update/deb-gate-recovery.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/installation-artifact.test.ts",
+      "src/main/update/deb-systemd-gate.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/runtime-control.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

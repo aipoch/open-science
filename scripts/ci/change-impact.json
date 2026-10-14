@@ -341,7 +341,15 @@
         "src/main/notebook/environment-resources.ts",
         "src/main/notebook/environment-runner.ts",
         "packages/environment/src/micromamba-cache-powershell.test.ts",
-        "packages/environment/src/micromamba-cache-acl.integration.test.ts"
+        "packages/environment/src/micromamba-cache-acl.integration.test.ts",
+        "src/main/composition/session-foundation.ts",
+        "src/main/system-boot-identity.ts",
+        "src/main/update/installation-artifact.ts",
+        "src/main/update/installation-executor.ts",
+        "src/main/update/installation-occupancy.ts",
+        "src/main/update/installation-protection.ts",
+        "src/main/update/installation-reboot-recovery.ts",
+        "src/main/update/verification-process.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },

@@ -168,7 +168,8 @@
     "src/shared/runtime-payload-client.ts",
     "src/shared/runtime-payload-client.test.ts",
     "src/shared/session-event-hydrator.ts",
-    "src/shared/session-event-hydrator.test.ts"
+    "src/shared/session-event-hydrator.test.ts",
+    "src/shared/runtime-startup.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -253,7 +254,8 @@
     "src/shared/skill-marketplace.ts",
     "src/shared/runtime-payload-transfer.ts",
     "src/shared/runtime-payload-client.ts",
-    "src/shared/session-event-hydrator.ts"
+    "src/shared/session-event-hydrator.ts",
+    "src/shared/runtime-startup.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

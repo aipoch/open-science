@@ -1004,7 +1004,10 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/internal-web-event-stream.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
