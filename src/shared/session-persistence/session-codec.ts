@@ -1,60 +1,61 @@
-import { sanitizePromptPreparation, resolvePreparationNoticeBaseline } from './prompt-preparation'
+import { sanitizeAcpContextUsage } from '../acp'
 import {
-  type PersistedSessionStatus,
-  type PersistedActiveRun,
-  type PersistedSessionResumeRecovery,
-  type PersistedPendingHistoryReplay,
-  type PersistedSessionBranchSource,
-  type PersistedChatSession,
-  normalizeDelegationPolicy,
-  type PersistedRuntimeSessionAdmission,
-  SESSION_DETAILS_DESCRIPTION_MAX_LENGTH
-} from './session'
+  createLinearConversationGraph,
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../conversation-graph'
+import { DEFAULT_PERMISSION_PROFILE, normalizePermissionProfile } from '../permission-profiles'
+import { projectActiveNestedDelegateActivities } from '../session-conversation-graph-materialization'
+import { packageOriginSchema } from '../session-package'
 import {
-  asString,
-  isRecord,
-  asNumber,
-  hasOnlyFields,
-  asStringArray,
-  AGENT_FRAMEWORK_IDS
-} from './primitives'
-import {
+  type AgentFrameworkId,
   type SessionAgentConfiguration,
-  isReasoningEffort,
-  type AgentFrameworkId
+  isReasoningEffort
 } from '../settings'
+import { sanitizeConversationGraph } from './conversation-graph'
+import { sanitizeSessionDetailsGeneration } from './details'
+import { isHiddenControlMessage, isHumanUserMessage } from './message'
+import { sanitizeMessage } from './message-codec'
 import { sanitizeArtifact, sanitizeSessionMessageImages } from './message-content'
+import type {
+  PersistedActivityGroup,
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedToolActivity
+} from '../session-message-contract'
+import { sanitizePlanHistoryProjections } from './plan'
 import {
-  type PersistedArtifact,
-  type PersistedToolActivity,
-  type PersistedActivityGroup,
-  type PersistedChatMessage,
-  isHumanUserMessage,
-  isHiddenControlMessage
-} from './message'
-import { sanitizeToolActivity, sanitizeActivityGroup } from './tool-activity'
+  AGENT_FRAMEWORK_IDS,
+  asNumber,
+  asString,
+  asStringArray,
+  hasOnlyFields,
+  isRecord
+} from './primitives'
+import { resolvePreparationNoticeBaseline, sanitizePromptPreparation } from './prompt-preparation'
 import {
+  normalizeActivityAfterRestore,
   normalizeActivityGroupAfterRestore,
   normalizeSessionAfterRestore,
   rearmUnacceptedElicitationContinuations,
-  restorePendingElicitationWait,
   resolveRestorablePermissionToolAuthority,
-  normalizeActivityAfterRestore
+  restorePendingElicitationWait
 } from './restore'
-import { DEFAULT_PERMISSION_PROFILE, normalizePermissionProfile } from '../permission-profiles'
-import { sanitizeMessage } from './message-codec'
-import { sanitizeSessionDetailsGeneration } from './details'
-import { packageOriginSchema } from '../session-package'
-import { sanitizeAcpContextUsage } from '../acp'
+import type {
+  PersistedActiveRun,
+  PersistedSessionResumeRecovery,
+  PersistedSessionStatus
+} from '../session-run-contract'
 import { sanitizeSessionRuntimeContext } from './runtime-context'
-import { sanitizePlanHistoryProjections } from './plan'
-import { sanitizeConversationGraph } from './conversation-graph'
-import { projectActiveNestedDelegateActivities } from '../session-conversation-graph-materialization'
 import {
-  resolveActiveConversationMessages,
-  projectConversationMessage,
-  createLinearConversationGraph
-} from '../conversation-graph'
+  type PersistedChatSession,
+  type PersistedPendingHistoryReplay,
+  type PersistedRuntimeSessionAdmission,
+  type PersistedSessionBranchSource,
+  SESSION_DETAILS_DESCRIPTION_MAX_LENGTH,
+  normalizeDelegationPolicy
+} from './session'
+import { sanitizeActivityGroup, sanitizeToolActivity } from './tool-activity'
 
 const SESSION_STATUSES = new Set<PersistedSessionStatus>([
   'idle',

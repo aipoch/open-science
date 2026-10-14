@@ -1,27 +1,26 @@
-import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
-import type { ProvisionProgress } from '@aipoch/environment/contracts'
-import type { NotebookSessionRuntimeBinding } from './session-aggregate'
-import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
-import {
-  EnvironmentLeaseManager,
-  type EnvironmentLease,
-  type EnvironmentLeaseMode
-} from '@aipoch/environment'
-import type { NotebookRecoveryCoordinator } from '@aipoch/environment'
-import { errorLogFields } from '@aipoch/diagnostics/node'
 import {
   boundedRuntimeDiagnostic,
+  errorLogFields,
   redactRuntimeDiagnosticValue,
   runtimeChildProcessErrorFields,
   type RuntimeDiagnosticLogger
 } from '@aipoch/diagnostics/node'
+import type { NotebookRecoveryCoordinator } from '@aipoch/environment'
 import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  EnvironmentLeaseManager,
   pythonReady,
-  rReady
+  rReady,
+  type EnvironmentLease,
+  type EnvironmentLeaseMode
 } from '@aipoch/environment'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
+import type { NotebookKernelMetadata } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
+import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type EnvironmentOperationKind = 'execution' | 'inspection' | 'mutation' | 'provision' | 'revocation'
 

@@ -1,17 +1,17 @@
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 import {
   isAppIconVariant,
   isReasoningEffort,
   type AppIconVariant,
   type ProjectFilesFilterPreference,
-  type ReasoningEffort,
-  type SetAgentRoutingRequest,
   type ReviewerModelConfiguration,
   type SessionDetailsModelConfiguration,
+  type SetAgentRoutingRequest,
   type SubagentModelConfiguration,
   type VisionModelConfiguration
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
-import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 const readField = (value: unknown, field: string): unknown =>
@@ -247,19 +247,19 @@ const readGitHubToken = (request: unknown): string => {
 }
 
 export {
-  readAppIconVariant,
   readAgentRouting,
+  readAppIconVariant,
   readClosePreference,
   readConversationSkillImportEnabled,
   readDefaultPermissionProfile,
   readGitHubToken,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
-  readShowNotificationContent,
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
   readSessionDetailsModel,
+  readShowNotificationContent,
   readSubagentModel,
   readVisionModel
 }

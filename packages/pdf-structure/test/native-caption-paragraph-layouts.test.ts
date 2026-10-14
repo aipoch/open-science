@@ -12,6 +12,55 @@ const { nativeCaptionOwnedInlineFragments } = await import(
 const input = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-caption-paragraph-layouts.jsonl'))
 
+it('preserves a lower literal script when projected math and upright prose share native boxes', () => {
+  const first = {
+    text: 'Table 1. Independent model measurements are given for',
+    x: 100,
+    y: 200,
+    width: 300,
+    height: 10,
+    fontSize: 10.14
+  }
+  const base = { text: 'α', x: 100, y: 212, width: 6, height: 10, fontSize: 10.14 }
+  const upper = { text: '*', x: 105, y: 210.6, width: 3.9, height: 7.8, fontSize: 7.8 }
+  const lower = { text: 'n', x: 104.8, y: 216.8, width: 2.2, height: 7.8, fontSize: 7.8 }
+  const prose = {
+    text: '. The remaining measurements are complete.',
+    x: 109.5,
+    y: 212,
+    width: 200,
+    height: 10,
+    fontSize: 10
+  }
+  const page = { pageNumber: 1, width: 600, height: 800, lines: [first, base, upper, lower, prose] }
+  const second = {
+    text: 'α * ' + prose.text,
+    x: 100,
+    y: 210.6,
+    right: 309.5,
+    bottom: 222,
+    fontSize: 10.14
+  }
+  const owned = [{ ...first, right: 400, bottom: 210 }, second]
+  const caption = { page: 1, lines: [first.text, second.text], rect: [100, 200, 400, 222] }
+  expect(nativeCaptionOwnedInlineFragments(page, caption, owned)).toEqual({
+    lines: [first.text, 'α * n ' + prose.text],
+    rect: [100, 200, 400, lower.y + lower.height]
+  })
+  for (const change of ['height', 'missing-base', 'overlap', 'invalid', 'ambiguous-row']) {
+    const copy = structuredClone(page),
+      rows = structuredClone(owned)
+    if (change === 'height') copy.lines[4].height = 11
+    if (change === 'missing-base') copy.lines.splice(1, 1)
+    if (change === 'overlap') copy.lines[4].x = 103
+    if (change === 'invalid') copy.lines[4].width = -200
+    if (change === 'ambiguous-row') rows.push({ ...second })
+    expect(
+      nativeCaptionOwnedInlineFragments(copy, caption, rows)?.lines.join(' ') ?? ''
+    ).not.toContain('α * n')
+  }
+})
+
 it.each(['B', 'C', 'D', 'E', 'G', 'H', 'T', 'Z'])(
   'recognizes a formal appendix figure %s while rejecting prose',
   (prefix) => {

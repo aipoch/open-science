@@ -5,18 +5,20 @@ import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import 'reflect-metadata'
 import { createServer, type Server } from 'node:http'
-import { connect } from 'node:net'
+import { connect, createServer as createTcpServer, type Server as TcpServer } from 'node:net'
 import { createServer as createHttpsServer } from 'node:https'
 import { webcrypto } from 'node:crypto'
 import { X509CertificateGenerator, SubjectAlternativeNameExtension } from '@peculiar/x509'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createNodeRuntimeNetwork } from './runtime-network-node'
+import { configureRuntimeNetwork } from './runtime-network'
+import { checkInternetReachability } from './net/network-info'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
-const listen = async (server: Server): Promise<number> => {
+const listen = async (server: Server | TcpServer): Promise<number> => {
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
@@ -24,7 +26,7 @@ const listen = async (server: Server): Promise<number> => {
   cleanup.push(
     () =>
       new Promise<void>((resolve, reject) => {
-        server.closeAllConnections()
+        if ('closeAllConnections' in server) server.closeAllConnections()
         server.close((error) => (error ? reject(error) : resolve()))
       })
   )
@@ -137,6 +139,8 @@ describe('ordinary Node HTTP transport', () => {
     const port = await listen(proxy)
     const transport = network({ HTTPS_PROXY: `http://127.0.0.1:${port}` })
     await expect(transport.fetch('https://example.invalid')).rejects.toThrow()
+    configureRuntimeNetwork(transport)
+    await expect(checkInternetReachability()).resolves.toBe(false)
     await expect(
       transport.setProxy({ mode: 'pac_script', pacScript: 'https://example.invalid/proxy.pac' })
     ).rejects.toThrow('PAC')
@@ -211,4 +215,153 @@ describe('ordinary Node HTTP transport', () => {
       child.on('close', (code) => (code === 0 ? resolveChild() : reject(new Error(stderr))))
     })
   })
+})
+
+it.each(['CONNECT', 'TLS'] as const)(
+  'closes a pending proxy %s socket when the runtime network is disposed',
+  async (phase) => {
+    const proxy = createServer()
+    let accepted!: () => void
+    const connected = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    let socket!: import('node:stream').Duplex
+    let closed = false
+    proxy.on('connect', (_request, client) => {
+      socket = client
+      client.on('end', () => {
+        closed = true
+        client.destroy()
+      })
+      client.on('close', () => {
+        closed = true
+      })
+      client.on('error', () => {})
+      client.resume()
+      if (phase === 'TLS') {
+        client.once('data', accepted)
+        client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      } else accepted()
+      // Deliberately never finish CONNECT or the subsequent TLS handshake.
+    })
+    const port = await listen(proxy)
+    cleanup.push(async () => {
+      socket?.destroy()
+    })
+    const transport = network({ HTTPS_PROXY: `http://127.0.0.1:${port}` })
+    const fetch = transport.fetch('https://example.invalid').catch(() => undefined)
+    await connected
+    await transport.close()
+    await fetch
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(closed).toBe(true)
+    await expect(transport.fetch('https://example.invalid')).rejects.toThrow('closed')
+    await expect(transport.setProxy({ mode: 'direct' })).rejects.toThrow('closed')
+  }
+)
+
+it.each(['proxy', 'direct'] as const)(
+  'lets a child naturally exit after closing an unfinished %s connection',
+  async (mode) => {
+    const directory = await mkdtemp(join(tmpdir(), 'runtime-network-exit-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const entry = join(directory, 'fixture.cjs')
+    await build({
+      stdin: {
+        contents: `import { createNodeRuntimeNetwork } from './src/main/runtime-network-node';
+      const network = createNodeRuntimeNetwork(${mode === 'proxy' ? '{ HTTPS_PROXY: process.argv[2] }' : '{}'});
+      void network.fetch(${mode === 'proxy' ? "'https://example.invalid'" : 'process.argv[2]'}).catch(() => {});
+      process.stdin.once('data', async () => { await network.close(); process.stdin.destroy(); console.log('network closed'); });`,
+        resolveDir: process.cwd()
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      outfile: entry,
+      logLevel: 'silent'
+    })
+    const proxy = mode === 'proxy' ? createServer() : createTcpServer()
+    const sockets = new Set<import('node:stream').Duplex>()
+    let accepted!: () => void
+    const connected = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    const connectedSocket = (socket: import('node:net').Socket): void => {
+      sockets.add(socket)
+      socket.on('end', () => socket.destroy())
+      socket.on('error', () => {})
+      if (mode === 'direct') socket.once('data', accepted)
+      else accepted()
+      socket.resume()
+    }
+    if (mode === 'proxy') proxy.on('connect', (_request, socket) => connectedSocket(socket))
+    else proxy.on('connection', connectedSocket)
+    const port = await listen(proxy)
+    cleanup.push(async () => {
+      for (const socket of sockets) socket.destroy()
+    })
+    const child = spawn(
+      process.execPath,
+      [entry, `${mode === 'direct' ? 'https' : 'http'}://127.0.0.1:${port}`],
+      {
+        stdio: ['pipe', 'pipe', 'pipe']
+      }
+    )
+    const exited = new Promise<number | null>((resolve) => child.once('exit', resolve))
+    cleanup.push(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL')
+        await exited
+      }
+    })
+    let output = ''
+    child.stdout.on('data', (bytes) => {
+      output += bytes.toString()
+    })
+    await connected
+    child.stdin.write('stop')
+    let timer!: ReturnType<typeof setTimeout>
+    try {
+      const outcome = await Promise.race([
+        exited,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Network shutdown left the child alive')), 2000)
+        })
+      ])
+      expect(outcome).toBe(0)
+      expect(output).toContain('network closed')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+)
+
+it('closes a direct socket awaiting TLS before returning network shutdown', async () => {
+  let accepted!: () => void
+  const handshake = new Promise<void>((resolve) => {
+    accepted = resolve
+  })
+  let remoteClosed = false
+  const sockets = new Set<import('node:net').Socket>()
+  const server = createTcpServer((socket) => {
+    sockets.add(socket)
+    socket.on('end', () => socket.destroy())
+    socket.on('error', () => {})
+    socket.on('close', () => {
+      remoteClosed = true
+    })
+    socket.once('data', accepted)
+    socket.resume()
+  })
+  const port = await listen(server)
+  cleanup.push(async () => {
+    for (const socket of sockets) socket.destroy()
+  })
+  const transport = network()
+  const request = transport.fetch(`https://127.0.0.1:${port}`).catch(() => undefined)
+  await handshake
+  await transport.close()
+  await request
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(remoteClosed).toBe(true)
 })

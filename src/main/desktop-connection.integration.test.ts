@@ -11,7 +11,7 @@ afterEach(async () => {
 })
 
 describe('private desktop process attachment', () => {
-  it('uses an authenticated OS socket, permits one desktop and accepts a later reconnection', async () => {
+  it('uses an authenticated OS socket, permits authenticated concurrent desktops and accepts a later reconnection', async () => {
     const attach = vi.fn((socket: WebSocket) => {
       socket.on('message', (bytes) => socket.send(bytes))
     })
@@ -22,12 +22,13 @@ describe('private desktop process attachment', () => {
     const reply = once(client, 'message')
     client.send('request')
     expect(String((await reply)[0])).toBe('request')
-    await expect(connectToDesktopEndpoint(host.endpoint)).rejects.toThrow('409')
+    const concurrent = await connectToDesktopEndpoint(host.endpoint)
+    concurrent.terminate()
     const detached = once(attach.mock.calls[0][0], 'close')
     client.terminate()
     await detached
     const second = await connectToDesktopEndpoint(host.endpoint)
-    expect(attach).toHaveBeenCalledTimes(2)
+    expect(attach).toHaveBeenCalledTimes(3)
     second.terminate()
   })
 

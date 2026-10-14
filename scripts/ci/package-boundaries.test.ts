@@ -5,6 +5,8 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { requiredLanesForModulePlan } from './module-impact-shadow.mjs'
 import {
   createPackageTestPlan,
   dedicatedPackageTestRoots,
@@ -253,39 +255,91 @@ it('local module and affected plans obey the same downstream package direction a
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
 })
 
-it('host-only selective plans never include package-owned unit suites', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+const hostBoundaryManifest = loadModuleImpactManifest()
+it('retains dedicated downstream host evidence while excluding independent upstream suites', async () => {
   const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = loadModuleImpactManifest()
-  let checked = 0
-  for (const [id, module] of Object.entries(manifest.modules) as [
-    string,
-    { ownerPaths: string[] }
-  ][]) {
-    if (module.ownerPaths.some((path) => path.startsWith('packages/'))) continue
-    const source = module.ownerPaths.find(
-      (path) =>
-        path.startsWith('src/') && /\.[cm]?tsx?$/.test(path) && !/\.(test|spec)\./.test(path)
+  const manifest = structuredClone(hostBoundaryManifest)
+  const source = 'src/shared/in-flight-promise.ts'
+  const id = Object.keys(manifest.modules).find((id) =>
+    manifest.modules[id].ownerPaths.includes(source)
+  )!
+  const module = manifest.modules[id]
+  delete module.fullTestReason
+  module.ownerPaths = [source, 'src/shared/in-flight-promise.test.ts']
+  module.interfacePaths = [source]
+  module.consumerModules = []
+  const upstream = 'packages/diagnostics/src/index.test.ts'
+  const dedicated = 'packages/notebook-network-sandbox/src/address-policy.test.ts'
+  module.testFiles.consumer = [upstream, dedicated]
+  const plan = createAffectedTestPlan(
+    [{ path: source, status: 'modified' }],
+    { status: 'not-requested', testFiles: [] },
+    manifest
+  )
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(dedicated)
+  expect(plan.testFiles).not.toContain(upstream)
+  // Explicit module runs keep their declared evidence; registration guards bound that evidence.
+  expect(createModuleTestPlan(id, manifest).testFiles).toContain(dedicated)
+})
+
+const hostBoundaryCases = (
+  Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][]
+).flatMap(([id, module]) => {
+  if (module.ownerPaths.some((path) => path.startsWith('packages/'))) return []
+  const source = module.ownerPaths.find(
+    (path) => path.startsWith('src/') && /\.[cm]?tsx?$/.test(path) && !/\.(test|spec)\./.test(path)
+  )
+  return source ? [{ id, source }] : []
+})
+
+it('includes host modules with selective test plans', async () => {
+  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+  expect(
+    hostBoundaryCases.some(
+      ({ id }) => createModuleTestPlan(id, hostBoundaryManifest).mode === 'selective'
     )
-    if (!source) continue
+  ).toBe(true)
+})
+
+// Each module keeps its own timeout as the ownership manifest grows.
+it.each(hostBoundaryCases)(
+  'host-only selective plans exclude independent upstream package suites: $id',
+  async ({ id, source }) => {
+    const { createAffectedTestPlan, createModuleTestPlan } =
+      await import('./module-test-impact.mjs')
     for (const plan of [
-      createModuleTestPlan(id, manifest),
+      createModuleTestPlan(id, hostBoundaryManifest),
       createAffectedTestPlan(
         [{ path: source, status: 'modified' }],
         { status: 'not-requested', testFiles: [] },
-        manifest
+        hostBoundaryManifest
       )
     ]) {
       if (plan.mode !== 'selective') continue
-      checked += 1
       expect(
-        plan.testFiles.filter((path: string) => path.startsWith('packages/')),
+        plan.testFiles.filter(
+          (path: string) =>
+            path.startsWith('packages/') &&
+            !dedicatedPackageTestRoots.some((root) => path.startsWith(root + '/'))
+        ),
         `${id}: ${source}`
       ).toEqual([])
+      // Portable CI excludes these integration tests; their declarations must retain the Linux job.
+      if (
+        plan.testFiles.some((path: string) =>
+          [
+            'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+            'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
+          ].includes(path)
+        )
+      )
+        expect(requiredLanesForModulePlan(plan), `${id}: Linux isolation evidence`).toContain(
+          'linux_runtime'
+        )
     }
   }
-  expect(checked).toBeGreaterThan(0)
-})
+)
 
 it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')

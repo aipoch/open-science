@@ -11092,3 +11092,61 @@ test('a finished numbered bibliography record does not consume the following nat
   const owner = (key: string) => result.units.find((unit) => unit.items.includes(key))!
   expect(owner('2:22')).not.toBe(owner('2:23'))
 })
+
+// Synthetic words retain the native geometry of two small-font rows beside a larger row.
+test('keeps two small-font rows apart beside one larger column baseline', () => {
+  const left = [
+    item(
+      'Xxxxxxxx Xxxxxxx Xxxxxxxxxx, Xxxxxxxxx, 510900,',
+      35.9935,
+      645.3975,
+      159.2325,
+      7.5,
+      false
+    ),
+    item('x', 197.101, 645.3975, 4.35, 7.5, false),
+    item('xxxx.', 201.526, 645.3975, 15.5475, 7.5, false),
+    item('4', 218.9716, 642.0475, 2.7298, 5.3212, false),
+    item('x', 221.7545, 645.4, 4.995, 7.5, false),
+    item('xxxxxxxxx xx Xxxxx-', 226.8545, 645.4, 64.1475, 7.5, true),
+    item('xx,', 36.002, 653.8975, 8.805, 7.5, false),
+    item('x', 45.9545, 653.8975, 3.54, 7.5, false),
+    item('xxxxxx', 49.2995, 653.8975, 23.9325, 7.5, false),
+    item('x', 74.3795, 653.8975, 4.89, 7.5, false),
+    item('xxxxxxx, Xxxxxxxx Xxxxxxxxxx xx', 79.1795, 653.8975, 90.7275, 7.5, false),
+    item('x', 170.732, 653.8975, 3.7275, 7.5, false),
+    item('xxxxxxxxxx', 174.032, 653.8975, 29.1075, 7.5, false),
+    item('x', 204.287, 653.8975, 4.35, 7.5, false),
+    item('xxxxxx Xxxxxxxx, Xxxxxxxx,', 208.547, 653.8975, 82.47, 7.5, true)
+  ]
+  const right = item(
+    'xxxxxx (XXXX), XXXx xxx XXXx xxxxxxxx xxx xxxxxx, xxxxxxxx x',
+    302.9968,
+    649.659,
+    254.9705,
+    9.5,
+    true
+  )
+  const result = extractPage(page([right, ...left]))
+  const lines = result.blocks.flatMap((block) => block.lines)
+  expect(lines.some((line) => line.items.includes('1:1') && line.items.includes('1:7'))).toBe(false)
+  expect(lines.find((line) => line.items.includes('1:1'))?.items).toContain('1:6')
+  expect(lines.find((line) => line.items.includes('1:7'))?.items).toContain('1:15')
+})
+
+test('keeps small panel legends above their larger caption beside a panel letter', () => {
+  const result = extractPage(
+    page(
+      [
+        item('D', 40, 233.38, 6, 9),
+        item('MARK A B C D E F', 60, 229.56, 72.45, 3.3924, false),
+        item('MARK A B C D E F', 138.06, 229.51, 72.45, 3.3924),
+        item('Synthetic panel caption', 105.58, 237.04, 63.99, 6.7847)
+      ],
+      8
+    )
+  )
+  const lines = result.blocks.flatMap((block) => block.lines)
+  expect(lines.find((line) => line.items.includes('8:3'))?.items).not.toContain('8:1')
+  expect(lines.find((line) => line.items.includes('8:3'))?.items).not.toContain('8:2')
+})

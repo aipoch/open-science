@@ -1,5 +1,3 @@
-import type { PrepareSessionReading } from './replay-reference-prompt'
-import * as acp from '@agentclientprotocol/sdk'
 import type {
   ActiveSession,
   ClientConnection,
@@ -7,6 +5,9 @@ import type {
   PromptResponse,
   SessionConfigOption
 } from '@agentclientprotocol/sdk'
+import * as acp from '@agentclientprotocol/sdk'
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -20,29 +21,21 @@ import {
   type AcpConnectRequest,
   type AcpCreateSessionRequest,
   type AcpCreateSessionResponse,
-  type AcpRuntimeEvent,
-  type AcpRuntimeEventInput,
   type AcpDeleteSessionRequest,
-  type AcpPermissionRequest,
   type AcpPermissionResponse,
-  type AcpPermissionSettlementState,
-  type ElicitationResponse,
   type AcpPromptRequest,
-  type AcpSteerFollowUpRequest,
-  type AcpSteerFollowUpResult,
   type AcpResumeSessionRequest,
   type AcpRevokePermissionGrantRequest,
+  type AcpRuntimeEventInput,
   type AcpRuntimeState,
   type AcpSetPermissionProfileRequest,
   type AcpStateSnapshot,
-  type AcpStateUpdate
+  type AcpSteerFollowUpRequest,
+  type AcpSteerFollowUpResult,
+  type ElicitationResponse
 } from '../../shared/acp'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
-import {
-  sanitizeSessionReferences,
-  type MessageAttribution
-} from '../../shared/session-persistence'
+import type { AppGeneratedArtifactProducer } from '../../shared/artifact-provenance'
+import type { ArtifactFile } from '../../shared/artifacts'
 import {
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
@@ -50,517 +43,116 @@ import {
   type ElicitationField,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
-import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
-import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
+import { resolveFileTextBudget } from '../../shared/history-preamble'
+import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
-import {
-  type AgentFramework,
-  type AgentModelChangeTarget,
-  type ResolvedAgentBackend
-} from '../agent-framework'
-import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
-import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
-import { redactSensitiveText } from '@aipoch/diagnostics'
-import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
-import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
-import { buildSessionReferencePrompt } from './session-reference-prompt'
-import {
-  ConversationPermissionGrantStore,
-  type AppPermissionRequest,
-  type RestoredPermissionContinuation
-} from './permission-broker'
-import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
-import type { AcpPermissionContext } from './permission-context'
-import { AgentMcpHttpHost } from './mcp-http-host'
-import type { AcpSessionCapabilityOwner, SessionCapabilityPolicy } from './session-capability-owner'
-import { ArtifactRepository } from '../artifacts/repository'
-import { ArtifactRunRegistry } from '../artifacts/run-registry'
-import type { NotebookRpcConnection } from '../notebook/mcp-server'
-import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type {
-  NotebookExecutionRpcMethod,
-  NotebookPromptInput,
-  ShellRuntimeBinding
-} from '../../shared/notebook'
-import type { SkillImportRpcConnection } from '../skills/mcp-server'
-import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
-import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import { withDataRootWrite } from '../storage/migration-state'
-import { opencodeStorageDir } from '../agent-framework/opencode'
-import type { UploadRepository } from '../uploads/repository'
-import {
-  LITERATURE_MCP_SERVER_NAME,
-  type LiteratureReadDocumentRequest
-} from '../literature/mcp-server'
-import type {
-  LiteratureLibraryDiscovery,
-  LiteratureLibraryFormatDocumentResult,
-  LiteratureLibraryFormatReferencesResult,
-  LiteratureLibraryPrepareLatexResult,
-  LiteratureLibraryReadAbstractResult,
-  LiteratureLibraryReadPdfResult,
-  LiteratureLibrarySaveResult,
-  LiteratureLibraryScope,
-  LiteratureLibrarySearchResult
-} from '../literature/library-mcp-server'
-import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactFile, FileReference } from '../../shared/artifacts'
-import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
-import type {
-  AppGeneratedArtifactProducer,
-  ArtifactRpcCapabilityBinding
-} from '../../shared/artifact-provenance'
-import { resolveFileTextBudget, type HistoryReplayDescriptor } from '../../shared/history-preamble'
-import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import type { AcpAppContinuationOwner } from './app-continuation-owner'
-import type { ContextUsageTracker } from './context-usage-tracker'
-import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
-import type { AcpElicitationOwner } from './elicitation-owner'
-import type {
-  ReviewerSessionOwner,
-  ReviewerSessionDisposition,
-  ReviewerSessionRequest,
-  ReviewerSessionResult
-} from './reviewer-session-owner'
-import type { ArtifactTurnOwner } from './artifact-turn-owner'
-import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import {
-  AcpNativeFollowUpWorkflow,
-  finalizeNativeFollowUpPreparedContent,
-  type NativeFollowUpPreparedContent
-} from './native-follow-up-workflow'
-import type { AcpSessionRegistry } from './session-registry'
-import type {
-  AcpConnectionResourceOwner,
-  AcpConnectionResourceAttempt
-} from './connection-resource-owner'
-import {
-  AcpAgentConnectionAdapter,
-  type AcpAgentConnectionCandidate,
-  type AcpAgentConnectionHooks
-} from './agent-connection-adapter'
-import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
-import type { AcpGenerationActivityOwner } from './generation-activity-owner'
-import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
-import type {
-  AcpBackendGenerationOwner,
-  AcpBackendGenerationView
-} from './backend-generation-owner'
-import type { AcpSessionConfigurator } from './session-configurator'
-import type {
-  AcpSessionUpdateProjector,
-  AcpToolFailureDiagnostic
-} from './session-update-projector'
-import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
-import {
-  artifactPublicationContinuationText,
-  type NotebookWorkingFile
-} from './artifact-publication-continuation'
-import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
-import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
-import type { AcpModelChangeWorkflow } from './model-change-workflow'
-import type { AcpProviderSessionCreator } from './provider-session-creator'
-import type { AcpProviderSessionResumer } from './provider-session-resumer'
-import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
-import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
-import type { AcpPromptContentOwner } from './prompt-content-owner'
-import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
-import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
-import {
-  codeBuddySkillRuntimeRoot,
-  followUpPromptText,
-  type AcpTurnSkillHooks,
-  type AcpTurnSkillOwner
-} from './turn-skill-owner'
-import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
-import { matchPlanDelivery } from '../session-plan/plan-delivery'
-import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import { sanitizeSessionReferences } from '../../shared/session-persistence'
+import type { MessageAttribution } from '../../shared/session-message-contract'
 import type {
   ActivePlanProjection,
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
+import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
+import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
+import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { opencodeStorageDir } from '../agent-framework/opencode'
 import type {
-  SessionCatalog,
-  SessionMutation,
-  SessionRuntimeContextCommands
-} from '../session-persistence/coordinator'
+  AgentFramework,
+  AgentModelChangeTarget,
+  ResolvedAgentBackend
+} from '../agent-framework/types'
+import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
+import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-server'
+import { matchPlanDelivery } from '../session-plan/plan-delivery'
+import type { PlanResponseResult } from '../session-plan/plan-service'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { withDataRootWrite } from '../storage/migration-state'
+import {
+  AcpAgentConnectionAdapter,
+  type AcpAgentConnectionCandidate,
+  type AcpAgentConnectionHooks
+} from './agent-connection-adapter'
+import type { AcpAppContinuationOwner } from './app-continuation-owner'
+import {
+  artifactPublicationContinuationText,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
+import type { ArtifactTurnOwner } from './artifact-turn-owner'
+import type {
+  AcpBackendGenerationOwner,
+  AcpBackendGenerationView
+} from './backend-generation-owner'
+import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
+import type {
+  AcpConnectionResourceAttempt,
+  AcpConnectionResourceOwner
+} from './connection-resource-owner'
+import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
+import type { AcpElicitationOwner } from './elicitation-owner'
+import type { AcpGenerationActivityOwner } from './generation-activity-owner'
+import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
+import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
+import type { AcpModelChangeWorkflow } from './model-change-workflow'
+import {
+  AcpNativeFollowUpWorkflow,
+  finalizeNativeFollowUpPreparedContent,
+  type NativeFollowUpPreparedContent
+} from './native-follow-up-workflow'
+import { type AppPermissionRequest, type RestoredPermissionContinuation } from './permission-broker'
+import type { AcpPermissionContext } from './permission-context'
+import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
+import type { AcpPromptContentOwner } from './prompt-content-owner'
+import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
+import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
+import type { AcpProviderSessionCreator } from './provider-session-creator'
+import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
+import type {
+  ReviewerSessionDisposition,
+  ReviewerSessionOwner,
+  ReviewerSessionRequest,
+  ReviewerSessionResult
+} from './reviewer-session-owner'
+import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
-import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
-import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
-import type { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
-import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
+import type { AcpRuntimeArtifactOptions, AcpRuntimeOptions } from './runtime-contract'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
-import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
-import { composeAcpRuntimePromptOwners } from './runtime-prompt-composition'
 import {
   composeAcpRuntimePlanWorkflow,
   type AcpRuntimePlanWorkflow,
   type AcpSessionPlanCall
 } from './runtime-plan-composition'
+import { composeAcpRuntimePromptOwners } from './runtime-prompt-composition'
+import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
+import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
+import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import type { AcpSessionCapabilityOwner } from './session-capability-owner'
+import type { AcpSessionConfigurator } from './session-configurator'
+import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
+import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
+import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import { buildSessionReferencePrompt } from './session-reference-prompt'
+import type { AcpSessionRegistry } from './session-registry'
+import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
+import type {
+  AcpSessionUpdateProjector,
+  AcpToolFailureDiagnostic
+} from './session-update-projector'
+import {
+  codeBuddySkillRuntimeRoot,
+  followUpPromptText,
+  type AcpTurnSkillOwner
+} from './turn-skill-owner'
+export type { AcpRuntimeCallbacks } from './runtime-contract'
 
-export type AcpRuntimeCallbacks = {
-  onStateChanged?: (state: AcpStateUpdate) => void
-  onEvent?: (event: AcpRuntimeEvent) => void
-  onPermissionRequest?: (request: AcpPermissionRequest) => void
-  onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
-  onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
-  // Fires after the provider prompt yields its first update/terminal response. Reaching this point
-  // proves startup did not reject before the provider accepted the request.
-  onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
-  onCodexWebSocketFallback?: () => void
-  onPromptEnded?: (sessionId: string, turnToken: string) => void
-  onSkillImportAttachmentEligible?: (
-    sessionId: string,
-    turnToken: string,
-    attachmentUri: string
-  ) => void
-  onRetired?: () => void
-}
-
-type AcpRuntimeOptions = {
-  prepareSessionReading?: PrepareSessionReading
-  classifySkills?: import('../../shared/classification').ClassifySkills
-  classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
-  hasPendingCredentialRequest?: (sessionId: string) => boolean
-  appVersion: string
-  defaultCwd: string
-  // Disposable framework homes must retain the same read protection as app-owned config roots.
-  additionalProtectedReadRoots?: readonly string[]
-  callbacks?: AcpRuntimeCallbacks
-  auxiliaryUsage?: Readonly<{
-    projectIdForSession: (sessionId: string) => Promise<string | undefined>
-    record: (
-      input: import('../session-persistence/auxiliary-turn-usage').SessionAuxiliaryTurnUsageRecord
-    ) => Promise<unknown>
-  }>
-  permissionGrantStore?: ConversationPermissionGrantStore
-  permissionGrantRegistry?: PermissionGrantRegistry
-  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
-  // Replaces only physical process creation. Backend identity and initialization material still come
-  // from resolveBackend when it is available.
-  spawnAgent?: () => ChildProcessWithoutNullStreams
-  // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
-  // provider switch takes effect on reconnect.
-  resolveBackend?: (context: {
-    forcedSkillIds: string[]
-    systemPromptAppends: string[]
-    grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
-  }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
-  artifacts?: AcpRuntimeArtifactOptions
-  runtimeSessions?: RuntimeSessionOwner
-  uploads?: AcpRuntimeUploadOptions
-  // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
-  // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
-  // stay unavailable.
-  grantedRoots?: {
-    list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
-    resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
-  }
-  notebook?: AcpRuntimeNotebookOptions
-  wslSetupSessions?: Readonly<{
-    authorizeToken(token: unknown): boolean
-    bind(token: string, sessionId: string): Promise<void>
-    isBound(sessionId: string): Promise<boolean>
-  }>
-  memory?: {
-    isEnabled?(): Promise<boolean>
-    recallForPrompt(
-      requestText: string,
-      context: { projectId: string }
-    ): Promise<string | undefined>
-  }
-  skillImport?: AcpRuntimeSkillImportOptions
-  skills?: AcpTurnSkillHooks
-  plan?: AcpRuntimePlanOptions
-  permissionWait?: {
-    sessions: SessionRuntimeContextCommands &
-      Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
-      Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
-    onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
-    onContinuationSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
-  }
-  sideChat?: Readonly<{
-    sendMessage: (
-      routingId: string,
-      request: SideChatSendMessageRequest
-    ) => Promise<SideChatSendMessageResult>
-  }>
-  literature?: Readonly<{
-    elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
-    isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
-    resolveAttachmentVersion?: (versionId: string) => Promise<
-      | Readonly<{
-          path: string
-          filename: string
-          contentType: string
-        }>
-      | undefined
-    >
-    readDocument: (request: {
-      projectId: string
-      sessionId: string
-      promptMessageId: string
-      input: LiteratureReadDocumentRequest
-    }) => Promise<unknown>
-  }>
-  literatureLibrary?: Readonly<{
-    acquirePdf?: (request: {
-      candidate: LiteratureLibraryDiscovery
-      pdfUrl?: string
-      signal?: AbortSignal
-      projectId: string
-      sessionId: string
-    }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
-    resolveSaveReferences?: (
-      references: readonly string[],
-      signal?: AbortSignal
-    ) => Promise<readonly LiteratureLibraryDiscovery[]>
-    searchLibrary: (request: {
-      projectId: string
-      query?: string
-      scope?: LiteratureLibraryScope
-      collectionId?: string
-      itemIds?: readonly string[]
-      offset?: number
-      limit?: number
-    }) => Promise<LiteratureLibrarySearchResult>
-    readAbstract: (request: {
-      projectId: string
-      itemId: string
-      scope?: LiteratureLibraryScope
-      collectionId?: string
-    }) => Promise<LiteratureLibraryReadAbstractResult | undefined>
-    readPdf: (request: {
-      projectId: string
-      itemId: string
-      attachmentId?: string
-      query: string
-      scope?: LiteratureLibraryScope
-      collectionId?: string
-    }) => Promise<LiteratureLibraryReadPdfResult | undefined>
-    readCandidateFile?: (request: {
-      projectId: string
-      sessionId: string
-      workspaceCwd: string
-      filename: string
-      signal?: AbortSignal
-    }) => Promise<string>
-    formatReferences?: (request: {
-      projectId: string
-      itemIds: readonly string[]
-      styleId: import('@aipoch/literature-citations/contracts').LiteratureCitationStyle
-      locale: import('@aipoch/literature-citations/contracts').LiteratureCitationLocale
-    }) => Promise<LiteratureLibraryFormatReferencesResult>
-    formatCitationDocument?: (request: {
-      projectId: string
-      sessionId: string
-      workspaceCwd: string
-      filename: string
-      styleId: import('@aipoch/literature-citations/contracts').LiteratureCitationStyle
-      locale: import('@aipoch/literature-citations/contracts').LiteratureCitationLocale
-    }) => Promise<
-      LiteratureLibraryFormatDocumentResult & {
-        contentBase64: string
-        literature: ArtifactLiteratureRequest
-      }
-    >
-    prepareLatexBundle?: (request: {
-      projectId: string
-      sessionId: string
-      workspaceCwd: string
-      filename: string
-    }) => Promise<
-      LiteratureLibraryPrepareLatexResult & {
-        contentBase64: string
-        literature: ArtifactLiteratureRequest
-      }
-    >
-    saveToInbox: (request: {
-      projectId: string
-      sessionId: string
-      candidates: readonly LiteratureLibraryDiscovery[]
-      signal?: AbortSignal
-    }) => Promise<LiteratureLibrarySaveResult>
-  }>
-  sideChatRelays?: Readonly<{
-    claim: (parentSessionId: string) =>
-      | Readonly<{
-          historyPreamble: string
-          commit: (promptMessageId?: string) => void | Promise<void>
-          restore: () => void
-        }>
-      | undefined
-  }>
-  sessionCapabilityPolicy?: SessionCapabilityPolicy
-  // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
-  // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
-  framework?: AgentFramework
-  // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
-  // Absent ⇒ those frameworks run without the corresponding app tooling.
-  mcpHttpHost?: AgentMcpHttpHost
-  // Bounds inactivity while reconnecting or resuming. Target-session provider events renew the
-  // resume deadline; the fast attached-session path is never timed. Injectable timers keep tests
-  // deterministic.
-  resumeTimeoutMs?: number
-  cancelTimeoutMs?: number
-  setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
-  clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
-  // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
-  // injectable so tests can drive the degrade-to-file path with small fixtures.
-  inlineImageBudgetBytes?: number
-  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'isAvailable' | 'prepare'>
-  hasReplayableImageHistory?: (projectId: string, sessionId: string) => Promise<boolean>
-  contextUsageTracker?: ContextUsageTracker
-  // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
-  opencodeUsageFetch?: typeof fetch
-  // Resolves the identity-inject text for a specialist UUID at session-creation time.
-  // The main process reads the latest Profile from SpecialistService; the runtime never caches it.
-  // Returns undefined when the specialist is not found, disabled, or its Profile is corrupt —
-  // the caller should have validated before calling createSession.
-  resolveSpecialistIdentity?: (
-    specialistId: string,
-    framework: string
-  ) => Promise<{ append: string; prefix: string } | undefined>
-  // Re-resolves capabilities from the latest Specialist profile and installed catalog. This is
-  // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
-  // eligible for a Specialist.
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
-  // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
-  // projectId carries the Project id. Returns undefined when absent or on lookup failure.
-  resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
-  // Reads the Session authority's current Compute execution targets at each Turn. The ids are used
-  // only to decide whether the fixed execution directive applies; host inventory stays in the
-  // runtime host.compute discovery seam.
-  resolveComputeExecutionTargetIds?: (sessionId: string) => readonly string[]
-}
-
-type AcpRuntimeArtifactOptions = {
-  // Config root: where the app-owned claude config dir lives (never relocated).
-  configRoot: string
-  // Data root: where artifacts/notebooks/runtime live (user-relocatable).
-  dataRoot: string
-  projectId: string
-  mcpEntryPath: string
-  mcpCommand?: string
-  repository?: ArtifactRepository
-  runRegistry?: ArtifactRunRegistry
-  getRpcConnection?: () => Promise<NotebookRpcConnection>
-  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
-  revokeRpcCapability?: (token: string) => Promise<void> | void
-  // When present, the caller already owns the execution Artifact turn. Runtime only provisions the
-  // MCP transport against this exact handoff and never opens a competing root turn.
-  currentRunFile?: string
-  provenance?: Pick<
-    import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-    'listRunVersions' | 'writeAppGeneratedVersion'
-  > &
-    Partial<
-      Pick<
-        import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-        | 'recordLiteraturePdfRead'
-        | 'recordLiteratureAbstractRead'
-        | 'recordLiteratureSearch'
-        | 'withSessionMutation'
-      >
-    >
-  managedFileVersions?: Pick<
-    import('../managed-file-versions/service').ManagedFileVersionService,
-    'openLatest' | 'openVersion' | 'openUnpublishedVersion'
-  >
-}
-
-type AcpRuntimeUploadOptions = {
-  repository: UploadRepository
-}
-
-type AcpRuntimeNotebookOptions = {
-  authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
-  canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
-  projectId: string
-  mcpEntryPath: string
-  mcpCommand?: string
-  memoryTools?: boolean
-  isMemoryEnabled?: () => Promise<boolean>
-  getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
-  getRpcConnection?: (binding: {
-    sessionId: string
-    projectId: string
-    memoryTools: boolean
-  }) => Promise<NotebookRpcConnection>
-  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
-  registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
-  authorizeExecution?: (authorization: {
-    sessionId: string
-    toolCallId: string
-    promptMessageId: string
-    method: NotebookExecutionRpcMethod
-    rawInput?: unknown
-  }) => string | undefined
-  setArtifactTurnBinding?: (
-    sessionId: string,
-    binding: {
-      ownerExecutionId: string
-      projectId: string
-      provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
-    }
-  ) => void
-  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
-  prepareTurnInputs?: (request: {
-    projectId: string
-    appSessionId: string
-    promptMessageId: string
-    uploads: UploadedAttachment[]
-    references: FileReference[]
-  }) => Promise<{ inputs: readonly NotebookPromptInput[]; commit: () => void }>
-  registerTurnInputs?: (request: {
-    projectId: string
-    appSessionId: string
-    promptMessageId: string
-    uploads: UploadedAttachment[]
-    references: FileReference[]
-    materializeOnly?: boolean
-  }) => Promise<readonly NotebookPromptInput[] | void>
-  peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
-}
-
-type AcpRuntimeSkillImportOptions = {
-  mcpEntryPath: string
-  mcpCommand?: string
-  // Read when building each agent session so a settings-triggered reconnect can add/remove the MCP
-  // without constructing a new application service or keeping stale prompt guidance.
-  isEnabled?: () => Promise<boolean>
-  getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
-  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
-  authorizeReferencedUploads?: (
-    projectId: string,
-    sessionId: string,
-    paths: string[]
-  ) => Promise<() => void>
-}
-
-type AcpRuntimePlanOptions = {
-  mcpEntryPath: string
-  mcpCommand?: string
-  getRpcConnection: (binding: {
-    sessionId: string
-    projectId: string
-    replaceExisting: false
-  }) => Promise<NotebookRpcConnection>
-  registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  sessions: SessionRuntimeContextCommands &
-    SessionMutation &
-    Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'>
-  onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
-  onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
-}
 // Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
 // hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,
 // and a non-string message (object/bigint/Symbol/undefined) must be coerced — this text flows into the
@@ -843,6 +435,9 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      onProviderPromptAccepted: (sessionId) => {
+        this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+      },
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
         prepareContinuationReplay: async (request) => {
@@ -1323,7 +918,6 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
       const resumed = await this.providerSessionResumer.resume(request)
       if (resumed.contextReset) {
         const contextResetSessionIds =
@@ -1335,7 +929,11 @@ class AcpRuntime {
         this.sessionEnvironment.projectId(request.sessionId),
         request.sessionId
       )
-      return resumed
+      // Attachment persistence can fail after adoption. Retrying that same attachment must still
+      // replay history until a prompt actually consumes the fresh provider context.
+      return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
+        ? { ...resumed, contextReset: true }
+        : resumed
     })
   }
 
@@ -2465,7 +2063,7 @@ class AcpRuntime {
             id: `question_${questionIndex}`,
             label: question.header ?? `Question ${questionIndex + 1}`,
             description: question.question,
-            kind: 'single-select' as const,
+            kind: question.kind ?? 'single-select',
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
@@ -2498,14 +2096,27 @@ class AcpRuntime {
         [
           `question_${questionIndex}`,
           {
-            type: 'string',
             ...(question.header ? { title: question.header } : {}),
             description: question.question,
-            oneOf: question.options.map((option) => ({
-              const: option.label,
-              title: option.label,
-              ...(option.description ? { description: option.description } : {})
-            }))
+            ...(question.kind === 'multi-select'
+              ? {
+                  type: 'array',
+                  items: {
+                    anyOf: question.options.map((option) => ({
+                      const: option.label,
+                      title: option.label,
+                      ...(option.description ? { description: option.description } : {})
+                    }))
+                  }
+                }
+              : {
+                  type: 'string',
+                  oneOf: question.options.map((option) => ({
+                    const: option.label,
+                    title: option.label,
+                    ...(option.description ? { description: option.description } : {})
+                  }))
+                })
           }
         ],
         [
@@ -2593,7 +2204,7 @@ class AcpRuntime {
             ? selectedAnswer.trim()
             : Array.isArray(selectedAnswer) &&
                 selectedAnswer.every((value): value is string => typeof value === 'string')
-              ? selectedAnswer.join(', ')
+              ? JSON.stringify(selectedAnswer)
               : undefined
       return answer
         ? [
@@ -3610,6 +3221,6 @@ class AcpRuntime {
   }
 }
 
+export type { ReviewerSessionDisposition } from './reviewer-session-owner'
 export { AcpRuntime }
 export type { AcpRuntimeOptions }
-export type { ReviewerSessionDisposition } from './reviewer-session-owner'

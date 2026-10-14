@@ -72,7 +72,9 @@ describe('desktop backend discovery', () => {
   )
   it('rejects an authenticated server version mismatch and a legacy Electron writer', async () => {
     const { root, owner, fetcher } = await fixture()
-    await expect(discoverDesktopBackend(root, 'different')).rejects.toThrow('different version')
+    await expect(discoverDesktopBackend(root, 'different')).rejects.toMatchObject({
+      issue: { reason: 'legacy-service', canStop: true }
+    })
     await writeFile(
       join(root, 'runtime-owner.json'),
       JSON.stringify({ ...owner, host: 'electron', desktop: undefined })
@@ -81,6 +83,20 @@ describe('desktop backend discovery', () => {
       new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
     )
     await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow('older desktop runtime')
+  })
+  it('does not stop a replacement owner after the confirmation was opened', async () => {
+    const { root, owner, fetcher } = await fixture()
+    owner.pid = process.pid
+    await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
+    fetcher.mockResolvedValue(
+      new Response(JSON.stringify({ generation: owner.generation, pid: owner.pid }))
+    )
+    const error = await discoverDesktopBackend(root, 'different').catch((error) => error)
+    fetcher.mockResolvedValueOnce(
+      new Response(JSON.stringify({ generation: randomUUID(), pid: owner.pid }))
+    )
+    await expect(error.stopAndContinue()).rejects.toThrow('server changed')
+    expect(fetcher.mock.calls.every(([, init]) => !init.method)).toBe(true)
   })
   it('locates the bundled ordinary Node without a PATH or Electron fallback', () => {
     const paths = desktopBackendPaths({

@@ -1,20 +1,20 @@
 import * as acp from '@agentclientprotocol/sdk'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
-import type { AgentFramework } from '../agent-framework'
+import type { AgentFramework } from '../agent-framework/types'
+import type { NotebookWorkingFile } from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import {
   AcpPromptTurnWorkflow,
   type AcpPromptTurnPlanWorkflow,
   type AcpPromptTurnWorkflowOptions
 } from './prompt-turn-workflow'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
-import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
   prepareContinuationReplay: AcpPromptTurnWorkflowOptions['prepareContinuationReplay']
@@ -26,6 +26,7 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onProviderPromptAccepted?: (sessionId: string) => void
   requestArtifactPublicationContinuation?: (input: {
     permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
@@ -311,6 +312,7 @@ const composeAcpRuntimePromptOwners = (
         // session/new alone may not create a resumable Claude transcript. Keep approved replay
         // through pre-prompt Skill reconnects, then retire it once the provider accepts a prompt.
         base.handoffContinuity.commitClaudeReplay(sessionId)
+        host.onProviderPromptAccepted?.(sessionId)
         callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
       },
       ...(options.runtimeSessions

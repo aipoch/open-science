@@ -1,28 +1,11 @@
-import type { PersistedChatMessage } from './message'
-import type { PersistedChatSession } from './session'
 import { resolveActiveConversationMessages } from '../conversation-graph'
-import { INTERRUPTED_TURN_ERROR } from './restore'
+import type { PersistedChatMessage } from '../session-message-contract'
 import { asNumber, isRecord } from './primitives'
+import { INTERRUPTED_TURN_ERROR } from './restore'
+import type { PersistedChatSession } from './session'
 import { latestTurnAnchor } from './turn-anchor'
-
-export type TurnOutcome =
-  | Readonly<{ kind: 'completed'; settledAt: number }>
-  | Readonly<{
-      kind: 'failed'
-      settledAt: number
-      error?: string
-      errorReportable?: boolean
-      recovery?: 'retry-artifact-publication'
-    }>
-  | Readonly<{ kind: 'cancelled'; settledAt: number; recovery: 'resume' }>
-  | Readonly<{
-      kind: 'interrupted'
-      settledAt: number
-      cause: 'app-restart' | 'connection-lost' | 'terminal-commit-failed'
-      error?: string
-      errorReportable?: false
-      recovery: 'resume'
-    }>
+import type { TurnOutcome } from '../session-turn-outcome-contract'
+export { type TurnOutcome } from '../session-turn-outcome-contract'
 
 // Reject malformed variants rather than converting an unknown outcome into a completed turn.
 // Forward compatibility: a known kind keeps only the fields this version understands, so extra

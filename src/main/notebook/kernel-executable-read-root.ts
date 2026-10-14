@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 
 /** Shared read boundary for kernel and package-installer executables. */
 export const kernelExecutableReadRoot = (

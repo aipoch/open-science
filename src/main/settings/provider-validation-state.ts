@@ -1,8 +1,8 @@
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
 import {
   preferredEndpoint,
   providerValidationTargetMatches,
   type AgentFrameworkId,
-  type ChatApiEndpoint,
   type ProviderType,
   type ProviderValidationTarget,
   type ValidateProviderResult

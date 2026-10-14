@@ -1,3 +1,7 @@
+import {
+  getDesktopRuntimeEpoch,
+  useDesktopRuntimeRecoveryStore
+} from './desktop-runtime-recovery-store'
 import { create } from 'zustand'
 
 import type { JobSummary } from '../../../shared/compute'
@@ -19,6 +23,7 @@ type SessionJobStoreData = {
 type SessionJobStore = SessionJobStoreData & {
   hydrate: (sessionId: string, options?: { activate?: boolean }) => Promise<void>
   hydrateNonTerminal: () => Promise<void>
+  hydrateForRecovery: () => Promise<void>
   applyUpdate: (job: JobSummary) => void
   runningJobsForSession: (sessionId: string) => JobSummary[]
   allJobsForSession: (sessionId: string) => JobSummary[]
@@ -86,6 +91,7 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => {
     ...createInitialSessionJobState(),
 
     hydrate: async (sessionId, options) => {
+      const epoch = getDesktopRuntimeEpoch()
       const activate = options?.activate ?? true
       const before = get()
       const generation = (before.hydrateGenerationBySession.get(sessionId) ?? 0) + 1
@@ -111,7 +117,11 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => {
         jobs = await window.api.compute.jobsList({ sessionId })
       } catch (error) {
         set((state) => {
-          if (state.hydrateGenerationBySession.get(sessionId) !== generation) return state
+          if (
+            epoch !== getDesktopRuntimeEpoch() ||
+            state.hydrateGenerationBySession.get(sessionId) !== generation
+          )
+            return state
           const loadErrorBySession = new Map(state.loadErrorBySession)
           loadErrorBySession.set(sessionId, errorMessage(error))
           return {
@@ -125,7 +135,11 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => {
       }
 
       set((state) => {
-        if (state.hydrateGenerationBySession.get(sessionId) !== generation) return state
+        if (
+          epoch !== getDesktopRuntimeEpoch() ||
+          state.hydrateGenerationBySession.get(sessionId) !== generation
+        )
+          return state
         const sessionChanged =
           (state.sessionRevisionBySession.get(sessionId) ?? 0) !== startRevision
         const jobsById = new Map(state.jobsById)
@@ -147,11 +161,65 @@ export const useSessionJobStore = create<SessionJobStore>((set, get) => {
       })
     },
 
+    hydrateForRecovery: async () => {
+      const epoch = getDesktopRuntimeEpoch()
+      const before = get()
+      const sessions = new Set([...before.jobsById.values()].map((job) => job.session_id))
+      if (before.hydratedSessionId) sessions.add(before.hydratedSessionId)
+      const retainedSessions = [...sessions]
+      let next = 0
+      let stopped = false
+      const checkState = (): void => {
+        const state = useDesktopRuntimeRecoveryStore.getState()
+        if (
+          state.epoch !== epoch ||
+          state.closing ||
+          (state.phase !== 'reconciling' && state.phase !== 'connected')
+        )
+          stopped = true
+      }
+      const assertCurrent = (): void => {
+        checkState()
+        if (stopped) throw new Error('Desktop recovery changed.')
+      }
+      // Latch cancellation, including a Quit cancellation/unlock within the same epoch.
+      const unsubscribe = useDesktopRuntimeRecoveryStore.subscribe(checkState)
+      const readNext = async (): Promise<void> => {
+        try {
+          while (next <= retainedSessions.length) {
+            assertCurrent()
+            const index = next++
+            if (index === 0) await get().hydrateNonTerminal()
+            else {
+              const sessionId = retainedSessions[index - 1]!
+              await get().hydrate(sessionId, { activate: false })
+              const error = get().loadErrorBySession.get(sessionId)
+              if (error) throw new Error(error)
+            }
+            assertCurrent()
+          }
+        } catch (error) {
+          stopped = true
+          throw error
+        }
+      }
+      try {
+        // Reserve attachment capacity for the other snapshot owners and windows.
+        await Promise.all(
+          Array.from({ length: Math.min(4, retainedSessions.length + 1) }, readNext)
+        )
+      } finally {
+        unsubscribe()
+      }
+    },
+
     hydrateNonTerminal: async () => {
+      const epoch = getDesktopRuntimeEpoch()
       const requestId = ++latestNonTerminalHydrationRequest
       const startedAtUpdateRevision = latestUpdateRevision
       const jobs = await window.api.compute.jobsList({ nonTerminal: true })
-      if (requestId !== latestNonTerminalHydrationRequest) return
+      if (epoch !== getDesktopRuntimeEpoch() || requestId !== latestNonTerminalHydrationRequest)
+        return
       set((state) => {
         const nonTerminalJobsById = new Map<string, JobSummary>()
         for (const job of jobs) {

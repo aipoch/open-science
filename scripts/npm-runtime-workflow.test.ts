@@ -121,7 +121,7 @@ describe('runtime distribution boundary', () => {
     for (const name of ['Attest build provenance', 'Publish GitHub Release']) {
       const entry = steps.find((s: any) => s.name === name)
       const patterns = entry.with['subject-path'] ?? entry.with.files
-      expect(patterns).toContain('artifacts/open-science-*.tar.gz')
+      expect(patterns).toContain('artifacts/open-science-cli-*.tar.gz')
       expect(patterns).toContain('artifacts/*.zip')
     }
     expect(JSON.stringify(flow)).not.toContain('NPM_TOKEN')

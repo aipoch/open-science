@@ -1,3 +1,4 @@
+import { trackLifecycleSettlement } from './lifecycle-settlement'
 // Coordinates a bounded, best-effort shutdown of the app's backend subsystems (main/Side Chat agent
 // runtimes and notebook kernels). Kept free of Electron imports so it stays trivially unit-testable:
 // callers inject the runtime handles. Every operation is time-bounded so app quit can never hang on a
@@ -159,6 +160,7 @@ const runBounded = async (
     timer.unref?.()
   })
 
+  trackLifecycleSettlement(settleAll)
   const result = await Promise.race([settleAll.then(() => 'done' as const), deadline])
   if (timer) clearTimeout(timer)
 

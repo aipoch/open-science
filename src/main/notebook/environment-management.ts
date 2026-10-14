@@ -1,14 +1,17 @@
 import type { InstallRequest as EnvironmentInstallRequest } from '@aipoch/environment'
-import type { EnvironmentRequestContext } from '../../shared/notebook-env'
-import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
-import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
-import type { EnvironmentInfo } from '@aipoch/environment/contracts'
-import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
-import type { NotebookEnvironmentOperations } from './environment-operations'
 import { assertSafeEnvName, envPrefix } from '@aipoch/environment'
+import type { EnvironmentInfo, NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookKernelMetadata } from '../../shared/notebook'
+import type {
+  EnvironmentRequestContext,
+  ManageEnvironmentsRequest,
+  ManageEnvironmentsResult
+} from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { NotebookEnvironmentOperations } from './environment-operations'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
-import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { managedRuntimeIdentity } from './runtime-target'
+import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type NotebookEnvironmentManager = {
   createNamedEnvironment: (

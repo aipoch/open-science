@@ -10,9 +10,10 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": ["scripts/native-components.test.ts"],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
       "src/main/agents/agents-mutations.test.ts",
       "src/main/agents/agents-service.test.ts",
@@ -412,7 +413,14 @@
       "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/connectors/custom-mcp-config.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -437,3 +437,152 @@ export function nativeCompleteAxisFigure(
   if (removed.some((t) => !proseOwners.has(t))) return
   return { caption, rect, graphicsCount: owned.length }
 }
+
+// A pair beside one caption, or two lower axes with a centered upper peer,
+// has stronger ownership than the nearest individual plot. Every face must
+// have four native rails, visible interior ink and native numeric tick labels.
+export function nativeCompletedAxisPanels(
+  page,
+  caption,
+  captions,
+  tables,
+  rules,
+  tokens,
+  oldBounds
+) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  if (!valid(oldBounds) || !valid(caption?.rect) || page.invalidGraphicsBounds || !tokens?.length)
+    return
+  if (
+    tokens.some(
+      (t) =>
+        t.text?.trim() &&
+        (!valid(t.rect) ||
+          !Number.isFinite(t.height) ||
+          !(t.height > 0) ||
+          !Number.isFinite(t.baseline))
+    )
+  )
+    return
+  const font = Math.max(
+    ...page.lines.filter((l) => intersection(lineRect(l), caption.rect) > 0).map((l) => l.fontSize)
+  )
+  if (!Number.isFinite(font) || font <= 0) return
+  const frames = nativeClosedRuleFrames(rules).filter(
+    (r) => valid(r) && r[2] - r[0] > font * 6 && r[3] - r[1] > font * 6
+  )
+  const peers = (a, b) =>
+    Math.abs(a[3] - a[1] - b[3] + b[1]) < Math.max(1, (a[3] - a[1]) * 0.02) &&
+    Math.abs(a[2] - a[0] - b[2] + b[0]) < Math.max(1, (a[2] - a[0]) * 0.05)
+  const candidates = []
+  for (let i = 0; i < frames.length; i++)
+    for (let j = i + 1; j < frames.length; j++) {
+      const pair = [frames[i], frames[j]].sort((a, b) => a[0] - b[0]),
+        [a, b] = pair,
+        bounds = union(pair)
+      if (
+        !peers(a, b) ||
+        Math.abs(a[1] - b[1]) > 1 ||
+        Math.abs(a[3] - b[3]) > 1 ||
+        b[0] - a[2] <= 0 ||
+        b[0] - a[2] > (a[2] - a[0]) * 0.65
+      )
+        continue
+      const side =
+        caption.rect[0] >= bounds[2] &&
+        caption.rect[0] - bounds[2] < font * 4 &&
+        Math.min(caption.rect[3], bounds[3]) - Math.max(caption.rect[1], bounds[1]) >
+          Math.min(caption.rect[3] - caption.rect[1], bounds[3] - bounds[1]) * 0.5
+      if (side) candidates.push(pair)
+      if (caption.rect[1] > bounds[3] && caption.rect[1] - bounds[3] < font * 6) {
+        const tops = frames.filter(
+          (r) =>
+            !pair.includes(r) &&
+            peers(a, r) &&
+            r[3] < bounds[1] &&
+            bounds[1] - r[3] < (a[3] - a[1]) * 0.6 &&
+            Math.abs(r[0] + r[2] - bounds[0] - bounds[2]) < font
+        )
+        if (tops.length === 1) candidates.push([...pair, tops[0]])
+      }
+    }
+  const groups = candidates.filter(
+    (group) =>
+      group.some((r) => intersection(r, oldBounds) / area(r) > 0.9) &&
+      group.some((r) => intersection(r, oldBounds) / area(r) < 0.5)
+  )
+  if (groups.length !== 1) return
+  const group = groups[0],
+    bounds = union(group),
+    others = captions.filter((c) => c !== caption && c.page === page.pageNumber)
+  if (
+    tables.some((t) => intersection(t, bounds) > 0) ||
+    others.some((c) => intersection(c.rect, bounds) > 0)
+  )
+    return
+  const graphics = []
+  for (const g of page.graphicsBounds) {
+    const normalized = g.paintedNormalizedRect ?? g.normalizedRect
+    if (
+      !Array.isArray(normalized) ||
+      normalized.length !== 4 ||
+      normalized.some((value) => !Number.isFinite(value))
+    )
+      return
+    graphics.push({
+      kind: g.kind,
+      rect: normalized.map((v, n) => v * (n % 2 ? page.height : page.width))
+    })
+  }
+  if (graphics.some((g) => !valid(g.rect))) return
+  for (const face of group) {
+    const ink = graphics.filter(
+      (g) =>
+        g.kind === 'path' && contains(pad(face, font), g.rect) && area(g.rect) < area(face) * 1.05
+    )
+    const ticks = tokens.filter(
+      (t) =>
+        /^[−-]?\d+(?:\.\d+)?$/.test(t.text.trim()) &&
+        t.height < font * 1.1 &&
+        contains(pad(face, font * 3), t.rect)
+    )
+    if (
+      ink.length < 3 ||
+      !ink.some((g) => g.rect[2] - g.rect[0] > font * 2 && g.rect[3] - g.rect[1] > font * 2) ||
+      ticks.length < 4
+    )
+      return
+  }
+  const labels = tokens.filter(
+    (t) =>
+      t.text.trim() &&
+      t.text.length < 60 &&
+      t.height < font * 0.98 &&
+      group.some((f) => contains(pad(f, font * 4, font * 3), t.rect)) &&
+      !captions.some((c) => intersection(c.rect, t.rect) > 0)
+  )
+  const owned = graphics.filter(
+    (g) =>
+      group.some((f) => contains(pad(f, font * 2), g.rect)) &&
+      !captions.some((c) => intersection(c.rect, g.rect) > 0)
+  )
+  const rect = union([oldBounds, bounds, ...labels.map((t) => t.rect), ...owned.map((g) => g.rect)])
+  if (
+    tables.some((t) => intersection(t, rect) > 0) ||
+    others.some((c) => intersection(c.rect, rect) > 0) ||
+    intersection(caption.rect, rect) > 0
+  )
+    return
+  if (
+    tokens.some(
+      (t) =>
+        t.text.length >= 40 &&
+        t.height >= font * 0.98 &&
+        intersection(t.rect, rect) > intersection(t.rect, oldBounds) + 0.01 &&
+        !group.some((f) => contains(f, t.rect))
+    )
+  )
+    return
+  return { caption, rect, graphicsCount: owned.length }
+}

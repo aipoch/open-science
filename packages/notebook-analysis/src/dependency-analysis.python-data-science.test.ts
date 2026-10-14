@@ -967,6 +967,486 @@ describe('SciPy named callback container candidates', () => {
   )
 })
 
+describe('Python callback dictionary identity barriers', () => {
+  // These public analyzer controls exercise candidate boundaries, not scientific execution.
+  const setup = [
+    'import numpy as np',
+    'OFFSET = 2.',
+    'def convert(value):',
+    '    return float(value) + OFFSET',
+    'def replacement(value):',
+    '    return float(value)'
+  ].join('\n')
+  const binding = 'converters = {4: convert}'
+  const read = 'array = np.genfromtxt("inputs/observations.csv", converters=converters)'
+  const rebind = 'OFFSET = 3.5'
+  const capturesOffset = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    readerRunId: string,
+    laterRunId: string
+  ): boolean =>
+    (projection.invalidatedByRunId[laterRunId] ?? []).some(
+      (item) => item.runId === readerRunId && item.names.includes('OFFSET')
+    )
+
+  it.each([
+    '{column: convert}',
+    '{True: convert}',
+    '{1.0: convert}',
+    '{9007199254740993: convert}',
+    '{4: convert, 4: replacement}',
+    '{"Temp": convert, "\\x54emp": replacement}',
+    // Physical CR/CRLF is normalized inside Python literals, even when the
+    // shared decoder retains it. Escaped Unicode/hex keys also stay uncertain.
+    "{'''T\r\nemp''': convert, 'T\\nemp': replacement}",
+    "{'''T\remp''': convert}",
+    '{"Temp": convert, "\\u0054emp": replacement, "\\x54emp": replacement}',
+    '{**extra, 4: convert}',
+    '{4: convert, 5: replacement()}',
+    '{4: lambda value: value}',
+    '{4: module.convert}',
+    'dict(Temp=convert)',
+    '{column: convert for column in [4]}'
+  ])('does not infer stored callbacks from an unreliable mapping %s', async (mapping) => {
+    const [facts] = await analyzePythonSources([`converters = ${mapping}`])
+    expect(facts.pythonCallbackContainerSummaries ?? []).not.toContainEqual(
+      expect.objectContaining({ name: 'converters' })
+    )
+    const projection = await projectPythonScripts([setup, `converters = ${mapping}`, read, rebind])
+    expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it.each([
+    'converters[4] = replacement',
+    'del converters[4]',
+    'converters.update({4: replacement})',
+    'alias = converters\nalias[4] = replacement',
+    'converters = unknown_converters',
+    'convert = replacement',
+    'alias = convert',
+    'convert.__code__ = replacement.__code__',
+    'convert.__defaults__ = (0,)',
+    'unknown_mutator(converters)',
+    'unknown_mutator(convert)',
+    'if flag:\n    converters = {4: replacement}',
+    'exec(source)'
+  ])('discards dictionary identity after %s', async (operation) => {
+    const projection = await projectPythonScripts([setup, binding, operation, read, rebind])
+    expect(capturesOffset(projection, 'run-4', 'run-5')).toBe(false)
+    expect(projection.stalenessByRunId['run-4'].state).toBe('unknown')
+  })
+
+  it.each([
+    'converters[4] = replacement',
+    'alias = converters\nalias[4] = replacement',
+    'unknown_mutator(converters)',
+    'convert.__code__ = replacement.__code__'
+  ])('does not recover a dictionary after same-cell exposure %s', async (operation) => {
+    const projection = await projectPythonScripts([setup, binding, operation + '\n' + read, rebind])
+    expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it('does not register a conditional dictionary definition', async () => {
+    const projection = await projectPythonScripts([
+      setup,
+      'if flag:\n    converters = {4: convert}',
+      read,
+      rebind
+    ])
+    expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it.each([
+    read,
+    'def preview(value=np.genfromtxt("inputs/observations.csv", converters=converters)):\n    pass'
+  ])('does not resolve an earlier load with a later dictionary assignment %s', async (earlier) => {
+    const projection = await projectPythonScripts([
+      setup,
+      'converters = {4: replacement}',
+      earlier + '\n' + binding,
+      rebind
+    ])
+    expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it.each([
+    [
+      'reader rebind',
+      'from numpy import genfromtxt as reader',
+      'reader = replacement',
+      'reader',
+      'unknown'
+    ],
+    ['module rebind', 'import numpy as np', 'np = replacement', 'np.genfromtxt', 'clear'],
+    [
+      'method patch',
+      'import numpy as np',
+      'np.genfromtxt = replacement',
+      'np.genfromtxt',
+      'unknown'
+    ]
+  ])(
+    'does not consume dictionary captures through an untrusted %s',
+    async (_, imports, patch, call, state) => {
+      const projection = await projectPythonScripts([
+        `${imports}\nOFFSET = 2.`,
+        setup + '\n' + binding,
+        `${patch}\narray = ${call}("inputs/observations.csv", converters=converters)`,
+        rebind
+      ])
+      expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(false)
+      // A known replacement removes the NumPy module contract; a mapping must not
+      // add uncertainty or captures to the existing handling of that attribute call.
+      expect(projection.stalenessByRunId['run-3'].state).toBe(state)
+    }
+  )
+})
+
+describe('Python callback call-time binding barriers', () => {
+  // Source-order controls: these do not execute or certify scientific workflows.
+  const read =
+    'array = np.genfromtxt("inputs/observations.csv", delimiter=",", converters=converters)'
+  const capturesOffset = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    readerRunId: string,
+    laterRunId: string
+  ): boolean =>
+    (projection.invalidatedByRunId[laterRunId] ?? []).some(
+      (item) => item.runId === readerRunId && item.names.includes('OFFSET')
+    )
+
+  it.each([
+    {
+      label: 'dictionary',
+      imports: 'import numpy as np',
+      callbacks: 'converters = {4: convert}',
+      mutate: 'converters[4] = replacement',
+      consume: read
+    },
+    {
+      label: 'list',
+      imports: 'from scipy.integrate import solve_ivp',
+      callbacks: 'events = [convert]',
+      mutate: 'events[0] = replacement',
+      consume: 'solution = solve_ivp(replacement, (0, 1), [0.], events=events)'
+    },
+    {
+      label: 'tuple',
+      imports: 'from scipy.integrate import solve_ivp',
+      callbacks: 'events = (convert,)',
+      mutate: 'global events\n    events = (replacement,)',
+      consume: 'solution = solve_ivp(replacement, (0, 1), [0.], events=events)'
+    }
+  ])('does not let a future pure helper rescue an exposed $label', async (example) => {
+    const setup = [
+      example.imports,
+      'OFFSET = 2.',
+      'def convert(*args): return OFFSET',
+      'def replacement(*args): return [1.]',
+      'def replace():',
+      '    ' + example.mutate
+    ].join('\n')
+    const projection = await projectPythonScripts([
+      setup,
+      example.callbacks,
+      'replace()\ndef replace(): pass',
+      example.consume,
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection, 'run-4', 'run-5')).toBe(false)
+    expect(projection.stalenessByRunId['run-4'].state).toBe('unknown')
+  })
+
+  it('preserves an unexposed dictionary when its pure helper is already defined', async () => {
+    const projection = await projectPythonScripts([
+      'import numpy as np\nOFFSET = 2.\ndef convert(value): return float(value) + OFFSET\ndef replace(): converters.clear()',
+      'converters = {4: convert}',
+      'def replace(): pass\nreplace()',
+      read,
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection, 'run-4', 'run-5')).toBe(true)
+    expect(projection.stalenessByRunId['run-4'].state).toBe('unknown')
+  })
+
+  it.each([
+    ['later same-line body', read + '\ndef decode(value): return float(value) + OFFSET', false],
+    ['earlier same-line body', 'def decode(value): return float(value) + OFFSET\n' + read, true],
+    [
+      'definition default before its binding',
+      'def decode(value=np.genfromtxt("inputs/observations.csv", delimiter=",", converters=converters)):\n    return float(value) + OFFSET',
+      false
+    ],
+    [
+      'same-name assignment RHS before a future definition',
+      'decode = np.genfromtxt("inputs/observations.csv", delimiter=",", converters=converters)\ndef decode(value): return float(value) + OFFSET',
+      false
+    ]
+  ] as const)('uses call-time transitive helpers: %s', async (_label, consumer, expected) => {
+    const projection = await projectPythonScripts([
+      'import numpy as np\nOFFSET = 2.\ndef decode(value): return float(value)\ndef convert(value): return decode(value)',
+      'converters = {4: convert}',
+      consumer,
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection, 'run-3', 'run-4')).toBe(expected)
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it.each(['earlier mutator', 'later transitive helper'])(
+    'retains call-time barriers after cached restart: %s',
+    async (boundary) => {
+      const scripts =
+        boundary === 'earlier mutator'
+          ? [
+              'import numpy as np\nOFFSET = 2.\ndef convert(value): return float(value) + OFFSET\ndef replacement(value): return float(value)\ndef replace(): converters[4] = replacement',
+              'converters = {4: convert}',
+              'replace()\ndef replace(): pass',
+              read,
+              'OFFSET = 3.5'
+            ]
+          : [
+              'import numpy as np\nOFFSET = 2.\ndef decode(value): return float(value)\ndef convert(value): return decode(value)',
+              'converters = {4: convert}',
+              read + '\ndef decode(value): return float(value) + OFFSET',
+              'OFFSET = 3.5'
+            ]
+      const storageRoot = await mkdtemp(join(tmpdir(), 'python-call-time-cache-'))
+      const runs = scripts.map(run)
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'project', sessionId: 'session' }
+      try {
+        const initial = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+          request
+        )
+        expect(
+          capturesOffset(initial, 'run-' + (runs.length - 2), 'run-' + (runs.length - 1))
+        ).toBe(false)
+        const cachePath = join(
+          storageRoot,
+          'notebooks/project/session/cache/dependency-analysis.json'
+        )
+        const cached = JSON.parse(await readFile(cachePath, 'utf8'))
+        delete cached.projectionSnapshots
+        await writeFile(cachePath, JSON.stringify(cached))
+        const analyze = vi.fn(async () => {
+          throw new Error('valid call-time facts must remain reusable')
+        })
+        const restored = await new NotebookDependencyAnalyzer({
+          storageRoot,
+          repository,
+          analyze
+        }).project(request)
+        expect(restored).toEqual(initial)
+        expect(analyze).not.toHaveBeenCalled()
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('denies a future transitive helper when call-time binding metadata overflows', async () => {
+    const projection = await projectPythonScripts([
+      'import numpy as np\nOFFSET = 2.\ndef decode(value): return float(value)\ndef convert(value): return decode(value)',
+      [
+        'array = np.genfromtxt("inputs/observations.csv", delimiter=",", converters=convert)',
+        // Delete temporary values so only the bounded final helper metadata survives.
+        ...Array.from({ length: 512 }, (_, index) => `pad${index} = 0\ndel pad${index}`),
+        'def decode(value): return float(value) + OFFSET'
+      ].join('\n'),
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection, 'run-2', 'run-3')).toBe(false)
+    expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+  })
+})
+
+describe('Python annotation-only binding preservation', () => {
+  const setup =
+    'import numpy as np\nOFFSET = 2.\n' +
+    'def decode(value): return float(value) + OFFSET\n' +
+    'def convert(value): return decode(value)'
+  const read =
+    'array = np.genfromtxt("inputs/observations.csv", delimiter=",", converters={0: convert})'
+  const capturesOffset = (projection: Awaited<ReturnType<typeof projectPythonScripts>>): boolean =>
+    (projection.invalidatedByRunId['run-3'] ?? []).some(
+      (item) => item.runId === 'run-2' && item.names.includes('OFFSET')
+    )
+
+  it.each(['decode', 'convert'])(
+    'retains the existing callback identity beside an annotation-only %s',
+    async (name) => {
+      for (const consumer of [`${name}: object\n${read}`, `${read}\n${name}: object`]) {
+        const projection = await projectPythonScripts([setup, consumer, 'OFFSET = 3.5'])
+        expect(capturesOffset(projection)).toBe(true)
+        expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+        const [facts] = await analyzePythonSources([consumer])
+        expect(facts.definedNames).not.toContain(name)
+        expect(
+          facts.receiverCalls?.some((call) => call.unavailablePythonFunctionNames?.includes(name))
+        ).not.toBe(true)
+      }
+    }
+  )
+
+  it('retains same-source transitive captures through an annotation-only helper', async () => {
+    const projection = await projectPythonScripts([
+      'OFFSET = 2.',
+      setup.replace('OFFSET = 2.\n', '') + '\ndecode: object\n' + read,
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection)).toBe(true)
+    expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+  })
+
+  it.each(['[convert]', '(convert,)', '{0: convert}'])(
+    'retains literal callback candidates beside annotation-only declarations: %s',
+    async (members) => {
+      const [facts] = await analyzePythonSources([
+        `${setup}\ncallbacks = ${members}\ncallbacks: object\nconvert: object`
+      ])
+      expect(facts.pythonCallbackContainerSummaries).toEqual([
+        {
+          name: 'callbacks',
+          callbackNames: ['convert'],
+          ...(members.startsWith('{') ? { container: 'dict' } : {})
+        }
+      ])
+    }
+  )
+
+  it('retains a named converter across an annotation-only cell', async () => {
+    const projection = await projectPythonScripts([
+      setup + '\nconverters = {0: convert}',
+      'converters: object\n' + read.replace('{0: convert}', 'converters'),
+      'OFFSET = 3.5'
+    ])
+    expect(capturesOffset(projection)).toBe(true)
+    expect(projection.stalenessByRunId['run-2'].state).toBe('unknown')
+  })
+
+  it.each(['None', '0', 'False'])(
+    'keeps a real annotated assignment barrier for %s',
+    async (value) => {
+      const [facts] = await analyzePythonSources([`${read}\ndecode: object = ${value}`])
+      expect(facts.definedNames).toContain('decode')
+      expect(
+        facts.receiverCalls?.some((call) => call.unavailablePythonFunctionNames?.includes('decode'))
+      ).toBe(true)
+      const [candidates] = await analyzePythonSources([
+        `${setup}\ncallbacks = {0: convert}\ncallbacks: object = ${value}`
+      ])
+      expect(candidates.pythonCallbackContainerSummaries ?? []).toEqual([])
+    }
+  )
+
+  it('retains real rebinding inside an annotation-only expression', async () => {
+    const [facts] = await analyzePythonSources([
+      `${setup}\ncallbacks = {0: convert}\n${read}\ncallbacks: (convert := replacement)`
+    ])
+    expect(facts.definedNames).toContain('convert')
+    expect(facts.usedNames).toContain('replacement')
+    expect(facts.pythonCallbackContainerSummaries ?? []).toEqual([])
+    expect(
+      facts.receiverCalls?.some((call) => call.unavailablePythonFunctionNames?.includes('convert'))
+    ).toBe(true)
+  })
+
+  it('retains the existing analysis of an opaque annotation-only expression', async () => {
+    const [facts] = await analyzePythonSources(['decode: inspect_runtime(observations)'])
+    const [control] = await analyzePythonSources(['inspect_runtime(observations)'])
+    expect(facts.definedNames).not.toContain('decode')
+    expect(facts.usedNames).toContain('inspect_runtime')
+    expect(facts.usedNames).toContain('observations')
+    expect(facts).toEqual(control)
+  })
+
+  it('does not capture a global that a function annotation declares local', async () => {
+    const [facts] = await analyzePythonSources([
+      'def convert(value):\n    OFFSET: object\n    return value + OFFSET'
+    ])
+    const method = facts.typeSummaries
+      ?.find((item) => item.name === 'python-function:convert')
+      ?.methods.find((item) => item.name === '__call__')
+    expect(method).toBeDefined()
+    expect(method?.usedNames ?? []).not.toContain('OFFSET')
+  })
+})
+
+describe('Python callback dictionary consumer semantics', () => {
+  const events = [
+    'from scipy.integrate import solve_ivp',
+    'LIMIT = 2.',
+    'def rhs(t, value):',
+    '    return [1.]',
+    'def terminal_event(t, value):',
+    '    return value[0] - LIMIT'
+  ].join('\n')
+
+  it.each(['{0: terminal_event}', '{"event": terminal_event}'])(
+    'does not invent SciPy event value captures for inline or named %s',
+    async (mapping) => {
+      for (const named of [false, true]) {
+        const call = `solution = solve_ivp(rhs, (0, 1), [0.], events=${named ? 'events' : mapping})`
+        const scripts = [events, named ? `events = ${mapping}` : '', call, 'LIMIT = 3.']
+        const projection = await projectPythonScripts(scripts)
+        expect(projection.invalidatedByRunId['run-4'] ?? []).not.toContainEqual(
+          expect.objectContaining({ runId: 'run-3', names: expect.arrayContaining(['LIMIT']) })
+        )
+        expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+        expect(
+          await analyzeNotebookSourceFileAccess('python', scripts.slice(0, 3).join('\n'))
+        ).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+      }
+    }
+  )
+
+  it.each([
+    'frame.pivot_table(values="value", aggfunc={"value": aggregate})',
+    'frame.groupby("group").agg(func={"value": aggregate})'
+  ])('preserves existing inline pandas dictionary captures in %s', async (call) => {
+    const projection = await projectPythonScripts([
+      'import pandas as pd\nOFFSET = 2.\nframe = pd.DataFrame({"group": ["a"], "value": [1.]})',
+      'def aggregate(values):\n    return OFFSET',
+      'result = ' + call,
+      'OFFSET = 3.5'
+    ])
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-3', names: expect.arrayContaining(['OFFSET']) })
+      ])
+    )
+  })
+
+  it.each([
+    [
+      'pandas formatters',
+      'import pandas as pd\nframe = pd.DataFrame({"value": ["text"]})\nframe.to_string(buf="output.txt", formatters={"value": lambda value: value})',
+      'complete'
+    ],
+    [
+      'MGF param_formatters',
+      'from pyteomics import mgf\nmgf.write([], output="output.txt", param_formatters={"title": lambda key, value: value})',
+      'partial'
+    ]
+  ])('preserves inline %s destinations and existing coverage', async (_, script, state) => {
+    expect(await analyzeNotebookSourceFileAccess('python', script)).toMatchObject({
+      writes: ['output.txt'],
+      readState: state,
+      writeState: state,
+      externalState: state
+    })
+  })
+})
+
 // Reduced from an executed six-subject Indometh elimination workflow.
 // Original source SHA256: 3b8c16ad5e1374f28b3af10b7c98bd8664960f297599f8cbb491448900fe8e56.
 // https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html

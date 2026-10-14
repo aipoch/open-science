@@ -1,17 +1,18 @@
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
+import type { SessionSummary } from '../shared/session-persistence'
+import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import type { UploadTransferProgress } from '../shared/uploads'
-import { LocalePreferenceOwner } from './locale/owner'
-import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
-import {
-  createElectronSurfaceAdapter,
-  createConnectorApprovalElectronSurface,
-  createCoreElectronSurfaces
-} from './desktop-surface-declarations'
-import { runtimeMetadata } from './runtime-metadata'
+import { createAcpRuntime } from './acp/runtime-composition'
+import type { ApplicationCommandComposition } from './application-command-composition-contract'
+import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
+import { type ApplicationModuleBuilder } from './application-runtime'
+import { ArchiveCoordinator } from './archive/coordinator'
 import { composeAgentActivation } from './composition/agent-activation'
 import { composeAgentCompletion, composeAgentWorkflows } from './composition/agent-completion'
 import { composeAgentControls } from './composition/agent-controls'
 import { composeAgentRuntime } from './composition/agent-runtime'
+import { registerApplicationCommandComposition } from './composition/application-commands'
 import { composeArtifactSurfaces } from './composition/artifact-surfaces'
 import { composeBackendLifecycle } from './composition/backend-lifecycle'
 import { composeBackgroundResults } from './composition/background-results'
@@ -30,6 +31,7 @@ import { composeNotebookSurfaces } from './composition/notebook-surfaces'
 import { composeNotifications } from './composition/notifications'
 import { composeProjectLifecycle, composeProjectRecovery } from './composition/project-lifecycle'
 import { composeResearchCatalog } from './composition/research-catalog'
+import { registerReviewerComposition } from './composition/reviewer'
 import { composeSessionAuthority } from './composition/session-authority'
 import { composeSessionFoundation } from './composition/session-foundation'
 import {
@@ -48,17 +50,15 @@ import {
 } from './composition/specialists'
 import { composeStorageStartup } from './composition/storage-startup'
 import { composeUploadStorage } from './composition/upload-storage'
-import { type ApplicationCommandComposition } from './application-command-composition'
-import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
-import { type ApplicationModuleBuilder } from './application-runtime'
-import { registerApplicationCommandComposition } from './composition/application-commands'
-import { createAcpRuntime } from './acp/runtime-composition'
-import { ArchiveCoordinator } from './archive/coordinator'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
-import type { SessionSummary } from '../shared/session-persistence'
-import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
-import { registerReviewerComposition } from './composition/reviewer'
-import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import {
+  createConnectorApprovalElectronSurface,
+  createCoreElectronSurfaces,
+  createElectronSurfaceAdapter
+} from './desktop-surface-declarations'
+import { LocalePreferenceOwner } from './locale/owner'
+import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
+import { runtimeMetadata } from './runtime-metadata'
 
 import { QUIT_SHUTDOWN_BUDGET_MS, type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { type NativeTranslator } from './locale/main-process-messages'
@@ -162,6 +162,7 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   prepareDesktopUpdate: import('./update/strategy').InstallGate
+  inspectDesktopUpdate: () => Promise<import('./update/strategy').InstallReadiness>
   abortDesktopUpdate: () => void
   hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
@@ -329,7 +330,9 @@ export const createApplicationModules = async (
     ...sessionPackages,
     ...managedFiles,
     ...sessionAuthority,
-    getNotebookService: () => notebookRuntime.notebookService
+    getNotebookService: () => notebookRuntime.notebookService,
+    clearSessionCredentials: (sessionId) =>
+      connectors.credentialRequestBroker.clearSession(sessionId)
   })
   const sessionProjection = composeSessionProjection({
     ...settingsBootstrap,
@@ -583,6 +586,7 @@ export const createApplicationModules = async (
     modules
   })
   const handoff = await composeHandoff({
+    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -888,6 +892,7 @@ export const createApplicationModules = async (
         })
       }),
     prepareDesktopUpdate: handoff.prepareDesktopUpdate,
+    inspectDesktopUpdate: handoff.inspectDesktopUpdate,
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
       sessionPackageSurfaces.browserPackageImport.active ||

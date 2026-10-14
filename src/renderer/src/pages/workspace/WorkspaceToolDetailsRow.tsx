@@ -1,33 +1,33 @@
 import type { ToolActivity } from '@/stores/session-store'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { TriangleAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { TriangleAlert } from 'lucide-react'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { NotebookCodeReview } from './notebook-tool-presentation'
 
+import type { SessionTextAnnotationItemType } from '../../../../shared/annotation-contract'
+import type { AnnotationPort } from './annotations/annotation-port'
+import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { notebookRunStatusLabel } from './notebook-cell-utils'
 import {
   formatNotebookRunFigureMeta,
   formatNotebookRunOutputLineMeta
 } from './notebook-run-figures'
-import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
-import { notebookRunStatusLabel } from './notebook-cell-utils'
+import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { useNearViewport } from './previews/useNearViewport'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 import type {
   ToolActivityDetails,
   ToolCodeSection,
   ToolDetailSection
 } from './workspace-tool-activity-details'
+import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
-import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
-import type { ToolExecutionPhase } from './tool-execution-phase'
-import type { SessionTextAnnotationItemType } from '../../../../shared/annotations'
-import type { AnnotationPort } from './annotations/annotation-port'
-import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
 type WorkspaceToolDetailsRowProps = {
   activity: ToolActivity

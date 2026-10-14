@@ -765,7 +765,20 @@ function metabolightsSampleTable(sampleTable: Obj, maxRows: number): Obj {
     .map(asObj)
     .filter((f) => 'index' in f)
     .sort((a, b) => Number(a.index) - Number(b.index))
-  const headers = ordered.map((f) => str(f.header) || `column_${String(f.index)}`)
+  const rawHeaders = ordered.map((f) => str(f.header) || `column_${String(f.index)}`)
+  const reservedHeaders = new Set(rawHeaders)
+  const assignedHeaders = new Set<string>()
+  const headers = rawHeaders.map((header) => {
+    let key = header
+    if (assignedHeaders.has(key)) {
+      let suffix = 2
+      do {
+        key = `${header}#${suffix++}`
+      } while (reservedHeaders.has(key) || assignedHeaders.has(key))
+    }
+    assignedHeaders.add(key)
+    return key
+  })
   const data = asArr(sampleTable.data)
   const nTotal = data.length
   const truncated = maxRows >= 0 && nTotal > maxRows
@@ -1288,7 +1301,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     connector: 'omics-archives',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      'Fetch per-sample SDRF annotation rows for an ArrayExpress experiment (MAGE-TAB headers verbatim, repeats suffixed #2/#3). Experiments with no SDRF return {"error":"no_sdrf"}.',
+      'Fetch relationship rows from the first SDRF file sorted by path for an ArrayExpress experiment, preserving every sample/assay/file relationship in that file (trimmed MAGE-TAB headers, repeats suffixed #2/#3). Count distinct named sample/source identifiers, not independent biological replicates, using Sample Name in preference to Source Name. Experiments with no SDRF return {"error":"no_sdrf"}.',
     input: {
       type: 'object',
       properties: {
@@ -1299,7 +1312,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     },
     required: ['accession'],
     returns:
-      '`{ "accession", "sdrf_file", "sdrf_size_bytes", "headers": [str], "n_samples": int, "samples": [ {header: value} ], "n_samples_returned": int, "rows_truncated": bool }` — `n_samples` is the true total; `samples` capped at `max_rows_returned` (default 200). No SDRF yields `{ "accession", "error": "no_sdrf", "n_samples": 0, "samples": [], ... }`.',
+      '`{ "accession", "sdrf_file", "sdrf_size_bytes", "headers": [str], "sample_id_column": str|null, "n_samples": int|null, "samples": [ {header: value} ], "n_samples_returned": int|null, "n_rows_total": int, "n_rows_returned": int, "rows_truncated": bool }` — Only the first SDRF file sorted by path is read; counts and relationship rows refer to that file, not the entire experiment. `samples` contains relationship rows capped at `max_rows_returned` (default 200), without deduplication. Lines starting with # are skipped as comments before parsing and capping. `n_rows_total`/`n_rows_returned` provide the former row counts. Corrected legacy `n_samples`/`n_samples_returned` count distinct identifiers in all/returned rows using `sample_id_column`: the first Sample Name header, otherwise the first Source Name header (case-insensitive matching after trimming and removing optional outer double quotes for matching only; record keys remain unchanged). Values are trimmed and case-preserved; these counts are not independent biological replicates. A missing identity column or blank/missing identifier makes the corresponding nonempty row set count null. Empty row sets count 0. No SDRF or an empty file has null `sample_id_column` and zero counts as an empty parsed-row sentinel, not evidence that the experiment has no samples.',
     exampleArgs: { accession: 'E-MTAB-5061', max_rows_returned: 200 },
     run: async (ctx, a) => {
       const accEnc = encodeURIComponent(String(a.accession))
@@ -1318,6 +1331,9 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
         n_samples: 0,
         samples: [] as Obj[],
         n_samples_returned: 0,
+        sample_id_column: null,
+        n_rows_total: 0,
+        n_rows_returned: 0,
         rows_truncated: false
       }
       if (!sdrfFiles.length) return { ...base, error: 'no_sdrf' }
@@ -1327,7 +1343,10 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
       const url = `${BIOSTUDIES_FILES}/${accEnc}/${encodeURIComponent(String(sdrf.path)).replace(/%2F/g, '/')}`
       const text = await ctx.fetchText(url)
       // Parse tab-delimited SDRF; disambiguate repeated headers with #2/#3 in document order.
-      const lines = text.split(/\r?\n/).map((l) => l.split('\t'))
+      const lines = text
+        .split(/\r?\n/)
+        .filter((l) => !l.startsWith('#'))
+        .map((l) => l.split('\t'))
       const nonEmpty = lines.filter((r) => r.some((c) => c.trim() !== ''))
       if (!nonEmpty.length)
         return { ...base, sdrf_file: sdrf.path, sdrf_size_bytes: sdrf.size_bytes, headers: [] }
@@ -1349,14 +1368,39 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
         return rec
       })
       const [rows, truncated] = cap(samples, maxRows)
+      const normalizeIdentityHeader = (header: string): string =>
+        header
+          .trim()
+          .replace(/^"(.*)"$/, '$1')
+          .trim()
+          .toLowerCase()
+      const sampleIdColumn =
+        headers.find((h) => normalizeIdentityHeader(h) === 'sample name') ??
+        headers.find((h) => normalizeIdentityHeader(h) === 'source name') ??
+        null
+      const countSamples = (records: Record<string, string>[]): number | null => {
+        if (!records.length) return 0
+        if (sampleIdColumn === null) return null
+        // MAGE-TAB permits outer field quotes; decode only the identity used for counting.
+        const ids = records.map((row) =>
+          row[sampleIdColumn]
+            ?.trim()
+            .replace(/^"(.*)"$/, '$1')
+            .trim()
+        )
+        return ids.some((id) => !id) ? null : new Set(ids).size
+      }
       return {
         accession: raw.accno,
         sdrf_file: sdrf.path,
         sdrf_size_bytes: sdrf.size_bytes,
         headers,
-        n_samples: samples.length,
+        sample_id_column: sampleIdColumn,
+        n_samples: countSamples(samples),
         samples: rows,
-        n_samples_returned: rows.length,
+        n_samples_returned: countSamples(rows),
+        n_rows_total: samples.length,
+        n_rows_returned: rows.length,
         rows_truncated: truncated
       }
     }
@@ -1454,7 +1498,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     connector: 'omics-archives',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      'Fetch structured metadata for MetaboLights studies (MTBLSxxx) from the parsed ISA payload — title, status, years, organisms, assays, factors, descriptors, sample count, protocols; optional per-sample table. Unknown/private accessions go in not_found.',
+      'Fetch structured metadata for MetaboLights studies (MTBLSxxx) from the parsed ISA payload — title, status, years, organisms, assays, factors, descriptors, sample count, protocols; optional per-sample table with unique column keys preserving ISA column order and associations. Unknown/private accessions go in not_found.',
     input: {
       type: 'object',
       properties: {
@@ -1466,7 +1510,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     },
     required: ['accessions'],
     returns:
-      '`{ "n_requested": int, "records": [ { "accession", "title", "description", "study_status", "release_year", "submission_year", "organisms": [{organism,organism_part}], "organism_names": [str], "assays": [{assay_number,measurement,technology,platform,filename}], "assay_count", "technologies": [str], "factors": [str], "descriptors": [str], "sample_count", "protocols": [{name,description}], "sample_table"? } ], "not_found": [str] }` — records sorted by numeric accession.',
+      '`{ "n_requested": int, "records": [ { "accession", "title", "description", "study_status", "release_year", "submission_year", "organisms": [{organism,organism_part}], "organism_names": [str], "assays": [{assay_number,measurement,technology,platform,filename}], "assay_count", "technologies": [str], "factors": [str], "descriptors": [str], "sample_count", "protocols": [{name,description}], "sample_table"?: { "headers": [str], "rows": [{header: value}], "n_rows_total": int, "rows_truncated": bool } } ], "not_found": [str] }` — records sorted by numeric accession. Sample-table headers stay in numeric field.index order to retain column associations. First occurrences keep their header (or column_<index> fallback); repeats receive the smallest available #2/#3/... suffix without claiming an existing original header or fallback key. All columns remain present in each row; short rows are padded with empty strings.',
     exampleArgs: { accessions: ['MTBLS1'], include_samples: false },
     run: async (ctx, a) => {
       const unique = sortMtbls(asArr(a.accessions).map(String))

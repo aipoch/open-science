@@ -1394,7 +1394,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
-      'src/main/composition/session-packages.test.ts',
+      'src/main/application-command-wiring.test.ts',
+      'src/main/composition/project-lifecycle.test.ts',
       'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',
@@ -1825,7 +1826,14 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
       'src/main/notebook/artifact-analysis-contract.integration.test.ts',
       'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
-      'src/main/notebook/environment-startup.contract.test.ts'
+      'src/main/notebook/environment-startup.contract.test.ts',
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts',
+      'src/main/node-entry.test.ts',
+      'src/main/desktop-runtime-session-size.integration.test.ts',
+      'src/main/notebook-payload.integration.test.ts',
+      'src/main/web-service/session-payload.integration.test.ts',
+      'src/main/composition/session-packages.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

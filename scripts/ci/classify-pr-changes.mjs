@@ -84,8 +84,24 @@ function visitCapability(manifest, capabilityId, path, lanes, reasonChains, visi
 export function classifyChanges(
   changes,
   manifest = defaultManifest,
-  { moduleManifest = defaultModuleManifest, registrationModules = [] } = {}
+  {
+    moduleManifest = defaultModuleManifest,
+    registrationModules = [],
+    registrationOnly = false
+  } = {}
 ) {
+  if (registrationOnly) {
+    return {
+      schemaVersion: manifest.schemaVersion,
+      mode: 'selective',
+      roots: ['module_registration'],
+      lanes: [...manifest.alwaysLanes, 'format', 'lint'],
+      bundles: ['policy', 'static'],
+      reasonChains: [
+        'validated registration-only Git diff -> policy and manifest contracts; application source unchanged'
+      ]
+    }
+  }
   const lanes = new Set(manifest.alwaysLanes)
   const reasonChains = new Set()
   const roots = new Set()
@@ -174,6 +190,17 @@ export function classifyChanges(
         owners.length === 0 &&
         fixtureTestPatterns(path, manifest).length === 0
       ) {
+        // Explicit consumer evidence can live outside source ownership (for example scripts).
+        // Keep every declaring module's capabilities; declarations never exempt executable inputs.
+        const evidenceModules = /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+          ? Object.entries(moduleManifest.modules).filter(([, module]) =>
+              Object.values(module.testFiles).some((tests) => tests.includes(path))
+            )
+          : []
+        if (evidenceModules.length > 0) {
+          for (const [id] of evidenceModules) visitModule(id, path)
+          continue
+        }
         selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }
@@ -407,6 +434,7 @@ export function toGitHubOutputPlan(plan) {
     lanes: [...plan.lanes],
     macosGroups: macosGroupsForPlan(plan)
   }
+  if (plan.windowsCoreChecks) output.windowsCoreChecks = [...plan.windowsCoreChecks]
   if (plan.macosProfile) output.macosProfile = plan.macosProfile
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output

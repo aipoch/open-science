@@ -1,7 +1,5 @@
 import { win32 } from 'node:path'
 
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -9,6 +7,8 @@ import {
   logicalEnvNameFromDirectory,
   resolveEnvName
 } from '@aipoch/environment'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 
 export type WindowsManagedRuntimeLocation = {
   environment: string

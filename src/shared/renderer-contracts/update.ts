@@ -5,6 +5,8 @@ import type { AppInfo, UpdateApplyOptions, UpdateStatus } from '../update'
 import { callable, LOCAL, type RemoveListener, EVENT } from './definition'
 
 export const updateApplyContracts = {
+  'update.recheck': callable<() => Promise<UpdateStatus>>()('update', ['update:recheck', LOCAL]),
+  'update.recover': callable<() => Promise<UpdateStatus>>()('update', ['update:recover', LOCAL]),
   'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
     'update:apply',
     LOCAL

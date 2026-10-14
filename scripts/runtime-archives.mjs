@@ -21,7 +21,7 @@ export const archiveStem = (version, target) => {
     runtimeTargets.some((item) => item.id === target.id),
     'Unsupported archive target'
   )
-  return `open-science-${version}-${target.id}`
+  return `open-science-cli-${version}-${target.id}`
 }
 export const archiveFilename = (version, target) =>
   `${archiveStem(version, target)}.${target.os === 'win32' ? 'zip' : 'tar.gz'}`

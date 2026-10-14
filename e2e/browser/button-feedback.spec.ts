@@ -1,5 +1,27 @@
 import { expect, test } from '@playwright/test'
 
+for (const [locale, label, projects, cancel] of [
+  ['en', 'New project', 'Projects', 'Cancel'],
+  ['zh-Hans', '新建项目', '项目', '取消']
+]) {
+  test(`Home project entries share a label and open the same form (${locale})`, async ({
+    page
+  }) => {
+    await page.goto(`/button-feedback.html?home&locale=${locale}`)
+    await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(2)
+    for (const region of [
+      page.locator('header'),
+      page.getByRole('region', { name: projects, exact: true })
+    ]) {
+      await region.getByRole('button', { name: label, exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: label, exact: true })
+      await expect(dialog).toBeVisible()
+      await dialog.getByRole('button', { name: cancel, exact: true }).click()
+      await expect(dialog).toBeHidden()
+    }
+  })
+}
+
 test('reveals the update label without turning activation into a two-step action', async ({
   page
 }) => {

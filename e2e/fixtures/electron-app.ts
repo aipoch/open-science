@@ -335,7 +335,10 @@ type ElectronApp = {
   completeOnboarding: () => Promise<Page>
   routeMarketplaceRequests: (origin: string) => Promise<void>
   configureFileBrowserFixture: () => Promise<void>
-  configureFakeAgent: () => Promise<Page>
+  configureFakeAgent: (options?: {
+    crossFramework?: boolean
+    providerBaseUrl?: string
+  }) => Promise<Page>
   configureLiveAgent: (
     settingsPath: string,
     model: string,
@@ -403,6 +406,34 @@ const launchEnvironment = (
     if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
   }
 
+  if (inheritedEnvironment.OPEN_SCIENCE_E2E_ISOLATE_HOME === '1') {
+    // Acceptance processes must not discover the operator's provider credentials, home files,
+    // or shared credential-bootstrap lock. Keep only OS launch inputs and fixture controls.
+    const osInputs = new Set([
+      'path',
+      'pathext',
+      'systemroot',
+      'windir',
+      'comspec',
+      'temp',
+      'tmp',
+      'number_of_processors',
+      'processor_architecture',
+      'systemdrive'
+    ])
+    for (const key of Object.keys(environment)) {
+      if (!osInputs.has(key.toLowerCase()) && !key.startsWith('OPEN_SCIENCE_E2E_'))
+        delete environment[key]
+    }
+    const fixtureHome = join(dirname(storageRoot), 'isolated home')
+    environment.HOME = fixtureHome
+    environment.USERPROFILE = fixtureHome
+    environment.APPDATA = join(fixtureHome, 'AppData', 'Roaming')
+    environment.LOCALAPPDATA = join(fixtureHome, 'AppData', 'Local')
+    environment.XDG_CONFIG_HOME = join(fixtureHome, '.config')
+    environment.XDG_DATA_HOME = join(fixtureHome, '.local', 'share')
+  }
+  environment.OPEN_SCIENCE_INSTALLATION_STATE_ROOT ??= join(storageRoot, 'installation-state')
   environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
   environment.OPEN_SCIENCE_USER_DATA = join(dirname(storageRoot), 'electron-profile')
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
@@ -1022,40 +1053,46 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async configureFakeAgent(): Promise<Page> {
-    await this.page.evaluate(async (providerName) => {
-      const bridge = globalThis as unknown as {
-        api: {
-          settings: {
-            setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
-            setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
-            upsertProvider: (request: {
-              apiEndpoints: ['openai']
-              baseUrl: string
-              key: string
-              model: string
-              name: string
-              supportsImageInput: true
-              type: 'custom'
-            }) => Promise<{ providers: Array<{ id: string; name: string }> }>
+  async configureFakeAgent(options?: {
+    crossFramework?: boolean
+    providerBaseUrl?: string
+  }): Promise<Page> {
+    await this.page.evaluate(
+      async ({ providerName, providerBaseUrl }) => {
+        const bridge = globalThis as unknown as {
+          api: {
+            settings: {
+              setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
+              setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
+              upsertProvider: (request: {
+                apiEndpoints: ['openai']
+                baseUrl: string
+                key: string
+                model: string
+                name: string
+                supportsImageInput: true
+                type: 'custom'
+              }) => Promise<{ providers: Array<{ id: string; name: string }> }>
+            }
           }
         }
-      }
-      const snapshot = await bridge.api.settings.upsertProvider({
-        type: 'custom',
-        name: providerName,
-        apiEndpoints: ['openai'],
-        baseUrl: 'http://127.0.0.1:9/v1',
-        model: 'e2e-model',
-        key: 'e2e-key',
-        supportsImageInput: true
-      })
-      const provider = snapshot.providers.find((item) => item.name === providerName)
-      if (!provider) throw new Error('The E2E provider was not persisted.')
+        const snapshot = await bridge.api.settings.upsertProvider({
+          type: 'custom',
+          name: providerName,
+          apiEndpoints: ['openai'],
+          baseUrl: providerBaseUrl ?? 'http://127.0.0.1:9/v1',
+          model: 'e2e-model',
+          key: 'e2e-key',
+          supportsImageInput: true
+        })
+        const provider = snapshot.providers.find((item) => item.name === providerName)
+        if (!provider) throw new Error('The E2E provider was not persisted.')
 
-      await bridge.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
-      await bridge.api.settings.setAgentFramework({ id: 'opencode' })
-    }, FAKE_PROVIDER_NAME)
+        await bridge.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
+        await bridge.api.settings.setAgentFramework({ id: 'opencode' })
+      },
+      { providerName: FAKE_PROVIDER_NAME, providerBaseUrl: options?.providerBaseUrl }
+    )
 
     this.fakeAgentEnabled = true
     await this.close()
@@ -1066,6 +1103,23 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
     )
     settings.opencodeVersion = '1.0.0'
+    if (options?.crossFramework) {
+      // Both framework adapters remain real; this block replaces their external executables.
+      const codebuddyPath = join(
+        this.roots.fakeAgentBinRoot,
+        process.platform === 'win32' ? 'codebuddy.cmd' : 'codebuddy'
+      )
+      await writeFile(
+        codebuddyPath,
+        process.platform === 'win32'
+          ? `@echo off\r\nif "%~1"=="--version" (echo 2.138.0 & exit /b 0)\r\n"${process.execPath}" "${FAKE_AGENT_PATH}" %*\r\n`
+          : `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 2.138.0; exit 0; fi\nexec ${shellQuote(process.execPath)} ${shellQuote(FAKE_AGENT_PATH)} "$@"\n`,
+        'utf8'
+      )
+      if (process.platform !== 'win32') await chmod(codebuddyPath, 0o755)
+      settings.codebuddyPath = codebuddyPath
+      settings.codebuddyVersion = '2.138.0'
+    }
     if (
       process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS ||
       process.env.OPEN_SCIENCE_E2E_REAL_MICROMAMBA

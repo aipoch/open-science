@@ -1,18 +1,19 @@
 import type {
+  PersistedSideChat,
   PersistedSideChatLifecycle,
-  PersistedSideChatRelay,
-  PersistedSideChat
+  PersistedSideChatRelay
 } from '../session-runtime-context'
-import { type SideChatEntry, SIDE_CHAT_MESSAGE_LIMIT } from '../side-chat'
+import { type AgentFrameworkId, isReasoningEffort } from '../settings'
+import { SIDE_CHAT_MESSAGE_LIMIT } from '../side-chat'
+import type { SideChatEntry } from '../side-chat-entry-contract'
 import {
-  isRecord,
+  AGENT_FRAMEWORK_IDS,
   asBoundedString,
+  asNumber,
   asString,
   hasOnlyKeys,
-  asNumber,
-  AGENT_FRAMEWORK_IDS
+  isRecord
 } from './primitives'
-import { type AgentFrameworkId, isReasoningEffort } from '../settings'
 
 const SIDE_CHAT_LIFECYCLES = new Set<PersistedSideChatLifecycle>(['open', 'interrupted', 'error'])
 

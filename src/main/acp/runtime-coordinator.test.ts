@@ -6370,7 +6370,29 @@ it('queries Side chat interaction authority on the session owner after framework
   await turn
 })
 
-it('late quit cleanup retains a newly admitted runtime', async () => {
+it('does not reopen a newer quit when an older cancelled cleanup settles', async () => {
+  const { trackLifecycleSettlement, waitForLifecycleSettlement } =
+    await import('../lifecycle-settlement')
+  const cleanup = createDeferred<void>()
+  const coordinator = new AcpRuntimeCoordinator(
+    (callbacks) =>
+      createFakeRuntime({ callbacks, frameworkId: 'opencode', sessionIds: ['after-cancel'] })
+        .runtime
+  )
+  await coordinator.prepareForQuit()
+  trackLifecycleSettlement(cleanup.promise)
+  coordinator.abortQuitPreparation()
+  await expect(coordinator.createSession()).rejects.toThrow('quitting')
+  await coordinator.prepareForQuit()
+  cleanup.resolve()
+  await waitForLifecycleSettlement()
+  await Promise.resolve()
+  await expect(coordinator.createSession()).rejects.toThrow('quitting')
+  coordinator.abortQuitPreparation()
+  await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+})
+
+it('defers cancelled quit admission until late cleanup settles', async () => {
   const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
     await import('../lifecycle-shutdown')
   vi.useFakeTimers()
@@ -6406,6 +6428,9 @@ it('late quit cleanup retains a newly admitted runtime', async () => {
     await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
     await expect(preparation).resolves.toBe('timeout')
     coordinator.abortQuitPreparation()
+    await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
     const next = await coordinator.createSession({ agentTarget: target })
     expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
     await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
@@ -6480,6 +6505,14 @@ it.each(['reaped', 'unreaped', 'rejected'] as const)(
       await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
       await expect(preparation).resolves.toBe('timeout')
       coordinator.abortQuitPreparation()
+      await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+      await expect(
+        coordinator.sendPrompt({ sessionId: old.sessionId, text: 'blocked during cleanup' })
+      ).rejects.toThrow('quitting')
+      if (outcome === 'rejected') cleanup.reject(new Error('old cleanup rejected'))
+      else cleanup.resolve({ reaped: outcome === 'reaped' })
+      await vi.advanceTimersByTimeAsync(0)
+      onDisconnected.mockClear()
       const next = await coordinator.createSession({ agentTarget: target })
       const nextRuntime = created.at(-1)!
       expect(nextRuntime).not.toBe(oldRuntime)
@@ -6525,7 +6558,7 @@ it.each(['reaped', 'unreaped', 'rejected'] as const)(
   }
 )
 
-it('retains a reused Codex runtime after late cleanup', async () => {
+it('admits a new Codex runtime after cancelled quit cleanup settles', async () => {
   const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
     await import('../lifecycle-shutdown')
   vi.useFakeTimers()
@@ -6561,9 +6594,12 @@ it('retains a reused Codex runtime after late cleanup', async () => {
     await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
     await expect(preparation).resolves.toBe('timeout')
     coordinator.abortQuitPreparation()
+    await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
     const countBeforeNewSession = created.length
     const next = await coordinator.createSession({ agentTarget: target })
-    expect(created.length).toBe(countBeforeNewSession)
+    expect(created.length).toBe(countBeforeNewSession + 1)
     expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
     await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
     expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()

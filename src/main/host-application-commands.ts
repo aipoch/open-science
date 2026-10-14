@@ -1,37 +1,11 @@
-import type { CompletionHandoffCommandOwner } from './agents/completion-handoff-ipc'
-import type {
-  CompletionHandoffCommand,
-  CompletionHandoffLifecycleEvent
-} from '../shared/specialist'
-import type { LocalePreferenceOwner } from './locale/owner'
-import type {
-  InitializeLocalePreferenceRequest,
-  SetLocalePreferenceRequest,
-  LocalePreferenceSnapshot
-} from '../shared/locale'
-import type { NetworkCommandOwner } from './network-ipc'
-import type { NetworkInfo } from '../shared/network'
-import type { BackgroundResultActivityOwner } from './background-result-delivery/ipc'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
 import type {
   BackgroundResultDeliveryProjectRequest,
   BackgroundResultDeliverySessionRequest,
   ProjectBackgroundActivity,
   SessionBackgroundResultActivity
 } from '../shared/background-result-delivery'
-import { pdfStructureCommandContracts } from '../shared/pdf-structure'
-import type {
-  ParsePdfStructureRequest,
-  ReadCachedPdfStructureRequest,
-  ReadPdfStructureThumbnailRequest
-} from '../shared/pdf-structure'
-import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
-import type { PdfStructureReader } from './literature/pdf-structure/reader'
-import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
-import type {
-  LocalModelApi,
-  LocalModelCapability,
-  LocalModelSnapshot
-} from '../shared/local-models'
 import type { CliLauncherStatus } from '../shared/cli'
 import type {
   GrantLocalRootRequest,
@@ -42,16 +16,33 @@ import type {
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
 } from '../shared/local-fs'
+import type {
+  LocalModelApi,
+  LocalModelCapability,
+  LocalModelSnapshot
+} from '../shared/local-models'
+import type {
+  InitializeLocalePreferenceRequest,
+  LocalePreferenceSnapshot,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
 import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { NetworkInfo } from '../shared/network'
 import type {
   NotificationDesktopAvailability,
-  NotificationTestResult,
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationTestResult,
   OpenSessionFromNotificationRequest
 } from '../shared/notifications'
+import type {
+  ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
+  ReadPdfStructureThumbnailRequest
+} from '../shared/pdf-structure'
+import { pdfStructureCommandContracts } from '../shared/pdf-structure'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -67,8 +58,11 @@ import type {
   ReviewSessionRequest,
   ReviewWithChecks
 } from '../shared/reviewer'
-import type { RendererSessionPersistenceTarget } from './session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
+import type {
+  CompletionHandoffCommand,
+  CompletionHandoffLifecycleEvent
+} from '../shared/specialist'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -85,17 +79,22 @@ import type {
   UpdateDownloadOptions,
   UpdateStatus
 } from '../shared/update'
+import type { CompletionHandoffCommandOwner } from './agents/completion-handoff-ipc'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from './application-command-router'
+import type { BackgroundResultActivityOwner } from './background-result-delivery/ipc'
 import type { CallerContext } from './caller-context'
 import type { CliCommandOwner } from './cli-install/ipc'
 import type { GithubCommandOwner } from './github-ipc'
+import type { PdfStructureReader } from './literature/pdf-structure/reader'
 import type { LocalFsService } from './local-fs/service'
+import type { LocalePreferenceOwner } from './locale/owner'
 import type { LogsCommandOwner } from './logs-ipc'
+import type { NetworkCommandOwner } from './network-ipc'
 import {
   requireNotificationMarkAllReadRequest,
   requireNotificationMarkReadRequest,
@@ -109,7 +108,8 @@ import {
 } from './remote-access/ipc'
 import type { RemoteAccessService } from './remote-access/service'
 import type { ReviewerCommandOwner } from './reviewer/ipc'
-import type { UpdateCommandOwner } from './update/ipc'
+import type { RendererSessionPersistenceTarget } from './session-persistence/flush-protocol'
+import type { UpdateCommandOwner } from './update/command-owner'
 
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
@@ -372,6 +372,8 @@ const updateCommands = Object.freeze({
   >('update:apply'),
   cancel: defineApplicationCommand<'update:cancel', readonly [], UpdateStatus>('update:cancel'),
   check: defineApplicationCommand<'update:check', readonly [], UpdateStatus>('update:check'),
+  recheck: defineApplicationCommand<'update:recheck', readonly [], UpdateStatus>('update:recheck'),
+  recover: defineApplicationCommand<'update:recover', readonly [], UpdateStatus>('update:recover'),
   download: defineApplicationCommand<
     'update:download',
     readonly [options?: UpdateDownloadOptions],
@@ -842,6 +844,10 @@ const registerHostApplicationCommands = (
       'update:cancel': ({ callerContext }) =>
         localCommand(callerContext, 'update:cancel', () => dependencies.update.cancel()),
       'update:check': () => dependencies.update.check(),
+      'update:recheck': ({ callerContext }) =>
+        localCommand(callerContext, 'update:recheck', () => dependencies.update.recheck()),
+      'update:recover': ({ callerContext }) =>
+        localCommand(callerContext, 'update:recover', () => dependencies.update.recover()),
       'update:download': ({ args, callerContext }) =>
         localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),

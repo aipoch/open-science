@@ -1,3 +1,4 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessMode,
@@ -6,11 +7,11 @@ import type {
   RemotePairingDecision
 } from '../../shared/remote-access'
 import { REMOTE_ACCESS_CHANGED_CHANNEL } from '../../shared/remote-access'
-import type { ExternalWebAccess } from '../web-service/http-server'
-import { DEFAULT_WEB_PORT, type WebServiceController } from '../web-service'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { toErrorMessage } from '../error-message'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
+import { DEFAULT_WEB_PORT, type WebServiceController } from '../web-service'
+import type { ExternalWebAccess } from '../web-service/external-access-contract'
 import { RemoteSessionPairingManager } from './pairing'
 import {
   detectRemoteIt,
@@ -19,7 +20,6 @@ import {
   ensureRemoteItConnectLink
 } from './remoteit'
 import { RemoteAccessRepository } from './repository'
-import { toErrorMessage } from '../error-message'
 
 type RemoteAccessServiceDeps = {
   repository?: RemoteAccessRepository

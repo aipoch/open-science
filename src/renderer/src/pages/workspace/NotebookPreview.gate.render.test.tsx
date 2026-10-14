@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import {
+  useDesktopRuntimeRecoveryStore,
+  refreshDesktopRecoveryReaders
+} from '../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent, screen } from '@testing-library/react'
@@ -45,6 +49,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   notebookCodeBlockSpy.mockClear()
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
   useSettingsStore.setState(createInitialSettingsState())
@@ -1876,6 +1881,79 @@ describe('NotebookPreview per-kernel tabs', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
+  })
+
+  it('keeps an oversized Notebook failure local while the recovery barrier completes', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+    const state = vi.mocked(window.api.notebook.state)
+    const validState = await state.mock.results[0]?.value
+    state.mockRejectedValue(new Error('Desktop response exceeds the frame limit.'))
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+      await refreshDesktopRecoveryReaders()
+    })
+    expect(container.textContent).toContain('Desktop response exceeds the frame limit.')
+    expect(container.querySelector('[data-testid="kernel-notebook-pane"]')).not.toBeNull()
+    const retry = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Retry')
+    )!
+    expect(retry).toBeDefined()
+    state.mockResolvedValue(validState)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      retry.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.textContent).not.toContain('Desktop response exceeds the frame limit.')
+  })
+
+  it('keeps terminal drafts and retires a queued submission across desktop recovery', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    let resolveRefresh!: (value: typeof idleState) => void
+    state.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve as typeof resolveRefresh))
+    )
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'print(42)' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(state).toHaveBeenCalledTimes(2)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+    })
+    await act(async () => {
+      resolveRefresh({ ...idleState, activeRunId: 'old-run' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await act(async () => {
+      await refreshDesktopRecoveryReaders()
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
     expect(window.api.notebook.execute).not.toHaveBeenCalled()
     expect(input.value).toBe('print(42)')
   })

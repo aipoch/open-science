@@ -1,6 +1,196 @@
 import { expect, it } from 'vitest'
 import { joinPdfTextItems, type PdfTextItem } from './pdf-text'
 
+it('separates an independently placed pair of small centered labels from closed prose', () => {
+  const prose = {
+    str: 'A complete preceding line describes the general process.',
+    width: 300,
+    height: 10,
+    transform: [10, 0, 0, 10, 100, 610],
+    hasEOL: true
+  }
+  const tail = {
+    ...prose,
+    str: 'The final stage produces the complete result of the process.',
+    width: 290,
+    transform: [10, 0, 0, 10, 100, 598],
+    hasEOL: false
+  }
+  const label = { str: 'Source', width: 18, height: 5, transform: [5, 0, 0, 5, 230, 520] }
+  const next = { ...label, str: 'data', width: 12, transform: [5, 0, 0, 5, 233, 514] }
+  const items = [prose, tail, label, { str: '', hasEOL: true }, next]
+  expect(joinPdfTextItems(items)).toContain('process.\nSource\ndata')
+  for (const changed of [
+    { ...label, width: -18 },
+    { ...label, transform: [5, 0, 0, 5, 230, 597] },
+    { ...label, transform: [0, 5, -5, 0, 230, 520] }
+  ])
+    expect(joinPdfTextItems([prose, tail, changed, items[3], next])).toContain('process.Source')
+  expect(joinPdfTextItems([prose, tail, label])).toContain('process.Source')
+})
+
+it('separates a detached figure label band from the final author affiliation line', () => {
+  const items: PdfTextItem[] = [
+    {
+      str: 'A paper title',
+      width: 100,
+      height: 17,
+      transform: [17, 0, 0, 17, 52, 680],
+      hasEOL: true
+    },
+    { str: '', hasEOL: true },
+    {
+      str: 'WRITER ONE,',
+      width: 72,
+      height: 12,
+      transform: [12, 0, 0, 12, 52, 630],
+      hasEOL: false
+    },
+    { str: ' ', width: 3, height: 0, transform: [12, 0, 0, 12, 124, 630] },
+    {
+      str: 'Research Group, Example City',
+      width: 160,
+      height: 10,
+      transform: [10, 0, 0, 10, 127, 630],
+      hasEOL: false
+    },
+    { str: 'Move', width: 22, height: 9, transform: [9, 0, 0, 9, 96, 460] },
+    { str: ' ', width: 66, height: 0, transform: [9, 0, 0, 9, 118, 460] },
+    { str: 'Trap', width: 17, height: 9, transform: [9, 0, 0, 9, 160, 461] },
+    { str: ' ', width: 189, height: 0, transform: [9, 0, 0, 9, 177, 461] },
+    { str: 'Dribble', width: 29, height: 9, transform: [9, 0, 0, 9, 296, 461] },
+    { str: ' ', width: 204, height: 0, transform: [9, 0, 0, 9, 325, 461] },
+    { str: 'Kick', width: 16, height: 9, transform: [9, 0, 0, 9, 452, 461] },
+    { str: '', hasEOL: true }
+  ]
+  expect(joinPdfTextItems(items)).toContain('Example City\nMove Trap Dribble Kick')
+  expect(joinPdfTextItems(items)).not.toContain('Example CityMove')
+})
+
+it('keeps an open same-line panel label band attached to following prose', () => {
+  const items: PdfTextItem[] = [
+    { str: 'coordinate system.', width: 69, height: 9, transform: [9, 0, 0, 9, 51, 101] },
+    { str: 'Reference', width: 33, height: 7.5, transform: [7.5, 0, 0, 7.5, 412, 677] },
+    { str: 'Goal', width: 15, height: 7.5, transform: [7.5, 0, 0, 7.5, 460, 677] },
+    { str: 'Latent', width: 21, height: 7.5, transform: [7.5, 0, 0, 7.5, 500, 677] },
+    { str: 'prose', width: 30, height: 7.5, transform: [7.5, 0, 0, 7.5, 550, 677] }
+  ]
+  expect(joinPdfTextItems(items)).not.toContain('system.\nReference')
+})
+
+it.each([
+  [
+    'panel prefix',
+    [
+      { str: 'Appendix B.', width: 45, height: 9, transform: [9, 0, 0, 9, 51, 103] },
+      {
+        str: '(a) STI Buffer Construction',
+        width: 95,
+        height: 7.4,
+        transform: [7.4, 0, 0, 7.4, 335, 702]
+      },
+      { str: '', hasEOL: true },
+      {
+        str: '(b) Dribble Policy Training with STI',
+        width: 124,
+        height: 7.4,
+        transform: [7.4, 0, 0, 7.4, 335, 622]
+      },
+      { str: '', hasEOL: true }
+    ]
+  ],
+  [
+    'short panel labels',
+    [
+      { str: 'coordinate system.', width: 69, height: 9, transform: [9, 0, 0, 9, 51, 101] },
+      { str: 'Reference', width: 33, height: 7.5, transform: [7.5, 0, 0, 7.5, 412, 677] },
+      { str: '', hasEOL: true },
+      { str: 'Goal', width: 15, height: 7.5, transform: [7.5, 0, 0, 7.5, 421, 668] },
+      { str: '', hasEOL: true },
+      { str: 'Reference', width: 33, height: 7.5, transform: [7.5, 0, 0, 7.5, 452, 677] },
+      { str: '', hasEOL: true },
+      { str: 'Latent', width: 21, height: 7.5, transform: [7.5, 0, 0, 7.5, 458, 668] },
+      { str: '', hasEOL: true }
+    ]
+  ]
+])('separates cross-column figure panel labels from narrative text: %s', (_name, items) => {
+  const typed = items as PdfTextItem[]
+  expect(joinPdfTextItems(typed)).toContain(`${typed[0].str}\n${typed[1].str}`)
+  expect(joinPdfTextItems(typed)).not.toContain(`${typed[0].str}${typed[1].str}`)
+})
+
+it.each([
+  [
+    'unclosed label band',
+    [
+      { str: 'Narrative paragraph', width: 120, height: 10, transform: [10, 0, 0, 10, 52, 630] },
+      { str: 'Move', width: 22, height: 9, transform: [9, 0, 0, 9, 96, 460] },
+      { str: 'Trap', width: 17, height: 9, transform: [9, 0, 0, 9, 160, 461] }
+    ]
+  ],
+  [
+    'invalid label geometry',
+    [
+      { str: 'WRITER ONE,', width: 72, height: 12, transform: [12, 0, 0, 12, 52, 630] },
+      {
+        str: ', Research Group, Example City',
+        width: 145,
+        height: 10,
+        transform: [10, 0, 0, 10, 127, 630]
+      },
+      { str: 'Move', width: -22, height: 9, transform: [9, 0, 0, 9, 96, 460] },
+      { str: 'Trap', width: 17, height: 9, transform: [9, 0, 0, 9, 160, 461] },
+      { str: 'Dribble', width: 29, height: 9, transform: [9, 0, 0, 9, 296, 461] },
+      { str: 'Kick', width: 16, height: 9, transform: [9, 0, 0, 9, 452, 461] },
+      { str: '', hasEOL: true }
+    ]
+  ]
+])('does not split a metadata line without a closed valid label band: %s', (_name, raw) => {
+  const items = raw as PdfTextItem[]
+  expect(joinPdfTextItems(items)).not.toContain('City\nMove')
+})
+
+it('separates a skewed run-in heading on a new native paragraph baseline', () => {
+  const tail = {
+    str: 'The completed paragraph states an independently measured result.',
+    width: 300,
+    height: 10,
+    transform: [10, 0, 0, 10, 60, 540]
+  }
+  const heading = {
+    str: 'Methods.',
+    width: 35,
+    height: Math.hypot(9.5, 1.5),
+    transform: [9.5, 0, 1.5, 9.5, 60, 528]
+  }
+  const body = {
+    str: 'The next paragraph describes another measured observation.',
+    width: 420,
+    height: 10,
+    transform: [10, 0, 0, 10, 99, 528],
+    hasEOL: true
+  }
+  const continuation = {
+    ...body,
+    str: 'The observation is independently bounded.',
+    width: 290,
+    transform: [10, 0, 0, 10, 60, 516]
+  }
+  expect(joinPdfTextItems([tail, heading, { str: ' ' }, body, continuation])).toContain(
+    'result.\nMethods. '
+  )
+  for (const changed of [
+    { ...heading, width: -35 },
+    { ...heading, transform: [9.5, 0, 1.5, 9.5, 60, 540] },
+    { ...heading, transform: [9.5, 0, 1.5, 9.5, 360, 528] },
+    { ...heading, transform: [9.5, 2, 1.5, 9.5, 60, 528] }
+  ])
+    expect(joinPdfTextItems([tail, changed, { str: ' ' }, body, continuation])).toContain(
+      'result.Methods.'
+    )
+  expect(joinPdfTextItems([tail, heading])).toContain('result.Methods.')
+})
+
 it('separates a distant period caption below a complete native label band', () => {
   const labels = ['Alpha', 'Beta', '4'].map((str, i) => ({
     str,
@@ -32,6 +222,59 @@ const item = (str: string, x: number, y: number, height = 10): PdfTextItem => ({
   width: str.length * height * 0.5,
   height,
   transform: [height, 0, 0, height, x, y]
+})
+
+const captionAndLabelColumn = (): PdfTextItem[] => [
+  { ...item('Figure 2: Comparison across complete groups', 100, 160), hasEOL: true },
+  { ...item('with each independent response shown', 100, 148), hasEOL: true },
+  item('in the final panel.', 100, 136),
+  ...['Alpha', 'Beta', 'Gamma'].map((str, n) => ({
+    ...item(str, 150 - str.length * 3.5, 110 - n * 9, 7),
+    hasEOL: true
+  }))
+]
+
+it('separates a complete multiline caption from a closed smaller label column', () => {
+  const items = captionAndLabelColumn(),
+    before = structuredClone(items)
+  expect(joinPdfTextItems(items)).toBe(
+    'Figure 2: Comparison across complete groups\nwith each independent response shown\nin the final panel.\nAlpha\nBeta\nGamma'
+  )
+  expect(items).toEqual(before)
+})
+
+it('requires a bounded formal caption and distinct aligned small label column', () => {
+  for (const mutation of [
+    'prose',
+    'unfinished',
+    'close',
+    'same-font',
+    'misaligned',
+    'open-label',
+    'single-label'
+  ]) {
+    const items = captionAndLabelColumn()
+    if (mutation === 'prose')
+      items[0] = { ...items[0], str: 'The comparison across complete groups' }
+    if (mutation === 'unfinished') items[2] = { ...items[2], str: 'in the final panel' }
+    if (mutation === 'close')
+      for (let n = 3; n < items.length; n++)
+        items[n] = {
+          ...items[n],
+          transform: [7, 0, 0, 7, items[n].transform![4], 125 - (n - 3) * 9]
+        }
+    if (mutation === 'same-font')
+      for (let n = 3; n < items.length; n++)
+        items[n] = {
+          ...items[n],
+          height: 10,
+          transform: [10, 0, 0, 10, items[n].transform![4], items[n].transform![5]]
+        }
+    if (mutation === 'misaligned') items[4] = { ...items[4], transform: [7, 0, 0, 7, 180, 101] }
+    if (mutation === 'open-label') items[4] = { ...items[4], hasEOL: false }
+    if (mutation === 'single-label') items.splice(4)
+    expect(joinPdfTextItems(items), mutation).not.toContain(`${items[2].str}\nAlpha`)
+  }
 })
 
 it('honors explicit empty native line ends between paragraph and heading items', () => {

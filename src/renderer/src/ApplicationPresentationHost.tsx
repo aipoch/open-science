@@ -1,6 +1,7 @@
+import { RuntimeUpdateOutcomeNotice } from '@/components/runtime-update-outcome-notice'
 import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { lazy, memo, Suspense, useCallback, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DeferredPresentationOwner } from '@/components/DeferredPresentationOwner'
@@ -83,6 +84,12 @@ const UpdateDialog = lazy(() =>
   import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
 )
 
+const StartupIssueDialog = lazy(() =>
+  import('@/components/startup-issue-dialog').then(({ StartupIssueDialog }) => ({
+    default: StartupIssueDialog
+  }))
+)
+
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const startup = useApplicationStartup()
   return (
@@ -103,6 +110,7 @@ const ApplicationPresentationContent = ({
   startup: ReturnType<typeof useApplicationStartup>
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const [settingsIssueOpen, setSettingsIssueOpen] = useState(false)
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
   const requestSettingsLeave = useCallback((leave: () => void) => {
@@ -136,13 +144,36 @@ const ApplicationPresentationContent = ({
           <ErrorNotice
             fullPage
             title={t('Settings could not be loaded')}
-            description={startup.settings.loadError}
+            description={t('Open-Science could not load settings. Retry to continue.')}
+            errorCode={
+              startup.settings.loadFailure
+                ? `SETTINGS_${startup.settings.loadFailure.toUpperCase().replaceAll('-', '_')}`
+                : undefined
+            }
+            issueLink={{
+              label: t('Report this error'),
+              tooltip: t('Report this error'),
+              onClick: () => setSettingsIssueOpen(true)
+            }}
             primaryButton={{
               label: startup.settings.isLoading ? t('Retrying…') : t('Retry'),
               onClick: () => void startup.settings.retry(),
               loading: startup.settings.isLoading
             }}
           />
+          {settingsIssueOpen ? (
+            <Suspense fallback={null}>
+              <StartupIssueDialog
+                error={{
+                  code: `SETTINGS_${(startup.settings.loadFailure ?? 'unknown').toUpperCase().replaceAll('-', '_')}`,
+                  message: 'Open-Science could not load settings. Retry to continue.',
+                  retryable: true,
+                  diagnostics: `stage=settings-load; reason=${startup.settings.loadFailure ?? 'unknown'}; attempt=${startup.settings.loadAttempt}; revision=${startup.settings.snapshotRevision}`
+                }}
+                onClose={() => setSettingsIssueOpen(false)}
+              />
+            </Suspense>
+          ) : null}
         </main>
       )
     }
@@ -412,6 +443,7 @@ const ApplicationPresentationContent = ({
           />
         )}
       </DeferredPresentationOwner>
+      <RuntimeUpdateOutcomeNotice />
       <DeferredPresentationOwner active={activePresentation === 'update'}>
         {(active) => <UpdateDialog active={active} />}
       </DeferredPresentationOwner>

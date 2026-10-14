@@ -1,9 +1,11 @@
-import type { ApplicationCommandByNameDispatcher } from './application-command-composition'
+import type { ApplicationCommandByNameDispatcher } from './application-command-composition-contract'
+import type { CallerContext, CallerSurface } from './caller-context'
+import { runtimePayloadTransfers } from './runtime-payload-transfers'
+import type { RuntimePayloadOptions } from '../shared/runtime-payload-transfer'
 import {
   ApplicationCallerLeaseRegistry,
   callerLeaseOwnershipKeyForContext
 } from './caller-lifecycle'
-import type { CallerContext, CallerSurface } from './caller-context'
 
 type ActiveCaller = Readonly<{
   clientId: string
@@ -16,7 +18,8 @@ type ApplicationCommandClient = Readonly<{
     dispatcher: ApplicationCommandByNameDispatcher,
     commandName: string,
     callerContext: CallerContext,
-    args: readonly unknown[]
+    args: readonly unknown[],
+    payloadOptions?: RuntimePayloadOptions
   ) => Promise<unknown>
   releaseClient: (surface: CallerSurface, clientId: string) => void
   dispose: () => void
@@ -43,13 +46,23 @@ const createApplicationCommandClient = (): ApplicationCommandClient => {
   }
 
   return Object.freeze({
-    invoke: async (dispatcher, commandName, callerContext, args) => {
+    invoke: async (dispatcher, commandName, callerContext, args, payloadOptions = {}) => {
       const caller = callerFor(callerContext)
-      return dispatcher.invoke(commandName, {
+      const dispatch = (arguments_: readonly unknown[]): Promise<unknown> =>
+        dispatcher.invoke(commandName, {
+          callerContext,
+          callerLease: caller.lease.lease,
+          args: arguments_
+        })
+      if (payloadOptions.acceptPayload !== 1 && !payloadOptions.transfer) return dispatch(args)
+      return runtimePayloadTransfers.invoke(
+        commandName,
+        args,
         callerContext,
-        callerLease: caller.lease.lease,
-        args
-      })
+        caller.lease.lease,
+        payloadOptions,
+        dispatch
+      )
     },
     releaseClient: (surface, clientId): void => {
       for (const [key, caller] of callers) {

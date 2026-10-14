@@ -68,10 +68,20 @@ const GENERATED_SOURCE_OMISSIONS = [
   'artifacts.onReproducibilityCheckChanged',
   'artifacts.startReproducibilityCheck',
   'artifacts.sessionReproducibility',
+  'runtimeStartup.getState',
+  'runtimeStartup.stopAndContinue',
+  'runtimeStartup.recover',
+  'runtimeStartup.quit',
+  'runtimeStartup.onStateChanged',
   'databaseStartup.getState',
   'databaseStartup.onStateChanged',
   'databaseStartup.quit',
   'databaseStartup.retry',
+  'desktopRuntime.getState',
+  'desktopRuntime.onStateChanged',
+  'desktopRuntime.quit',
+  'desktopRuntime.reconciled',
+  'desktopRuntime.reconnect',
   'diagnostics.reportRendererFailure',
   'getRuntimeVersions',
   'handoff.list',
@@ -86,6 +96,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',
+  'network.onSystemResumed',
   'notifications.getDesktopAvailability',
   'notifications.onOpenSession',
   'notifications.onViewProbe',
@@ -331,7 +342,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-data-root-and-relaunch',
     'validate-data-root'
   ],
-  update: ['apply', 'cancel', 'download'],
+  update: ['apply', 'cancel', 'download', 'recheck', 'recover'],
   uploads: ['stage-local-path']
 }
 

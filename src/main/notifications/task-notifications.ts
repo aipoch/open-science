@@ -1,5 +1,6 @@
-import type { AcpPermissionRequest, AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
   NotificationActionState,

@@ -3,7 +3,6 @@ import type { BigIntStats } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
-import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
 import type { OfficePreviewAdmissionError } from '../shared/office-preview'
 import type {
   AcquireManagedPreviewRequest,
@@ -12,8 +11,9 @@ import type {
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
-import type { ManagedFileReadLease } from './managed-file-versions/service'
+import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
 import { waitForManagedFilePublication } from './managed-file-preview'
+import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,

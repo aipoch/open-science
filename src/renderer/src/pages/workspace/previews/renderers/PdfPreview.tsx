@@ -1,55 +1,55 @@
-import { PdfTranslationExport } from './PdfTranslationExport'
-import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
-import { restorePdfTranslationJob } from './use-pdf-translation-job'
+import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
-import {
-  usePdfTranslationDocument,
-  type PdfTranslationArtifact
-} from './use-pdf-translation-document'
-import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
-import { PdfSearchTextCache } from './pdf-search-text-cache'
-import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
-import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
-import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import type {
   PdfAnnotationSource,
   PdfNativeAnnotationImportProgress
 } from '../../../../../../shared/pdf-annotations'
+import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
+import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
+import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
+import { PdfTranslationExport } from './PdfTranslationExport'
+import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
+import { PdfSearchTextCache } from './pdf-search-text-cache'
+import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
+import {
+  usePdfTranslationDocument,
+  type PdfTranslationArtifact
+} from './use-pdf-translation-document'
+import { restorePdfTranslationJob } from './use-pdf-translation-job'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
-  FileText,
-  SlidersHorizontal,
-  Images,
-  NotebookPen,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Columns2,
+  FileText,
   Hand,
-  LoaderCircle,
-  RefreshCw,
+  Highlighter,
+  Images,
   Languages,
   ListOrdered,
-  Columns2,
-  Check,
+  LoaderCircle,
   MousePointer2,
+  NotebookPen,
   PanelLeft,
   PanelRight,
-  Highlighter,
-  Underline,
-  Waves,
-  Strikethrough,
+  RefreshCw,
   Scan,
-  SquareDashedMousePointer,
   Search,
   Shrink,
+  SlidersHorizontal,
+  SquareDashedMousePointer,
+  Strikethrough,
+  Underline,
+  Waves,
   X,
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { Tabs, Collapsible } from 'radix-ui'
-import { PdfTranslationEditions } from './PdfTranslationEditions'
 import type { TextLayerBuilder as PdfTextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs'
+import { Collapsible, Tabs } from 'radix-ui'
 import {
   memo,
   useCallback,
@@ -61,16 +61,17 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PdfTranslationEditions } from './PdfTranslationEditions'
 
-import { TagSelection } from '../../../settings/ResourceTagControls'
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuItem
+  DropdownMenuItem,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverAnchor,
@@ -78,7 +79,6 @@ import {
   PopoverContent,
   PopoverTrigger
 } from '@/components/ui/popover'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -87,22 +87,35 @@ import {
   usePreviewWorkbenchStore,
   type PreviewFileSource
 } from '@/stores/preview-workbench-store'
-import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 import { useSessionStore } from '@/stores/session-store'
-import {
-  ANNOTATION_LIMITS,
-  pdfAnnotationSourceIsFixed,
-  type Annotation,
-  type PdfAnnotation
-} from '../../../../../../shared/annotations'
+import type { Annotation, PdfAnnotation } from '../../../../../../shared/annotation-contract'
+import { ANNOTATION_LIMITS, pdfAnnotationSourceIsFixed } from '../../../../../../shared/annotations'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature-attachment-reference'
 import {
   sanitizePdfDocumentSource,
   type PdfDocumentSource
 } from '../../../../../../shared/pdf-document-source'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
+import { TagSelection } from '../../../settings/ResourceTagControls'
+import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 
-import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import {
+  pdfBookmarkSelectorMatchesPage,
+  type PdfBookmarkSelector,
+  type PdfMarkColor,
+  type PdfMarkKind
+} from '../../../../../../shared/pdf-bookmarks'
+import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  type WebEventConnectionState
+} from '../../../../../../shared/web-event-connection'
+import {
+  PdfMarkColorControls,
+  PdfTextMarkControls,
+  type PdfTextMarkStyle
+} from '../../annotations/TextAnnotationEditors'
+import { createAnnotationId } from '../../annotations/annotation-id'
 import {
   annotationRevealScrollBehavior,
   retryPendingAnnotationReveal,
@@ -112,47 +125,31 @@ import {
   subscribeBookmarkRevealPreparation,
   type BookmarkRevealTarget
 } from '../../annotations/annotation-reveal'
-import {
-  PdfTextMarkControls,
-  PdfMarkColorControls,
-  type PdfTextMarkStyle
-} from '../../annotations/TextAnnotationEditors'
-import { createAnnotationId } from '../../annotations/annotation-id'
-import { createManagedPdfLoadingTask } from '../managed-pdf-document'
-import { pdfjsLib } from '../pdfjs'
-import { isUnavailableFileError } from '../preview-errors'
-import { createPreviewResourceKey } from '../preview-resource-key'
-import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
-import {
-  WEB_EVENT_CONNECTION_STATE_EVENT,
-  type WebEventConnectionState
-} from '../../../../../../shared/web-event-connection'
-import { createManagedPreviewRequest } from '../preview-file-reader'
-import type { PreviewFileRendererProps } from '../preview-types'
-import {
-  pdfBookmarkSelectorMatchesPage,
-  type PdfMarkColor,
-  type PdfBookmarkSelector,
-  type PdfMarkKind
-} from '../../../../../../shared/pdf-bookmarks'
 import { PdfAnnotationHistoryControls } from '../../pdf-annotations/PdfAnnotationHistoryControls'
-import { handlePdfAnnotationHistoryKey } from '../../pdf-annotations/pdf-annotation-history-keyboard'
 import { PdfAnnotationMarker } from '../../pdf-annotations/PdfAnnotationMarker'
+import { handlePdfAnnotationHistoryKey } from '../../pdf-annotations/pdf-annotation-history-keyboard'
 import { usePdfAnnotations } from '../../pdf-annotations/pdf-annotations-context'
-import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
-import { useNearViewport } from '../useNearViewport'
-import { resolvePdfContextTarget } from '../../use-pdf-context-action'
 import { subscribePdfReadingReveal } from '../../pdf-reading-reveal'
+import { resolvePdfContextTarget } from '../../use-pdf-context-action'
+import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
+import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import {
   cropPdfCanvasRegion,
   normalizedPdfRect,
   pointInPage,
   textInPdfRect
 } from '../pdf-region-evidence'
-import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
+import { pdfjsLib } from '../pdfjs'
+import { isUnavailableFileError } from '../preview-errors'
+import { createManagedPreviewRequest } from '../preview-file-reader'
+import { createPreviewResourceKey } from '../preview-resource-key'
+import type { PreviewFileRendererProps } from '../preview-types'
+import { useNearViewport } from '../useNearViewport'
+import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
 import { PdfFiguresView } from './PdfFiguresView'
-import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
 import { PdfNotebookView } from './PdfNotebookView'
+import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
 import {
   countPdfSearchOccurrences,
   resolvePdfSearchMatch,
@@ -178,9 +175,13 @@ import {
   PdfTranslationMarkers,
   PdfTranslationSidebar
 } from './PdfTranslationView'
-import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
-import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
 import { usePdfTranslationAgent } from './use-pdf-translation-agent'
+import {
+  usePdfTranslationJob,
+  type PdfTranslationExecutor,
+  type PdfTranslationOptions
+} from './use-pdf-translation-job'
+import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
 export type PdfTranslationDocumentContext = Readonly<{
@@ -1675,7 +1676,7 @@ const PdfEvidenceLayer = ({
             </button>
           )
         })}
-        {matchingBookmarks.flatMap((bookmark) => {
+        {matchingBookmarks.map((bookmark) => {
           const selector = bookmark.selector
           if (selector.kind !== 'text' && selector.kind !== 'region') return []
           const boxes = selector.kind === 'text' ? selector.quads : [selector.rect]
@@ -1683,73 +1684,68 @@ const PdfEvidenceLayer = ({
           const colorValue = pdfMarkColorValue(color)
           const isRevealed = reveal?.id === bookmark.id
           const isSelected = selectedBookmarkId === bookmark.id
-          return boxes.map((rect, index) => (
-            <button
-              key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
-              type="button"
-              data-pdf-bookmark-highlight={bookmark.id}
-              data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
-              aria-label={t('Select annotation')}
-              aria-pressed={isSelected}
-              className={cn(
-                'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                markKind === 'area' && 'ring-1 ring-inset',
-                isRevealed && 'pdf-evidence-reveal',
-                isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
-              )}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                onSelectBookmark?.(bookmark.id)
-              }}
-              style={{
-                left: `${rect.x * 100}%`,
-                top: `${rect.y * 100}%`,
-                width: `${rect.width * 100}%`,
-                height: `${rect.height * 100}%`,
-                backgroundColor:
-                  markKind === 'highlight' || markKind === 'area'
-                    ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
-                    : 'transparent',
-                borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
-                ...(markKind === 'strikethrough'
-                  ? {
-                      backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
-                    }
-                  : markKind === 'squiggly'
-                    ? {
-                        backgroundColor: colorValue,
-                        maskImage: PDF_SQUIGGLY_MASK,
-                        maskRepeat: 'repeat-x',
-                        maskPosition: 'left bottom',
-                        maskSize: '8px 4px'
-                      }
-                    : markKind === 'underline'
-                      ? { borderBottom: `0.12rem solid ${colorValue}` }
-                      : {})
-              }}
-            />
-          ))
-        })}
-        {pageAnnotations.flatMap((annotation) => {
-          const selector = annotation.target.selector
-          if (!pdfBookmarkSelectorMatchesPage(selector, pageNumber, pageRotation)) return []
-          const rect =
-            selector.kind === 'text'
-              ? selector.quads.at(-1)
-              : selector.kind === 'region'
-                ? selector.rect
-                : undefined
-          if (!rect) return []
-          return [
-            <PdfAnnotationMarker
-              key={annotation.id}
-              id={annotation.id}
-              note={annotation.note}
-              left={`${Math.min(0.97, rect.x + rect.width) * 100}%`}
-              top={`${rect.y * 100}%`}
-            />
-          ]
+          const annotation = pageAnnotations.find((item) => item.id === bookmark.id)
+          const anchor = boxes.at(-1)
+          return (
+            <div key={bookmark.id} className="group/pdf-annotation">
+              {boxes.map((rect, index) => (
+                <button
+                  key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
+                  type="button"
+                  data-pdf-bookmark-highlight={bookmark.id}
+                  data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
+                  aria-label={t('Select annotation')}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    markKind === 'area' && 'ring-1 ring-inset',
+                    isRevealed && 'pdf-evidence-reveal',
+                    isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
+                  )}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onSelectBookmark?.(bookmark.id)
+                  }}
+                  style={{
+                    left: `${rect.x * 100}%`,
+                    top: `${rect.y * 100}%`,
+                    width: `${rect.width * 100}%`,
+                    height: `${rect.height * 100}%`,
+                    backgroundColor:
+                      markKind === 'highlight' || markKind === 'area'
+                        ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
+                        : 'transparent',
+                    borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
+                    ...(markKind === 'strikethrough'
+                      ? {
+                          backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
+                        }
+                      : markKind === 'squiggly'
+                        ? {
+                            backgroundColor: colorValue,
+                            maskImage: PDF_SQUIGGLY_MASK,
+                            maskRepeat: 'repeat-x',
+                            maskPosition: 'left bottom',
+                            maskSize: '8px 4px'
+                          }
+                        : markKind === 'underline'
+                          ? { borderBottom: `0.12rem solid ${colorValue}` }
+                          : {})
+                  }}
+                />
+              ))}
+              {annotation && anchor ? (
+                <PdfAnnotationMarker
+                  id={annotation.id}
+                  note={annotation.note}
+                  selected={isSelected}
+                  left={`${Math.min(0.97, anchor.x + anchor.width) * 100}%`}
+                  top={`${anchor.y * 100}%`}
+                />
+              ) : null}
+            </div>
+          )
         })}
         {draft ? (
           <span
@@ -2420,11 +2416,15 @@ export const PdfPreviewContent = ({
     size,
     mtimeMs
   })
-  const generation = usePreviewResourceGeneration()
-  const resourceRequestKey = `${requestKey}:${generation}`
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const panGestureRef = useRef<PdfPanGesture | undefined>(undefined)
   const viewportAnchorRef = useRef<PdfViewportAnchor | undefined>(undefined)
+  const retainRecoveryViewport = useCallback(() => {
+    const anchor = readViewportAnchor(scrollRef.current)
+    if (anchor) viewportAnchorRef.current = anchor
+  }, [])
+  const generation = usePreviewResourceGeneration(retainRecoveryViewport)
+  const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
     { destination: PdfLinkDestination; translated: boolean } | undefined
   >(undefined)
@@ -2451,6 +2451,14 @@ export const PdfPreviewContent = ({
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
   const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
+  const pendingNewTranslation = useRef<
+    | {
+        key: string
+        document: PdfDocument
+        options: PdfTranslationOptions
+      }
+    | undefined
+  >(undefined)
   const translationToggleRef = useRef<HTMLButtonElement>(null)
   const translationCloseRef = useRef<HTMLButtonElement>(null)
   const translationPanelId = useId()
@@ -2607,7 +2615,8 @@ export const PdfPreviewContent = ({
     setCursorMode('select')
 
   const captureViewportAnchor = useCallback((): void => {
-    viewportAnchorRef.current = readViewportAnchor(scrollRef.current)
+    const anchor = readViewportAnchor(scrollRef.current)
+    if (anchor) viewportAnchorRef.current = anchor
   }, [])
 
   useEffect(() => {
@@ -2701,6 +2710,7 @@ export const PdfPreviewContent = ({
   }, [captureViewportAnchor])
 
   useEffect(() => {
+    if (!desktopRuntimeWritable()) return
     let canceled = false
     let document: PdfDocument | undefined
     let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
@@ -2847,7 +2857,7 @@ export const PdfPreviewContent = ({
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recovery.checkpoint
+    recoveryCheckpoint
   )
   const jobSource =
     document && presentation !== 'search'
@@ -2869,6 +2879,25 @@ export const PdfPreviewContent = ({
     effectiveTranslationExecutor,
     recoveryCheckpoint
   )
+  useEffect(() => {
+    const pending = pendingNewTranslation.current
+    if (!pending) return
+    if (
+      pending.key !== resourceRequestKey ||
+      pending.document !== document ||
+      preparation.state.status === 'error' ||
+      preparation.state.status === 'cancelled'
+    ) {
+      pendingNewTranslation.current = undefined
+      return
+    }
+    if (preparation.state.status === 'idle') prepareFullText()
+    else if (preparation.state.status === 'ready') {
+      // Start only after React has installed the freshly extracted source in the job owner.
+      pendingNewTranslation.current = undefined
+      translationJob.restart(pending.options)
+    }
+  }, [resourceRequestKey, document, preparation.state.status, prepareFullText, translationJob])
   const {
     status: translationStatus,
     done: translatedCount,
@@ -3716,12 +3745,25 @@ export const PdfPreviewContent = ({
       onCancel={translationJob.cancel}
       onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
       onNewTranslation={(options) => {
+        if (!document) return
         setSuppressedRecoveryKey(resourceRequestKey)
-        translationJob.restart({
+        const requestedOptions = {
           ...options,
           ...(attachmentVersionId ? { attachmentVersionId } : {}),
           ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
-        })
+        }
+        pendingNewTranslation.current = undefined
+        if (preparationAvailable) {
+          translationJob.reset()
+          preparation.reset()
+          pendingNewTranslation.current = {
+            key: resourceRequestKey,
+            document,
+            options: requestedOptions
+          }
+        } else {
+          translationJob.restart(requestedOptions)
+        }
         setTranslationQuery('')
         setSelectedTranslation(undefined)
         setShowParagraphMarkers(false)

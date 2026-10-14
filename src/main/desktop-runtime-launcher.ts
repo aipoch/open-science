@@ -1,3 +1,12 @@
+import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
+import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
+import { isRuntimeProcessAlive, waitForRuntimeStopped } from './runtime-stop-confirmation'
+import { randomUUID } from 'node:crypto'
+import {
+  backendStartupStatusSchema,
+  DesktopBackendStartupError,
+  type BackendStartupStatus
+} from './backend-startup'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { access, mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -72,13 +81,133 @@ export async function discoverDesktopBackend(
   )
     return undefined
   if (owner.host !== 'node' || !owner.desktop)
-    throw new Error(
+    throw new DesktopRuntimeStartupError(
+      {
+        reason: 'legacy-host',
+        desktopVersion: version,
+        pid: owner.pid,
+        canStop: false,
+        canRecover: false
+      },
       'An older desktop runtime owns this data folder. Quit that application before opening this version.'
     )
-  if (owner.desktop.version !== version)
-    throw new Error(
-      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.'
+  if (owner.desktop.version !== version) {
+    const startup = z
+      .object({
+        desktopGeneration: z.literal(owner.desktop.generation),
+        startupOptions: runtimeStartupOptionsSchema
+      })
+      .safeParse(proof)
+    const startupOptions =
+      startup.success && startup.data.startupOptions.configRoot === configRoot
+        ? startup.data.startupOptions
+        : undefined
+    const legacy = !startupOptions
+    const issue = {
+      reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
+      desktopVersion: version,
+      runtimeVersion: owner.desktop.version,
+      pid: owner.pid,
+      canStop: true,
+      canRecover: legacy
+    }
+    throw new DesktopRuntimeStartupError(
+      issue,
+      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
+      async () => {
+        // An older service may have exited while its confirmation was open. Confirm the
+        // released directory before continuing; never signal a PID read from the state file.
+        if (legacy && !isRuntimeProcessAlive(owner.pid)) {
+          const lease = await waitForRuntimeStopped({
+            configRoot,
+            generation: owner.desktop!.generation,
+            pid: owner.pid,
+            requireCleanExit: false
+          })
+          lease.release()
+          return
+        }
+        // A button may remain open for minutes: authenticate the exact owner again before acting.
+        const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          },
+          signal: AbortSignal.timeout(1500),
+          redirect: 'error'
+        })
+        const current = response.ok ? await response.json() : undefined
+        if (current?.pid !== owner.pid || current?.generation !== owner.generation)
+          throw new DesktopRuntimeStartupError(
+            {
+              ...issue,
+              reason: legacy ? 'legacy-service' : 'startup-recovery-required',
+              canStop: false
+            },
+            'The running server changed. Check again to verify its identity.',
+            undefined,
+            legacy
+              ? async () => {
+                  await discoverDesktopBackend(configRoot, version)
+                }
+              : undefined
+          )
+        if (JSON.stringify(current.startupOptions) !== JSON.stringify(startupOptions))
+          throw new DesktopRuntimeStartupError(
+            {
+              ...issue,
+              reason: legacy ? 'legacy-service' : 'startup-recovery-required',
+              canStop: false
+            },
+            'The server configuration changed. Check again to verify it.',
+            undefined,
+            legacy
+              ? async () => {
+                  await discoverDesktopBackend(configRoot, version)
+                }
+              : undefined
+          )
+        // The owner endpoint is distinct from the Web service port. Start Web through its
+        // authenticated control endpoint, then bind shutdown to that process's service record.
+        const started = await fetch(`http://127.0.0.1:${owner.port}/web/start?port=0`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          },
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error'
+        })
+        if (!started.ok) throw new Error('The server shutdown endpoint is unavailable.')
+        const service = z
+          .object({ pid: z.literal(owner.pid), port: z.number().int().min(1).max(65535) })
+          .parse(JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8')))
+        const stopped = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error'
+        })
+        if (!stopped.ok) throw new Error('The server did not accept the shutdown request.')
+        await stopped.arrayBuffer()
+        const lease = await waitForRuntimeStopped({
+          configRoot,
+          generation: owner.desktop!.generation,
+          pid: owner.pid,
+          // Legacy CLI shutdown predates clean-exit receipts. This user-confirmed startup
+          // transition waits for process exit and directory release, not installation authority.
+          requireCleanExit: !legacy
+        })
+        lease.release()
+      },
+      legacy
+        ? async () => {
+            await discoverDesktopBackend(configRoot, version)
+          }
+        : undefined,
+      startupOptions
     )
+  }
   return owner.desktop
 }
 
@@ -114,6 +243,7 @@ export async function startOrAttachDesktopBackend(options: {
   packaged: boolean
   args?: readonly string[]
   timeoutMs?: number
+  onStatus?: (status: BackendStartupStatus & { elapsedMs: number }) => void
 }): Promise<DesktopBackendLaunch> {
   const existing = await discoverDesktopBackend(options.configRoot, options.version)
   if (existing) return { endpoint: existing }
@@ -126,14 +256,29 @@ export async function startOrAttachDesktopBackend(options: {
     0o600
   )
   // The explicit config root must not make Node select a different credential profile.
+  const attemptId = randomUUID()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPEN_SCIENCE_CONFIG_ROOT: options.configRoot,
-    OPEN_SCIENCE_USER_DATA: options.profilePath
+    OPEN_SCIENCE_USER_DATA: options.profilePath,
+    OPEN_SCIENCE_STARTUP_ATTEMPT: attemptId
   }
   delete env.ELECTRON_RUN_AS_NODE
   let child: ChildProcess
   let failure: Error | undefined
+  let status: BackendStartupStatus | undefined
+  const startedAt = Date.now()
+  const onMessage = (message: unknown): void => {
+    const result = backendStartupStatusSchema.safeParse(message)
+    if (result.success && result.data.attemptId === attemptId && status?.kind !== 'failed') {
+      status = result.data
+      try {
+        options.onStatus?.({ ...status, elapsedMs: Date.now() - startedAt })
+      } catch {
+        /* Diagnostics must not change the launch outcome. */
+      }
+    }
+  }
   const onError = (error: Error): void => {
     failure = error
   }
@@ -151,34 +296,43 @@ export async function startOrAttachDesktopBackend(options: {
         env,
         detached: true,
         windowsHide: true,
-        stdio: ['ignore', file.fd, file.fd]
+        stdio: ['ignore', file.fd, file.fd, 'ipc']
       }
     )
     // Spawn errors can fire before the asynchronous descriptor close settles.
     child.on('error', onError)
+    child.on('message', onMessage)
   } finally {
     await file.close()
   }
   child.unref()
-  const deadline = Date.now() + (options.timeoutMs ?? 60_000)
+  child.channel?.unref()
+  const deadline = startedAt + (options.timeoutMs ?? 60_000)
   try {
     while (Date.now() < deadline) {
       if (failure) throw failure
-      if (
-        child.signalCode ||
-        (child.exitCode !== null && child.exitCode !== 0 && child.exitCode !== 75)
-      )
-        throw new Error(
-          `Node backend exited during startup (${child.signalCode ?? child.exitCode}). See ${logs}.`
+      if (child.signalCode || (child.exitCode !== null && child.exitCode !== 75))
+        throw new DesktopBackendStartupError(
+          `Node backend exited during startup (${child.signalCode ?? child.exitCode}). See ${logs}.`,
+          status?.stage ?? 'bootstrap',
+          true,
+          logs,
+          status
         )
       const endpoint = await discoverDesktopBackend(options.configRoot, options.version)
-      if (endpoint) return { endpoint, startedProcess: child }
+      if (endpoint && status?.kind !== 'failed') return { endpoint, startedProcess: child }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
-    throw new Error(
-      `Node backend startup timed out. See ${logs}. A surviving server is not terminated automatically.`
+    throw new DesktopBackendStartupError(
+      `Node backend startup timed out. See ${logs}. A surviving server is not terminated automatically.`,
+      status?.stage ?? 'bootstrap',
+      false,
+      logs,
+      status
     )
   } finally {
+    child.off('message', onMessage)
+    if (child.connected) child.disconnect()
     child.off('error', onError)
   }
 }

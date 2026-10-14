@@ -1,10 +1,4 @@
 import {
-  reportWorkspaceOperationError,
-  clearWorkspaceOperationError
-} from './workspace-operation-error'
-import { isRuntimeWriter } from './runtime-writer-client'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
-import {
   createContext,
   createElement,
   useCallback,
@@ -17,15 +11,17 @@ import {
   type ReactElement
 } from 'react'
 import {
-  type AcpContextUsage,
-  type AcpPermissionGrant,
-  type AcpPermissionRequest,
   type AcpPermissionResponse,
   type AcpSaveAsSkillRequest,
   type AcpSteerFollowUpRequest,
   type AcpSteerFollowUpResult,
   type DelegatedWorkUnavailableReason
 } from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest
+} from '../../../../shared/acp-permission-contract'
+import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId,
@@ -35,14 +31,32 @@ import {
   isSessionSizeLimitError,
   type MessagePdfContextSnapshot
 } from '../../../../shared/session-persistence'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
+import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
-  usePreviewWorkbenchStore,
   pendingPdfContextSelections,
+  usePreviewWorkbenchStore,
   type PendingPdfContext
 } from '../../stores/preview-workbench-store'
+import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
+import { isRuntimeWriter } from './runtime-writer-client'
 import { useAcpRuntime } from './useAcpRuntime'
+import {
+  clearWorkspaceOperationError,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
+import {
+  createPermissionResponseAttemptOwner,
+  pendingWorkspacePermissions
+} from './workspace-permission-response-attempt-owner'
+import {
+  resendEditedWorkspaceMessage,
+  sendWorkspaceMessage,
+  type ResendEditedMessageInput,
+  type SendWorkspaceMessageIntent,
+  type SendWorkspaceMessageResult
+} from './workspace-runtime-command-owner'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -59,29 +73,17 @@ import {
   useWorkspaceRuntimeEventIngest
 } from './workspace-runtime-event-owner'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
+import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 import {
-  resendEditedWorkspaceMessage,
-  sendWorkspaceMessage,
-  type ResendEditedMessageInput,
-  type SendWorkspaceMessageIntent,
-  type SendWorkspaceMessageResult
-} from './workspace-runtime-command-owner'
+  useWorkspaceRuntimeSelectionOwner,
+  type WorkspaceSessionRuntimeSelection
+} from './workspace-runtime-selection-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import {
   createSubagentTranscriptOwner,
   useSubagentRuntimePresentation,
   type SubagentTranscriptOwner
 } from './workspace-subagent-runtime-presentation'
-import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
-import {
-  createPermissionResponseAttemptOwner,
-  pendingWorkspacePermissions
-} from './workspace-permission-response-attempt-owner'
-import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
-import {
-  useWorkspaceRuntimeSelectionOwner,
-  type WorkspaceSessionRuntimeSelection
-} from './workspace-runtime-selection-owner'
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
@@ -668,18 +670,18 @@ const useWorkspaceSubagentRuntimeSession = (
 }
 
 export {
-  WorkspaceAgentRuntimeProvider,
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
+  pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,
-  pendingWorkspacePermissions,
   syncWorkspaceContextUsage,
   syncWorkspaceInteractionState,
   syncWorkspaceInteractionStateFromSnapshot,
+  useWorkspaceAgentRuntime,
   useWorkspaceSubagentRuntimeSession,
-  useWorkspaceAgentRuntime
+  WorkspaceAgentRuntimeProvider
 }
 export type { WorkspaceAgentRuntime, WorkspaceSessionRuntimeSelection }
 

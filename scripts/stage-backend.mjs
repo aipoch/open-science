@@ -49,7 +49,7 @@ if (process.platform === 'win32') {
   )
 }
 for (const file of await readdir(join(root, 'packages/open-science'))) {
-  if (/\.(?:mjs|d\.ts|d\.mts)$/.test(file) && !file.includes('.test.'))
+  if (/\.(?:mjs|cjs|d\.ts|d\.mts|d\.cts)$/.test(file) && !file.includes('.test.'))
     await cp(join(root, 'packages/open-science', file), join(stage, file))
 }
 await cp(join(root, 'LICENSE'), join(stage, 'LICENSE'))

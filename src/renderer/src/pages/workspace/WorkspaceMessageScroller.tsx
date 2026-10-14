@@ -11,26 +11,26 @@ import {
   useMessageScroller,
   useMessageScrollerScrollable
 } from '@/components/ui/message-scroller'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import {
-  usePreviewWorkbenchStore,
   createSessionReviewerPreviewItem,
-  createSessionSubagentsPreviewItem
+  createSessionSubagentsPreviewItem,
+  usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import {
-  selectProjectSessionReviews,
   selectProjectSessionReviewLoadError,
+  selectProjectSessionReviews,
   selectReviewRunsForMessage,
   useReviewStore
 } from '@/stores/review-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import { useNavigationStore } from '@/stores/navigation-store'
 import {
   useSearchMessageFocusStore,
   type SearchMessageFocus
 } from '@/stores/search-message-focus-store'
-import { findMessageTarget } from './workspace-run-marks'
-import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { ArrowDownIcon } from 'lucide-react'
 import {
   Fragment,
   memo,
@@ -43,10 +43,22 @@ import {
   type ComponentProps,
   type ReactNode
 } from 'react'
-import { ArrowDownIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+import { findMessageTarget } from './workspace-run-marks'
 
+import { CompletedJobCard } from '@/components/CompletedJobCard'
+import { JobDetailModal } from '@/components/JobDetailModal'
+import { extractJobIdFromActivity } from '@/components/job-binding-utils'
+import { MessageScrollerItem } from '@/components/ui/message-scroller'
+import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import type { JobSummary } from '../../../../shared/compute'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
+import { resolveLocalPath } from '../../../../shared/local-fs'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
   createPreviewFileItemFromArtifact,
@@ -55,77 +67,65 @@ import {
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import { createPreviewRequestScope } from './previews/preview-file-reader'
-import { resolveLocalPath } from '../../../../shared/local-fs'
-import { resolveProjectId } from '../../../../shared/project-scope'
-import {
-  resolveActiveConversationActivities,
-  resolveActiveConversationMessages
-} from '../../../../shared/conversation-graph'
-import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
-import type { JobSummary } from '../../../../shared/compute'
-import { CompletedJobCard } from '@/components/CompletedJobCard'
-import { JobDetailModal } from '@/components/JobDetailModal'
-import { extractJobIdFromActivity } from '@/components/job-binding-utils'
-import { MessageScrollerItem } from '@/components/ui/message-scroller'
 
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
-import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
-import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
-import { WorkspaceSessionConfigChangeRow } from './WorkspaceSessionConfigChangeRow'
-import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
-import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
-import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
+import { useSessionJobStore } from '@/stores/session-job-store'
+import type { PendingElicitationRequest } from '../../../../shared/acp'
+import type {
+  Annotation,
+  SessionTextAnnotationItemType,
+  TextAnnotation
+} from '../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../shared/annotations'
+import type {
+  HandoffLifecycleEventSource,
+  HandoffRetryRequest
+} from '../../../../shared/handoff-lifecycle'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
+import { isHumanUserMessage } from '../../../../shared/session-persistence'
 import { EmptyConversationBanner } from './EmptyConversationBanner'
-import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
-import { WorkspaceRunMarks } from './WorkspaceRunMarks'
+import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
+import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
+import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
+import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
+import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import type {
   ArtifactMentionPart,
   EditAnnotationTarget,
   LibraryMentionScopeRequest
 } from './WorkspaceMessageItem'
-import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
-import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
-import {
-  createConversationItems,
-  hidesBehindPresentationBarrier
-} from './workspace-conversation-items'
-import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
-import {
-  createWorkspaceConversationTimeline,
-  resolveForkBoundaryItemId
-} from './workspace-conversation-timeline'
-import { useSessionJobStore } from '@/stores/session-job-store'
-import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
-import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
-import type { SendEditedMessage } from './workspace-edited-message'
-import type {
-  Annotation,
-  AnnotationValidationError,
-  SessionTextAnnotationItemType,
-  TextAnnotation
-} from '../../../../shared/annotations'
-import type {
-  HandoffLifecycleEventSource,
-  HandoffRetryRequest
-} from '../../../../shared/handoff-lifecycle'
-import type { PendingElicitationRequest } from '../../../../shared/acp'
-import { isHumanUserMessage } from '../../../../shared/session-persistence'
-import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
-import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
-import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
-import type { NotebookSessionReference } from '../../../../shared/notebook'
-import { useNotebookRunsById } from './use-notebook-runs-by-id'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
+import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
+import { WorkspaceRunMarks } from './WorkspaceRunMarks'
+import { WorkspaceSessionConfigChangeRow } from './WorkspaceSessionConfigChangeRow'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
-import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
-import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
-import { useTranscriptWindow } from './use-transcript-window'
+import type { AnnotationPort } from './annotations/annotation-port'
 import {
   subscribeAnnotationRevealPreparation,
   subscribeBookmarkRevealPreparation
 } from './annotations/annotation-reveal'
-import type { AnnotationPort } from './annotations/annotation-port'
+import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
+import { useNotebookRunsById } from './use-notebook-runs-by-id'
+import { useTranscriptWindow } from './use-transcript-window'
+import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
+import {
+  createConversationItems,
+  hidesBehindPresentationBarrier
+} from './workspace-conversation-items'
+import {
+  createWorkspaceConversationTimeline,
+  resolveForkBoundaryItemId
+} from './workspace-conversation-timeline'
+import type { SendEditedMessage } from './workspace-edited-message'
+import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
+import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
+import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 
 // Replacing a bounded tail can keep the same row count. Tell the existing scroller to follow
 // after that replacement commits; its normal resize/streaming behavior remains authoritative.
@@ -1723,7 +1723,7 @@ const WorkspaceMessageScrollerImpl = ({
                 if (
                   presentationBarrierIndex >= 0 &&
                   itemIndex > presentationBarrierIndex &&
-                  hidesBehindPresentationBarrier(item.type)
+                  hidesBehindPresentationBarrier(item)
                 ) {
                   return null
                 }

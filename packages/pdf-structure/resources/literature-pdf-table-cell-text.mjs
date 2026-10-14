@@ -193,6 +193,180 @@ export function rejectNativeLetterFractionScriptMetadata(cells, rules) {
   return rejected
 }
 
+// A closed native fraction bar can prove that a descending letter is a
+// denominator, even when its PDF text box overlaps the numerator baseline.
+// Keep this deliberately narrow: only reconstruct lists of scientific-notation
+// values over a letter or integer denominator, with a complete centered bar.
+export function recoverNativeStackedScientificFractions(items, rules, runs) {
+  if (!Array.isArray(items) || !Array.isArray(rules) || !Array.isArray(runs)) return
+  const proofs = []
+  for (const [x1, y1, x2, y2] of rules) {
+    if (y1 !== y2 || !(x2 > x1)) continue
+    const above = items
+        .filter(
+          (item) =>
+            item.horizontal &&
+            Number.isFinite(item.baseline) &&
+            item.baseline < y1 &&
+            item.rect?.[0] >= x1 - item.height * 0.1 &&
+            item.rect?.[2] <= x2 + item.height * 0.1 &&
+            y1 - item.baseline <= item.height * 0.5
+        )
+        .sort((a, b) => a.rect[0] - b.rect[0]),
+      below = items.filter(
+        (item) =>
+          item.horizontal &&
+          /^(?:\p{L}|\d{2,})$/u.test(item.text.trim()) &&
+          Number.isFinite(item.baseline) &&
+          item.baseline > y1 &&
+          Math.abs((item.rect[0] + item.rect[2] - x1 - x2) / 2) <= item.height * 0.2 &&
+          item.baseline - y1 >= item.height * 0.5 &&
+          item.baseline - y1 <= item.height * 1.4
+      )
+    if (
+      above.length < 4 ||
+      below.length !== 1 ||
+      !/^\d+e[−-]\d+$/u.test(above.map((item) => item.text.trim()).join('')) ||
+      Math.abs(above[0].rect[0] - x1) > above[0].height * 0.1 ||
+      Math.abs(above.at(-1).rect[2] - x2) > above.at(-1).height * 0.1 ||
+      above.some((item) => Math.abs(item.baseline - above[0].baseline) > item.height * 0.05)
+    )
+      continue
+    const numerator = above.map((item) => item.text.trim()).join(''),
+      denominator = below[0].text.trim()
+    proofs.push({
+      malformed: [
+        ...new Set([
+          /^\p{L}$/u.test(denominator)
+            ? numerator.replace(/^(\d+e)([−-]\d+)$/u, `$1${denominator}$2`)
+            : `${numerator}${denominator}`,
+          `${numerator}${denominator}`
+        ])
+      ],
+      corrected: `${numerator}/${denominator}`
+    })
+  }
+  if (!proofs.length) return
+  let text = runs
+    .map((run) => run.text)
+    .join('')
+    .replace(/\s+/gu, '')
+  if (
+    proofs.length !==
+    (text.match(/(?:\d+e\p{L}[−-]\d+|\d+e[−-]\d+(?:\p{L}|\d{2,}))/gu) ?? []).length
+  )
+    return
+  let unproved = text
+  for (const { malformed, corrected } of proofs) {
+    const matches = malformed.filter((candidate) => {
+      const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return (text.match(new RegExp(escaped, 'gu'))?.length ?? 0) === 1
+    })
+    if (matches.length !== 1) return
+    unproved = unproved.replace(matches[0], '')
+    text = text.replace(matches[0], corrected)
+  }
+  // Replacing all runs would erase spacing and script metadata in unrelated
+  // prose or expressions. Only punctuation may remain outside proved values.
+  if (!/^[[\](),;]*$/u.test(unproved)) return
+  // Native baseline positions prove the literal numerator/denominator order.
+  // They do not prove that the exponent belongs in superscript: PDF fonts may
+  // render the entire scientific-notation token at a smaller size instead.
+  return [{ text }]
+}
+
+// A short fraction bar can be absent from the table-rule projection while its
+// exact native paint remains available. Preserve a complete reciprocal of an
+// indexed letter, including the independently positioned denominator subscript.
+export function recoverNativeIndexedReciprocal(items, paintBounds, runs) {
+  if (!Array.isArray(items) || !(paintBounds instanceof Map) || !Array.isArray(runs)) return
+  if (
+    items.length < 3 ||
+    items.length > 4 ||
+    items.some(
+      (item) =>
+        !item.horizontal ||
+        !item.rect?.every(Number.isFinite) ||
+        !(item.height > 0) ||
+        !Number.isFinite(item.baseline) ||
+        item.sourceItem?.text !== item.text
+    )
+  )
+    return
+  const ordered = [...items].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  const [numerator, denominator, ...scripts] = ordered
+  const h = denominator.height
+  if (
+    numerator.text !== '1' ||
+    !/^\p{L}$/u.test(denominator.text) ||
+    Math.abs(numerator.height - h) > h * 0.1 ||
+    denominator.baseline - numerator.baseline < h * 0.8 ||
+    denominator.baseline - numerator.baseline > h * 1.4 ||
+    scripts.some(
+      (item) =>
+        item.height < h * 0.6 ||
+        item.height > h * 0.85 ||
+        item.baseline - denominator.baseline < h * 0.1 ||
+        item.baseline - denominator.baseline > h * 0.35
+    ) ||
+    scripts.some((item) => Math.abs(item.baseline - scripts[0].baseline) > h * 0.05)
+  )
+    return
+  scripts.sort((a, b) => a.rect[0] - b.rect[0])
+  const subscript = scripts.map((item) => item.text).join('')
+  if (!/^\p{L},\d$/u.test(subscript)) return
+  const bottom = [denominator, ...scripts]
+  if (
+    bottom.some(
+      (item, index) => index && Math.abs(item.rect[0] - bottom[index - 1].rect[2]) > h * 0.1
+    )
+  )
+    return
+  const left = denominator.rect[0],
+    right = scripts.at(-1).rect[2]
+  if (
+    numerator.rect[0] < left - h * 0.1 ||
+    numerator.rect[2] > right + h * 0.1 ||
+    Math.abs((numerator.rect[0] + numerator.rect[2] - left - right) / 2) > h * 0.15
+  )
+    return
+  const bars = [...paintBounds].filter(([key, paint]) => {
+    const rule = key.split(',').map(Number)
+    return (
+      rule.length === 4 &&
+      rule.every(Number.isFinite) &&
+      rule[1] === rule[3] &&
+      Math.abs(rule[0] - left) < h * 0.1 &&
+      Math.abs(rule[2] - right) < h * 0.1 &&
+      rule[1] - numerator.baseline > h * 0.05 &&
+      rule[1] - numerator.baseline < h * 0.5 &&
+      denominator.baseline - rule[1] > h * 0.5 &&
+      denominator.baseline - rule[1] < h * 1.1 &&
+      Array.isArray(paint) &&
+      paint.length === 4 &&
+      paint.every(Number.isFinite) &&
+      paint[0] <= rule[0] &&
+      paint[2] >= rule[2] &&
+      paint[2] - paint[0] < right - left + h * 0.2 &&
+      paint[1] < rule[1] &&
+      paint[3] > rule[1] &&
+      paint[3] - paint[1] < h * 0.15
+    )
+  })
+  if (
+    bars.length !== 1 ||
+    runs
+      .map((run) => run.text)
+      .join('')
+      .replace(/\s+/gu, '') !== `1${denominator.text}${subscript}`
+  )
+    return
+  return [
+    { text: `1/${denominator.text}`, position: 'normal' },
+    { text: subscript, position: 'subscript' }
+  ]
+}
+
 export function reconcileNativeTieredHeader({
   cells,
   rows,
@@ -1740,6 +1914,172 @@ export function recoverUnassignedStubSpans({
     .map((row, rowIndex) => ({ row, rowIndex }))
     .filter(({ rowIndex }) => !headerRows.includes(rowIndex))
   let recovered = 0
+  const owns = (cell) => items.filter((item) => assignments.get(item) === cell)
+  // A centered model stub can be snapped to a neighboring row, and an earlier
+  // bad span can cover the correct pair's blank stub cells. Prove every target
+  // first, then release only overlapping spans whose own labels have another
+  // complete source-backed target.
+  const pairedTargets = new Map()
+  for (const item of items) {
+    const current = assignments.get(item)
+    if (
+      !current ||
+      current.column !== 0 ||
+      ![1, 2].includes(current.rowSpan) ||
+      !item.horizontal ||
+      !looksLikeStub(item.text)
+    )
+      continue
+    const possible = []
+    for (let rowIndex = 0; rowIndex + 1 < rows.length; rowIndex++) {
+      if (headerRows.includes(rowIndex) || headerRows.includes(rowIndex + 1)) continue
+      const metrics = [
+        cells.find((cell) => cell.row === rowIndex && cell.column === 1 && cell.rowSpan === 1),
+        cells.find((cell) => cell.row === rowIndex + 1 && cell.column === 1 && cell.rowSpan === 1)
+      ]
+      if (metrics.some((cell) => !cell || cell.colSpan !== 1)) continue
+      const metricItems = metrics.map((cell) => {
+        const labels = owns(cell).filter((source) => /^(?:Acc%|Pct)$/u.test(source.text.trim()))
+        return labels.length === 1 ? labels[0] : undefined
+      })
+      if (
+        metricItems.some((source) => !source?.horizontal || !Number.isFinite(source.baseline)) ||
+        new Set(metricItems.map((source) => source.text.trim())).size !== 2
+      )
+        continue
+      const valueRows = [rowIndex, rowIndex + 1].map((row) =>
+        cells.filter((cell) => cell.row === row && cell.column > 1 && cell.rowSpan === 1)
+      )
+      if (
+        valueRows.some(
+          (valueCells) => valueCells.length < 2 || valueCells.some((cell) => !owns(cell).length)
+        ) ||
+        valueRows[0].length !== valueRows[1].length ||
+        rows[rowIndex].rect[3] > rows[rowIndex + 1].rect[1] + item.height * 0.5
+      )
+        continue
+      const [firstMetric, secondMetric] = metricItems,
+        midpoint = (firstMetric.baseline + secondMetric.baseline) / 2,
+        tolerance = Math.max(item.height, firstMetric.height, secondMetric.height) * 0.2
+      if (
+        Math.abs(item.baseline - midpoint) > tolerance ||
+        item.rect[0] < current.rect[0] - item.height ||
+        item.rect[2] > current.rect[2] + item.height
+      )
+        continue
+      possible.push({ rowIndex, midpointDistance: Math.abs(item.baseline - midpoint) })
+    }
+    possible.sort((a, b) => a.midpointDistance - b.midpointDistance)
+    if (
+      possible.length &&
+      (!possible[1] ||
+        possible[1].midpointDistance - possible[0].midpointDistance >= item.height * 0.1)
+    )
+      pairedTargets.set(item, possible[0].rowIndex)
+  }
+  const singleTargets = new Map()
+  for (const item of items) {
+    const current = assignments.get(item)
+    if (
+      !current ||
+      current.column !== 0 ||
+      current.rowSpan !== 2 ||
+      !item.horizontal ||
+      !looksLikeStub(item.text)
+    )
+      continue
+    const possible = rows.flatMap((row, rowIndex) => {
+      if (headerRows.includes(rowIndex)) return []
+      const metric = cells.find(
+          (cell) => cell.row === rowIndex && cell.column === 1 && cell.rowSpan === 1
+        ),
+        source =
+          metric && owns(metric).find((entry) => /^(?:Avg%|Avg Acc%)$/u.test(entry.text.trim())),
+        values = cells.filter(
+          (cell) => cell.row === rowIndex && cell.column > 1 && cell.rowSpan === 1
+        )
+      return source &&
+        source.horizontal &&
+        Math.abs(source.baseline - item.baseline) <= Math.max(source.height, item.height) * 0.1 &&
+        values.length >= 2 &&
+        values.every((cell) => owns(cell).length)
+        ? [rowIndex]
+        : []
+    })
+    if (possible.length === 1) singleTargets.set(item, possible[0])
+  }
+  const targetCounts = new Map()
+  for (const rowIndex of pairedTargets.values())
+    targetCounts.set(rowIndex, (targetCounts.get(rowIndex) ?? 0) + 1)
+  for (const [item, rowIndex] of pairedTargets) {
+    if (targetCounts.get(rowIndex) !== 1) continue
+    const current = assignments.get(item)
+    if (current.row === rowIndex && current.rowSpan === 2) continue
+    const blockers = cells.filter(
+        (cell) => cell.column === 0 && cell.row < rowIndex + 2 && cell.row + cell.rowSpan > rowIndex
+      ),
+      displaced = blockers.flatMap(owns).filter((other) => other !== item)
+    if (displaced.some((other) => !pairedTargets.has(other) && !singleTargets.has(other))) continue
+    const base = blockers[0] ?? current
+    for (const cell of blockers) {
+      const index = cells.indexOf(cell)
+      if (index >= 0) cells.splice(index, 1)
+    }
+    const oldIndex = cells.indexOf(current)
+    if (oldIndex >= 0 && current.rowSpan > 1) cells.splice(oldIndex, 1)
+    const merged = {
+      ...base,
+      row: rowIndex,
+      rowSpan: 2,
+      rect: [base.rect[0], rows[rowIndex].rect[1], base.rect[2], rows[rowIndex + 1].rect[3]],
+      origin: 'source-centered-paired-stub',
+      items: []
+    }
+    cells.push(merged)
+    assignments.set(item, merged)
+    repairs.push('centered-paired-stub-reanchored')
+    recovered++
+  }
+  // A centered single-record label can also be swallowed by a neighboring
+  // erroneous two-row span. An exact baseline match to the Avg% source label
+  // and a complete numeric row are required to release it.
+  for (const item of items) {
+    const current = assignments.get(item)
+    if (
+      !current ||
+      current.column !== 0 ||
+      current.rowSpan !== 2 ||
+      !item.horizontal ||
+      !looksLikeStub(item.text)
+    )
+      continue
+    const rowIndex = singleTargets.get(item)
+    if (rowIndex === undefined) continue
+    const blockers = cells.filter(
+        (cell) => cell.column === 0 && cell.row <= rowIndex && cell.row + cell.rowSpan > rowIndex
+      ),
+      displaced = blockers.flatMap(owns).filter((other) => other !== item)
+    if (displaced.some((other) => !pairedTargets.has(other) && !singleTargets.has(other))) continue
+    const base = blockers[0] ?? current
+    for (const cell of blockers) {
+      const index = cells.indexOf(cell)
+      if (index >= 0) cells.splice(index, 1)
+    }
+    const oldIndex = cells.indexOf(current)
+    if (oldIndex >= 0) cells.splice(oldIndex, 1)
+    const rowCell = {
+      ...base,
+      row: rowIndex,
+      rowSpan: 1,
+      rect: [base.rect[0], rows[rowIndex].rect[1], base.rect[2], rows[rowIndex].rect[3]],
+      origin: 'source-centered-record-stub',
+      items: []
+    }
+    cells.push(rowCell)
+    assignments.set(item, rowCell)
+    repairs.push('centered-record-stub-reanchored')
+    recovered++
+  }
   for (const item of items) {
     if (assignments.has(item) || !item.horizontal || !looksLikeStub(item.text)) continue
     const candidates = bodyRows
@@ -2249,6 +2589,136 @@ export function recoverUnassignedCompleteSourceRows({
     repairs.push('unassigned-complete-source-row-recovered')
   }
   return recovered
+}
+
+// A repeated metrics table can lose the first aggregate record while retaining
+// every later group. Recover only the proved eight-lane shape: one unassigned
+// baseline contains `all`, two dash placeholders and four numeric values, it
+// sits between the printed header and the first owned body row, and at least
+// two later aggregate rows witness the same layout. Insert one existing-source
+// row; ordinary prose and partial records remain unassigned.
+export function recoverUnassignedAggregateRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs
+}) {
+  if (columnRects.length !== 8 || !headerRows?.length || rows.length <= Math.max(...headerRows) + 1)
+    return 0
+  const heights = items
+    .filter((item) => item.horizontal && Number.isFinite(item.height) && item.height > 0)
+    .map((item) => item.height)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return 0
+  const firstBody = Math.max(...headerRows) + 1
+  const rowCells = (row) =>
+    cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+  const owns = (cell) => [...assignments.values()].some((owner) => owner === cell)
+  const cellValue = (cell) => {
+    if (typeof cell.text === 'string' && cell.text.trim()) return cell.text.trim()
+    return [...assignments]
+      .filter(([, owner]) => owner === cell)
+      .map(([item]) => item.text?.trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim()
+  }
+  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?(?:%|[A-Za-z]{1,3})?$/u.test(text.trim())
+  const aggregateRows = rows
+    .map((row, rowIndex) => ({ row, rowIndex, cells: rowCells(rowIndex) }))
+    .filter(({ rowIndex, cells: candidate }) => {
+      if (rowIndex < firstBody || candidate.length !== 8) return false
+      if (
+        candidate.some(
+          (cell, column) => cell.column !== column || cell.rowSpan !== 1 || cell.colSpan !== 1
+        )
+      )
+        return false
+      return (
+        cellValue(candidate[1]).toLowerCase() === 'all' &&
+        cellValue(candidate[2]) === '-' &&
+        cellValue(candidate[3]) === '-' &&
+        candidate.slice(4).every((cell) => numeric(cellValue(cell))) &&
+        candidate.slice(1).every(owns)
+      )
+    })
+  if (aggregateRows.length < 2) return 0
+  if (aggregateRows.some(({ rowIndex }, index) => rowIndex !== firstBody + 4 + index * 5)) return 0
+  const unassignedItems = items.filter(
+    (item) => !assignments.has(item) && item.horizontal && item.text?.trim()
+  )
+  if (unassignedItems.length !== 7) return 0
+  const sourceGroups = []
+  for (const item of unassignedItems.sort(
+    (a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]
+  )) {
+    const group = sourceGroups.at(-1)
+    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.35) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+    } else sourceGroups.push({ baseline: item.baseline, items: [item] })
+  }
+  const target = sourceGroups.find((group) => {
+    if (group.items.length !== 7) return false
+    const source = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
+    const columns = source.map((item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
+    })
+    if (columns.join(',') !== '1,2,3,4,5,6,7') return false
+    if (source[0].text.trim().toLowerCase() !== 'all') return false
+    if (source.slice(1, 3).some((item) => item.text.trim() !== '-')) return false
+    if (!source.slice(3).every((item) => numeric(item.text))) return false
+    const firstRowItems = items.filter((item) => assignments.get(item)?.row === firstBody)
+    if (!firstRowItems.length) return false
+    const firstTop = Math.min(...firstRowItems.map((item) => item.rect[1]))
+    const lastHeaderItems = items.filter(
+      (item) => assignments.get(item)?.row === Math.max(...headerRows)
+    )
+    if (!lastHeaderItems.length) return false
+    const headerBottom = Math.max(...lastHeaderItems.map((item) => item.rect[3]))
+    return group.baseline > headerBottom && group.baseline < firstTop
+  })
+  if (!target) return 0
+  const source = target.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
+  const nextRow = rows[firstBody]
+  const previousRow = rows[firstBody - 1]
+  const top = Math.max(previousRow.rect[3] + 0.25, Math.min(...source.map((item) => item.rect[1])))
+  const bottom = Math.min(nextRow.rect[1] - 0.25, Math.max(...source.map((item) => item.rect[3])))
+  if (!(bottom > top)) return 0
+  previousRow.rect[3] = top
+  nextRow.rect[1] = bottom
+  for (const cell of cells) {
+    if (cell.row >= firstBody) cell.row += 1
+    else if (cell.row + cell.rowSpan > firstBody) cell.rowSpan += 1
+    if (cell.row === firstBody - 1) cell.rect[3] = top
+    if (cell.row === firstBody + 1) cell.rect[1] = bottom
+  }
+  rows.splice(firstBody, 0, {
+    rect: [nextRow.rect[0], top, nextRow.rect[2], bottom],
+    origin: 'source-aggregate-row'
+  })
+  const inserted = columnRects.map((rect, column) => ({
+    row: firstBody,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [rect[0], top, rect[2], bottom],
+    origin: 'source-aggregate-row',
+    items: []
+  }))
+  cells.push(...inserted)
+  source.forEach((item, offset) => {
+    assignments.set(item, inserted[offset + 1])
+    ambiguousAssignments?.delete(item)
+  })
+  repairs.push('unassigned-aggregate-row-inserted')
+  return 1
 }
 
 // A captioned parameter grid can lose one complete baseline when the model
@@ -3388,6 +3858,53 @@ export function populateTableCellText({
   // Small raised/lowered fragments may straddle a predicted row boundary. Attach only to an
   // adjacent larger source token with an assigned cell in the same column, never by text content.
   const anchors = new Map()
+  // Some math fonts use a five-sixths em exponent. Its exact touching
+  // advance and unique already-owned base prove a script without changing
+  // the generic small-fragment threshold or moving it across a model cell.
+  const touchingRaisedDigits = new Map()
+  const validScriptBox = (item) =>
+    item?.horizontal &&
+    Number.isFinite(item.height) &&
+    item.height > 0 &&
+    Number.isFinite(item.baseline) &&
+    item.rect?.length === 4 &&
+    item.rect.every(Number.isFinite) &&
+    item.rect[2] > item.rect[0] &&
+    item.rect[3] > item.rect[1] &&
+    Math.abs(item.rect[3] - item.baseline) < 0.02 &&
+    Math.abs(item.rect[3] - item.rect[1] - item.height) < 0.02
+  for (const item of items) {
+    const cell = assignments.get(item)
+    if (!cell || !validScriptBox(item) || !/^\d+$/u.test(item.text)) continue
+    const candidates = items.filter(
+      (anchor) =>
+        anchor !== item &&
+        validScriptBox(anchor) &&
+        assignments.get(anchor) === cell &&
+        item.height >= anchor.height * 0.8 &&
+        item.height < anchor.height * 0.9 &&
+        anchor.baseline - item.baseline > anchor.height * 0.35 &&
+        anchor.baseline - item.baseline < anchor.height * 0.5 &&
+        Math.abs(item.rect[0] - anchor.rect[2]) < anchor.height * 0.02 &&
+        cell.rect?.length === 4 &&
+        cell.rect.every(Number.isFinite) &&
+        cell.rect[3] > cell.rect[1] &&
+        [item, anchor].every(
+          (i) => i.rect[0] >= cell.rect[0] && i.rect[2] <= cell.rect[2] && i.rect[3] <= bottom
+        ) &&
+        !rules.some(
+          (r) =>
+            r?.length !== 4 ||
+            !r.every(Number.isFinite) ||
+            (r[0] === r[2] &&
+              r[0] >= anchor.rect[2] - anchor.height * 0.02 &&
+              r[0] <= item.rect[0] + anchor.height * 0.02 &&
+              r[1] < anchor.baseline &&
+              r[3] > item.rect[1])
+        )
+    )
+    if (candidates.length === 1) touchingRaisedDigits.set(item, candidates[0])
+  }
   // A predicted boundary may cut through a header or a footnoted body label.
   // Tight native adjacency can override that boundary, never a source rule.
   const crossesScriptBoundary = (item, anchor, cell) =>
@@ -3478,6 +3995,7 @@ export function populateTableCellText({
           anchor.horizontal &&
           (isRaisedNoteMarker(item, anchor, cell) ||
             isRepeatedRaisedSymbol(item, anchor, cell) ||
+            touchingRaisedDigits.get(item) === anchor ||
             isAdjacentTableScript(item, anchor)) &&
           (item.rect[0] + item.rect[2]) / 2 >= cell.rect[0] &&
           ((item.rect[0] + item.rect[2]) / 2 <= cell.rect[2] ||
@@ -3833,6 +4351,16 @@ export function populateTableCellText({
     repairs
   })
   recoverUnassignedCompleteSourceRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs
+  })
+  recoverUnassignedAggregateRows({
     items,
     cells,
     rows,
@@ -4242,6 +4770,7 @@ export function populateTableCellText({
           anchor &&
             (item.height < anchor.height * 0.8 ||
               (/^[a-z]$/.test(item.text) && item.height < anchor.height * 0.9) ||
+              touchingRaisedDigits.get(item) === anchor ||
               raisedNoteMarkers.has(item))
             ? item.baseline < anchor.baseline
               ? 'superscript'
@@ -4274,6 +4803,8 @@ export function populateTableCellText({
         repairs.push('multi-glyph-script-recovered')
       }
     }
+    const stackedFractionRuns = recoverNativeStackedScientificFractions(cell.items, rules, runs)
+    if (stackedFractionRuns) runs.splice(0, runs.length, ...stackedFractionRuns)
     const stacked = recoverNativeStackedUncertainty(cell.items, rules, recordGrid?.equalFontStacks)
     if (stacked) runs.splice(0, runs.length, ...stacked.runs)
     const nativeMathRuns = recoverNativeClosedMathRuns(cell.items, runs, nativeMathOrder)

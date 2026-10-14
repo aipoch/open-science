@@ -1,4 +1,3 @@
-import { reportWorkspaceOperationError } from './workspace-operation-error'
 import {
   ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
@@ -6,11 +5,17 @@ import {
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
-  type AcpContextWindowSample,
-  type AcpModelCallUsage,
-  type AcpRuntimeEvent,
-  type AcpTurnTokenUsage
+  type AcpRuntimeEvent
 } from '../../../../shared/acp'
+import type {
+  AcpContextWindowSample,
+  AcpModelCallUsage,
+  AcpTurnTokenUsage
+} from '../../../../shared/acp-usage-contract'
+import {
+  getActivityGroupTitleFromToolEvent,
+  isActivityGroupToolEvent
+} from '../../../../shared/activity-groups'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
@@ -18,7 +23,9 @@ import {
   type ReconcilePendingArtifactsRequest,
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
+import { isClaudeApiResponseInterruption } from '../../../../shared/run-error-classification'
 import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
@@ -32,12 +39,6 @@ import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { useNavigationStore } from '../../stores/navigation-store'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
-import { isClaudeApiResponseInterruption } from '../../../../shared/run-error-classification'
-import {
-  getActivityGroupTitleFromToolEvent,
-  isActivityGroupToolEvent
-} from '../../../../shared/activity-groups'
 import {
   toPersistedSession,
   useSessionStore,
@@ -45,16 +46,16 @@ import {
   type ToolActivity
 } from '../../stores/session-store'
 import {
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
+import {
   recordAcpChunkEventReceived,
   recordAgentMessageChunkCommit,
   recordTextEventApplied,
   recordToolEventApplied
 } from '../streaming-metrics'
-import {
-  hydratePersistedSessionIfPresent,
-  loadPersistedSession,
-  saveSessionInOrder
-} from '../session-persistence/session-persistence'
 import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,
@@ -64,6 +65,7 @@ import {
   isRuntimeChatMessageEvent,
   type RuntimeChatMessageEvent
 } from './chat-events'
+import { reportWorkspaceOperationError } from './workspace-operation-error'
 
 // One seam for per-chunk metrics so the single and batch apply paths cannot drift apart.
 const recordAppliedTextChunk = (
@@ -1250,10 +1252,10 @@ export {
   applyWorkspaceRuntimeEvent,
   applyWorkspaceRuntimeEventBatch,
   assembleReviewRunRequest,
-  resumeAutoReviewsAfterQuitAbort,
-  suppressAutoReviewsForQuit,
-  suppressNextAutoReview,
   clearSuppressNextAutoReview,
+  resetDeferredArtifactEventsForTests,
+  resumeAutoReviewsAfterQuitAbort,
   scheduleCommittedRuntimeTranscriptAutoReview,
-  resetDeferredArtifactEventsForTests
+  suppressAutoReviewsForQuit,
+  suppressNextAutoReview
 }

@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import {
   CircleCheck,
   KeyRound,
@@ -7,16 +8,18 @@ import {
   PlugZap,
   RefreshCw,
   Route,
-  TriangleAlert,
   Trash2,
+  TriangleAlert,
   X
 } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
+import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
+import { defaultVendorModel, getOfficialVendor } from '../../../../shared/provider-registry'
 import type {
   AgentFrameworkId,
-  ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ProviderValidationFailure,
   ProviderView
@@ -36,13 +39,10 @@ import {
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
-import { defaultVendorModel, getOfficialVendor } from '../../../../shared/provider-registry'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import { ProviderKindIcon } from './provider-icons'
-import { providerKindKey } from './provider-form-value'
-import { SettingsIconAction } from './SettingsLayout'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
+import { providerKindKey } from './provider-form-value'
+import { ProviderKindIcon } from './provider-icons'
+import { SettingsIconAction } from './SettingsLayout'
 import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {

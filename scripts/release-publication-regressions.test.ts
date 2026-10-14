@@ -601,3 +601,192 @@ it.skipIf(process.platform === 'win32')(
     expect(readFileSync(join(channel, 'version.json'), 'utf8')).toBe(current)
   }
 )
+
+it.skipIf(process.platform === 'win32')(
+  'promotes a stable release whose asset set includes CLI distribution packages',
+  () => {
+    const { cwd, remote, env } = objectStore()
+    const dir = join(cwd, 'dist-assets')
+    mkdirSync(dir)
+    // Real script copies (not a symlink) so each script's `import.meta.url === argv[1]` CLI
+    // guard holds; js-yaml for the feed steps resolves through the repo's node_modules.
+    unlinkSync(join(cwd, 'scripts'))
+    mkdirSync(join(cwd, 'scripts'))
+    for (const name of [
+      'generate-version-manifest.mjs',
+      'release-artifact-validation.mjs',
+      'inject-feed-notes.mjs',
+      'publish-release-assets.mjs',
+      'publish-update-channel.mjs'
+    ]) {
+      copyFileSync(join(repo, 'scripts', name), join(cwd, 'scripts', name))
+    }
+    symlinkSync(join(repo, 'node_modules'), join(cwd, 'node_modules'), 'dir')
+    // The stock mock cannot stream a remote object to stdout; promote reads the current channel
+    // pointers back before overwriting them.
+    writeFileSync(
+      join(cwd, 'bin', 'aws'),
+      `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path');
+const args = process.argv.slice(2), root = process.env.TEST_OBJECT_STORE;
+fs.appendFileSync(path.join(root, 'operations.jsonl'), JSON.stringify(args) + '\\n');
+const local = p => p.startsWith('s3://') ? path.join(root, p.slice(5)) : p;
+if (args[0] === 's3api' && args[1] === 'head-object') {
+  const file = path.join(root, args[args.indexOf('--bucket') + 1], args[args.indexOf('--key') + 1]);
+  if (!fs.existsSync(file)) { console.error('An error occurred (404) when calling HeadObject: Not Found'); process.exit(1); }
+  process.exit(0);
+}
+if (args[0] !== 's3' || args[1] !== 'cp') throw Error('Unsupported AWS test operation');
+const source = local(args[2]), target = local(args[3]);
+if (target === '-') { process.stdout.write(fs.readFileSync(source)); process.exit(0); }
+fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, target);
+`,
+      { mode: 0o755 }
+    )
+    // Seed the current stable channel pointers the promotion monotonicity check reads back.
+    const channelPrefix = join(remote, 'test-bucket/open-science')
+    mkdirSync(channelPrefix, { recursive: true })
+    writeFileSync(
+      join(channelPrefix, 'version.json'),
+      JSON.stringify({ version: '0.37.1', downloads: {} })
+    )
+    for (const name of [
+      'latest.yml',
+      'latest-linux.yml',
+      'latest-linux-arm64.yml',
+      'latest-mac.yml',
+      'arm64-mac.yml',
+      'x64-mac.yml'
+    ]) {
+      writeFileSync(
+        join(channelPrefix, name),
+        'version: 0.37.1\nfiles:\n  - url: x\n    sha512: abc\n    size: 1\n'
+      )
+    }
+    // The mocked gh leaves the pre-staged download set untouched; the workflow's exclusion
+    // step must prune the CLI artifacts exactly as it does after a real gh release download.
+    writeFileSync(
+      join(cwd, 'bin', 'gh'),
+      '#!/usr/bin/env node\nconsole.log("2026-01-01T00:00:00Z")\n',
+      { mode: 0o755 }
+    )
+    const version = '0.37.2'
+    const desktopInstallers = [
+      `aipoch-open-science-${version}-mac-arm64.dmg`,
+      `aipoch-open-science-${version}-mac-x64.dmg`,
+      `aipoch-open-science-${version}-win-x64-setup.exe`,
+      `aipoch-open-science-${version}-linux-x64.AppImage`,
+      `aipoch-open-science-${version}-linux-arm64.AppImage`,
+      `aipoch-open-science_${version}_amd64.deb`,
+      `aipoch-open-science_${version}_arm64.deb`
+    ]
+    const macZips = [
+      `aipoch-open-science-${version}-mac-arm64.zip`,
+      `aipoch-open-science-${version}-mac-x64.zip`
+    ]
+    const cliPackages = [
+      `open-science-cli_${version}_amd64.deb`,
+      `open-science-cli_${version}_arm64.deb`,
+      `open-science-cli-${version}-1.x86_64.rpm`,
+      `open-science-cli-${version}-1.aarch64.rpm`,
+      `open-science-${version}-darwin-arm64.tar.gz`,
+      `open-science-${version}-linux-x64-gnu.tar.gz`,
+      `open-science-${version}-win32-x64.zip`,
+      `open-science-cli-${version}-darwin-arm64.tar.gz`,
+      `open-science-cli-${version}-darwin-x64.tar.gz`,
+      `open-science-cli-${version}-linux-arm64-gnu.tar.gz`,
+      `open-science-cli-${version}-linux-x64-gnu.tar.gz`,
+      `open-science-cli-${version}-win32-x64.zip`
+    ]
+    const sums: string[] = []
+    for (const name of [...desktopInstallers, ...macZips, ...cliPackages]) {
+      writeFileSync(join(dir, name), 'synthetic installer')
+      sums.push(`${sha256('synthetic installer')}  ${name}`)
+    }
+    writeFileSync(join(dir, 'SHA256SUMS.txt'), `${sums.join('\n')}\n`)
+    const sha512 = createHash('sha512').update('synthetic installer').digest('base64')
+    const feed = (urls: string[]): string =>
+      `version: ${version}\nfiles:\n${urls
+        .map((url) => `  - url: ${url}\n    sha512: ${sha512}\n    size: 19\n`)
+        .join('')}`
+    writeFileSync(join(dir, 'latest.yml'), feed([desktopInstallers[2]]))
+    writeFileSync(join(dir, 'latest-linux.yml'), feed([desktopInstallers[3], desktopInstallers[5]]))
+    writeFileSync(
+      join(dir, 'latest-linux-arm64.yml'),
+      feed([desktopInstallers[4], desktopInstallers[6]])
+    )
+    writeFileSync(join(dir, 'latest-mac.yml'), feed(macZips))
+    writeFileSync(join(dir, 'arm64-mac.yml'), feed([macZips[0]]))
+    writeFileSync(join(dir, 'x64-mac.yml'), feed([macZips[1]]))
+    const notes = join(cwd, 'notes')
+    mkdirSync(notes)
+    writeFileSync(join(notes, 'en.md'), 'Stable release')
+
+    const download = spawnSync(
+      'bash',
+      ['-eu', '-c', workflowStep('mirror-to-website.yml', 'mirror', 'Download release assets')],
+      {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...env,
+          PATH: `${join(cwd, 'bin')}:${process.env.PATH}`,
+          RELEASE_TAG: `v${version}`,
+          GITHUB_REPOSITORY: 'fixture/repo'
+        }
+      }
+    )
+    expect(download.status, download.stderr).toBe(0)
+    const staged = readdirSync(dir)
+    for (const name of cliPackages) expect(staged, name).not.toContain(name)
+    expect(staged).toContain(desktopInstallers[5])
+
+    // publish-update-channel addresses the bucket by the raw S3_PREFIX ('open-science').
+    const channel = join(remote, 'test-bucket/open-science')
+    const run = (step: string): ReturnType<typeof spawnSync> =>
+      spawnSync('bash', ['-eu', '-c', workflowStep('mirror-to-website.yml', 'mirror', step)], {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...env,
+          PATH: `${join(cwd, 'bin')}:${process.env.PATH}`,
+          VERSION: version,
+          MODE: 'promote',
+          METADATA_ONLY: 'false',
+          DIST_DIR: 'dist-assets',
+          OUTPUT: 'version.json',
+          NOTES_DIR: notes,
+          CDN_BASE_URL: 'https://cdn.example',
+          S3_PREFIX: 'open-science',
+          TAG: `v${version}`,
+          GH_TOKEN: 'token',
+          GITHUB_REPOSITORY: 'fixture/repo'
+        }
+      })
+    for (const step of [
+      'Generate version.json',
+      'Rewrite update feed paths',
+      'Inject release notes into update feeds'
+    ]) {
+      const result = run(step)
+      expect(result.status, `${step}: ${result.stderr}`).toBe(0)
+    }
+    const published = run('Sync installers to versioned path')
+    expect(published.status, published.stderr).toBe(0)
+    const manifest = JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8'))
+    expect(Object.keys(manifest.downloads).sort()).toEqual(
+      [
+        'linux-arm64-appimage',
+        'linux-arm64-deb',
+        'linux-x64-appimage',
+        'linux-x64-deb',
+        'mac-arm64',
+        'mac-x64',
+        'win-x64'
+      ].sort()
+    )
+    expect(manifest.version).toBe(version)
+    const uploaded = readdirSync(join(channel, 'releases', version))
+    for (const name of cliPackages) expect(uploaded, name).not.toContain(name)
+  }
+)

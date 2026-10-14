@@ -1,5 +1,4 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -9,9 +8,10 @@ import {
   Quote,
   ScanLine
 } from 'lucide-react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpMessageImage } from '../../../../../shared/acp'
+import type { AcpMessageImage } from '../../../../../shared/acp-image-contract'
 
 type SentAnnotationCardView =
   | Readonly<{

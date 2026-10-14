@@ -1,6 +1,8 @@
 import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 for (const scenario of ['control', 'resume', 'continue-child'] as const) {
   const stop = scenario !== 'control'
@@ -8,10 +10,7 @@ for (const scenario of ['control', 'resume', 'continue-child'] as const) {
     test.setTimeout(180_000)
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(`Delegation resume audit ${stop}`)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, `Delegation resume audit ${stop}`)
     if (
       !(await page.getByTestId('composer-controls-trigger').getAttribute('aria-label'))?.includes(
         'Delegation On'
@@ -25,16 +24,14 @@ for (const scenario of ['control', 'resume', 'continue-child'] as const) {
       'aria-label',
       /Delegation On/
     )
-    await page
-      .getByRole('textbox', { name: 'Ask anything' })
-      .fill(
-        scenario === 'continue-child'
-          ? 'Audit delegation explicit continuation.'
-          : stop
-            ? 'Audit delegation after Stop Resume.'
-            : 'Audit delegation without Stop.'
-      )
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(
+      page,
+      scenario === 'continue-child'
+        ? 'Audit delegation explicit continuation.'
+        : stop
+          ? 'Audit delegation after Stop Resume.'
+          : 'Audit delegation without Stop.'
+    )
     if (stop) {
       await expect(
         page.getByText('Delegation audit ready for Stop.', { exact: false })

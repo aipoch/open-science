@@ -32,6 +32,7 @@ export type LoggerConfig = {
   fileName: string
   minLevel: LogLevel
   mirrorToConsole: boolean
+  consoleFormat: 'text' | 'json'
   // Max bytes per file before it rotates.
   maxBytes: number
   // Total files kept (the live file plus rotated backups). Older ones are deleted automatically.
@@ -842,6 +843,7 @@ const initLogger = (options: { logDir: string } & Partial<Omit<LoggerConfig, 'lo
     fileName: 'main.log',
     minLevel: 'debug',
     mirrorToConsole: DEFAULT_MIRROR_TO_CONSOLE,
+    consoleFormat: 'text',
     maxBytes: DEFAULT_MAX_BYTES,
     maxFiles: DEFAULT_MAX_FILES,
     maxPendingBytes: 4 * 1024 * 1024,
@@ -938,11 +940,15 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
 
   if (mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
-    const record = JSON.parse(line) as { scope: string; msg: string; data?: unknown }
-    console[consoleMethod](
-      `[${record.scope}] ${record.msg}`,
-      Object.hasOwn(record, 'data') ? record.data : ''
-    )
+    if (config?.consoleFormat === 'json') {
+      console[consoleMethod](line)
+    } else {
+      const record = JSON.parse(line) as { scope: string; msg: string; data?: unknown }
+      console[consoleMethod](
+        `[${record.scope}] ${record.msg}`,
+        Object.hasOwn(record, 'data') ? record.data : ''
+      )
+    }
   }
 
   if (config && LEVEL_ORDER[level] < LEVEL_ORDER[config.minLevel]) return

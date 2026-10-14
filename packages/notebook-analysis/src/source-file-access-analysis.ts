@@ -30,11 +30,22 @@ const normalizeNotebookSourceFileAccess = (
   const activeContext = context
   const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
   const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
+  // A resolved prior Python value does not certify the callable's file effects.
+  // Only existing safe-call, strict-wrapper, or replayed-helper contracts do.
+  const uncertifiedPriorCallableNames = new Set(
+    language === 'python' ? (dependencyFacts?.priorUsedNames ?? []) : []
+  )
   if (language === 'r') unresolvedPriorNames.delete('pi')
-  for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
+  for (const safeName of dependencyFacts?.safeCallNames ?? []) {
+    unresolvedPriorNames.delete(safeName)
+    uncertifiedPriorCallableNames.delete(safeName)
+  }
   for (const { name } of activeContext?.staticStrings ?? []) unresolvedPriorNames.delete(name)
   for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
-  for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
+  for (const { name } of activeContext?.localFileWrappers ?? []) {
+    unresolvedPriorNames.delete(name)
+    uncertifiedPriorCallableNames.delete(name)
+  }
   for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
   const shadowedNames = new Set([
     ...(dependencyFacts?.definedNames ?? []),
@@ -43,7 +54,10 @@ const normalizeNotebookSourceFileAccess = (
   const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
   for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
     []) {
-    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
+    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) {
+      unresolvedPriorNames.delete(name)
+      uncertifiedPriorCallableNames.delete(name)
+    }
   }
   const dependencyAnalysisUnavailable =
     !dependencyFacts ||
@@ -57,9 +71,12 @@ const normalizeNotebookSourceFileAccess = (
       ))
   const unresolvedCalls =
     dependencyFacts?.receiverCalls?.some(
-      (call) => call.kind === 'callable' && unresolvedPriorNames.has(call.receiver)
+      (call) =>
+        call.kind === 'callable' &&
+        (unresolvedPriorNames.has(call.receiver) ||
+          uncertifiedPriorCallableNames.has(call.receiver))
     ) ?? false
-  if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0) {
+  if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0 || unresolvedCalls) {
     reasonCodes.push('source-analysis-unsupported-call')
   }
   if (fileAccess.unresolvedReads || fileAccess.unresolvedWrites) {

@@ -1,6 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, describe, expect, it } from 'vitest'
-import { chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,7 +74,7 @@ describe('Linux CLI packages', () => {
     expect(() => packageIdentity({ ...metadata, sourceSha: 'main' })).toThrow()
   })
   it('rejects traversal, external links, devices and foreign archive directories before extraction', () => {
-    const stem = 'open-science-0.37.1-linux-x64-gnu'
+    const stem = 'open-science-cli-0.37.1-linux-x64-gnu'
     expect(
       validateArchiveEntry(
         `${stem}/backend/lib.so`,
@@ -84,7 +94,7 @@ describe('Linux CLI packages', () => {
   })
   it('prepares the original bytes and rejects checksum, target or source-commit substitution', async () => {
     const root = await temporary()
-    const stem = `open-science-${metadata.version}-${metadata.target}`
+    const stem = `open-science-cli-${metadata.version}-${metadata.target}`
     const source = join(root, stem)
     for (const path of ['backend/out/backend', 'backend/out/web', 'node-runtime'])
       await mkdir(join(source, path), { recursive: true })
@@ -114,6 +124,11 @@ describe('Linux CLI packages', () => {
     const archive = join(root, `${stem}.tar.gz`)
     await c({ file: archive, cwd: root, gzip: true }, [stem])
     const sha = await digest(archive)
+    const legacyArchive = join(root, `open-science-${metadata.version}-${metadata.target}.tar.gz`)
+    await copyFile(archive, legacyArchive)
+    await expect(
+      preparePackage(legacyArchive, sha, metadata.sourceSha, metadata.target, join(root, 'legacy'))
+    ).rejects.toThrow('filename')
     const output = join(root, 'prepared')
     const result = await preparePackage(archive, sha, metadata.sourceSha, metadata.target, output)
     expect(result.sourceArchiveSha256).toBe(sha)
@@ -158,7 +173,7 @@ describe('Linux CLI packages', () => {
             format,
             filename,
             sha256: await digest(join(root, filename)),
-            sourceArchive: `open-science-${metadata.version}-${target}.tar.gz`,
+            sourceArchive: `open-science-cli-${metadata.version}-${target}.tar.gz`,
             sourceArchiveSha256: 'c'.repeat(64)
           })
         )
@@ -281,6 +296,17 @@ describe('Linux package workflow publication boundary', () => {
     const content = JSON.stringify(flow)
     expect(content).not.toContain('--omit=dev')
     expect(content).toContain('gh attestation verify')
+    const download = flow.jobs.package.steps.find(
+      (step: { name: string }) => step.name === 'Download immutable released CLI archive'
+    ).run
+    const prepare = flow.jobs.package.steps.find(
+      (step: { name: string }) => step.name === 'Verify source and prepare unchanged payload'
+    ).run
+    expect(download).toContain('--pattern "open-science-cli-$VERSION-$TARGET.tar.gz"')
+    expect(download).toContain(
+      'gh attestation verify "out/cli-input/open-science-cli-$VERSION-$TARGET.tar.gz"'
+    )
+    expect(prepare).toContain('filename="open-science-cli-$VERSION-$TARGET.tar.gz"')
     expect(content).toContain('test-linux-cli-package.mjs deb')
     expect(content).toContain('test-linux-cli-package.mjs rpm')
     expect(content).not.toMatch(/gh release (?:upload|create|edit)|contents.:.write|--nodeps/)

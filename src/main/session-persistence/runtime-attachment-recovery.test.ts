@@ -3,7 +3,10 @@ import {
   materializeSessionConversationGraph,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import { clearUnanchoredAttachmentRecovery } from './runtime-attachment-recovery'
+import {
+  clearUnanchoredAttachmentRecovery,
+  completeRuntimeAttachmentRecovery
+} from './runtime-attachment-recovery'
 
 const fixture = (): PersistedChatSession => ({
   id: 'session',
@@ -60,5 +63,52 @@ describe('successful attachment recovery', () => {
     expect(clearUnanchoredAttachmentRecovery(running)).toBe(running)
     const unrelated = { ...fixture(), resumeRecovery: undefined, error: 'Storage unavailable' }
     expect(clearUnanchoredAttachmentRecovery(unrelated)).toBe(unrelated)
+  })
+})
+
+describe('Main attachment identity', () => {
+  it('preserves the interrupted prompt and replay intent while replacing actual provider identity', () => {
+    const session = materializeSessionConversationGraph({
+      ...fixture(),
+      agentFrameworkId: 'claude-code',
+      agentBackendId: 'old-backend',
+      providerSessionId: 'old-provider',
+      resumeRecovery: { kind: 'resume-required', cause: 'app-restart', promptMessageId: 'prompt' },
+      messages: [
+        {
+          id: 'prompt',
+          role: 'user',
+          content: 'Research',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          turnOutcome: {
+            kind: 'interrupted',
+            cause: 'app-restart',
+            recovery: 'resume',
+            settledAt: 2
+          }
+        }
+      ]
+    })
+    const attached = completeRuntimeAttachmentRecovery(session, {
+      sessionId: session.id,
+      frameworkId: 'codex',
+      providerSessionId: 'new-provider',
+      contextReset: true
+    })
+    expect(attached).toMatchObject({
+      agentFrameworkId: 'codex',
+      providerSessionId: 'new-provider',
+      pendingHistoryReplay: { kind: 'all' },
+      resumeRecovery: session.resumeRecovery
+    })
+    expect(attached.agentBackendId).toBeUndefined()
+    expect(attached.messages).toBe(session.messages)
+    expect(attached.conversationGraph).toBe(session.conversationGraph)
+    expect(() =>
+      completeRuntimeAttachmentRecovery(session, { sessionId: 'another-session' })
+    ).toThrow('Attached Session identity does not match')
   })
 })

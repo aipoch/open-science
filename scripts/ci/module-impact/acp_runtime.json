@@ -2,8 +2,6 @@
   "ownerPaths": [
     "src/main/acp/agent-connection-adapter.test.ts",
     "src/main/acp/agent-connection-adapter.ts",
-    "src/main/acp/agent-process.test.ts",
-    "src/main/acp/agent-process.ts",
     "src/main/acp/app-continuation-owner.ts",
     "src/main/acp/application-commands.test.ts",
     "src/main/acp/application-commands.ts",
@@ -19,8 +17,6 @@
     "src/main/acp/backend-generation-owner.test.ts",
     "src/main/acp/backend-generation-owner.ts",
     "src/main/acp/claude-agent-acp-patch.test.ts",
-    "src/main/acp/claude-executable.test.ts",
-    "src/main/acp/claude-executable.ts",
     "src/main/acp/claude-transcript-reader.test.ts",
     "src/main/acp/claude-transcript-reader.ts",
     "src/main/acp/claude-turn-adapter.test.ts",
@@ -104,8 +100,6 @@
     "src/main/acp/permission-frequency.test.ts",
     "src/main/acp/permission-policy.test.ts",
     "src/main/acp/permission-policy.ts",
-    "src/main/acp/permission-profile-controller.test.ts",
-    "src/main/acp/permission-profile-controller.ts",
     "src/main/acp/permission-wait-owner.test.ts",
     "src/main/acp/permission-wait-owner.ts",
     "src/main/acp/plan-review-provider-stop.test.ts",
@@ -178,8 +172,6 @@
     "src/main/acp/runtime.test.ts",
     "src/main/acp/runtime.ts",
     "src/main/acp/save-as-skill-history.ts",
-    "src/main/acp/session-agent-target.test.ts",
-    "src/main/acp/session-agent-target.ts",
     "src/main/acp/session-aggregate.test.ts",
     "src/main/acp/session-aggregate.ts",
     "src/main/acp/session-capability-handover.integration.test.ts",
@@ -230,7 +222,9 @@
     "src/main/acp/auto-operation-broker.test.ts",
     "src/main/acp/auto-operation-inventory.test.ts",
     "src/main/acp/auto-operation-policy.test.ts",
-    "src/main/acp/auto-operation-policy.ts"
+    "src/main/acp/auto-operation-policy.ts",
+    "src/main/acp/runtime-activity-port.ts",
+    "src/main/acp/runtime-contract.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -284,7 +278,6 @@
   "testFiles": {
     "owner": [
       "src/main/acp/agent-connection-adapter.test.ts",
-      "src/main/acp/agent-process.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/artifact-turn-owner.test.ts",
@@ -292,7 +285,6 @@
       "src/main/acp/attachment-content.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",
       "src/main/acp/claude-agent-acp-patch.test.ts",
-      "src/main/acp/claude-executable.test.ts",
       "src/main/acp/claude-transcript-reader.test.ts",
       "src/main/acp/claude-turn-adapter.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",
@@ -338,7 +330,6 @@
       "src/main/acp/permission-context.test.ts",
       "src/main/acp/permission-frequency.test.ts",
       "src/main/acp/permission-policy.test.ts",
-      "src/main/acp/permission-profile-controller.test.ts",
       "src/main/acp/permission-wait-owner.test.ts",
       "src/main/acp/plan-review-provider-stop.test.ts",
       "src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts",
@@ -374,7 +365,6 @@
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime-snapshot-owner.test.ts",
       "src/main/acp/runtime.test.ts",
-      "src/main/acp/session-agent-target.test.ts",
       "src/main/acp/session-aggregate.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
@@ -449,7 +439,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -828,7 +819,18 @@
       "src/main/connectors/custom-mcp-config.test.ts",
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/acp/agent-process.test.ts",
+      "src/main/acp/claude-executable.test.ts",
+      "src/main/acp/permission-profile-controller.test.ts",
+      "src/main/acp/session-agent-target.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -297,13 +297,24 @@ const verifyLegacyProjectPreserved = async (configRoot) => {
 }
 
 const parsePackagedSqliteVersion = (output) => {
-  const sqliteVersion = output.match(
-    /\[main\] database runtime verified: sqlite_version=(\d+\.\d+\.\d+)/
-  )?.[1]
-  if (!sqliteVersion) {
-    throw new Error('Packaged application did not report its SQLite runtime version.')
+  for (const line of output.split(/\r?\n/)) {
+    let message = line.replace(/^\[main\] /, '')
+    if (!line.startsWith('[main] ')) {
+      try {
+        const record = JSON.parse(line)
+        if (record?.scope !== 'main' || typeof record.msg !== 'string') continue
+        message = record.msg
+      } catch {
+        // Launch captures also contain raw Node and native stderr.
+        continue
+      }
+    }
+    const sqliteVersion = message.match(
+      /^database runtime verified: sqlite_version=(\d+\.\d+\.\d+)\s*$/
+    )?.[1]
+    if (sqliteVersion) return sqliteVersion
   }
-  return sqliteVersion
+  throw new Error('Packaged application did not report its SQLite runtime version.')
 }
 
 const readDesktopSqliteVersion = async (configRoot, desktopPid) => {

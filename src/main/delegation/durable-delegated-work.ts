@@ -2,34 +2,26 @@ import { randomUUID } from 'node:crypto'
 
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import {
-  DelegateExecutionError,
-  DelegateExecutionCleanupError,
-  DelegateMessagePreAcceptanceError,
-  type DelegateCapacityReservation,
-  type DelegateExecutionBackendClaim,
-  type DelegateExecution,
-  type DelegateExecutionInput,
-  type DelegateMessageAcceptanceEvidence
-} from './execution-port'
-import { RootDelegatePermissionOwner } from './delegated-work-permissions'
-import { DelegatedWorkProjectionOwner } from './delegated-work-projection'
-import { DelegatedWorkReadModel } from './delegated-work-read-model'
-import { currentAttempt, sameSession } from './delegated-work-record-invariants'
-import { createAdmissionGate, DelegatedWorkAdmissionPolicy } from './delegated-work-admission'
-import { DurableDelegatedWorkError } from './durable-delegated-work-error'
-import { createInMemoryDelegatedWorkRecords } from './in-memory-delegated-work-records'
+import { toErrorMessage } from '../error-message'
+import type {
+  DelegatedArtifactEvidence,
+  DelegatedArtifactHandle,
+  DelegatedArtifactProjectionScope,
+  DelegatedArtifactScope
+} from './artifact-evidence-contract'
 import {
   createAttemptRuntimeTranscriptStager,
   terminalizeUnsuccessfulAttempt
 } from './attempt-runtime-transcript'
-import {
-  createDelegatedTurnLifecycle,
-  type DelegatedArtifactEvidence,
-  type DelegatedArtifactHandle,
-  type DelegatedArtifactProjectionScope,
-  type DelegatedArtifactScope
-} from './delegated-turn-lifecycle'
+import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
+import type { DurableDelegateRequest } from './delegate-request-contract'
+import { createDelegatedTurnLifecycle } from './delegated-turn-lifecycle'
+import { DelegatedUserQuestionOwner } from './delegated-user-question-owner'
+import { createAdmissionGate, DelegatedWorkAdmissionPolicy } from './delegated-work-admission'
+import { RootDelegatePermissionOwner } from './delegated-work-permissions'
+import { DelegatedWorkProjectionOwner } from './delegated-work-projection'
+import { DelegatedWorkReadModel } from './delegated-work-read-model'
+import { currentAttempt, sameSession } from './delegated-work-record-invariants'
 import type {
   DelegatedWorkDurableRecords,
   DurableChild,
@@ -42,15 +34,13 @@ import type {
   DurableMessageCommand,
   DurablePendingMessage
 } from './delegated-work-record-types'
-import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 import type {
   CreateDurableDelegatedWorkOptions,
   DelegatedReviewEvidence,
   DelegatedReviewProjectionScope,
-  DurableDelegateRequest,
   DurableDelegatedWork,
-  DurableSendMessageOutcome,
   DurableSendMessageOptions,
+  DurableSendMessageOutcome,
   ParentMessageDelivery,
   ReadOnlyAgentFrameDetail,
   RecoveryOutcome,
@@ -62,10 +52,20 @@ import type {
   SpecialistDelegationProfile,
   StopOutcome
 } from './durable-delegated-work-contract'
-import { submitStructuredOutput } from './structured-output-submission'
+import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import {
+  DelegateExecutionCleanupError,
+  DelegateExecutionError,
+  DelegateMessagePreAcceptanceError,
+  type DelegateCapacityReservation,
+  type DelegateExecution,
+  type DelegateExecutionBackendClaim,
+  type DelegateExecutionInput,
+  type DelegateMessageAcceptanceEvidence
+} from './execution-port'
+import { createInMemoryDelegatedWorkRecords } from './in-memory-delegated-work-records'
 import { ReliableMessageDeliveryOwner } from './message-delivery-owner'
-import { DelegatedUserQuestionOwner } from './delegated-user-question-owner'
-import { toErrorMessage } from '../error-message'
+import { submitStructuredOutput } from './structured-output-submission'
 
 const createDurableDelegatedWork = (
   options: CreateDurableDelegatedWorkOptions
@@ -1135,34 +1135,6 @@ const createDurableDelegatedWork = (
   })
 }
 
-export { DurableDelegatedWorkError, createDurableDelegatedWork, createInMemoryDelegatedWorkRecords }
-export type {
-  DelegatedArtifactEvidence,
-  DelegatedArtifactHandle,
-  DelegatedArtifactProjectionScope,
-  DelegatedArtifactScope,
-  DelegatedReviewEvidence,
-  DelegatedReviewProjectionScope,
-  DurableChildSummary,
-  DurableDelegateOutcome,
-  DurableDelegateRequest,
-  DurableDelegateResult,
-  DurableCollectOptions,
-  DurableCollectSelector,
-  DurableDelegateObservation,
-  DurableSendMessageOutcome,
-  DurableSendMessageOptions,
-  DurableDelegatedWork,
-  ParentMessageDelivery,
-  ReadOnlyAgentFrameDetail,
-  RecoveryOutcome,
-  RootDelegatePermissionRequest,
-  RootDelegatePermissionEvent,
-  RootDelegatePermissionResponse,
-  SpecialistDelegationProfile,
-  SessionSubagentSummary,
-  StopOutcome
-}
 export type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 export type {
   DelegatedWorkDurableRecords,
@@ -1171,3 +1143,31 @@ export type {
   DurablePendingMessage,
   DurableSnapshot
 } from './delegated-work-record-types'
+export { createDurableDelegatedWork, createInMemoryDelegatedWorkRecords, DurableDelegatedWorkError }
+export type {
+  DelegatedArtifactEvidence,
+  DelegatedArtifactHandle,
+  DelegatedArtifactProjectionScope,
+  DelegatedArtifactScope,
+  DelegatedReviewEvidence,
+  DelegatedReviewProjectionScope,
+  DurableChildSummary,
+  DurableCollectOptions,
+  DurableCollectSelector,
+  DurableDelegatedWork,
+  DurableDelegateObservation,
+  DurableDelegateOutcome,
+  DurableDelegateRequest,
+  DurableDelegateResult,
+  DurableSendMessageOptions,
+  DurableSendMessageOutcome,
+  ParentMessageDelivery,
+  ReadOnlyAgentFrameDetail,
+  RecoveryOutcome,
+  RootDelegatePermissionEvent,
+  RootDelegatePermissionRequest,
+  RootDelegatePermissionResponse,
+  SessionSubagentSummary,
+  SpecialistDelegationProfile,
+  StopOutcome
+}

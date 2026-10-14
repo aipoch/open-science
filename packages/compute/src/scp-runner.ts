@@ -176,6 +176,7 @@ export class SystemScpRunner implements ScpRunner {
 
       const child = execFile(scpBinary, args, {
         timeout: 0,
+        windowsHide: true,
         encoding: 'buffer',
         ...(options.env ? { env: options.env } : {})
       })
@@ -260,6 +261,7 @@ export class SystemScpRunner implements ScpRunner {
 
       const child = spawn(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
         ...(options.env ? { env: options.env } : {})
       })
       const output = createWriteStream(localPath, { flags: 'w' })

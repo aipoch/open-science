@@ -14,6 +14,7 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
   )
     return
   let changed = false
+  let recoveredBottom = caption.rect[3]
   const covered = new Set(),
     result = []
   for (const row of ownedLines) {
@@ -31,6 +32,52 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
     if (!bases.length) {
       result.push(row.text)
       continue
+    }
+    // A sheared mathematical face can report a slightly larger font norm
+    // than adjacent upright prose although both have identical native boxes.
+    // An already accepted single-letter base proves that physical baseline;
+    // admit only complete, nonoverlapping upright fragments on the same row.
+    const projected = bases.filter(
+      (b) =>
+        /^\p{L}$/u.test(b.text.trim()) &&
+        b.width > 0 &&
+        b.height > 0 &&
+        b.fontSize > b.height &&
+        b.fontSize <= b.height * 1.02
+    )
+    let sharedNativeBaseline = false
+    if (
+      projected.length &&
+      page.lines.every((l) => l.width > 0 && l.height > 0 && l.fontSize > 0)
+    ) {
+      const sameHeight = page.lines.filter(
+        (l) =>
+          !bases.includes(l) &&
+          l.text.trim() &&
+          row.text.replace(/\s/gu, '').includes(l.text.replace(/\s/gu, '')) &&
+          Math.abs(l.fontSize - l.height) < 0.02 &&
+          l.x >= row.x &&
+          l.x + l.width <= row.right &&
+          projected.some(
+            (b) => Math.abs(l.y - b.y) < 0.02 && Math.abs(l.height - b.height) < 0.02
+          ) &&
+          ownedLines.filter((r) => Math.abs(l.y - r.y) < Math.max(2, em * 0.15)).length === 1
+      )
+      const all = [...bases, ...sameHeight]
+      if (
+        sameHeight.length &&
+        all.every((l, i) =>
+          all
+            .slice(i + 1)
+            .every(
+              (other) =>
+                Math.min(l.x + l.width, other.x + other.width) - Math.max(l.x, other.x) <= em * 0.01
+            )
+        )
+      ) {
+        bases.push(...sameHeight)
+        sharedNativeBaseline = true
+      }
     }
     const scripts = page.lines
       .filter(
@@ -118,6 +165,11 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       const parents = bases.filter(
         (b) =>
           (Math.abs(s.x - b.x - b.width) < em * 0.1 ||
+            (/^[−-]?\d+$/.test(s.text) &&
+              /[\p{L}\p{N}]$/u.test(b.text.trim()) &&
+              s.x - b.x - b.width >= -em * 0.1 &&
+              // PDF.js can leave a small advance gap before compact superscripts.
+              s.x - b.x - b.width <= em * 0.3) ||
             (/^\p{L}$/u.test(s.text) &&
               s.x >= b.x + b.width - em &&
               s.x + s.width <= b.x + b.width + em * 0.1 &&
@@ -171,34 +223,80 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       }
     }
     bases.sort((a, b) => a.x - b.x)
-    if (
-      bases.some(
-        (b, i) =>
-          i &&
-          b.x -
-            Math.max(
-              bases[i - 1].x + bases[i - 1].width,
-              ...(attached.get(bases[i - 1]) ?? []).map((s) => s.x + s.width)
-            ) >
-            em * 0.8
+    const hasWideGap = bases.some(
+      (b, i) =>
+        i &&
+        b.x -
+          Math.max(
+            bases[i - 1].x + bases[i - 1].width,
+            ...(attached.get(bases[i - 1]) ?? []).map((s) => s.x + s.width)
+          ) >
+          em * 0.8
+    )
+    let text
+    if (hasWideGap && !fractions.size) {
+      // Math can span several native baselines inside one caption row (for
+      // example, a sum and a derivative between two prose fragments). When
+      // the ordinary parent-edge recovery cannot join that row, keep the
+      // complete literal fragment stream rather than silently dropping it.
+      const scriptsInRow = scripts.filter(
+        (s) =>
+          s.x >= bases[0].x &&
+          s.x < Math.max(...bases.map((b) => b.x + b.width)) &&
+          Math.abs(s.y + s.height / 2 - (row.y + row.fontSize / 2)) <= em * 0.8
       )
-    ) {
+      const gap = bases
+        .map((base, index) => ({
+          left: base.x + base.width,
+          right: bases[index + 1]?.x,
+          width: bases[index + 1]?.x - base.x - base.width
+        }))
+        .filter((span) => span.width > em * 0.8)
+        .sort((a, b) => b.width - a.width)[0]
+      const gapScripts = gap
+        ? scriptsInRow.filter((s) => s.x >= gap.left - em * 0.2 && s.x <= gap.right + em * 0.8)
+        : []
+      const raised = gap
+        ? page.lines.filter(
+            (fragment) =>
+              fragment.text.trim().length === 1 &&
+              fragment.fontSize >= em * 0.85 &&
+              fragment.fontSize <= em * 1.05 &&
+              fragment.x >= gap.left &&
+              fragment.x + fragment.width <= gap.right &&
+              fragment.y < row.y - em * 0.2 &&
+              row.y - fragment.y < em &&
+              caption.rect[1] <= fragment.y &&
+              fragment.y + fragment.height <= caption.rect[3]
+          )
+        : []
+      if (gapScripts.length < 3 || !gap || raised.length !== 1) {
+        result.push(row.text)
+        continue
+      }
+      text = [...bases, ...gapScripts, ...raised]
+        .sort((a, b) => Math.round(a.x / (em * 0.2)) - Math.round(b.x / (em * 0.2)) || a.y - b.y)
+        .map((fragment) => fragment.text.trim())
+        .join(' ')
+      for (const fragment of gapScripts) covered.add(fragment)
+    } else if (hasWideGap) {
       result.push(row.text)
       continue
+    } else {
+      text = bases
+        .map((b) => {
+          let value = b.text.trim()
+          for (const s of attached.get(b) ?? []) {
+            const rise = b.y + b.height - s.y - s.height
+            value +=
+              /^[−-]?\d+$/.test(s.text) && rise >= em * 0.2 && rise <= em * 0.8
+                ? s.text.replace(/[−-]/g, '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(d)])
+                : ' ' + s.text
+          }
+          return value
+        })
+        .join(' ')
     }
-    const text = bases
-      .map((b) => {
-        let value = b.text.trim()
-        for (const s of attached.get(b) ?? []) {
-          const rise = b.y + b.height - s.y - s.height
-          value +=
-            /^[−-]?\d+$/.test(s.text) && rise >= em * 0.2 && rise <= em * 0.8
-              ? s.text.replace(/[−-]/g, '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(d)])
-              : ' ' + s.text
-        }
-        return value
-      })
-      .join(' ')
     const unresolved = scripts.some(
       (s) => !covered.has(s) && s.y >= row.y - em * 0.2 && s.y < row.y + em * 0.8
     )
@@ -219,9 +317,20 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       return count > 0
     })
     if (conserves && text !== row.text && (bases.length > 1 || attached.size)) changed = true
+    if (sharedNativeBaseline && conserves && text !== row.text)
+      for (const scripts of attached.values())
+        for (const script of scripts)
+          recoveredBottom = Math.max(recoveredBottom, script.y + script.height)
     result.push(conserves ? text : row.text)
   }
-  return changed ? { lines: result } : undefined
+  return changed
+    ? {
+        lines: result,
+        ...(recoveredBottom > caption.rect[3]
+          ? { rect: [...caption.rect.slice(0, 3), recoveredBottom] }
+          : {})
+      }
+    : undefined
 }
 
 // Work only inside an existing multiline numbered caption. Native left-edge

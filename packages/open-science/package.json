@@ -18,6 +18,7 @@
   },
   "files": [
     "*.mjs",
+    "*.cjs",
     "*.d.ts",
     "LICENSE",
     "README.md",

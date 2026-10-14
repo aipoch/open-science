@@ -1,21 +1,21 @@
+import type { ChatApiEndpoint } from './model-preference-contract'
+import type { OfficialVendorId } from './provider-registry'
 import {
   isModelBridgeSupported,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
 } from './provider-registry'
-import type { OfficialVendorId } from './provider-registry'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
-  preferredEndpoint,
   isXaiSubscriptionProvider,
+  preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
   requiresChatCompletionsBridge,
   selectClaudeSubscriptionProvider,
   type AgentFrameworkId,
-  type ChatApiEndpoint,
   type ClaudeSubscriptionProviderId,
   type ProviderType,
   type ProviderView

@@ -1,3 +1,4 @@
+import type { SkillMarketplaceView } from '../../lib/settings-navigation'
 import { SkillMarketplaceUpdateDialog } from './SkillMarketplaceUpdateDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CircleCheck, ChevronDown, Download, LoaderCircle, Trash2 } from 'lucide-react'
@@ -41,10 +42,7 @@ import {
 } from './skill-marketplace-model'
 import './skill-marketplace.css'
 
-export type SkillMarketplaceView =
-  | { kind: 'marketplace' }
-  | { kind: 'marketplace-batch' }
-  | { kind: 'marketplace-detail'; id: string; displayName: string; snapshotId: string }
+export type { SkillMarketplaceView } from '../../lib/settings-navigation'
 
 function TruncatedText({
   text,

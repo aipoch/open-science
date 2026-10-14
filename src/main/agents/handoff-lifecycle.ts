@@ -7,7 +7,7 @@ import type {
   HandoffLifecyclePhase,
   HandoffRetryRequest
 } from '../../shared/handoff-lifecycle'
-import type { CompletionGateLifecycle } from './completion-gate'
+import type { CompletionGateLifecycle } from './completion-gate-contract'
 
 type HandoffLifecycleCoordinatorOptions = {
   onChange?: (change: HandoffLifecycleChange) => void

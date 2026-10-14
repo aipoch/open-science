@@ -14,8 +14,6 @@
     "src/main/settings/mirror-settings.test.ts",
     "src/main/settings/record-codec.test.ts",
     "src/main/settings/repository.test.ts",
-    "src/main/settings/document-read-error.ts",
-    "src/main/settings/document-shape.ts",
     "src/main/settings/classification-config.ts"
   ],
   "interfacePaths": [
@@ -45,7 +43,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/settings/service.test.ts",
@@ -254,7 +253,15 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-      "src/main/settings/provider-token-limits.test.ts"
+      "src/main/settings/provider-token-limits.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/settings/settings-snapshot-commit-owner.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

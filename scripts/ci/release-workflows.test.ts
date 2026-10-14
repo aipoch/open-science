@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -48,6 +50,49 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it.each(['0189093', '0000000', '1234567', 'abc1234', null])(
+    'keeps backend and installer versions identical for commit %s (null is stable)',
+    (shortSha) => {
+      const root = mkdtempSync(join(tmpdir(), 'nightly-version-'))
+      try {
+        const manifest = { name: 'nightly-version-fixture', version: '0.37.1', private: true }
+        writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
+        writeFileSync(
+          join(root, 'package-lock.json'),
+          JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { '': manifest } })
+        )
+        const build = step(workflow('build.yml').jobs.build, 'Build & package').run!
+        // Execute the real version preparation, stopping before builds, signing, or publication.
+        const preparation = build.slice(0, build.indexOf('npm run build:e2e'))
+        expect(preparation).toContain('npm version --no-git-tag-version')
+        const output = execFileSync(
+          'bash',
+          [
+            '-e',
+            '-c',
+            preparation.replaceAll('${{ inputs.nightly }}', String(shortSha !== null)) +
+              '\nprintf "package-version=%s\\n" "${eb_ver[@]}"'
+          ],
+          {
+            cwd: root,
+            encoding: 'utf8',
+            env: { ...process.env, GITHUB_SHA: `${shortSha ?? 'abc1234'}${'0'.repeat(33)}` }
+          }
+        )
+        const version = shortSha ? `0.37.1-nightly.g${shortSha}` : manifest.version
+        expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe(version)
+        const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+        expect(lock.version).toBe(version)
+        expect(lock.packages[''].version).toBe(version)
+        expect(output).toContain(
+          `package-version=${shortSha ? `-c.extraMetadata.version=${version}` : ''}\n`
+        )
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('allows Build OIDC through every direct and nested caller', () => {
     // GitHub validates declared permissions before evaluating signing inputs or job conditions.
     const callees = new Set([

@@ -4,7 +4,7 @@ import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpMessageImage
-} from '../acp'
+} from '../acp-image-contract'
 import {
   projectConversationMessage,
   resolveActiveConversationMessages
@@ -15,14 +15,16 @@ import {
   MAX_LITERATURE_SCOPE_NAME_LENGTH,
   MAX_SESSION_REFERENCES_PER_MESSAGE,
   MAX_SESSION_REFERENCE_ID_LENGTH,
-  MAX_SESSION_REFERENCE_TITLE_LENGTH,
-  type MessagePart,
-  type PersistedArtifact,
-  type PersistedArtifactKind,
-  type PersistedChatMessage,
-  type PersistedMessageImage,
-  type SessionReference
+  MAX_SESSION_REFERENCE_TITLE_LENGTH
 } from './message'
+import type {
+  MessagePart,
+  PersistedArtifact,
+  PersistedArtifactKind,
+  PersistedChatMessage,
+  PersistedMessageImage,
+  SessionReference
+} from '../session-message-contract'
 import { asNumber, asString, isRecord } from './primitives'
 import type { MaterializedPersistedChatSession, PersistedChatSession } from './session'
 

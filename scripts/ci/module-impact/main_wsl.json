@@ -14,9 +14,7 @@
     "src/main/wsl/wsl-setup-terminal.test.ts",
     "src/main/wsl/wsl-setup-terminal.ts",
     "src/main/wsl/wsl2-packaged-restart-certification.test.ts",
-    "src/main/wsl/wsl2-packaged-restart-certification.ts",
-    "src/main/wsl/wsl2-preview-gate.test.ts",
-    "src/main/wsl/wsl2-preview-gate.ts"
+    "src/main/wsl/wsl2-packaged-restart-certification.ts"
   ],
   "interfacePaths": [
     "src/main/wsl/windows-volume-probe.ts",
@@ -37,8 +35,7 @@
       "src/main/wsl/wsl-setup-owner.test.ts",
       "src/main/wsl/wsl-setup-session-owner.test.ts",
       "src/main/wsl/wsl-setup-terminal.test.ts",
-      "src/main/wsl/wsl2-packaged-restart-certification.test.ts",
-      "src/main/wsl/wsl2-preview-gate.test.ts"
+      "src/main/wsl/wsl2-packaged-restart-certification.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -46,7 +43,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -249,7 +246,15 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/working-file-observer-plain-host.test.ts",
-      "src/main/notebook/auto-mode-budget.integration.test.ts"
+      "src/main/notebook/auto-mode-budget.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/wsl/wsl2-preview-gate.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

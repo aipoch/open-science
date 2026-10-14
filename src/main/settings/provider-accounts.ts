@@ -1,16 +1,21 @@
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
-import { ensureCodexAuthHome } from './codex-auth'
+import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../shared/provider-base-url'
+import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import type {
-  ChatApiEndpoint,
-  ProviderDraft,
   ProviderDeletionScenarioModelHandling,
-  ProviderView,
+  ProviderDraft,
   ProviderValidationTarget,
+  ProviderView,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
-  UpsertProviderRequest,
   SaveValidatedProviderResult,
+  UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
@@ -18,6 +23,7 @@ import type {
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  ENDPOINT_PATHS,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
@@ -26,54 +32,50 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
-  providerEndpoints,
   preferredEndpoint,
+  providerEndpoints,
   requiresChatCompletionsBridge,
-  xaiSubscriptionProviderIdentity,
-  ENDPOINT_PATHS
+  xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
-import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
-import {
-  customProviderRequiresKey,
-  getCustomProviderBaseUrlError
-} from '../../shared/provider-base-url'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
   type AgentFrameworkId
 } from '../agent-framework'
 import { netFetchStandard } from '../network-fetch'
-import { type CodexAuthControllerPort } from './codex-auth'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
+import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
-import { validateProvider as validateProviderTarget } from './validate'
-import type { ResolvedProvider } from './provider-env'
-import { resolveCustomTokenLimits } from './provider-token-limits'
-import { resolveProviderDraft } from './provider-draft-projection'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
   ProviderAuthLifecycleOwner
 } from './provider-auth-lifecycle'
+import { resolveProviderDraft } from './provider-draft-projection'
+import type { ResolvedProvider } from './provider-env'
+import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
+import {
+  assertProviderCapacity,
+  assertProviderDraftLimits,
+  assertProviderModelLimit
+} from './provider-resource-limits'
 import {
   ProviderRuntimeProjectionOwner,
   requiresNativeResponsesCompatibility,
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-runtime-projection'
-import type { SettingsRepository } from './repository'
-import type { SystemProxyEnvironment } from './system-proxy'
-import type { StoredProvider, StoredSettings } from './types'
-import type { XaiOAuthControllerPort } from './xai-oauth'
-import { XaiProviderAccountOwner } from './xai-provider-account-owner'
-import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
-import { assertProviderCapacity, assertProviderDraftLimits } from './provider-resource-limits'
-import { assertProviderModelLimit } from './provider-resource-limits'
+import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
   buildProviderValidationPatch,
   targetForValidationResult
 } from './provider-validation-state'
+import type { SettingsRepository } from './repository'
+import type { SystemProxyEnvironment } from './system-proxy'
+import type { StoredProvider, StoredSettings } from './types'
+import { validateProvider as validateProviderTarget } from './validate'
+import type { XaiOAuthControllerPort } from './xai-oauth'
+import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
   storageRoot: string

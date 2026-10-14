@@ -1,29 +1,32 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type {
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
-  AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
-  AcpSaveAsSkillRequest,
-  AcpRuntimeState
+  AcpRuntimeState,
+  AcpSaveAsSkillRequest
 } from '../../shared/acp'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
-import type { TaskNotificationService } from '../notifications/task-notifications'
-import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import { bindResumeRequestToProject } from './session-project-binding'
-import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
-import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
-import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
-import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
+import type {
+  HistoryReplayDescriptor,
+  HistoryReplayTarget
+} from '../../shared/history-replay-contract'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
+import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
+import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
+import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
+import { bindResumeRequestToProject } from './session-project-binding'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -81,7 +84,11 @@ type AcpHandlerWorkflows = {
 type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   prepareRuntimeResume?(projectId: string, sessionId: string): Promise<void>
-  completeRuntimeAttachment?(projectId: string, sessionId: string): Promise<void>
+  completeRuntimeAttachment?(
+    projectId: string,
+    sessionId: string,
+    attached: AcpCreateSessionResponse
+  ): Promise<void>
 }
 
 type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
@@ -297,7 +304,11 @@ const createAcpHandlerWorkflows = (
     const startedAt = Date.now()
     const context = {
       operationId: randomUUID(),
-      sessionHash: resumeSessionHash(request.sessionId)
+      sessionHash: resumeSessionHash(request.sessionId),
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      frameworkId: request.agentTarget?.frameworkId,
+      previousFrameworkId: request.previousFrameworkId
     }
     logResumeDiagnostic('info', 'acp:resume-session started', context)
 
@@ -311,7 +322,11 @@ const createAcpHandlerWorkflows = (
           await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
         }
         const attached = await runtime.resumeSession(bound)
-        await interruptedTurnSessions?.completeRuntimeAttachment?.(projectId, request.sessionId)
+        await interruptedTurnSessions?.completeRuntimeAttachment?.(
+          projectId,
+          request.sessionId,
+          attached
+        )
         return attached
       }
       const result = archiveAvailability
@@ -330,7 +345,8 @@ const createAcpHandlerWorkflows = (
       logResumeDiagnostic('error', 'acp:resume-session failed', {
         ...context,
         durationMs: Math.max(0, Date.now() - startedAt),
-        ...resumeErrorDiagnosticFields(error)
+        ...resumeErrorDiagnosticFields(error),
+        ...errorLogFields(error)
       })
       throw error
     }
@@ -376,7 +392,19 @@ const createAcpHandlerWorkflows = (
       request.sessionId,
       async () => undefined
     )
-    return run()
+    try {
+      return await run()
+    } catch (error) {
+      logResumeDiagnostic('error', 'acp:continue-interrupted-turn failed', {
+        operation: 'continue-interrupted-turn',
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        promptMessageId: request.promptMessageId,
+        runtimeSegmentId: request.contextReset?.runtimeSegmentId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
   },
 
   async saveAsSkill(request): Promise<AcpRuntimeState> {

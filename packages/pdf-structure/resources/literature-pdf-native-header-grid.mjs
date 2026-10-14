@@ -378,6 +378,9 @@ export function proveNativeFullyRuledLiteralGrid(table, items, captions, rules) 
   )
   if (
     !source.length ||
+    // Internal vertical dividers must not masquerade as outer borders and
+    // silently discard complete stub/value columns already inside the crop.
+    nearby.some((i) => i.baseline > faces[0] && i.baseline < faces.at(-1) && !source.includes(i)) ||
     source.some(
       (i) =>
         !i.horizontal ||
@@ -2666,6 +2669,73 @@ export function proveNativeTieredHeader(table, items, captions, rules, measuredB
     if (column < 0 || lowerSlots.has(column)) return
     lowerSlots.set(column, g)
   }
+  // A font box may cross a printed header separator. In that case the
+  // connected parent walls and every child wall, rather than the width of
+  // the centered title, must prove the complete parent span.
+  const framedParent = (g, row) => {
+    if (
+      bands.length !== 2 ||
+      row !== 0 ||
+      rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite))
+    )
+      return
+    const bars = joinHorizontalTableRules(rules).filter(
+      (r) =>
+        r[1] > g.rect[3] &&
+        r[1] < Math.min(...groups[1].map((t) => t.baseline)) &&
+        r[0] <= g.rect[0] &&
+        r[2] >= g.rect[2]
+    )
+    if (bars.length !== 1) return
+    const bar = bars[0],
+      epsilon = h * 0.08
+    const vertical = rules.filter((r) => r[0] === r[2] && r[3] > r[1])
+    const walls = vertical.filter(
+      (r) => Math.abs(r[1] - opening[1]) < epsilon && Math.abs(r[3] - bar[1]) < epsilon
+    )
+    const xs = [...new Set([opening[0], ...walls.map((r) => r[0]), opening[2]])].sort(
+      (a, b) => a - b
+    )
+    const face = xs
+      .slice(1)
+      .map((x, i) => [xs[i], x])
+      .filter(
+        ([a, b]) => g.rect[0] > a && g.rect[2] < b && bar[0] <= a + epsilon && bar[2] >= b - epsilon
+      )
+    if (face.length !== 1) return
+    const [a, b] = face[0]
+    const owned = allDomains
+      .map((d, index) => ({ d, index }))
+      .filter(({ d }) => d[0] > a && d[1] < b)
+      .map(({ index }) => index)
+    if (
+      owned.length < 2 ||
+      owned.some((c, i) => !lowerSlots.has(c) || (i && c !== owned[i - 1] + 1))
+    )
+      return
+    if (allDomains.some((d) => (d[0] < a && d[1] > a) || (d[0] < b && d[1] > b))) return
+    const leaves = vertical.filter(
+      (r) => Math.abs(r[1] - bar[1]) < epsilon && Math.abs(r[3] - divider[1]) < epsilon
+    )
+    for (let i = 1; i < owned.length; i++) {
+      const before = allDomains[owned[i - 1]],
+        after = allDomains[owned[i]]
+      const edges = leaves.filter((r) => r[0] > before[1] && r[0] < after[0])
+      if (
+        edges.length !== 1 ||
+        lowerSlots.get(owned[i - 1]).rect[2] >= edges[0][0] ||
+        lowerSlots.get(owned[i]).rect[0] <= edges[0][0]
+      )
+        return
+    }
+    if (
+      lowest.some(
+        (leaf) => (leaf.rect[0] < a && leaf.rect[2] > a) || (leaf.rect[0] < b && leaf.rect[2] > b)
+      )
+    )
+      return
+    return [a, bar[1], b, bar[1]]
+  }
   const cells = [],
     occupied = new Set(),
     rows = []
@@ -2709,7 +2779,8 @@ export function proveNativeTieredHeader(table, items, captions, rules, measuredB
             g.rect[2] <= r[2] + h * 0.4
         )
         if (underline.length > 1) return
-        const witness = underline[0] ?? g.rect
+        const enclosure = framedParent(g, row)
+        const witness = enclosure ?? underline[0] ?? g.rect
         owned = allDomains
           .map((d, index) => ({ index, x: (d[0] + d[1]) / 2 }))
           .filter((v) => v.x >= witness[0] && v.x <= witness[2])

@@ -1,4 +1,5 @@
-import { ClassificationPanel, type ClassificationView } from './ClassificationPanel'
+import type { ModelView } from '../../lib/settings-navigation'
+import { ClassificationPanel } from './ClassificationPanel'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import * as AlertDialog from '@/components/ui/alert-dialog'
@@ -260,12 +261,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
   )
 }
 
-export type ModelView =
-  | ClassificationView
-  | { kind: 'list' }
-  | { kind: 'local-models' }
-  | { kind: 'create' }
-  | { kind: 'edit'; providerId: string }
+export type { ModelView } from '../../lib/settings-navigation'
 
 export const ModelPanel = ({
   local,

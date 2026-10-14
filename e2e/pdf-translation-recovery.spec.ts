@@ -14,6 +14,7 @@ import type {
   PdfTranslationCheckpoint
 } from '../src/shared/pdf-translation'
 import { test } from './fixtures/electron-app'
+import { openAllReferences } from './fixtures/library'
 
 // Real built main/preload/IPC/SQLite with a deterministic local provider. These tests
 // measure recovery semantics, not model quality. Every database belongs to the fixture.
@@ -244,8 +245,7 @@ test('reuses a managed Workspace PDF translation in Literature without repeating
         })
       }
     )
-    await page.getByRole('button', { name: 'Library', exact: true }).click()
-    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    await openAllReferences(page)
     await page.getByRole('button', { name: 'Preview shared-library.pdf', exact: true }).click()
     await expect(page.locator('[data-pdf-preview-root]')).toBeVisible()
     const adopted = (await read(page, libraryId))!
@@ -528,8 +528,7 @@ for (const scenario of [
           }
         ])
         expect((await read(secondPage, document))!.failures ?? []).toEqual([])
-        await page.getByRole('button', { name: 'Library', exact: true }).click()
-        await page.getByRole('button', { name: 'All references', exact: true }).click()
+        await openAllReferences(page)
         for (const name of ['recovery-a.pdf', 'recovery-b.pdf', 'recovery-a.pdf']) {
           await page.getByRole('button', { name: `Preview ${name}`, exact: true }).click()
           await expect(page.locator('[data-pdf-preview-root]')).toBeVisible()

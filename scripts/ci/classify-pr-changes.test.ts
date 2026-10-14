@@ -36,6 +36,66 @@ const listSourceFiles = (directory: string): string[] =>
 const windowsRuntimeSignal =
   /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
+describe('declared test evidence without source ownership', () => {
+  const path = 'scripts/unowned-consumer.test.ts'
+  const moduleManifest = {
+    modules: {
+      host: {
+        ownerPaths: [],
+        testFiles: { owner: [], contract: [], consumer: [path] },
+        fallbackCapability: 'settings_ipc',
+        capabilityOverlays: []
+      },
+      runtime: {
+        ownerPaths: [],
+        testFiles: { owner: [], contract: [path], consumer: [] },
+        fallbackCapability: 'notebook_network_sandbox',
+        capabilityOverlays: []
+      }
+    }
+  }
+
+  it('unions capabilities of all evidence declarations and retains portable tests', () => {
+    const plan = classifyChanges([{ path, status: 'modified' }], readManifest(), {
+      moduleManifest
+    })
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toEqual(['module:host', 'module:runtime'])
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining([
+        'unit_macos',
+        'interface_contracts',
+        'linux_runtime',
+        'windows_runtime'
+      ])
+    )
+  })
+
+  it.each(['scripts/unregistered.test.ts', 'scripts/unowned-consumer.mjs'])(
+    'retains unknown fallback for %s',
+    (path) => {
+      const plan = classifyChanges([{ path, status: 'modified' }], readManifest(), {
+        moduleManifest
+      })
+      expect(plan).toMatchObject({ mode: 'full', roots: ['unknown'] })
+    }
+  )
+
+  it('does not let an evidence declaration override a global input rule', () => {
+    const manifest = readManifest()
+    manifest.rules.find((rule: { id: string }) => rule.id === 'global_gate_input').paths.push(path)
+    expect(
+      classifyChanges([{ path, status: 'modified' }], manifest, { moduleManifest })
+    ).toMatchObject({ mode: 'full', roots: ['global_gate_input'] })
+  })
+
+  it('retains full validation for deletion of declared evidence', () => {
+    expect(
+      classifyChanges([{ path, status: 'deleted' }], readManifest(), { moduleManifest })
+    ).toMatchObject({ mode: 'full', roots: ['destructive_change'] })
+  })
+})
+
 describe('pull request change classification', () => {
   it('publishes a Git revision plan for GitHub Actions callers', () => {
     const root = mkdtempSync(join(tmpdir(), 'pr-change-classifier-'))
@@ -784,6 +844,7 @@ describe('pull request change classification', () => {
 
   it.each([
     'src/main/notebook/windows-shell.ts',
+    'src/main/settings/claude-cli-process.ts',
     'packages/notebook-code-risk/src/index.ts',
     'src/main/notebook/runtime-service.ts',
     'src/main/notebook/environment-resources.ts',

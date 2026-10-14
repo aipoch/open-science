@@ -5,11 +5,8 @@
     "src/main/uploads/legacy-recovery-owner.ts",
     "src/main/uploads/managed-upload-resolver.ts",
     "src/main/uploads/staged-publication-owner.ts",
-    "src/main/uploads/storage-helpers.ts",
     "src/main/uploads/verified-legacy-cleanup-owner.ts",
     "src/main/uploads/active-transfer-owner.test.ts",
-    "src/main/uploads/atomic-no-replace-publisher.test.ts",
-    "src/main/uploads/atomic-no-replace-publisher.ts",
     "src/main/uploads/attachment-media.pdf-preview.test.ts",
     "src/main/uploads/attachment-media.sharp.test.ts",
     "src/main/uploads/attachment-media.test.ts",
@@ -42,7 +39,6 @@
       "src/main/uploads/repository.characterization.test.ts",
       "src/main/uploads/publication-lifecycle.integration.test.ts",
       "src/main/uploads/repository.architecture.test.ts",
-      "src/main/uploads/atomic-no-replace-publisher.test.ts",
       "src/main/uploads/attachment-media.pdf-preview.test.ts",
       "src/main/uploads/attachment-media.sharp.test.ts",
       "src/main/uploads/attachment-media.test.ts",
@@ -56,7 +52,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
       "src/main/agents/agents-mutations.test.ts",
       "src/main/agents/agents-service.test.ts",
@@ -523,7 +520,15 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/uploads/atomic-no-replace-publisher.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

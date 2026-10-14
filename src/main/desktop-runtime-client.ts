@@ -1,3 +1,11 @@
+import { randomUUID } from 'node:crypto'
+import { desktopRuntimeInfoSchema, type DesktopRuntimeInfo } from './desktop-runtime-info'
+import { waitForRuntimeStopped } from './runtime-stop-confirmation'
+import type { RuntimeDirectoryLease } from './runtime-ownership'
+const desktopInstanceId = randomUUID()
+import { createSessionEventHydrator } from '../shared/session-event-hydrator'
+import { createRuntimePayloadClient } from '../shared/runtime-payload-client'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
 import { desktopDatabaseStartupSchema, desktopStartupEventSchema } from './desktop-startup-contract'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import type { DesktopLifecycleRequest } from './desktop-runtime-lifecycle'
@@ -25,6 +33,53 @@ import {
 import { parseApplicationCommandError } from '../shared/application-command-contract'
 import { connectToDesktopEndpoint, type DesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
+import { createLogger } from '@aipoch/diagnostics/node'
+
+const logger = createLogger('desktop-runtime-client')
+// Includes cancelled handlers from retired attachments until their real resources settle.
+const unsettledNativeHandlers = new Set<AbortController>()
+const MAX_UNSETTLED_NATIVE_HANDLERS = 64
+
+export type DesktopDeliveryFailure = {
+  kind: 'event' | 'startup' | 'document' | 'upload'
+  clientId?: string
+}
+type DisconnectReason =
+  | 'bootstrap-timeout'
+  | 'invalid-frame'
+  | 'invalid-bootstrap'
+  | 'invalid-event'
+  | 'callback-failure'
+  | 'invalid-native-request'
+  | 'native-capacity'
+  | 'invalid-response'
+  | 'response-identity'
+  | 'event-history'
+  | 'send-failure'
+  | 'transport-close'
+  | 'socket-error'
+  | 'client-close'
+
+type DisconnectPolicyReason =
+  | 'invalid-request'
+  | 'request-order-or-capacity'
+  | 'document-capacity'
+  | 'retired-document-capacity'
+
+function classifyPolicyReason(reason: string): DisconnectPolicyReason | undefined {
+  switch (reason) {
+    case 'Invalid desktop request.':
+      return 'invalid-request'
+    case 'Invalid or excessive desktop requests.':
+      return 'request-order-or-capacity'
+    case 'Too many renderer documents.':
+      return 'document-capacity'
+    case 'Reconnect desktop attachment.':
+      return 'retired-document-capacity'
+    default:
+      return undefined
+  }
+}
 
 // JSON omits an undefined result. The private desktop transport preserves that Electron
 // return value; public Web responses retain their required JSON result contract.
@@ -36,13 +91,15 @@ const responseSchema = z.discriminatedUnion('ok', [
 const bootstrapSchema = webRpcBootstrapSchema
   .pick({
     rpcProtocolVersion: true,
+    rpcCapabilities: true,
     eventStream: true
   })
   .extend({
     kind: z.literal('bootstrap'),
     startup: desktopDatabaseStartupSchema.optional(),
     pid: z.number().int().positive(),
-    rpcChannels: z.array(z.string())
+    rpcChannels: z.array(z.string()),
+    ...desktopRuntimeInfoSchema.shape
   })
   .strict()
 const eventSchema = z.discriminatedUnion('kind', [
@@ -58,42 +115,74 @@ export type DesktopRuntimeClient = Readonly<{
   retryStartup(): Promise<DatabaseStartupState>
   processId(): number
   ownsRuntime(): boolean
+  runtimeInfo(): DesktopRuntimeInfo
+  refreshControl(): Promise<DesktopRuntimeInfo>
+  waitForStopped(): Promise<RuntimeDirectoryLease>
+  stopRuntime(): Promise<RuntimeDirectoryLease>
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
+  loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
   invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
   invoke(clientId: string, channel: string, args: readonly unknown[]): Promise<unknown>
   release(clientId: string): void
   notificationAction(token: string, action: 'clicked' | 'closed'): void
   notificationView(reason: 'view' | 'focus' | 'window-created', visibleSessionId?: string): void
   close(): void
-  quit(): Promise<void>
+  quit(): Promise<RuntimeDirectoryLease | undefined>
 }>
 
 // No business state lives here. In-flight mutations are never automatically retried after a
 // disconnect: the caller must reload current state before deciding whether to submit again.
 export async function connectDesktopRuntime(options: {
   endpoint: DesktopEndpoint
+  signal?: AbortSignal
+  desktopInstanceId?: string
   // Only the launcher that actually spawned this child may supply its handle.
   startedProcess?: ChildProcess
   onNativeRequest?: DesktopNativeHandler
+  onNativeResponseSent?: (request: Parameters<DesktopNativeHandler>[0], result: unknown) => void
   onStartupState?: (state: DatabaseStartupState) => void
   onDocumentEvent?: (event: z.infer<typeof desktopDocumentEventSchema>) => void
   onUploadProgress?: (clientId: string, progress: UploadTransferProgress) => void
   onEvent(event: { channel: string; payload: unknown }): void
+  onDeliveryFailure?: (failure: DesktopDeliveryFailure) => void
   onDisconnect(error: Error): void
 }): Promise<DesktopRuntimeClient> {
-  const socket = await connectToDesktopEndpoint(options.endpoint)
+  const socket = await connectToDesktopEndpoint(options.endpoint, options.signal)
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
   const native = new Map<number, AbortController>()
   let highestNativeId = 0
+  const payloadClients = new Map<
+    string,
+    {
+      controller: AbortController
+      client: ReturnType<typeof createRuntimePayloadClient>
+    }
+  >()
+  let supportsPayload = false
   let requestId = 0
   let channels: readonly string[] = []
   let cursor: { streamId: string; latestSequence: number } | undefined
   let startupState: DatabaseStartupState = { phase: 'checking' }
   let runtimePid = 0
-  let ownedChild: ChildProcess | undefined
+  let runtimeInfo!: DesktopRuntimeInfo
+  let refreshing:
+    | {
+        promise: Promise<DesktopRuntimeInfo>
+        resolve(value: DesktopRuntimeInfo): void
+        reject(error: Error): void
+        timer: NodeJS.Timeout
+      }
+    | undefined
   let quitting = false
-  let quitPromise: Promise<void> | undefined
+  let quitPromise: Promise<RuntimeDirectoryLease | undefined> | undefined
   let closed = false
+  let disconnectCause: Error | undefined
+  let disconnectDelivered = false
+  const notifyDisconnect = (): void => {
+    if (!initialized || !disconnectCause || disconnectDelivered) return
+    disconnectDelivered = true
+    options.onDisconnect(disconnectCause)
+  }
   let initialized = false
   let resolveReady!: () => void
   let rejectReady!: (error: Error) => void
@@ -101,162 +190,75 @@ export async function connectDesktopRuntime(options: {
     resolveReady = resolve
     rejectReady = reject
   })
-  const fail = (error: Error): void => {
+  const fail = (
+    error: Error,
+    reason: DisconnectReason,
+    closeCode?: number,
+    policyReason?: DisconnectPolicyReason
+  ): void => {
     if (closed) return
     closed = true
+    disconnectCause = error
+    if (reason !== 'client-close')
+      logger[
+        quitting &&
+        reason === 'transport-close' &&
+        pending.size === 0 &&
+        (closeCode === 1000 || closeCode === 1001 || closeCode === 1006)
+          ? 'info'
+          : 'warn'
+      ]('desktop runtime disconnected', {
+        phase: quitting ? 'shutdown' : initialized ? 'connected' : 'bootstrap',
+        reason,
+        pendingRequests: Math.min(pending.size, 256),
+        pendingNativeOperations: Math.min(native.size, 32),
+        ...(policyReason ? { policyReason } : {}),
+        ...(typeof closeCode === 'number' &&
+        Number.isInteger(closeCode) &&
+        closeCode >= 1000 &&
+        closeCode <= 4999
+          ? { closeCode }
+          : {})
+      })
     clearTimeout(timer)
     rejectReady(error)
-    for (const request of pending.values()) request.reject(error)
+    if (refreshing) {
+      clearTimeout(refreshing.timer)
+      refreshing.reject(error)
+      refreshing = undefined
+    }
+    for (const request of pending.values())
+      request.reject(
+        new Error(
+          'Desktop connection lost. The result of a submitted operation is unknown; it will not be retried.',
+          { cause: error }
+        )
+      )
     pending.clear()
+    for (const document of payloadClients.values()) document.controller.abort(error)
+    payloadClients.clear()
     for (const operation of native.values()) operation.abort()
     native.clear()
     socket.terminate()
-    if (initialized && !quitting) options.onDisconnect(error)
+    if (!quitting) notifyDisconnect()
   }
-  const timer = setTimeout(() => fail(new Error('Desktop runtime bootstrap timed out.')), 5_000)
+  const timer = setTimeout(
+    () => fail(new Error('Desktop runtime bootstrap timed out.'), 'bootstrap-timeout'),
+    5_000
+  )
   timer.unref()
-  const send = (message: unknown): void => {
+  const send = (message: unknown, onSent?: () => void): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new Error('Desktop runtime is disconnected.')
+      throw new Error('Desktop runtime is disconnected.', { cause: disconnectCause })
     const serialized = stringifyRpcJson(message)
     if (socket.bufferedAmount + Buffer.byteLength(serialized) > 16 * 1024 * 1024) {
       throw new Error('Desktop runtime request exceeds the transport byte budget.')
     }
-    socket.send(serialized)
+    socket.send(serialized, (error) => {
+      if (error) fail(error, 'send-failure')
+      else onSent?.()
+    })
   }
-  socket.on('message', (bytes, binary) => {
-    try {
-      if (binary) throw new Error('Unexpected binary desktop frame.')
-      const frame = parseRpcJson(bytes.toString())
-      if (!initialized) {
-        const bootstrap = bootstrapSchema.parse(frame)
-        startupState = bootstrap.startup ?? { phase: 'ready' }
-        runtimePid = bootstrap.pid
-        channels = Object.freeze([...bootstrap.rpcChannels])
-        cursor = bootstrap.eventStream
-        const child = options.startedProcess
-        if (child?.pid === bootstrap.pid && child.exitCode === null && child.signalCode === null)
-          ownedChild = child
-        initialized = true
-        clearTimeout(timer)
-        resolveReady()
-        return
-      }
-      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'startup-state') {
-        const event = desktopStartupEventSchema.parse(frame)
-        channels = Object.freeze([...event.rpcChannels])
-        startupState = event.state
-        options.onStartupState?.(event.state)
-        return
-      }
-      if (
-        frame &&
-        typeof frame === 'object' &&
-        'kind' in frame &&
-        frame.kind === 'upload-progress'
-      ) {
-        const event = desktopUploadProgressSchema.parse(frame)
-        options.onUploadProgress?.(event.clientId, event.progress)
-        return
-      }
-      if (
-        frame &&
-        typeof frame === 'object' &&
-        'kind' in frame &&
-        frame.kind === 'document-event'
-      ) {
-        const event = desktopDocumentEventSchema.parse(frame)
-        options.onDocumentEvent?.(event)
-        return
-      }
-      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'native-cancel') {
-        const cancelled = desktopNativeCancelSchema.parse(frame)
-        native.get(cancelled.id)?.abort()
-        return
-      }
-      if (
-        frame &&
-        typeof frame === 'object' &&
-        'kind' in frame &&
-        frame.kind === 'native-request'
-      ) {
-        const request = desktopNativeRequestSchema.parse(frame)
-        if (request.id <= highestNativeId || native.size >= 32)
-          throw new Error('Invalid or excessive native desktop requests.')
-        highestNativeId = request.id
-        const controller = new AbortController()
-        native.set(request.id, controller)
-        void (async () => {
-          try {
-            if (!options.onNativeRequest)
-              throw new Error('Native desktop operations are unavailable.')
-            const result = await options.onNativeRequest(request, controller.signal)
-            if (!closed && !controller.signal.aborted)
-              send({ kind: 'native-response', id: request.id, outcome: { ok: true, result } })
-          } catch (error) {
-            if (!closed && !controller.signal.aborted)
-              send({
-                kind: 'native-response',
-                id: request.id,
-                outcome: {
-                  ok: false,
-                  message: (error instanceof Error ? error.message : String(error)).slice(0, 32768)
-                }
-              })
-          } finally {
-            native.delete(request.id)
-          }
-        })().catch((error) => fail(error instanceof Error ? error : new Error(String(error))))
-        return
-      }
-      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'response') {
-        const { id, kind: _kind, ...body } = frame as Record<string, unknown>
-        void _kind
-        const response = responseSchema.parse(body)
-        if (typeof id !== 'number' || !pending.has(id))
-          throw new Error('Unexpected desktop response identity.')
-        const request = pending.get(id)!
-        pending.delete(id)
-        if (response.ok) request.resolve(response.result)
-        else
-          request.reject(
-            parseApplicationCommandError(response.error) ?? new Error(response.error.message)
-          )
-        return
-      }
-      const event = eventSchema.parse(frame)
-      if (event.kind === 'resync-required' || event.streamId !== cursor!.streamId) {
-        throw new Error('Desktop runtime event history changed; reload required.')
-      }
-      if (event.kind === 'event') {
-        if (event.sequence <= cursor!.latestSequence) return
-        if (event.sequence !== cursor!.latestSequence + 1) {
-          send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
-          return
-        }
-        options.onEvent({ channel: event.channel, payload: event.payload })
-        cursor = { streamId: event.streamId, latestSequence: event.sequence }
-      } else if (event.latestSequence > cursor!.latestSequence) {
-        send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
-      }
-    } catch (error) {
-      fail(error instanceof Error ? error : new Error(String(error)))
-    }
-  })
-  socket.once('close', (code, reason) => {
-    fail(
-      new Error(
-        `Desktop runtime connection closed (${code}${reason.length ? `: ${reason.toString()}` : ''}).`
-      )
-    )
-  })
-  socket.once('error', fail)
-  try {
-    send({ kind: 'bootstrap' })
-  } catch (error) {
-    fail(error instanceof Error ? error : new Error(String(error)))
-  }
-  await ready
   const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
     if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
     const id = ++requestId
@@ -271,66 +273,383 @@ export async function connectDesktopRuntime(options: {
     })
     return { id, response }
   }
+  const deliver = (failure: DesktopDeliveryFailure, callback: () => void): void => {
+    try {
+      callback()
+    } catch {
+      logger.warn('desktop consumer delivery failed', {
+        reason: 'callback-failure',
+        kind: failure.kind
+      })
+      try {
+        options.onDeliveryFailure?.(failure)
+      } catch {
+        logger.warn('desktop consumer invalidation failed', { reason: 'callback-failure' })
+      }
+    }
+  }
+  const eventController = new AbortController()
+  const eventPayloadClient = createRuntimePayloadClient({
+    invoke: (_channel, args, payloadOptions) =>
+      request({
+        kind: 'session-event-read',
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        args,
+        ...payloadOptions
+      }).response,
+    encode: stringifyRpcJson,
+    decode: parseRpcJson,
+    signal: () => eventController.signal
+  })
+  const eventHydrator = createSessionEventHydrator({
+    load: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
+    deliver: (event) => deliver({ kind: 'event' }, () => options.onEvent(event)),
+    onFailure: () =>
+      deliver({ kind: 'event' }, () => {
+        throw new Error('Session event projection requires reload.')
+      })
+  })
+  socket.once('close', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
+  socket.once('error', () => {
+    eventController.abort()
+    eventHydrator.dispose()
+  })
+  socket.on('message', (bytes, binary) => {
+    if (closed) return
+    let failureReason: DisconnectReason = 'invalid-frame'
+    try {
+      if (binary) throw new Error('Unexpected binary desktop frame.')
+      const frame = parseRpcJson(bytes.toString())
+      if (
+        initialized &&
+        frame &&
+        typeof frame === 'object' &&
+        'kind' in frame &&
+        frame.kind === 'bootstrap'
+      ) {
+        if (!refreshing) throw new Error('Unrequested Desktop bootstrap.')
+        const bootstrap = bootstrapSchema.parse(frame)
+        if (
+          bootstrap.pid !== runtimePid ||
+          bootstrap.generation !== runtimeInfo.generation ||
+          bootstrap.eventStream.streamId !== cursor?.streamId
+        )
+          throw new Error('The original Runtime identity changed during control refresh.')
+        const next = desktopRuntimeInfoSchema.parse(
+          Object.fromEntries(
+            Object.keys(desktopRuntimeInfoSchema.shape).map((key) => [
+              key,
+              bootstrap[key as keyof typeof bootstrap]
+            ])
+          )
+        )
+        if (
+          JSON.stringify(next.startupOptions) !== JSON.stringify(runtimeInfo.startupOptions) ||
+          next.entryPath !== runtimeInfo.entryPath ||
+          next.launch !== runtimeInfo.launch
+        )
+          throw new Error('The original Runtime configuration changed during control refresh.')
+        runtimeInfo = next
+        // Keep the existing event cursor, documents, native request IDs and pending requests.
+        const completed = refreshing
+        refreshing = undefined
+        clearTimeout(completed.timer)
+        completed.resolve(runtimeInfo)
+        return
+      }
+      if (!initialized) {
+        failureReason = 'invalid-bootstrap'
+        const bootstrap = bootstrapSchema.parse(frame)
+        startupState = bootstrap.startup ?? { phase: 'ready' }
+        runtimePid = bootstrap.pid
+        supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
+        channels = Object.freeze([...bootstrap.rpcChannels])
+        cursor = bootstrap.eventStream
+        runtimeInfo = desktopRuntimeInfoSchema.parse(
+          Object.fromEntries(
+            Object.keys(desktopRuntimeInfoSchema.shape).map((key) => [
+              key,
+              bootstrap[key as keyof typeof bootstrap]
+            ])
+          )
+        )
+        if (runtimeInfo.generation !== options.endpoint.generation)
+          throw new Error('Desktop Runtime generation changed during bootstrap.')
+        initialized = true
+        clearTimeout(timer)
+        resolveReady()
+        return
+      }
+      failureReason = 'invalid-event'
+      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'startup-state') {
+        const event = desktopStartupEventSchema.parse(frame)
+        channels = Object.freeze([...event.rpcChannels])
+        startupState = event.state
+        failureReason = 'callback-failure'
+        deliver({ kind: 'startup' }, () => options.onStartupState?.(event.state))
+        return
+      }
+      if (
+        frame &&
+        typeof frame === 'object' &&
+        'kind' in frame &&
+        frame.kind === 'upload-progress'
+      ) {
+        const event = desktopUploadProgressSchema.parse(frame)
+        failureReason = 'callback-failure'
+        deliver({ kind: 'upload', clientId: event.clientId }, () =>
+          options.onUploadProgress?.(event.clientId, event.progress)
+        )
+        return
+      }
+      if (
+        frame &&
+        typeof frame === 'object' &&
+        'kind' in frame &&
+        frame.kind === 'document-event'
+      ) {
+        const event = desktopDocumentEventSchema.parse(frame)
+        failureReason = 'callback-failure'
+        deliver({ kind: 'document', clientId: event.clientId }, () =>
+          options.onDocumentEvent?.(event)
+        )
+        return
+      }
+      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'native-cancel') {
+        const cancelled = desktopNativeCancelSchema.parse(frame)
+        const controller = native.get(cancelled.id)
+        // Some native dialogs settle only after user interaction; cancelled work owns no slot.
+        native.delete(cancelled.id)
+        controller?.abort()
+        return
+      }
+      if (
+        frame &&
+        typeof frame === 'object' &&
+        'kind' in frame &&
+        frame.kind === 'native-request'
+      ) {
+        failureReason = 'invalid-native-request'
+        const request = desktopNativeRequestSchema.parse(frame)
+        failureReason = native.size >= 32 ? 'native-capacity' : 'invalid-native-request'
+        if (request.id <= highestNativeId || native.size >= 32)
+          throw new Error('Invalid or excessive native desktop requests.')
+        highestNativeId = request.id
+        if (unsettledNativeHandlers.size >= MAX_UNSETTLED_NATIVE_HANDLERS) {
+          send({
+            kind: 'native-response',
+            id: request.id,
+            outcome: {
+              ok: false,
+              message:
+                'Native desktop resources are still busy. Close outstanding native operations and retry.'
+            }
+          })
+          return
+        }
+        const controller = new AbortController()
+        unsettledNativeHandlers.add(controller)
+        native.set(request.id, controller)
+        void (async () => {
+          try {
+            if (!options.onNativeRequest)
+              throw new Error('Native desktop operations are unavailable.')
+            const result = await options.onNativeRequest(request, controller.signal)
+            if (!closed && !controller.signal.aborted)
+              send({ kind: 'native-response', id: request.id, outcome: { ok: true, result } }, () =>
+                options.onNativeResponseSent?.(request, result)
+              )
+          } catch (error) {
+            if (!closed && !controller.signal.aborted)
+              send({
+                kind: 'native-response',
+                id: request.id,
+                outcome: {
+                  ok: false,
+                  message: (error instanceof Error ? error.message : String(error)).slice(0, 32768)
+                }
+              })
+          } finally {
+            native.delete(request.id)
+            unsettledNativeHandlers.delete(controller)
+          }
+        })().catch((error) =>
+          fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
+        )
+        return
+      }
+      if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'response') {
+        const { id, kind: _kind, ...body } = frame as Record<string, unknown>
+        void _kind
+        failureReason = 'invalid-response'
+        const response = responseSchema.parse(body)
+        failureReason = 'response-identity'
+        if (typeof id !== 'number' || !pending.has(id))
+          throw new Error('Unexpected desktop response identity.')
+        const request = pending.get(id)!
+        pending.delete(id)
+        if (response.ok) request.resolve(response.result)
+        else
+          request.reject(
+            parseApplicationCommandError(response.error) ?? new Error(response.error.message)
+          )
+        return
+      }
+      const event = eventSchema.parse(frame)
+      failureReason = 'event-history'
+      if (event.kind === 'resync-required' || event.streamId !== cursor!.streamId) {
+        throw new Error('Desktop runtime event history changed; reload required.')
+      }
+      if (event.kind === 'event') {
+        if (event.sequence <= cursor!.latestSequence) return
+        if (event.sequence !== cursor!.latestSequence + 1) {
+          failureReason = 'send-failure'
+          send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
+          return
+        }
+        failureReason = 'callback-failure'
+        eventHydrator.receive(
+          { channel: event.channel, payload: event.payload },
+          Array.isArray(bytes)
+            ? bytes.reduce((total, part) => total + part.byteLength, 0)
+            : bytes.byteLength
+        )
+        cursor = { streamId: event.streamId, latestSequence: event.sequence }
+      } else if (event.latestSequence > cursor!.latestSequence) {
+        failureReason = 'send-failure'
+        send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
+      }
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)), failureReason)
+    }
+  })
+  socket.once('close', (code, reason) =>
+    fail(
+      new Error('Desktop runtime connection closed.'),
+      'transport-close',
+      code,
+      code === 1008 ? classifyPolicyReason(reason.toString()) : undefined
+    )
+  )
+  socket.once('error', (error) => fail(error, 'socket-error'))
+  try {
+    send({ kind: 'bootstrap', desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId })
+  } catch (error) {
+    fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
+  }
+  const canceled = (): void => fail(new Error('Desktop attachment canceled.'), 'client-close')
+  options.signal?.addEventListener('abort', canceled, { once: true })
+  if (options.signal?.aborted) canceled()
+  try {
+    await ready
+  } finally {
+    options.signal?.removeEventListener('abort', canceled)
+  }
   const close = (): void => {
     initialized = false
-    fail(new Error('Desktop runtime client closed.'))
+    fail(new Error('Desktop runtime client closed.'), 'client-close')
   }
-  const quit = async (): Promise<void> => {
-    const child = ownedChild
-    if (!child || child.exitCode !== null || child.signalCode !== null) {
-      close()
-      return
-    }
-    quitting = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let onExit!: (code: number | null, signal: NodeJS.Signals | null) => void
-    const exited = new Promise<void>((resolve, reject) => {
-      onExit = (code, signal) =>
-        code === 0 && signal === null
-          ? resolve()
-          : reject(new Error('The owned runtime exited without completing a clean shutdown.'))
-      child.once('exit', onExit)
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              'The owned runtime did not stop within 15 seconds. No process signal was sent.'
-            )
-          ),
-        15_000
-      )
+  const waitForStopped = (signal?: AbortSignal): Promise<RuntimeDirectoryLease> =>
+    waitForRuntimeStopped({
+      configRoot: runtimeInfo.startupOptions.configRoot,
+      generation: runtimeInfo.generation,
+      pid: runtimePid,
+      signal,
+      socketClosed: () => socket.readyState === WebSocket.CLOSED
     })
-    let shutdownRequestId: number | undefined
+  const ownsRuntime = (): boolean =>
+    runtimeInfo.launch === 'desktop' && runtimeInfo.control === 'granted'
+  let stopPromise: Promise<RuntimeDirectoryLease> | undefined
+  const runStop = async (): Promise<RuntimeDirectoryLease> => {
+    if (runtimeInfo.control !== 'granted')
+      throw new Error('This Desktop does not control the Runtime.')
+    quitting = true
+    const confirmation = new AbortController()
+    let stopped: Promise<RuntimeDirectoryLease> | undefined
     try {
-      // The endpoint authenticates a fixed generation. Never rediscover or signal a PID here.
-      const shutdown = request({
-        kind: 'shutdown',
-        generation: options.endpoint.generation,
-        pid: child.pid
+      // Start the total stop budget before waiting for the command acknowledgement. A
+      // lost reply is ambiguous, so actual process/lock/exit-record evidence is authoritative.
+      stopped = waitForStopped(confirmation.signal)
+      const rejected = new Promise<never>((_resolve, reject) => {
+        if (!closed) {
+          void request({
+            kind: 'shutdown',
+            generation: runtimeInfo.generation,
+            pid: runtimePid
+          }).response.catch((error) => {
+            if (!closed) reject(error)
+          })
+        }
       })
-      shutdownRequestId = shutdown.id
-      await Promise.all([shutdown.response, exited])
+      const lease = await Promise.race([stopped, rejected])
       close()
+      return lease
+    } catch (error) {
+      confirmation.abort()
+      await stopped?.then(
+        (lease) => lease.release(),
+        () => undefined
+      )
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'runtime-stop-timeout'
+      )
+        fail(new Error('Runtime stop confirmation timed out.'), 'client-close')
+      notifyDisconnect()
+      throw error
     } finally {
-      clearTimeout(timer)
-      child.off('exit', onExit)
-      if (shutdownRequestId !== undefined) pending.delete(shutdownRequestId)
+      confirmation.abort()
       quitting = false
     }
   }
+
+  const stopRuntime = (): Promise<RuntimeDirectoryLease> =>
+    (stopPromise ??= runStop().catch((error) => {
+      stopPromise = undefined
+      throw error
+    }))
+
   return {
+    refreshControl: () => {
+      if (refreshing) return refreshing.promise
+      let resolve!: (value: DesktopRuntimeInfo) => void
+      let reject!: (error: Error) => void
+      const promise = new Promise<DesktopRuntimeInfo>((yes, no) => {
+        resolve = yes
+        reject = no
+      })
+      const timer = setTimeout(
+        () => fail(new Error('Desktop control refresh timed out.'), 'bootstrap-timeout'),
+        5000
+      )
+      refreshing = { promise, resolve, reject, timer }
+      try {
+        send({
+          kind: 'bootstrap',
+          desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId
+        })
+      } catch (error) {
+        clearTimeout(timer)
+        refreshing = undefined
+        reject(error as Error)
+      }
+      return promise
+    },
     commandNames: () => channels,
     startupState: () => startupState,
     retryStartup: async () =>
       desktopDatabaseStartupSchema.parse(await request({ kind: 'startup-retry' }).response),
     processId: () => runtimePid,
-    ownsRuntime: () =>
-      Boolean(ownedChild && ownedChild.exitCode === null && ownedChild.signalCode === null),
-    lifecycle: async (operation) => {
-      if (!ownedChild || ownedChild.exitCode !== null || ownedChild.signalCode !== null)
-        throw new Error('This desktop does not own the connected server lifecycle.')
-      return request({ kind: 'lifecycle', request: operation }).response
-    },
+    ownsRuntime,
+    runtimeInfo: () => runtimeInfo,
+    waitForStopped,
+    stopRuntime,
+    lifecycle: async (operation) => request({ kind: 'lifecycle', request: operation }).response,
     notificationView: (reason, visibleSessionId) => {
       if (!closed)
         send(
@@ -344,6 +663,7 @@ export async function connectDesktopRuntime(options: {
     notificationAction: (token, action) => {
       if (!closed) send({ kind: 'notification-action', token, action })
     },
+    loadSessionForEvent: (request) => eventPayloadClient.invoke('sessions:load-one', [request]),
     invokeHost: async (channel, args = []) =>
       request({
         kind: 'host-invoke',
@@ -354,27 +674,53 @@ export async function connectDesktopRuntime(options: {
     invoke: async (clientId, channel, args) => {
       if (!channels.includes(channel))
         throw new Error(`Desktop runtime command is unavailable: ${channel}`)
-      return request({
-        kind: 'invoke',
-        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        clientId,
+      const invoke: Parameters<typeof createRuntimePayloadClient>[0]['invoke'] = (
         channel,
-        args
-      }).response
+        args,
+        payloadOptions
+      ) =>
+        request({
+          kind: 'invoke',
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          clientId,
+          channel,
+          args,
+          ...payloadOptions
+        }).response
+      if (!supportsPayload) return invoke(channel, args)
+      let document = payloadClients.get(clientId)
+      if (!document) {
+        const controller = new AbortController()
+        document = {
+          controller,
+          client: createRuntimePayloadClient({
+            invoke,
+            encode: stringifyRpcJson,
+            decode: parseRpcJson,
+            signal: () => controller.signal
+          })
+        }
+        payloadClients.set(clientId, document)
+      }
+      return document.client.invoke(channel, args)
     },
     release: (clientId) => {
+      payloadClients.get(clientId)?.controller.abort(new Error('Renderer document released.'))
+      payloadClients.delete(clientId)
       if (closed) return
       try {
         send({ kind: 'release', clientId })
       } catch (error) {
         // If one document cannot be revoked reliably, revoke the entire attachment.
-        fail(error instanceof Error ? error : new Error(String(error)))
+        fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
       }
     },
     close,
     // Called only after desktop confirmation and durability barriers; ordinary detach never stops.
     quit: () =>
-      (quitPromise ??= quit().catch((error) => {
+      (quitPromise ??= (
+        ownsRuntime() ? stopRuntime() : Promise.resolve(close()).then(() => undefined)
+      ).catch((error) => {
         quitPromise = undefined
         throw error
       }))

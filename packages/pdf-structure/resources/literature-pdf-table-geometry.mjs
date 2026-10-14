@@ -507,6 +507,204 @@ export function trimTableCaptionCrop({
     frame ??
     proveCaptionedTableRuleFrame(table, caption, rules, pageItems, scale, true, rulePaintBounds)
   const original = [...cropRect]
+  // A padded detector crop may start inside an above-table caption. A thick
+  // opening's center can also overlap the header's em box; use its measured
+  // paint only for this inward cut, leaving the older center-line proof intact.
+  const paintedCaptionCut = (() => {
+    const rect = (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] > r[0] &&
+        r[3] > r[1],
+      same = (a, b) => a.every((v, n) => v === b[n]),
+      literal = (s) => s.replace(/\s+/gu, '')
+    if (
+      !(rulePaintBounds instanceof Map) ||
+      !rect(original) ||
+      !rect(caption.rect) ||
+      !Number.isFinite(scale) ||
+      scale <= 0 ||
+      table.unassigned.length ||
+      table.clipped?.length ||
+      !pageFontItems.length ||
+      captionKind(caption.lines[0]) !== 'table' ||
+      !table.grid?.length ||
+      table.grid.length < 3 ||
+      table.grid[0].length < 3 ||
+      !table.grid.every(
+        (row) =>
+          row.length === table.grid[0].length && row.every((s) => typeof s === 'string' && s.trim())
+      ) ||
+      table.cells.length !== table.grid.length * table.grid[0].length ||
+      !pageItems.every((i) => typeof i.text === 'string' && (!i.text.trim() || rect(i.rect)))
+    )
+      return
+    const source = new Set(),
+      slots = new Set()
+    for (const cell of table.cells) {
+      const slot = `${cell.row},${cell.column}`
+      if (
+        !Number.isInteger(cell.row) ||
+        !Number.isInteger(cell.column) ||
+        cell.row < 0 ||
+        cell.column < 0 ||
+        cell.rowSpan !== 1 ||
+        cell.colSpan !== 1 ||
+        slots.has(slot) ||
+        table.grid[cell.row]?.[cell.column] !== cell.text ||
+        !cell.sourceRects?.length ||
+        !cell.sourceRects.every(rect)
+      )
+        return
+      slots.add(slot)
+      const owners = []
+      for (const r of cell.sourceRects) {
+        const matches = pageItems.filter((i) => same(i.rect, r))
+        if (matches.length !== 1 || source.has(matches[0])) return
+        const item = matches[0]
+        if (
+          !item.horizontal ||
+          !Number.isFinite(item.height) ||
+          item.height <= 0 ||
+          !Number.isFinite(item.baseline) ||
+          item.baseline !== item.rect[3]
+        )
+          return
+        source.add(item)
+        owners.push(item)
+      }
+      if (
+        owners.some((i) => Math.abs(i.baseline - owners[0].baseline) > 0.01) ||
+        literal(
+          owners
+            .sort((a, b) => a.rect[0] - b.rect[0])
+            .map((i) => i.text)
+            .join('')
+        ) !== literal(cell.text)
+      )
+        return
+    }
+    const cr = caption.rect.map((v) => v * scale),
+      captionSource = new Set(
+        pageItems.filter(
+          (i) =>
+            i.text.trim() && i.rect.every((v, n) => (n < 2 ? v >= cr[n] - 0.1 : v <= cr[n] + 0.1))
+        )
+      ),
+      proof = { source, captionSource }
+    if (
+      !captionSource.size ||
+      literal([...captionSource].map((i) => i.text).join('')) !== literal(caption.lines.join(''))
+    )
+      return
+    let captionBottom = -Infinity
+    for (const item of captionSource) {
+      if (
+        !item.horizontal ||
+        !Number.isFinite(item.height) ||
+        item.height <= 0 ||
+        !Number.isFinite(item.baseline) ||
+        item.baseline !== item.rect[3]
+      )
+        return
+      const fonts = pageFontItems.filter(
+        (f) => f.text === item.text && rect(f.rect) && same(f.rect, item.rect)
+      )
+      if (source.has(item) || fonts.length !== 1) return
+      const font = fonts[0]
+      if (
+        !font.horizontal ||
+        !Number.isFinite(font.height) ||
+        font.height <= 0 ||
+        !Number.isFinite(font.baseline) ||
+        font.baseline !== font.rect[3] ||
+        Math.abs(font.rect[3] - font.rect[1] - font.height) > 1e-7 ||
+        !Number.isFinite(font.fontDescent) ||
+        font.fontDescent < -1 ||
+        font.fontDescent > 0
+      )
+        return
+      captionBottom = Math.max(captionBottom, font.baseline - font.fontDescent * font.height)
+    }
+    const heights = [...source].map((i) => i.height).sort((a, b) => a - b),
+      h = heights[heights.length >> 1],
+      first = Math.min(...[...source].map((i) => i.rect[1])),
+      last = Math.max(...[...source].map((i) => i.rect[3])),
+      horizontal = rules.filter(
+        (r) =>
+          Array.isArray(r) &&
+          r.length === 4 &&
+          r.every(Number.isFinite) &&
+          r[0] < r[2] &&
+          r[1] === r[3] &&
+          Math.abs(r[0] - original[0]) < h &&
+          Math.abs(r[2] - original[2]) < h
+      ),
+      opening = horizontal.filter((r) => {
+        const p = nativeFrameRulePaint(r, proof, pageItems, rulePaintBounds, original)
+        return (
+          p &&
+          p[1] > captionBottom + 0.5 &&
+          p[1] < first &&
+          first - p[1] < h &&
+          p[1] > original[1] &&
+          p[1] - original[1] < h
+        )
+      }),
+      closing = horizontal.filter(
+        (r) => r[1] > last && r[1] - last < h * 2 && Math.abs(r[1] - original[3]) < h
+      )
+    if (opening.length !== 1 || closing.length !== 1) return
+    const closingPaint = nativeFrameRulePaint(
+      closing[0],
+      proof,
+      pageItems,
+      rulePaintBounds,
+      original
+    )
+    if (
+      !closingPaint ||
+      Math.abs(opening[0][2] - closing[0][2]) > 0.01 ||
+      closing[0][0] > opening[0][0] + 0.01 ||
+      opening[0][0] - closing[0][0] > (closingPaint[3] - closingPaint[1]) / 2 + 0.01
+    )
+      return
+    const header = table.cells.filter((c) => c.row === 0).flatMap((c) => c.sourceRects),
+      body = table.cells.filter((c) => c.row === 1).flatMap((c) => c.sourceRects),
+      dividers = horizontal.filter(
+        (r) =>
+          r[1] > Math.max(...header.map((r) => r[3])) &&
+          r[1] < Math.min(...body.map((r) => r[3])) &&
+          Math.abs(r[0] - opening[0][0]) < 0.01 &&
+          Math.abs(r[2] - opening[0][2]) < 0.01
+      ),
+      paint = rulePaintBounds.get(opening[0].join(',')),
+      top = paint[1] - 0.5
+    if (
+      dividers.length !== 1 ||
+      [...source].some(
+        (i) =>
+          i.rect[0] < opening[0][0] - 0.1 ||
+          i.rect[2] > opening[0][2] + 0.1 ||
+          i.rect[1] <= top ||
+          i.rect[3] >= closing[0][1]
+      ) ||
+      pageItems.some(
+        (i) =>
+          i.text.trim() &&
+          i.rect[0] < original[2] &&
+          i.rect[2] > original[0] &&
+          i.rect[1] < closing[0][1] &&
+          i.rect[3] > original[1] &&
+          !source.has(i) &&
+          !captionSource.has(i)
+      )
+    )
+      return
+    return top
+  })()
+  if (paintedCaptionCut !== undefined) cropRect[1] = paintedCaptionCut
   // Glyph outlines can extend beyond their font-metric boxes. Cut inside
   // the measured caption/content gap instead of hugging the caption.
   if (caption.rect[3] <= contentRect[1])

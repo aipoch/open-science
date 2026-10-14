@@ -2,6 +2,7 @@ import { serializedSourcePath } from './serialized-file-provenance'
 import { notebookWriteOption, notebookWriteDisposition } from './notebook-write-semantics'
 import {
   PYTHON_LIBRARY_EFFECTS,
+  acceptsPythonCallbackContainer,
   pythonLibraryMethodEffect,
   pythonArgumentShapeReturnType,
   type PythonArgumentShape,
@@ -217,6 +218,11 @@ type PyNode = {
 const isPyNode = (value: unknown): value is PyNode =>
   Boolean(value && typeof value === 'object' && typeof (value as PyNode).type === 'string')
 
+// A simple name annotation does not assign in the current namespace. Keep this
+// separate from function-local lexical declaration collection, where it is local.
+const isAnnotationOnlyName = (node: PyNode): boolean =>
+  node.type === 'AnnAssign' && node.target?.type === 'Name' && !isPyNode(node.value)
+
 const py = (
   type: string,
   fields: Omit<PyNode, 'type' | '_fields'>,
@@ -250,6 +256,34 @@ const pyChildren = (node: PyNode): PyNode[] => {
   return children
 }
 
+// Lexical binding scans share definition headers but never deferred bodies or
+// comprehension targets. Generator expression stores remain possible bindings,
+// rather than proof that their deferred expressions executed at import time.
+const pythonLexicalBindingChildren = (node: PyNode): PyNode[] => {
+  if (['FunctionDef', 'AsyncFunctionDef', 'Lambda'].includes(node.type)) {
+    const args = node.args as PyArguments | undefined
+    return [
+      ...(node.decorator_list ?? []),
+      ...(args?.defaults ?? []),
+      ...(args?.kw_defaults ?? []).filter(isPyNode)
+    ]
+  }
+  if (node.type === 'ClassDef')
+    return [
+      ...(node.bases ?? []),
+      ...(node.decorator_list ?? []),
+      ...(node.classKeywords ?? []).map((keyword) => keyword.value)
+    ]
+  if (['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(node.type))
+    return [
+      node.elt,
+      node.key,
+      node.value,
+      ...(node.generators ?? []).flatMap((generator) => [generator.iter, ...generator.ifs])
+    ].filter(isPyNode)
+  return pyChildren(node)
+}
+
 const walkPy = (node: PyNode): PyNode[] => [node, ...pyChildren(node).flatMap(walkPy)]
 
 // The public periodogram detrend argument may invoke arbitrary user code. A
@@ -270,6 +304,51 @@ const pythonPeriodogramHasClosedDetrend = (node: PyNode): boolean => {
       ((detrend.constKind === 'bool' && detrend.value === false) ||
         (detrend.constKind === 'str' && ['constant', 'linear'].includes(String(detrend.value)))))
   )
+}
+
+const pythonTextReaderConverterPosition = (
+  canonicalName: string | undefined
+): number | undefined =>
+  canonicalName === 'numpy.loadtxt' ? 4 : canonicalName === 'numpy.genfromtxt' ? 6 : undefined
+
+// Share the converter boundary between dependency and file analysis. A reader's
+// explicit input is independent of arbitrary code invoked while parsing it.
+const specializePythonTextReaderEffect = (
+  effect: PythonLibraryMethodEffect,
+  node: PyNode,
+  canonicalName: string
+): PythonLibraryMethodEffect => {
+  const position = pythonTextReaderConverterPosition(canonicalName)
+  if (position === undefined) return effect
+  const args = Array.isArray(node.args) ? node.args : []
+  const keywords = node.keywords ?? []
+  const expanded = args.some((arg) => arg.type === 'Starred') || keywords.some((key) => !key.arg)
+  const converterKeywords = keywords.filter((key) => key.arg === 'converters')
+  const ambiguous =
+    expanded || converterKeywords.length > 1 || (converterKeywords.length > 0 && !!args[position])
+  const converter = converterKeywords[0]?.value ?? args[position]
+  const absent =
+    !ambiguous &&
+    (!converter ||
+      (converter.type === 'Constant' && converter.value === null) ||
+      (converter.type === 'Dict' && !converter.keys?.length && !converter.values?.length))
+  if (absent)
+    return {
+      ...effect,
+      callbackKeywords: undefined,
+      callbackContainerKeywords: undefined,
+      callbackPositionalKeywords: undefined
+    }
+  return {
+    ...effect,
+    effect: 'unknown',
+    scopedOpaque: true,
+    externalState: true,
+    // A positional index following *args does not identify a known converter.
+    callbackPositionalKeywords: args.some((arg) => arg.type === 'Starred')
+      ? undefined
+      : effect.callbackPositionalKeywords
+  }
 }
 
 const pythonRedirectsConsole = (node: PyNode): boolean =>
@@ -4249,6 +4328,8 @@ class Analyzer extends NodeVisitor {
     node: PyNode,
     canonicalName: string
   ): PythonLibraryMethodEffect {
+    if (pythonTextReaderConverterPosition(canonicalName) !== undefined)
+      return specializePythonTextReaderEffect(effect, node, canonicalName)
     if (canonicalName === 'scipy.signal.periodogram') {
       return pythonPeriodogramHasClosedDetrend(node)
         ? { ...effect, callbackKeywords: undefined }
@@ -4438,6 +4519,26 @@ class Analyzer extends NodeVisitor {
     return loopTargetNames(node)
   }
 
+  recordPythonBinding(names: readonly string[]): void {
+    for (const name of names) {
+      if (this.localScopes.some((scope) => name in scope)) continue
+      if (!name || name.length > 4096) {
+        this.unknown.add('dynamic-namespace')
+        continue
+      }
+      for (const call of this.receiverCalls) {
+        const unavailable = call.unavailablePythonFunctionNames ?? []
+        if (unavailable.includes(name)) continue
+        if (unavailable.length >= 512) {
+          // Truncated order evidence must never authorize a stored callback identity.
+          this.unknown.add('dynamic-namespace')
+          continue
+        }
+        call.unavailablePythonFunctionNames = [...unavailable, name].sort()
+      }
+    }
+  }
+
   clearAlias(name: string, conditional = false): void {
     const source = this.aliases.get(name)
     this.aliases.delete(name)
@@ -4497,7 +4598,13 @@ class Analyzer extends NodeVisitor {
   visit_control(node: PyNode): void {
     this.unknown.add('control-flow')
     this.controlDepth += 1
-    this.genericVisit(node)
+    if (node.type === 'For' || node.type === 'AsyncFor') {
+      // The iterable is evaluated before the loop target receives its binding.
+      this.visit(node.iter)
+      this.visit(node.target)
+      for (const statement of Array.isArray(node.body) ? node.body : []) this.visit(statement)
+      for (const statement of node.orelse ?? []) this.visit(statement)
+    } else this.genericVisit(node)
     this.controlDepth -= 1
     // A conservatively analyzed loop can still leave an element alias in the kernel.
     // Retain literal-container sources so later mutations cannot lose that dependency.
@@ -4520,10 +4627,12 @@ class Analyzer extends NodeVisitor {
       )
         this.safeCallNames.add(node.id)
     } else if (node.ctx === 'Store') {
+      this.recordPythonBinding([node.id])
       this.defined.add(node.id)
       if (this.controlDepth > 0) this.conditionallyDefined.add(node.id)
     } else if (node.ctx === 'Del') {
       this.prepareAssignment([node.id])
+      this.recordPythonBinding([node.id])
       this.addMutation(node.id)
     }
   }
@@ -4532,6 +4641,7 @@ class Analyzer extends NodeVisitor {
     const aliases = (node.names as PyAlias[] | undefined) ?? []
     const names = aliases.map((alias) => alias.asname || alias.name.split('.')[0] || alias.name)
     this.prepareAssignment(names)
+    this.recordPythonBinding(names)
     for (const alias of aliases) {
       const name = alias.asname || alias.name.split('.')[0] || alias.name
       this.defined.add(name)
@@ -4547,6 +4657,9 @@ class Analyzer extends NodeVisitor {
   visit_ImportFrom(node: PyNode): void {
     const aliases = (node.names as PyAlias[] | undefined) ?? []
     this.prepareAssignment(
+      aliases.filter((alias) => alias.name !== '*').map((alias) => alias.asname || alias.name)
+    )
+    this.recordPythonBinding(
       aliases.filter((alias) => alias.name !== '*').map((alias) => alias.asname || alias.name)
     )
     for (const alias of aliases) {
@@ -4935,6 +5048,10 @@ class Analyzer extends NodeVisitor {
   }
 
   visit_AnnAssign(node: PyNode): void {
+    if (isAnnotationOnlyName(node)) {
+      if (node.annotation) this.visit(node.annotation)
+      return
+    }
     this.bindAssignmentValue(
       node,
       node.target,
@@ -5220,6 +5337,7 @@ class Analyzer extends NodeVisitor {
       const targetNames = this.assignedNames(node.target)
       this.controlDepth += 1
       this.prepareAssignment(targetNames)
+      this.recordPythonBinding(targetNames)
       for (const name of targetNames) this.defined.add(name)
       const sources = this.loopSourceNames(node.iter)
       const targetTypes = this.loopLibraryTypes(node.iter, targetNames)
@@ -5264,6 +5382,7 @@ class Analyzer extends NodeVisitor {
     if (node.iter) this.visit(node.iter)
     if (deterministic) {
       this.prepareAssignment(targetNames)
+      this.recordPythonBinding(targetNames)
       for (const name of targetNames) this.defined.add(name)
     }
     const sources = this.loopSourceNames(node.iter)
@@ -5358,8 +5477,18 @@ class Analyzer extends NodeVisitor {
   }
 
   visit_FunctionDef(node: PyNode): void {
+    // A new function name is not bound while its decorators/defaults execute.
+    const fnArgs = node.args as PyArguments | undefined
+    for (const value of [
+      ...(node.decorator_list ?? []),
+      ...(fnArgs?.defaults ?? []),
+      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
+    ]) {
+      this.visit(value)
+    }
     if (node.name) {
       this.prepareAssignment([node.name])
+      this.recordPythonBinding([node.name])
       this.defined.add(node.name)
     }
     if (
@@ -5396,25 +5525,10 @@ class Analyzer extends NodeVisitor {
       this.typeSummaries.push(summary)
       this.typeBindings.push({ target: node.name, typeName: summary.name, argumentNames: [] })
     } else this.unknown.add('function-scope')
-    const fnArgs = node.args as PyArguments | undefined
-    for (const value of [
-      ...(node.decorator_list ?? []),
-      ...(fnArgs?.defaults ?? []),
-      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
-    ]) {
-      this.visit(value)
-    }
   }
   visit_AsyncFunctionDef = this.visit_FunctionDef
 
   visit_ClassDef(node: PyNode): void {
-    if (node.name) {
-      this.prepareAssignment([node.name])
-      this.defined.add(node.name)
-    }
-    const summary = summarizeClass(node)
-    if (summary) this.typeSummaries.push(summary)
-    else this.unknown.add('class-scope')
     for (const value of [
       ...(node.decorator_list ?? []),
       ...(node.bases ?? []),
@@ -5422,9 +5536,24 @@ class Analyzer extends NodeVisitor {
     ]) {
       this.visit(isPyNode(value) ? value : (value as PyKeyword).value)
     }
+    if (node.name) {
+      this.prepareAssignment([node.name])
+      this.recordPythonBinding([node.name])
+      this.defined.add(node.name)
+    }
+    const summary = summarizeClass(node)
+    if (summary) this.typeSummaries.push(summary)
+    else this.unknown.add('class-scope')
   }
 
   visit_Lambda(node: PyNode): void {
+    const fnArgs = node.args as PyArguments | undefined
+    for (const value of [
+      ...(fnArgs?.defaults ?? []),
+      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
+    ]) {
+      this.visit(value)
+    }
     const summary = this.pureInlineCallbacks.get(node)
     if (!summary) {
       this.unknown.add('lambda-scope')
@@ -5504,6 +5633,7 @@ class Analyzer extends NodeVisitor {
       if (node.target) this.visit(node.target)
     }
     if (isPyNode(node.value)) this.visit(node.value)
+    if (node.target?.type === 'Name' && node.target.id) this.recordPythonBinding([node.target.id])
   }
 
   visit_Subscript(node: PyNode): void {
@@ -6097,8 +6227,12 @@ class Analyzer extends NodeVisitor {
     for (const name of child.safeCallNames) this.safeCallNames.add(name)
     for (const record of child.receiverCalls) {
       if (localNames.has(record.receiver) && !supplied.has(record.receiver)) continue
+      const unavailable = exported(
+        (record.unavailablePythonFunctionNames ?? []).filter((name) => !localNames.has(name))
+      ).sort()
       this.receiverCalls.push({
         ...record,
+        unavailablePythonFunctionNames: unavailable.length ? unavailable : undefined,
         // Summarize every possible effect of this checked invocation. A branch
         // inside the helper does not make the caller's invocation conditional.
         conditional: undefined,
@@ -6401,14 +6535,34 @@ class Analyzer extends NodeVisitor {
       ) {
         callbackCandidates.push(args[0])
       }
-      for (const keyword of node.keywords ?? []) {
+      const callbackKeywords = [...(node.keywords ?? [])]
+      const converterPosition = pythonTextReaderConverterPosition(this.serializationCallName(node))
+      if (
+        converterPosition !== undefined &&
+        libraryEffect.callbackPositionalKeywords?.[converterPosition] === 'converters' &&
+        args[converterPosition]
+      )
+        callbackKeywords.push({
+          type: 'keyword',
+          arg: 'converters',
+          value: args[converterPosition],
+          _fields: ['value']
+        })
+      for (const keyword of callbackKeywords) {
         if (
           libraryEffect.callbackAllKeywords ||
           libraryEffect.callbackKeywords?.includes(keyword.arg ?? '')
         ) {
           callbackCandidates.push(keyword.value)
         }
-        if (libraryEffect.callbackContainerKeywords?.includes(keyword.arg ?? '')) {
+        if (
+          ['Dict', 'List', 'Tuple'].includes(keyword.value.type) &&
+          acceptsPythonCallbackContainer(
+            libraryEffect,
+            keyword.arg ?? '',
+            keyword.value.type === 'Dict' ? 'dict' : 'list'
+          )
+        ) {
           callbackCandidates.push(...(keyword.value.elts ?? []), ...(keyword.value.values ?? []))
         }
       }
@@ -6767,14 +6921,18 @@ class Analyzer extends NodeVisitor {
 const pythonCallbackContainerSummaries = (
   tree: PyNode
 ): NonNullable<NotebookRunDependencyFacts['pythonCallbackContainerSummaries']> => {
-  const candidates = new Map<string, string[]>()
+  const candidates = new Map<
+    string,
+    NonNullable<NotebookRunDependencyFacts['pythonCallbackContainerSummaries']>[number]
+  >()
   const loadedBeforeAssignment = new Set<string>()
   const invalidate = (name: string): void => {
-    for (const [container, callbacks] of candidates) {
-      if (container === name || callbacks.includes(name)) candidates.delete(container)
+    for (const [container, candidate] of candidates) {
+      if (container === name || candidate.callbackNames.includes(name)) candidates.delete(container)
     }
   }
   const executedNodes = (node: PyNode): PyNode[] => {
+    if (isAnnotationOnlyName(node)) return node.annotation ? executedNodes(node.annotation) : []
     if (node.type === 'FunctionDef' || node.type === 'AsyncFunctionDef') {
       const args = node.args as PyArguments | undefined
       const parameters = [
@@ -6836,20 +6994,54 @@ const pythonCallbackContainerSummaries = (
       // Never use a later assignment to resolve an earlier load of this name.
       loadedBeforeAssignment.has(targets[0].id) ||
       !isPyNode(value) ||
-      !['List', 'Tuple'].includes(value.type) ||
-      !value.elts?.length ||
-      value.elts.length > 128 ||
-      value.elts.some((member) => member.type !== 'Name' || !member.id)
+      !['List', 'Tuple', 'Dict'].includes(value.type)
     )
       continue
-    candidates.set(targets[0].id, [...new Set(value.elts.map((member) => member.id!))])
+    const members = value.type === 'Dict' ? value.values : value.elts
+    if (
+      !members?.length ||
+      members.length > 128 ||
+      members.some((member) => member.type !== 'Name' || !member.id)
+    )
+      continue
+    if (value.type === 'Dict') {
+      const keys = value.keys ?? []
+      const identities = keys.map((key) => {
+        if (
+          key?.type === 'Constant' &&
+          key.constKind === 'str' &&
+          typeof key.value === 'string' &&
+          // The shared decoder does not cover every Python escape. Do not
+          // certify undecoded escapes or unnormalized physical newlines.
+          !key.value.includes('\\') &&
+          !key.value.includes('\r')
+        )
+          return `str:${key.value}`
+        const integer = staticInteger(key)
+        return integer !== undefined && Number.isSafeInteger(integer) ? `int:${integer}` : undefined
+      })
+      if (
+        keys.length !== members.length ||
+        identities.some((identity) => identity === undefined) ||
+        new Set(identities).size !== identities.length
+      )
+        continue
+    }
+    candidates.set(targets[0].id, {
+      name: targets[0].id,
+      callbackNames: [...new Set(members.map((member) => member.id!))],
+      ...(value.type === 'Dict' ? { container: 'dict' as const } : {})
+    })
   }
   if (
     candidates.size > 512 ||
-    [...candidates.values()].reduce((count, names) => count + names.length, 0) > 1_024
+    [...candidates.values()].reduce(
+      (count, candidate) => count + candidate.callbackNames.length,
+      0
+    ) > 1_024
   )
     return []
-  return [...candidates].map(([name, callbackNames]) => ({ name, callbackNames }))
+  return [...candidates.values()]
 }
 
 const factsFromAnalyzer = (
@@ -7750,9 +7942,13 @@ const analyzePythonFileAccessTree = (
     const topLevelFunctions = new Map<string, PyNode>()
     const finalBindings = new Map<string, 'function' | 'other'>()
     const collectReboundNames = (node: PyNode): string[] => {
-      // Definition bodies have their own namespace; control-flow blocks do not.
+      if (isAnnotationOnlyName(node))
+        return node.annotation ? collectReboundNames(node.annotation) : []
       if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(node.type))
-        return node.name ? [node.name] : []
+        return [
+          ...(node.name ? [node.name] : []),
+          ...pythonLexicalBindingChildren(node).flatMap(collectReboundNames)
+        ]
       // Capture patterns are not modeled as stores in the converted match tree.
       if (node.type === 'Match') return [...exports]
       if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del'))
@@ -7765,20 +7961,19 @@ const analyzePythonFileAccessTree = (
         return ((node.names as PyAlias[] | undefined) ?? []).flatMap((alias) =>
           alias.name === '*' ? [...exports] : [alias.asname || alias.name]
         )
-      return pyChildren(node).flatMap(collectReboundNames)
+      return pythonLexicalBindingChildren(node).flatMap(collectReboundNames)
     }
     for (const statement of Array.isArray(module.body) ? module.body : []) {
+      for (const name of collectReboundNames(statement)) finalBindings.set(name, 'other')
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name &&
         !statement.decorator_list?.length
       ) {
         topLevelFunctions.set(statement.name, statement)
+        // The function's own name is bound after its header expressions execute.
         finalBindings.set(statement.name, 'function')
-        continue
       }
-      const reboundNames = collectReboundNames(statement)
-      for (const name of reboundNames) finalBindings.set(name, 'other')
     }
     for (const name of exports) {
       const fn = topLevelFunctions.get(name)
@@ -7787,20 +7982,291 @@ const analyzePythonFileAccessTree = (
       helperFunctions.set(name, { function: fn, module, topLevel: true })
     }
   }
-  // A multi-statement local helper is executable notebook code, not just a
-  // callable name. Replay its body in the current cell scope so parameterized
+  // Multi-statement and sole-With local helpers are executable notebook code,
+  // not just callable names. Replay their bodies in the current cell scope so parameterized
   // reads and writes (for example an AnnData preprocessing helper) retain
   // their concrete paths. Single-call wrappers keep their existing summary
   // path and do not need this second representation.
   const localFileHelperNames = new Set<string>()
+  const activeLocalFileHelperNames = new Set<string>()
+  const soleReturnReaderCalls = new Map<PyNode, PyNode>()
+  const soleReturnAliasedReaderCalls = new Set<PyNode>()
+  const soleReturnReaderHelperNames = new Set<string>()
+  const nestedReaderHelperNames = new Set<string>()
+  type ChecksumHelper = { function: PyNode; parameter: string }
+  const checksumHelpers = new Map<string, ChecksumHelper>()
+  const uncertainReaderChainNames = new Set<string>()
+  const uncertainReaderChainNamespaces = new Set<string>()
+  const uncertainReaderChainImports = new Set<string>()
+  const explicitMatrixReaderAliases = new Set<string>()
+  const collectMatrixReaderAliases = (node: PyNode): void => {
+    if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef', 'Lambda'].includes(node.type)) return
+    if (node.type === 'ImportFrom' && node.module === 'scipy.io') {
+      for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
+        if (alias.name === 'mmread' && alias.asname) explicitMatrixReaderAliases.add(alias.asname)
+      }
+    }
+    pyChildren(node).forEach(collectMatrixReaderAliases)
+  }
+  collectMatrixReaderAliases(tree)
+  const soleReturnReaderCall = (fn: PyNode): PyNode | undefined => {
+    const body = Array.isArray(fn.body) ? fn.body : []
+    const args = fn.args as PyArguments | undefined
+    if (
+      fn.type !== 'FunctionDef' ||
+      body.length !== 1 ||
+      body[0]?.type !== 'Return' ||
+      !isPyNode(body[0].value) ||
+      fn.annotation ||
+      [...(args?.defaults ?? []), ...(args?.kw_defaults ?? []).filter(isPyNode)].some(
+        (value) => value.type !== 'Constant'
+      ) ||
+      [
+        ...(args?.posonlyargs ?? []),
+        ...(args?.args ?? []),
+        ...(args?.kwonlyargs ?? []),
+        ...(args?.vararg ? [args.vararg] : []),
+        ...(args?.kwarg ? [args.kwarg] : [])
+      ].some((parameter) => parameter.annotation)
+    )
+      return undefined
+    let call = body[0].value
+    let chainLength = 0
+    while (
+      call.type === 'Call' &&
+      call.func?.type === 'Attribute' &&
+      isPyNode(call.func.value) &&
+      call.func.value.type === 'Call'
+    ) {
+      // Only recover the eager receiver read. Method arguments may execute
+      // arbitrary code; their paths and the method result are not certified.
+      if ((call.args as PyNode[] | undefined)?.length || call.keywords?.length) return undefined
+      call = call.func.value
+      if (++chainLength > 16) return undefined
+    }
+    const name = call.type === 'Call' ? pythonDottedName(call.func) : undefined
+    const effect = name ? PYTHON_FILE_CALL_EFFECTS.get(name.split('.').at(-1)!) : undefined
+    const explicitAlias = name ? explicitMatrixReaderAliases.has(name) : false
+    if (effect?.kind !== 'read' && !explicitAlias) return undefined
+    // This spelling is only a same-source candidate. Its active canonical import
+    // identity and argument shape must still be checked at the actual invocation.
+    if (explicitAlias) soleReturnAliasedReaderCalls.add(call)
+    return call
+  }
+  const checksumPathCall = (node: PyNode, parameter: string): boolean => {
+    if (node.type !== 'Call' || node.func?.type !== 'Attribute') return false
+    if (!['read_bytes', 'read_text', 'stat'].includes(node.func.attr ?? '')) return false
+    const receiver = node.func.value
+    if (
+      !isPyNode(receiver) ||
+      receiver.type !== 'Call' ||
+      receiver.func?.type !== 'Attribute' ||
+      receiver.func.attr !== 'Path' ||
+      pythonDottedName(receiver.func) !== 'pathlib.Path'
+    )
+      return false
+    const args = Array.isArray(receiver.args) ? receiver.args : []
+    return (
+      args.length === 1 &&
+      !(receiver.keywords ?? []).length &&
+      args[0]?.type === 'Name' &&
+      args[0].id === parameter
+    )
+  }
+  const checksumExpressionSafe = (node: PyNode, names: ReadonlySet<string>): boolean => {
+    if (node.type === 'Constant' || (node.type === 'Name' && names.has(node.id ?? ''))) return true
+    if (node.type === 'Call') {
+      const pathParameter = [...names][0]
+      if (pathParameter && checksumPathCall(node, pathParameter)) return true
+      const name = pythonDottedName(node.func)
+      const args = Array.isArray(node.args) ? node.args : []
+      if (name === 'hashlib.sha256' || name === 'len')
+        return (
+          args.length === 1 &&
+          !(node.keywords ?? []).length &&
+          isPyNode(args[0]) &&
+          checksumExpressionSafe(args[0], names)
+        )
+      if (
+        node.func?.type === 'Attribute' &&
+        node.func.attr === 'hexdigest' &&
+        isPyNode(node.func.value)
+      )
+        return checksumExpressionSafe(node.func.value, names)
+      return false
+    }
+    if (node.type === 'Attribute' && node.attr === 'st_size' && isPyNode(node.value))
+      return checksumExpressionSafe(node.value, names)
+    if (['Dict', 'List', 'Tuple'].includes(node.type))
+      return pyChildren(node).every((child) => checksumExpressionSafe(child, names))
+    return false
+  }
+  const checksumHelperCandidate = (fn: PyNode): ChecksumHelper | undefined => {
+    if (
+      fn.type !== 'FunctionDef' ||
+      fn.decorator_list?.length ||
+      !Array.isArray(fn.body) ||
+      !fn.body.length
+    )
+      return undefined
+    const args = fn.args as PyArguments | undefined
+    if (
+      !args ||
+      (args.posonlyargs ?? []).length + (args.args ?? []).length !== 1 ||
+      (args.kwonlyargs ?? []).length ||
+      args.vararg ||
+      args.kwarg ||
+      (args.defaults ?? []).length ||
+      (args.kw_defaults ?? []).some(isPyNode) ||
+      (args.posonlyargs ?? []).some((parameter) => parameter.annotation) ||
+      (args.args ?? []).some((parameter) => parameter.annotation)
+    )
+      return undefined
+    const parameter = (args.posonlyargs ?? [])[0]?.arg ?? (args.args ?? [])[0]?.arg
+    if (!parameter) return undefined
+    let returnNode: PyNode | undefined
+    const names = new Set([parameter])
+    if (fn.body.length === 1 && fn.body[0]?.type === 'Return') {
+      returnNode = fn.body[0]
+    } else if (
+      fn.body.length === 2 &&
+      fn.body[0]?.type === 'Assign' &&
+      fn.body[1]?.type === 'Return'
+    ) {
+      const assignment = fn.body[0]
+      const target = assignment.targets?.length === 1 ? assignment.targets[0] : undefined
+      const local = target?.type === 'Name' ? target.id : undefined
+      if (!local || !isPyNode(assignment.value) || !checksumPathCall(assignment.value, parameter))
+        return undefined
+      names.add(local)
+      returnNode = fn.body[1]
+    }
+    if (
+      !returnNode ||
+      !isPyNode(returnNode.value) ||
+      !checksumExpressionSafe(returnNode.value, names)
+    )
+      return undefined
+    const pathRead =
+      walkPy(returnNode.value).some((node) => checksumPathCall(node, parameter)) ||
+      (fn.body.length === 2 &&
+        isPyNode(fn.body[0]?.value) &&
+        walkPy(fn.body[0].value).some((node) => checksumPathCall(node, parameter)))
+    if (!pathRead) return undefined
+    return { function: fn, parameter }
+  }
+  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
+    const candidate = statement.name ? checksumHelperCandidate(statement) : undefined
+    if (candidate && statement.name) checksumHelpers.set(statement.name, candidate)
+  }
+  const localFunctionNames = new Set<string>()
+  const repeatedLocalFunctionNames = new Set<string>()
+  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
+    if (
+      (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+      statement.name
+    ) {
+      if (localFunctionNames.has(statement.name)) repeatedLocalFunctionNames.add(statement.name)
+      localFunctionNames.add(statement.name)
+    }
+  }
+  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
+    const body = Array.isArray(statement.body) ? statement.body : []
+    const receiverRead = soleReturnReaderCall(statement)
+    if (
+      (statement.type !== 'FunctionDef' && statement.type !== 'AsyncFunctionDef') ||
+      !statement.name ||
+      repeatedLocalFunctionNames.has(statement.name) ||
+      statement.decorator_list?.length ||
+      (!localWrappers.fileLikeNames.has(statement.name) &&
+        (!receiverRead || !soleReturnAliasedReaderCalls.has(receiverRead))) ||
+      (localWrappers.effects.has(statement.name) && !receiverRead) ||
+      (body.length <= 1 && body[0]?.type !== 'With' && !receiverRead)
+    )
+      continue
+    localFileHelperNames.add(statement.name)
+    if (receiverRead) {
+      soleReturnReaderCalls.set(statement, receiverRead)
+      soleReturnReaderHelperNames.add(statement.name)
+      if (localWrappers.effects.has(statement.name)) nestedReaderHelperNames.add(statement.name)
+    }
+    if (!nestedReaderHelperNames.has(statement.name)) exportedHelperNames.add(statement.name)
+    helperFunctions.set(statement.name, {
+      function: statement,
+      module: tree,
+      topLevel: false,
+      preserveCallerScope: true
+    })
+  }
+  // A stable outer helper may delegate its only known reader through another
+  // stable same-cell helper (for example, ``main(path)`` calling
+  // ``load_coordinates(path)``).  Register that outer helper for replay too,
+  // but only when the reader name is never rebound in the outer function. This
+  // keeps aliases, shadowing, dynamic dispatch, and opaque callbacks outside
+  // the known-input contract.
+  const hasStableNestedReaderCall = (fn: PyNode): boolean => {
+    if (fn.type !== 'FunctionDef' || !Array.isArray(fn.body)) return false
+    const args = fn.args as PyArguments | undefined
+    const parameters = [
+      ...(args?.posonlyargs ?? []),
+      ...(args?.args ?? []),
+      ...(args?.kwonlyargs ?? []),
+      ...(args?.vararg ? [args.vararg] : []),
+      ...(args?.kwarg ? [args.kwarg] : [])
+    ]
+    const readerNames = soleReturnReaderHelperNames
+    const boundNames = new Set(parameters.map(({ arg }) => arg).filter(Boolean))
+    let found = false
+    let invalid = parameters.some(({ arg }) => Boolean(arg && readerNames.has(arg)))
+    const inspect = (node: PyNode): void => {
+      if (invalid) return
+      if (
+        node !== fn &&
+        ['FunctionDef', 'AsyncFunctionDef', 'ClassDef', 'Lambda'].includes(node.type)
+      ) {
+        if (node.name && readerNames.has(node.name)) invalid = true
+        return
+      }
+      if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del') && node.id) {
+        boundNames.add(node.id)
+        if (readerNames.has(node.id)) invalid = true
+        return
+      }
+      if (node.type === 'Import') {
+        for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
+          const name = alias.asname || alias.name.split('.')[0] || alias.name
+          if (readerNames.has(name)) invalid = true
+        }
+        return
+      }
+      if (node.type === 'ImportFrom') {
+        for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
+          const name = alias.asname || alias.name
+          if (readerNames.has(name)) invalid = true
+        }
+        return
+      }
+      if (
+        node.type === 'Call' &&
+        node.func?.type === 'Name' &&
+        readerNames.has(node.func.id ?? '') &&
+        !boundNames.has(node.func.id ?? '')
+      )
+        found = true
+      pyChildren(node).forEach(inspect)
+    }
+    for (const statement of fn.body) inspect(statement)
+    return found && !invalid
+  }
   for (const statement of Array.isArray(tree.body) ? tree.body : []) {
     if (
       (statement.type !== 'FunctionDef' && statement.type !== 'AsyncFunctionDef') ||
       !statement.name ||
+      repeatedLocalFunctionNames.has(statement.name) ||
       statement.decorator_list?.length ||
-      !localWrappers.fileLikeNames.has(statement.name) ||
       localWrappers.effects.has(statement.name) ||
-      (Array.isArray(statement.body) ? statement.body.length : 0) <= 1
+      localFileHelperNames.has(statement.name) ||
+      !hasStableNestedReaderCall(statement)
     )
       continue
     localFileHelperNames.add(statement.name)
@@ -7842,7 +8308,8 @@ const analyzePythonFileAccessTree = (
     shadowHelper = true
   ): void => {
     if (!name) return
-    if (shadowHelper && isHelperName(name)) shadowedHelperNames.add(name)
+    if (shadowHelper && (isHelperName(name) || checksumHelpers.has(name)))
+      shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
       for (const { target, source } of possibleAliases) {
@@ -7998,6 +8465,25 @@ const analyzePythonFileAccessTree = (
       return `${objectType}.__call__`
     }
     return [canonicalRoot, ...members].filter(Boolean).join('.')
+  }
+
+  const readerChainEscapedNames = (node: PyNode): string[] => {
+    // Passing a call result does not pass its callable identity. Recurse into
+    // arguments so an opaque nested call cannot hide an escaped reader.
+    if (node.type === 'Call')
+      return [
+        ...(Array.isArray(node.args) ? node.args : []),
+        ...(node.keywords ?? []).map(({ value }) => value)
+      ].flatMap(readerChainEscapedNames)
+    if (node.type === 'Name') return node.id ? [node.id] : []
+    return pyChildren(node).flatMap(readerChainEscapedNames)
+  }
+  const recordReaderChainEscapes = (node: PyNode): void => {
+    for (const name of readerChainEscapedNames(node)) {
+      if (soleReturnReaderHelperNames.has(name)) uncertainReaderChainNames.add(name)
+      const identity = importedNames.get(name)
+      if (identity) uncertainReaderChainNamespaces.add(identity.split('.')[0]!)
+    }
   }
 
   const isBuiltinOpenCall = (node: PyNode): boolean => {
@@ -8366,10 +8852,87 @@ const analyzePythonFileAccessTree = (
   }
 
   const invokeHelper = (helper: HelperFunction, call: PyNode): void => {
+    const receiverRead = soleReturnReaderCalls.get(helper.function)
+    if (receiverRead) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      const rawReader = pythonDottedName(receiverRead.func)
+      const readerRoot = rawReader?.split('.')[0]
+      const canonicalReader = canonicalCallName(receiverRead)
+      const member = canonicalReader?.split('.').at(-1)
+      const owner =
+        canonicalReader && member ? canonicalReader.slice(0, -(member.length + 1)) : undefined
+      const effect =
+        (canonicalReader ? PYTHON_FILE_CALL_EFFECTS.get(canonicalReader) : undefined) ??
+        (owner && member ? pythonLibraryMethodEffect(owner, member)?.file : undefined) ??
+        (member ? PYTHON_FILE_CALL_EFFECTS.get(member) : undefined) ??
+        (canonicalReader === 'scipy.io.mmread' ? PYTHON_FILE_CALL_EFFECTS.get('mmread') : undefined)
+      const namespace = canonicalReader?.split('.')[0]
+      const fnArgs = helper.function.args as PyArguments | undefined
+      const parameterNames = [
+        ...(fnArgs?.posonlyargs ?? []),
+        ...(fnArgs?.args ?? []),
+        ...(fnArgs?.kwonlyargs ?? []),
+        ...(fnArgs?.vararg ? [fnArgs.vararg] : []),
+        ...(fnArgs?.kwarg ? [fnArgs.kwarg] : [])
+      ].map(({ arg }) => arg)
+      const readerArguments = Array.isArray(receiverRead.args) ? receiverRead.args : []
+      const readerKeywords = receiverRead.keywords ?? []
+      // Path extraction aliases are not a signature. Only replay an eager read
+      // with one plain file argument, before any opaque argument can execute.
+      const readerPath =
+        readerArguments.length === 1 && readerKeywords.length === 0
+          ? readerArguments[0]
+          : readerArguments.length === 0 &&
+              readerKeywords.length === 1 &&
+              canonicalReader === 'scipy.io.mmread' &&
+              readerKeywords[0]?.arg === 'source'
+            ? readerKeywords[0].value
+            : undefined
+      if (
+        conditionalDepth > 0 ||
+        !readerRoot ||
+        !importedNames.has(readerRoot) ||
+        (soleReturnAliasedReaderCalls.has(receiverRead) && canonicalReader !== 'scipy.io.mmread') ||
+        uncertainReaderChainImports.has(readerRoot) ||
+        parameterNames.includes(readerRoot) ||
+        effect?.kind !== 'read' ||
+        effect.position !== 0 ||
+        !readerPath ||
+        !(
+          (readerPath.type === 'Name' && parameterNames.includes(readerPath.id ?? '')) ||
+          (readerPath.type === 'Constant' && readerPath.constKind === 'str')
+        ) ||
+        !namespace ||
+        pythonTaintedNamespaces.has('*') ||
+        pythonTaintedNamespaces.has(namespace) ||
+        uncertainReaderChainNamespaces.has('*') ||
+        uncertainReaderChainNamespaces.has(namespace) ||
+        uncertainReaderChainNames.has(helper.function.name ?? '') ||
+        [
+          ...(Array.isArray(call.args) ? call.args : []),
+          ...(call.keywords ?? []).map(({ value }) => value)
+        ].some(
+          (argument) =>
+            argument.type !== 'Constant' && resolveStaticString(argument, bindings) === undefined
+        )
+      )
+        return
+    }
+    const moduleNamespaceEffects = walkPy(helper.module).filter((node) =>
+      ['Global', 'Nonlocal', 'Match'].includes(node.type)
+    )
+    const moduleHasNamespaceEffects = moduleNamespaceEffects.length > 0
     // Replay restores lexical state after each invocation. Cross-scope writes and
     // match captures cannot safely reuse that state, including on later calls.
     if (
-      walkPy(helper.module).some((node) => ['Global', 'Nonlocal', 'Match'].includes(node.type)) ||
+      moduleNamespaceEffects.some((node) => node.type === 'Match') ||
+      (helper.preserveCallerScope
+        ? walkPy(helper.function).some((node) =>
+            ['Global', 'Nonlocal', 'Match'].includes(node.type)
+          )
+        : moduleHasNamespaceEffects) ||
       walkPy(helper.function).some((node) => ['Yield', 'YieldFrom'].includes(node.type)) ||
       hasUnreachableStatements(helper.function)
     ) {
@@ -8377,6 +8940,34 @@ const analyzePythonFileAccessTree = (
       unresolvedWrites = true
       unsupportedExternalState = true
       return
+    }
+    if (moduleHasNamespaceEffects) {
+      // Recover this local helper's paths without certifying sibling namespace effects.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      if (helper.preserveCallerScope) {
+        // Opaque sibling calls may already have changed these bindings, including
+        // through aliases. Do not pass their old values or callable identities
+        // into a replay; literal arguments remain recoverable.
+        const namespaceNames = new Set(
+          moduleNamespaceEffects.flatMap((node) =>
+            ['Global', 'Nonlocal'].includes(node.type)
+              ? (node.names ?? []).filter((name): name is string => typeof name === 'string')
+              : []
+          )
+        )
+        for (const name of namespaceNames) {
+          invalidateStaticValue(name)
+          shadowedStaticCalls.add(name)
+          inMemoryInputs.delete(name)
+          fileConnections.delete(name)
+          scientificObjectTypes.delete(name)
+          importedNames.delete(name)
+          archiveNames.delete(name)
+        }
+        if (namespaceNames.has(helper.function.name ?? '')) return
+      }
     }
     const nestedInvocation = helperScopeDepth > 0
     const preserveCallerScope =
@@ -8465,6 +9056,7 @@ const analyzePythonFileAccessTree = (
     const archiveNamesSnapshot = new Set(archiveNames)
     const possibleAliasesSnapshot = [...possibleAliases]
     const importedNamesSnapshot = new Map(importedNames)
+    const uncertainReaderChainImportsSnapshot = new Set(uncertainReaderChainImports)
     const scientificObjectTypesSnapshot = new Map(scientificObjectTypes)
     const shadowedStaticCallsSnapshot = new Set(shadowedStaticCalls)
     const shadowedHelperNamesSnapshot = new Set(shadowedHelperNames)
@@ -8484,6 +9076,8 @@ const analyzePythonFileAccessTree = (
       for (const [key, value] of fileConnectionsSnapshot) fileConnections.set(key, value)
       importedNames.clear()
       for (const [key, value] of importedNamesSnapshot) importedNames.set(key, value)
+      uncertainReaderChainImports.clear()
+      for (const name of uncertainReaderChainImportsSnapshot) uncertainReaderChainImports.add(name)
       scientificObjectTypes.clear()
       for (const [key, value] of scientificObjectTypesSnapshot)
         scientificObjectTypes.set(key, value)
@@ -8496,7 +9090,8 @@ const analyzePythonFileAccessTree = (
       for (const value of shadowedStaticCallsSnapshot) shadowedStaticCalls.add(value)
       shadowedHelperNames.clear()
       for (const value of shadowedHelperNamesSnapshot) shadowedHelperNames.add(value)
-      pythonTaintedNamespaces.clear()
+      // Restoring lexical bindings cannot undo a mutation of a shared module.
+      // Keep namespaces tainted by the invocation as well as the caller's taints.
       for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
       freshSequenceCollections.clear()
       for (const value of freshSequenceCollectionsSnapshot) freshSequenceCollections.add(value)
@@ -8510,6 +9105,7 @@ const analyzePythonFileAccessTree = (
       fileConnections.clear()
       archiveNames.clear()
       importedNames.clear()
+      uncertainReaderChainImports.clear()
       scientificObjectTypes.clear()
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
@@ -8539,22 +9135,95 @@ const analyzePythonFileAccessTree = (
       if (statement.annotation || (statement.decorator_list ?? []).length)
         markOpaqueImportTimeEffect()
     }
+    const collectImportTimeMutationNames = (
+      node: PyNode,
+      localNames = new Set<string>()
+    ): string[] => {
+      const receiver =
+        node.type === 'Call' &&
+        node.func?.type === 'Attribute' &&
+        MUTATING_METHODS.has(node.func.attr ?? '')
+          ? rootName(node.func)
+          : ['Attribute', 'Subscript'].includes(node.type) &&
+              (node.ctx === 'Store' || node.ctx === 'Del')
+            ? rootName(node)
+            : undefined
+      const names =
+        receiver &&
+        !localNames.has(receiver) &&
+        (collections.has(receiver) ||
+          partialMappingKeys.has(receiver) ||
+          partialCollectionRows.has(receiver) ||
+          possibleAliases.some(({ target, source }) => target === receiver || source === receiver))
+          ? [receiver]
+          : []
+      // A generator evaluates only its first iterable when constructed. Its
+      // element, filters and later iterables can mutate state only when consumed.
+      if (node.type === 'GeneratorExp') {
+        const iterable = node.generators?.[0]?.iter
+        return iterable ? collectImportTimeMutationNames(iterable, localNames) : []
+      }
+      if (['ListComp', 'SetComp', 'DictComp'].includes(node.type)) {
+        const comprehensionLocals = new Set(localNames)
+        for (const generator of node.generators ?? []) {
+          names.push(...collectImportTimeMutationNames(generator.iter, comprehensionLocals))
+          for (const name of collectBindings(generator.target)) comprehensionLocals.add(name)
+          for (const condition of generator.ifs)
+            names.push(...collectImportTimeMutationNames(condition, comprehensionLocals))
+        }
+        for (const value of [node.elt, node.key, node.value].filter(isPyNode))
+          names.push(...collectImportTimeMutationNames(value, comprehensionLocals))
+        return names
+      }
+      return [
+        ...names,
+        ...pythonLexicalBindingChildren(node).flatMap((child) =>
+          collectImportTimeMutationNames(child, localNames)
+        )
+      ]
+    }
+    const invalidateImportTimeBindings = (statement: PyNode): void => {
+      // Skipping an import-time expression must not preserve its old path value.
+      // Collect only enclosing bindings; deferred bodies and comprehension targets
+      // cannot replace a module name. Do not execute or certify the replacement.
+      // Loaded receivers do not bind a name, but an in-place mutation invalidates
+      // the container and its existing aliases just as an opaque rebinding does.
+      const names = new Set([
+        ...collectBindings(statement, true),
+        ...collectImportTimeMutationNames(statement)
+      ])
+      for (const name of names) {
+        invalidateStaticValue(name, false, false)
+        inMemoryInputs.delete(name)
+        fileConnections.delete(name)
+        importedNames.delete(name)
+        scientificObjectTypes.delete(name)
+        archiveNames.delete(name)
+        shadowedStaticCalls.add(name)
+        shadowedHelperNames.add(name)
+      }
+    }
+    const hasImportTimeCall = (node: PyNode): boolean =>
+      node.type === 'Call' || pythonLexicalBindingChildren(node).some(hasImportTimeCall)
     const loadModuleGlobals = (): void => {
       // Module-level imports and static assignments execute when the helper is imported. Keep
       // function/class definitions as callable bindings, but do not execute their bodies here.
       for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
         if (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') {
           visitFunctionImportTimeEffects(statement)
+          pythonLexicalBindingChildren(statement).forEach(invalidateImportTimeBindings)
           continue
         }
         if (statement.type === 'ClassDef') {
           markOpaqueImportTimeEffect()
+          pythonLexicalBindingChildren(statement).forEach(invalidateImportTimeBindings)
           continue
         }
         // Top-level calls execute when the helper module is imported, not when an exported
         // function is later invoked. Do not attribute those effects to the invocation.
-        if (walkPy(statement).some((node) => node.type === 'Call')) {
+        if (hasImportTimeCall(statement)) {
           markOpaqueImportTimeEffect()
+          invalidateImportTimeBindings(statement)
           continue
         }
         visit(statement)
@@ -8583,13 +9252,17 @@ const analyzePythonFileAccessTree = (
         )
         .map((statement) => statement as PyNode)
     )
-    const collectBindings = (node: PyNode): string[] => {
-      if (
-        node.type === 'FunctionDef' ||
-        node.type === 'AsyncFunctionDef' ||
-        node.type === 'ClassDef'
-      )
-        return node.name ? [node.name] : []
+    const finalModuleBindings = new Map<string, PyNode | undefined>()
+    const collectBindings = (node: PyNode, moduleScope = false): string[] => {
+      const collect = (child: PyNode): string[] => collectBindings(child, moduleScope)
+      // Annotation-only names preserve module identity but still declare function locals.
+      if (moduleScope && isAnnotationOnlyName(node))
+        return node.annotation ? collect(node.annotation) : []
+      if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(node.type))
+        return [
+          ...(node.name ? [node.name] : []),
+          ...pythonLexicalBindingChildren(node).flatMap(collect)
+        ]
       if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del'))
         return node.id ? [node.id] : []
       if (node.type === 'Import')
@@ -8598,35 +9271,37 @@ const analyzePythonFileAccessTree = (
         )
       if (node.type === 'ImportFrom')
         return ((node.names as PyAlias[] | undefined) ?? []).flatMap((alias) =>
-          alias.name === '*' ? [] : [alias.asname || alias.name]
+          // An external __all__ can replace private helpers as well as public exports.
+          alias.name === '*'
+            ? moduleScope
+              ? [...finalModuleBindings.keys()]
+              : []
+            : [alias.asname || alias.name]
         )
-      return pyChildren(node).flatMap(collectBindings)
+      return pythonLexicalBindingChildren(node).flatMap(collect)
     }
-    const finalModuleBindings = new Map<string, PyNode | undefined>()
     for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
-      const names = collectBindings(statement)
+      const names = collectBindings(statement, true)
+      for (const name of names) finalModuleBindings.set(name, undefined)
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name &&
         !statement.decorator_list?.length
       ) {
         finalModuleBindings.set(statement.name, statement)
-        continue
       }
-      for (const name of names) finalModuleBindings.set(name, undefined)
     }
     const finalNestedBindings = new Map<string, PyNode | undefined>()
     for (const statement of Array.isArray(helper.function.body) ? helper.function.body : []) {
       const names = collectBindings(statement)
+      for (const name of names) finalNestedBindings.set(name, undefined)
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name &&
         !statement.decorator_list?.length
       ) {
         finalNestedBindings.set(statement.name, statement)
-        continue
       }
-      for (const name of names) finalNestedBindings.set(name, undefined)
     }
     if (!preserveCallerScope) {
       for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
@@ -8656,7 +9331,10 @@ const analyzePythonFileAccessTree = (
       // Nested helpers inherit the enclosing bindings, including shadowed globals.
       // Their module has already been loaded by the enclosing helper invocation.
       if (!preserveCallerScope) loadModuleGlobals()
-      for (const name of parameterNames) {
+      // Any binding in the function makes that name local for the whole body,
+      // including stores after a With target. Never borrow the caller's module
+      // identity for such an unbound local and then export a spurious taint.
+      for (const name of new Set([...parameterNames, ...finalNestedBindings.keys()])) {
         shadowedStaticCalls.add(name)
         shadowedHelperNames.add(name)
         bindings.delete(name)
@@ -8683,7 +9361,12 @@ const analyzePythonFileAccessTree = (
   const analyzeCall = (node: PyNode, awaitedCall: boolean): void => {
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
-    if (helperScopeDepth > 0 && node.func?.type === 'Name' && shadowedHelperNames.has(rawName)) {
+    if (
+      helperScopeDepth > 0 &&
+      node.func?.type === 'Name' &&
+      shadowedHelperNames.has(rawName) &&
+      !importedNames.has(rawName)
+    ) {
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
@@ -8801,6 +9484,7 @@ const analyzePythonFileAccessTree = (
       node.func?.type === 'Name' &&
       helper &&
       (helperScopeDepth > 0 || exportedHelperNames.has(rawName)) &&
+      (!helper.preserveCallerScope || activeLocalFileHelperNames.has(rawName)) &&
       !shadowedHelperNames.has(rawName) &&
       !activeHelperFunctions.has(helper.function)
     ) {
@@ -8827,16 +9511,18 @@ const analyzePythonFileAccessTree = (
     }
     const member = canonicalName.split('.').at(-1) ?? canonicalName
     if (
-      node.func?.type === 'Name' &&
       canonicalName === rawName &&
-      shadowedStaticCalls.has(rawName) &&
-      !importedNames.has(rawName) &&
-      PYTHON_FILE_CALL_EFFECTS.has(rawName) &&
+      shadowedStaticCalls.has(rawRoot!) &&
+      !importedNames.has(rawRoot!) &&
+      !scientificObjectTypes.has(rawRoot!) &&
+      ((node.func?.type === 'Name' && PYTHON_FILE_CALL_EFFECTS.has(rawName)) ||
+        (node.func?.type === 'Attribute' &&
+          PYTHON_FILE_CALL_EFFECTS.get(member)?.kind === 'read')) &&
       !localWrappers.effects.has(rawName) &&
       !contextualWrappers.has(rawName)
     ) {
-      // A rebound loader is no longer the imported file API. In particular, do
-      // not fall back to a generic "load" effect and invent a definite input.
+      // A rebound loader or receiver is no longer the imported file API. A
+      // matching member spelling cannot restore that identity after rebinding.
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
@@ -8855,11 +9541,25 @@ const analyzePythonFileAccessTree = (
       unsupportedExternalState = true
       return
     }
-    const libraryMethodEffect = pythonLibraryMethodEffect(
+    const registeredLibraryMethodEffect = pythonLibraryMethodEffect(
       canonicalName.slice(0, -(member.length + 1)),
       member
     )
+    const libraryMethodEffect = registeredLibraryMethodEffect
+      ? specializePythonTextReaderEffect(registeredLibraryMethodEffect, node, canonicalName)
+      : undefined
     const libraryFileEffect = libraryMethodEffect?.file
+    if (
+      pythonTextReaderConverterPosition(canonicalName) !== undefined &&
+      libraryMethodEffect?.scopedOpaque
+    ) {
+      // Do not certify hidden callback I/O, even when the reader path is known.
+      revokeSqlitePaths()
+      sqliteRelativePathsUncertain = true
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+    }
     if (canonicalName === 'scipy.signal.periodogram' && !pythonPeriodogramHasClosedDetrend(node)) {
       // A callback can read/write files or mutate the supplied array. Keep the
       // known return types, but do not certify its source I/O from the call name.
@@ -8981,7 +9681,8 @@ const analyzePythonFileAccessTree = (
       const knownStrings = libraryMethodEffect.callbackStringValues?.[keyword.arg ?? '']
       if (knownStrings?.includes(resolveStaticString(keyword.value, bindings) ?? '')) continue
       const callbacks =
-        keyword.value.type === 'Dict'
+        keyword.value.type === 'Dict' &&
+        acceptsPythonCallbackContainer(libraryMethodEffect, keyword.arg ?? '', 'dict')
           ? keyword.value.values
           : ['List', 'Tuple'].includes(keyword.value.type)
             ? keyword.value.elts
@@ -10049,17 +10750,22 @@ const analyzePythonFileAccessTree = (
       } else unresolvedReads = true
       return
     }
-    let call: NotebookFileCallEffect | undefined = localWrappers.effects.get(rawName)
-    if (!call && localWrappers.fileLikeNames.has(rawName) && !localFileHelperNames.has(rawName)) {
-      // A local function with more than one statement is deliberately not summarized as a
-      // wrapper. Do not silently skip its call: an opaque body may read or write files.
+    // A later same-source definition cannot displace the reader imported at this
+    // call. Its helper identity becomes active only when its definition is visited.
+    const importedCallable = importedNames.has(rawName)
+    let call: NotebookFileCallEffect | undefined = importedCallable
+      ? undefined
+      : localWrappers.effects.get(rawName)
+    if (!call && !importedCallable && localWrappers.fileLikeNames.has(rawName)) {
+      // Trusted helper calls were replayed above. A remaining file-like helper
+      // has no usable wrapper or active identity, so its I/O is still unknown.
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
       return
     }
     let writeScopeKind: NotebookSourceFileWriteScope['kind'] | undefined
-    if (!call && !localWrappers.names.has(rawName)) {
+    if (!call && (!localWrappers.names.has(rawName) || importedCallable)) {
       call =
         (helperScopeDepth === 0 ? contextualWrappers.get(rawName) : undefined) ??
         PYTHON_FILE_CALL_EFFECTS.get(canonicalName) ??
@@ -10299,6 +11005,10 @@ const analyzePythonFileAccessTree = (
   }
 
   const visit = (node: PyNode, awaitedCall = false): void => {
+    if (isAnnotationOnlyName(node)) {
+      if (node.annotation) visit(node.annotation)
+      return
+    }
     const consoleControl =
       !consoleRedirected &&
       pythonConsoleControlDiagnostic(
@@ -10335,8 +11045,84 @@ const analyzePythonFileAccessTree = (
         return
       }
     }
+    if (node.type === 'ListComp') {
+      const generators = node.generators ?? []
+      const generator = generators.length === 1 ? generators[0] : undefined
+      const element = isPyNode(node.elt) ? node.elt : undefined
+      const helperName =
+        element?.type === 'Call' && element.func?.type === 'Name' ? element.func.id : undefined
+      const helper = helperName ? checksumHelpers.get(helperName) : undefined
+      if (
+        helper &&
+        !shadowedHelperNames.has(helperName ?? '') &&
+        generator &&
+        generator.ifs.length === 0 &&
+        generator.target?.type === 'Name' &&
+        loopTargetNames(generator.target).length === 1 &&
+        importedNames.get('pathlib') === 'pathlib' &&
+        importedNames.get('hashlib') === 'hashlib'
+      ) {
+        const collection = pythonStaticStringCollection(generator.iter, bindings, collections, {
+          collections,
+          importedNames,
+          shadowedNames: shadowedStaticCalls,
+          managedEnvironment:
+            !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+              ? context?.managedEnvironment
+              : undefined
+        })
+        const call = element as PyNode
+        const callArguments = Array.isArray(call.args) ? call.args : []
+        if (
+          collection?.kind === 'sequence' &&
+          collection.values.length <= MAX_STATIC_FILE_LOOP_ITERATIONS &&
+          callArguments.length === 1 &&
+          !(call.keywords ?? []).length &&
+          callArguments[0]?.type === 'Name' &&
+          callArguments[0].id === loopTargetNames(generator.target)[0]
+        ) {
+          for (const path of collection.values) {
+            recordFileAccess('read', {
+              type: 'Constant',
+              constKind: 'str',
+              value: path,
+              _fields: []
+            })
+          }
+          // The helper's explicit path reads are useful evidence, but its
+          // callback body is still user code. Keep the overall contract
+          // partial until runtime evidence certifies any additional I/O.
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+          return
+        }
+      }
+    }
     if (node.type === 'Await') {
       if (isPyNode(node.argument)) visit(node.argument, true)
+      return
+    }
+    if (node.type === 'Lambda') {
+      // Defaults run in the enclosing scope when the lambda is created. Its
+      // parameters and body belong to a later invocation, not this traversal.
+      const args = node.args as PyArguments | undefined
+      for (const value of [
+        ...(args?.defaults ?? []),
+        ...(args?.kw_defaults ?? []).filter(isPyNode)
+      ]) {
+        if (
+          walkPy(value).some((child) =>
+            ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(child.type)
+          )
+        ) {
+          // Scoped/deferred defaults are outside the file visitor's contract.
+          // Do not claim their paths or certify an empty set as complete.
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else visit(value)
+      }
       return
     }
     if (
@@ -10355,10 +11141,47 @@ const analyzePythonFileAccessTree = (
       node.type === 'AsyncFunctionDef' ||
       node.type === 'ClassDef'
     ) {
+      if (node.type === 'FunctionDef' || node.type === 'AsyncFunctionDef') {
+        // Function defaults run in the enclosing scope when the definition is
+        // executed. The body, annotations, and decorators remain deferred or
+        // opaque to this file visitor, just as they are for lambdas.
+        const args = node.args as PyArguments | undefined
+        for (const value of [
+          ...(args?.defaults ?? []),
+          ...(args?.kw_defaults ?? []).filter(isPyNode)
+        ]) {
+          if (
+            walkPy(value).some((child) =>
+              ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(child.type)
+            )
+          ) {
+            // Scoped/deferred defaults are outside the file visitor's contract.
+            // Do not claim their paths or certify an empty set as complete.
+            unresolvedReads = true
+            unresolvedWrites = true
+            unsupportedExternalState = true
+          } else visit(value)
+        }
+      }
       if (node.name) {
+        // Activation is separate from revocation: a definition must not undo
+        // an earlier opaque write to this helper's identity.
+        if (
+          helperScopeDepth === 0 &&
+          localFileHelperNames.has(node.name) &&
+          helperFunctions.get(node.name)?.function === node
+        )
+          activeLocalFileHelperNames.add(node.name)
+        if (helperScopeDepth > 0 && helperScopes.at(-1)?.get(node.name)?.function === node) {
+          // A stable nested helper becomes callable at its definition, not at
+          // function entry when its local name is still unbound.
+          shadowedHelperNames.delete(node.name)
+        }
         if (
           isHelperName(node.name) &&
-          !localFileHelperNames.has(node.name) &&
+          !(
+            localFileHelperNames.has(node.name) && helperFunctions.get(node.name)?.function === node
+          ) &&
           (helperScopeDepth === 0 || helperScopes.at(-1)?.get(node.name)?.function !== node)
         )
           shadowedHelperNames.add(node.name)
@@ -10737,8 +11560,36 @@ const analyzePythonFileAccessTree = (
       return
     }
     if (node.type === 'With') {
+      const bindTarget = (target: PyNode): void => {
+        if (target.type === 'Tuple' || target.type === 'List') {
+          for (const element of target.elts ?? []) bindTarget(element)
+        } else if (target.type === 'Starred' && isPyNode(target.value)) {
+          bindTarget(target.value)
+        } else if (target.type === 'Name' && target.id) {
+          // Rebinding a local name does not mutate the imported module itself.
+          invalidateStaticValue(target.id, false)
+          shadowedStaticCalls.add(target.id)
+          inMemoryInputs.delete(target.id)
+          fileConnections.delete(target.id)
+          scientificObjectTypes.delete(target.id)
+          importedNames.delete(target.id)
+          archiveNames.delete(target.id)
+        } else {
+          // Attribute/subscript stores mutate their receiver. Use the existing
+          // Store visitor before processing later targets in an unpacking.
+          visit(target)
+        }
+      }
       for (const item of node.items ?? []) {
         if (item.context_expr) visit(item.context_expr)
+        const path = fileConnectionPath(item.context_expr)
+        if (helperScopeDepth > 0 && !path) {
+          // Unknown __enter__/__exit__ effects do not certify complete helper I/O.
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        }
+        if (item.optional_vars) bindTarget(item.optional_vars)
         if (item.optional_vars?.type !== 'Name' || !item.optional_vars.id) continue
         const target = item.optional_vars.id
         if (
@@ -10750,12 +11601,6 @@ const analyzePythonFileAccessTree = (
         )
           archiveNames.add(target)
         else archiveNames.delete(target)
-        const path = fileConnectionPath(item.context_expr)
-        bindings.delete(target)
-        collections.delete(target)
-        inMemoryInputs.delete(target)
-        scientificObjectTypes.delete(target)
-        importedNames.delete(target)
         if (path && conditionalDepth === 0) fileConnections.set(target, path)
         else fileConnections.delete(target)
       }
@@ -10772,7 +11617,13 @@ const analyzePythonFileAccessTree = (
         }
         const localName = alias.asname || alias.name.split('.')[0] || alias.name
         importedNames.set(localName, alias.asname ? alias.name : localName)
-        if (isHelperName(localName)) shadowedHelperNames.add(localName)
+        if (conditionalDepth > 0) uncertainReaderChainImports.add(localName)
+        else uncertainReaderChainImports.delete(localName)
+        if (
+          isHelperName(localName) &&
+          !(localFileHelperNames.has(localName) && !activeLocalFileHelperNames.has(localName))
+        )
+          shadowedHelperNames.add(localName)
         archiveNames.delete(localName)
         inMemoryInputs.delete(localName)
         fileConnections.delete(localName)
@@ -10786,10 +11637,20 @@ const analyzePythonFileAccessTree = (
         unsupportedExternalState = true
       }
       for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
-        if (alias.name !== '*') {
+        if (alias.name === '*') {
+          // Unknown exports can replace the helper or reader, and their import-time
+          // effects can mutate a module even if those names are later reintroduced.
+          uncertainReaderChainNamespaces.add('*')
+        } else {
           const localName = alias.asname || alias.name
           importedNames.set(localName, `${node.module ?? ''}.${alias.name}`)
-          if (isHelperName(localName)) shadowedHelperNames.add(localName)
+          if (conditionalDepth > 0) uncertainReaderChainImports.add(localName)
+          else uncertainReaderChainImports.delete(localName)
+          if (
+            isHelperName(localName) &&
+            !(localFileHelperNames.has(localName) && !activeLocalFileHelperNames.has(localName))
+          )
+            shadowedHelperNames.add(localName)
           archiveNames.delete(localName)
           inMemoryInputs.delete(localName)
           fileConnections.delete(localName)
@@ -10900,6 +11761,7 @@ const analyzePythonFileAccessTree = (
           archiveAlias
         } = resolvedValues.get(valueNode)!
         if (target.type !== 'Name' || !target.id) continue
+        if (valueNode && valueNode.type !== 'Call') recordReaderChainEscapes(valueNode)
         revokeSqlitePaths(target.id)
         if (
           objectType &&
@@ -11021,6 +11883,26 @@ const analyzePythonFileAccessTree = (
       }
       return
     } else if (node.type === 'Call') {
+      if (soleReturnReaderCalls.size) {
+        const rawName = pythonDottedName(node.func)
+        const canonicalName = canonicalCallName(node)
+        if (
+          ['globals', 'locals', 'vars', 'exec', 'eval'].includes(rawName ?? '') ||
+          [
+            'builtins.globals',
+            'builtins.locals',
+            'builtins.vars',
+            'builtins.exec',
+            'builtins.eval'
+          ].includes(canonicalName ?? '')
+        )
+          uncertainReaderChainNamespaces.add('*')
+        for (const argument of [
+          ...(Array.isArray(node.args) ? node.args : []),
+          ...(node.keywords ?? []).map(({ value }) => value)
+        ])
+          recordReaderChainEscapes(argument)
+      }
       revokeEscapedSqlitePaths(node)
       analyzeCall(node, awaitedCall)
     }

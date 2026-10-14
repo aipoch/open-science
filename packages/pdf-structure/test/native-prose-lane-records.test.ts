@@ -98,7 +98,12 @@ const { tableTextToken } = await import(
 
 // Whole original fonts are drawn cell by cell. The stub may wrap before its
 // peer paragraph starts; no lexical rule distinguishes a tail from a record.
-const sourceOrdered = (columns: 2 | 4 | 6, paired = false): ReturnType<typeof JSON.parse> => {
+const sourceOrdered = (
+  columns: 2 | 4 | 6,
+  paired = false,
+  below = paired,
+  overhang = false
+): ReturnType<typeof JSON.parse> => {
   const width = columns === 2 ? 310 : columns === 4 ? 420 : 620
   const viewport = {
     width: 800,
@@ -129,9 +134,14 @@ const sourceOrdered = (columns: 2 | 4 | 6, paired = false): ReturnType<typeof JS
       null
     )
   }
-  draw('Table 1: Records.', 20, paired ? 230 : 10)
+  draw('Table 1: Records.', 20, below ? 230 : 10)
   for (let c = 0; c < columns; c++)
-    if (!paired || c % 2 === 0) draw(`Field ${c}`, columns === 2 ? 20 + c * 130 : 20 + c * 100, 45)
+    if (!paired || c % 2 === 0)
+      draw(
+        overhang && c === 1 ? 'Long explanation heading extended' : `Field ${c}`,
+        columns === 2 ? 20 + c * 130 : 20 + c * 100,
+        45
+      )
   for (let n = 0; n < 3; n++) {
     const y = 75 + n * 48
     for (let c = 0; c < columns; c++) {
@@ -167,7 +177,7 @@ const sourceOrdered = (columns: 2 | 4 | 6, paired = false): ReturnType<typeof JS
       {
         page: 7,
         lines: ['Table 1: Records.'],
-        rect: [20, paired ? 230 : 10, width, paired ? 240 : 20]
+        rect: [20, below ? 230 : 10, width, below ? 240 : 20]
       }
     ],
     rules,
@@ -219,6 +229,67 @@ it('retains unequal closed prose/scalar pairs and the complete caption below the
       .map((i) => JSON.stringify(i.rect))
       .sort()
   )
+})
+
+it('retains all prose records under an overhanging header with a caption below the frame', () => {
+  const f = sourceOrdered(2, false, true, true)
+  f.context.operators.fnArray.unshift(OPS.setGState)
+  f.context.operators.argsArray.unshift([
+    [
+      ['CA', 1],
+      ['ca', 1]
+    ]
+  ])
+  f.table.structure = { objects: [] }
+  const r = refineTable(
+    f.table,
+    f.tokens,
+    f.captions,
+    [],
+    f.rules,
+    [],
+    undefined,
+    undefined,
+    f.context
+  )
+  expect(r.grid).toHaveLength(4)
+  expect(r.grid[0]).toEqual(['Field 0', 'Long explanation heading extended'])
+  expect(r.grid[2][0]).toBe('Entry 1 0')
+  expect(r.grid[3][1]).toContain('final detail')
+  expect(r.cropRect[2]).toBeGreaterThanOrEqual(315)
+  expect(r.unassigned).toEqual([])
+})
+
+it.each([false, true])(
+  'checks transformed filled paint outside the native prose packet (crossing=%s)',
+  (crossing) => {
+    const f = sourceOrdered(2, false, true, true)
+    const { fnArray, argsArray } = f.context.operators
+    fnArray.push(OPS.save, OPS.transform, OPS.constructPath, OPS.constructPath, OPS.restore)
+    argsArray.push(
+      null,
+      [0, 1, -1, 0, crossing ? 100 : 650, crossing ? 400 : 100],
+      [
+        OPS.fill,
+        [new Float32Array([0, 0, 0, 1, 10, 0, 1, 10, 10, 1, 0, 10, 4])],
+        new Float32Array([0, 0, 10, 10])
+      ],
+      [OPS.endPath, [null], null],
+      null
+    )
+    const r = recoverNativeProseLaneRecords(f.table, f.tokens, f.captions, f.rules, f.context)
+    if (crossing) expect(r).toBeUndefined()
+    else expect(r.rows).toHaveLength(4)
+  }
+)
+
+it('declines nonopaque native prose despite complete fonts and rules', () => {
+  const f = sourceOrdered(2, false, true, true)
+  f.context.operators.fnArray.unshift(OPS.setGState)
+  f.context.operators.argsArray.unshift([[['ca', 0.5]]])
+  expect(
+    recoverNativeProseLaneRecords(f.table, f.tokens, f.captions, f.rules, f.context)
+  ).toBeUndefined()
 })
 
 it('requires scalar peers for the six-field wrapped family', () => {

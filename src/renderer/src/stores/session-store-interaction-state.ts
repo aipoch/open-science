@@ -1,17 +1,12 @@
-import type { ChatSession, SessionStatus } from './session-store-persistence-owner'
 import {
   deriveSessionAttention,
-  projectSessionAttention,
-  type PersistedChatSession,
-  type SessionAttention,
-  type SessionWaitReason
+  projectSessionAttention
 } from '../../../shared/session-persistence'
-
-export type SessionInteractionState = Readonly<{
-  permission: boolean
-  elicitation: boolean
-  plan: boolean
-}>
+import type { SessionAttention } from '../../../shared/session-attention-contract'
+import type { PersistedChatSession, SessionWaitReason } from '../../../shared/session-persistence'
+import type { SessionInteractionState } from './session-interaction-contract'
+import type { ChatSession, SessionStatus } from './session-store-contract'
+export type { SessionInteractionState } from './session-interaction-contract'
 
 export type { SessionWaitReason } from '../../../shared/session-persistence'
 

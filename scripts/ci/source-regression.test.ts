@@ -11,6 +11,7 @@ import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveAuthoritativePlan } from './module-impact-shadow.mjs'
 
 type Step = {
+  'continue-on-error'?: boolean
   id?: string
   name: string
   run?: string
@@ -20,6 +21,7 @@ type Step = {
   with?: Record<string, unknown>
 }
 type Job = {
+  'timeout-minutes'?: number
   env?: Record<string, string>
   if?: string
   needs?: string
@@ -68,7 +70,11 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(step.if).toContain("'windows_runtime'")
   expect(step.if).toContain("inputs.dry_run != 'windows-process'")
-  expect(step).not.toHaveProperty('continue-on-error')
+  expect(step['continue-on-error']).toBe(true)
+  const enforce = pr.jobs.windows_core.steps.find(
+    ({ name }) => name === 'Enforce selected Windows core checks'
+  )!
+  expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
     'src/main/session-diagnostics/collector.test.ts',
     'src/main/literature/smart-collections.test.ts',
@@ -293,7 +299,7 @@ describe('independent source regression', () => {
         )
         expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
         if (selection === 'true') {
-          expect(result.stdout).toContain('--global-timeout=3000000')
+          expect(result.stdout).toContain('--global-timeout=4500000')
           expect(result.stdout).not.toContain('--grep-invert')
         }
         if (selection === 'false') {
@@ -356,7 +362,7 @@ describe('independent source regression', () => {
           'npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos'
         )
         expect(command.run).toContain('regression_timeout=1200000')
-        expect(command.run).toContain('true) regression_timeout=3000000')
+        expect(command.run).toContain('true) regression_timeout=4500000')
       } else {
         expect(command.run).toContain(
           'npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos'
@@ -369,6 +375,30 @@ describe('independent source regression', () => {
       }
     }
   )
+
+  it('leaves setup and upload time beyond all serial suite budgets including accessibility', () => {
+    const coreBudgets = scheduled.jobs.regression.steps
+      .flatMap(({ run }) => [...(run ?? '').matchAll(/--global-timeout=(\d+)/g)])
+      .map((match) => Number(match[1]))
+    const regressions = action.runs.steps.find(
+      ({ name }) => name === 'Run supplemental regressions'
+    )!.run!
+    const delegation = action.runs.steps.find(
+      ({ name }) => name === 'Run supplemental delegation'
+    )!.run!
+    const accessibility = readFileSync('e2e/playwright.accessibility.config.ts', 'utf8')
+    const budgets = [
+      ...coreBudgets,
+      Number(accessibility.match(/globalTimeout:\s*([\d_]+)/)![1].replaceAll('_', '')),
+      Number(regressions.match(/true\) regression_timeout=(\d+)/)![1]),
+      Number(delegation.match(/--global-timeout=(\d+)/)![1])
+    ]
+    expect(budgets).toEqual([900000, 1500000, 900000, 600000, 600000, 4500000, 1200000])
+    expect(
+      scheduled.jobs.regression['timeout-minutes']! * 60000 -
+        budgets.reduce((total, budget) => total + budget, 0)
+    ).toBeGreaterThanOrEqual(20 * 60000)
+  })
 
   it('runs both scheduled rounds even when main has not changed', () => {
     expect(scheduled.jobs).not.toHaveProperty('plan')

@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { cpus, platform, release, totalmem } from 'node:os'
 import { openProjectSession } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { homeNewProjectButton } from './fixtures/project'
 
 test('measures representative local workloads and verifies 200 percent project controls', async ({
   app
@@ -16,12 +17,12 @@ test('measures representative local workloads and verifies 200 percent project c
   }
   for (let i = 0; i < 3; i++) {
     page = await app.restart()
-    await expect(page.getByRole('button', { name: 'New project' })).toBeVisible()
+    await expect(homeNewProjectButton(page)).toBeVisible()
     sample('navigationToHomeActionMs', await page.evaluate(() => performance.now()))
   }
   await app.setMainWindowZoomFactor(2)
   try {
-    await page.getByRole('button', { name: 'New project' }).press('Enter')
+    await homeNewProjectButton(page).press('Enter')
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill('Zoom acceptance')
     const create = dialog.getByRole('button', { name: 'Create project' })

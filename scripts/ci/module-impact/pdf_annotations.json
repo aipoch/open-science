@@ -1,10 +1,5 @@
 {
   "ownerPaths": [
-    "src/main/pdf-annotations/application-commands.ts",
-    "src/main/pdf-annotations/repository.integration.test.ts",
-    "src/main/pdf-annotations/repository.ts",
-    "src/main/pdf-annotations/service.test.ts",
-    "src/main/pdf-annotations/service.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.tsx",
@@ -34,7 +29,6 @@
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.test.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts",
-    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx",
     "src/main/pdf-annotations/document-store.ts",
     "src/main/pdf-annotations/sharing.ts",
     "src/main/pdf-annotations/sharing.integration.test.ts",
@@ -60,8 +54,6 @@
   ],
   "testFiles": {
     "owner": [
-      "src/main/pdf-annotations/repository.integration.test.ts",
-      "src/main/pdf-annotations/service.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/pdf-annotation-index.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx",
@@ -85,7 +77,8 @@
       "src/shared/pdf-annotations.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
@@ -671,7 +664,16 @@
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

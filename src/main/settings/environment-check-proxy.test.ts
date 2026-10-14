@@ -8,7 +8,9 @@ vi.mock('electron', () => ({ net: { fetch: netFetch } }))
 const { probeRegistryReachability } = await import('./environment-check')
 
 describe('proxy-aware registry reachability', () => {
-  beforeEach(() => netFetch.mockReset())
+  beforeEach(() => {
+    netFetch.mockReset()
+  })
 
   it('uses Electron net.fetch so the active Session proxy applies', async () => {
     netFetch.mockResolvedValue(new Response(null, { status: 204 }))
@@ -20,6 +22,19 @@ describe('proxy-aware registry reachability', () => {
       redirect: 'follow',
       signal: expect.any(AbortSignal)
     })
+  })
+
+  it.each([
+    ['ENOTFOUND', 'dns'],
+    ['CERT_HAS_EXPIRED', 'tls'],
+    ['ETIMEDOUT', 'timeout']
+  ])('preserves a safe %s classification through fetch failure', async (code, failureReason) => {
+    netFetch.mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('private proxy address'), { code })
+      })
+    )
+    await expect(probeRegistryReachability('npmjs')).rejects.toMatchObject({ failureReason })
   })
 
   it('rejects non-success responses', async () => {

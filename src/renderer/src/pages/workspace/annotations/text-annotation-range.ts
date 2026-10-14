@@ -1,4 +1,7 @@
-import type { PdfTextSelector, TextAnnotationAnchor } from '../../../../../shared/annotations'
+import type {
+  PdfTextSelector,
+  TextAnnotationAnchor
+} from '../../../../../shared/annotation-contract'
 
 const collectSurfaceTextNodes = (surface: HTMLElement): Text[] => {
   const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT)
@@ -268,9 +271,9 @@ const pdfTextSelectorForRange = (
 
 export {
   pdfTextSelectorForRange,
-  textAnnotationAnchorForRange,
   quoteOccurrenceForRange,
   rangeForTextOccurrence,
   reconcileTextAnnotationRanges,
-  retargetTextAnnotationRange
+  retargetTextAnnotationRange,
+  textAnnotationAnchorForRange
 }

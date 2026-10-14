@@ -62,9 +62,10 @@ describe('Node desktop quit coordination', () => {
         })
     )
     const pending = owner.request({ operation: 'prepare', fingerprint: observed.fingerprint })
-    owner.disconnect()
+    const disconnected = owner.disconnect()
     finish('completed')
     await expect(pending).rejects.toThrow('disconnected')
+    await disconnected
     expect(release).toHaveBeenCalledOnce()
     expect(deps.abortQuitPreparation).toHaveBeenCalled()
     await expect(owner.request({ operation: 'inspect' })).rejects.toThrow('closed')

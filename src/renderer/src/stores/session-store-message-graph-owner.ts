@@ -1,11 +1,4 @@
-import { createSessionBranchSource } from '../../../shared/session-branch-source'
 import type { StoreApi } from 'zustand'
-import {
-  captureSessionConversationIntents,
-  pendingSessionConversationCommands
-} from './session-conversation-intents'
-import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
-import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -14,8 +7,16 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
-import { normalizeDelegationPolicy } from '../../../shared/session-persistence'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
+import { createSessionBranchSource } from '../../../shared/session-branch-source'
+import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
+import { normalizeDelegationPolicy } from '../../../shared/session-persistence'
+import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
+import {
+  captureSessionConversationIntents,
+  pendingSessionConversationCommands
+} from './session-conversation-intents'
+import type { ChatMessage, ChatSession } from './session-store-contract'
 import {
   buildUserMessage,
   canBranchInNewSession,
@@ -27,19 +28,17 @@ import {
   createTitleFromMessage,
   createTitleFromUploads,
   isBeforeTimelineItem,
-  projectSessionBranchSnapshot,
   projectElicitationRevision,
+  projectSessionBranchSnapshot,
   synchronizeSessionGraph,
   type SessionMessageGraphActions
 } from './session-store-message-graph-helpers'
 import {
-  hydrateToolActivity,
   hydrateSession,
-  toPersistedSession,
+  hydrateToolActivity,
   pruneStreamingMessageContent,
+  toPersistedSession,
   type ActiveRun,
-  type ChatMessage,
-  type ChatSession,
   type SessionStoreData
 } from './session-store-persistence-owner'
 import * as sessionDetails from './session-store-session-details'

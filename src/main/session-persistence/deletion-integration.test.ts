@@ -19,6 +19,7 @@ import {
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { BookmarkRepository } from '../bookmarks/repository'
+import { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
@@ -134,6 +135,68 @@ describe('managed-file deletion integration', () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
+
+  it.each(['session', 'archived-session', 'project', 'failed-session'] as const)(
+    'clears credential refusals only after committed %s deletion',
+    async (target) => {
+      let sequence = 0
+      const broker = new CredentialRequestBroker({
+        generateId: () => `credential-${++sequence}`,
+        broadcast: vi.fn()
+      })
+      coordinator.setSessionDeletionHandlers({
+        commit: async (sessionIds) => {
+          for (const sessionId of sessionIds) broker.clearSession(sessionId)
+        },
+        reconcile: async () => undefined
+      })
+      const info = {
+        credentialId: 'openalex' as const,
+        connector: 'literature',
+        method: 'openalex_search_works',
+        sessionId: SESSION_ID
+      }
+      const first = broker.request(info)
+      broker.respond('credential-1', false)
+      await first
+      if (target === 'archived-session') {
+        await sessions.saveSession({ ...createSession(uploadPath, artifactPath), archivedAt: 200 })
+      }
+      if (target === 'failed-session') {
+        vi.spyOn(sessions, 'deleteSession').mockRejectedValueOnce(new Error('disk locked'))
+        const owner = new SessionDeletionOwner({
+          runtime: {
+            liveSessionProjectId: () => PROJECT_ID,
+            deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+          },
+          persistence: {
+            deleteSession: ({ projectId, sessionId }) =>
+              coordinator.deleteSession(projectId, sessionId)
+          }
+        })
+        await expect(
+          owner.delete({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+        ).resolves.toEqual({
+          status: 'failed',
+          reason: 'persistence',
+          runtimeDetached: true
+        })
+      } else if (target === 'project') {
+        await coordinator.deleteProjectSessions(PROJECT_ID)
+      } else {
+        await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+      }
+
+      const next = broker.request(info)
+      try {
+        expect(broker.hasPendingForSession(SESSION_ID)).toBe(target !== 'failed-session')
+        expect(sequence).toBe(target === 'failed-session' ? 1 : 2)
+      } finally {
+        broker.cancelAll()
+        await next
+      }
+    }
+  )
 
   it('soft-deletes indexed rows but retains upload and artifact bytes after session deletion', async () => {
     const legacyPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')

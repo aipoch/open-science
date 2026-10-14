@@ -104,7 +104,8 @@ const publicImports = new Set([
   'selectProviderModelOptions',
   'selectVisionRelayAvailable',
   'ProviderModelOption',
-  'SaveProviderResult'
+  'SaveProviderResult',
+  'SettingsLoadFailure'
 ])
 
 type ImportReference = Readonly<{
@@ -326,6 +327,16 @@ const allowedFacadeVariableCounts = new Map<string, number>([
   ['configuration', 1],
   ['selectedKey', 1],
   ['selectProviderModelOptions', 1],
+  // Bounded startup reads and their validated result remain owned by the facade's existing load.
+  ['settingsLoadFailure', 1],
+  ['pendingSettingsReads', 1],
+  ['readSettings', 1],
+  ['current', 1],
+  ['promise', 1],
+  ['pending', 1],
+  ['clear', 1],
+  ['epoch', 1],
+  ['phase', 1],
   ['settingsLoadPromise', 1],
   ['SAFE_SETTINGS_LOAD_ERROR', 1],
   ['reportSettingsLoadError', 1],
@@ -340,7 +351,7 @@ const allowedFacadeVariableCounts = new Map<string, number>([
   ['[[encryptionResult], runtimeResults]', 1],
   ['[preflightResult, npmAvailableResult]', 1],
   ['loadPromise', 1],
-  ['error', 1],
+  ['error', 2],
   ['useSettingsStore', 1]
 ])
 
@@ -423,7 +434,11 @@ const settingsAccessAudit = (source: string): SettingsAccessAudit => {
           member
         ) &&
         isCallExpression(parent.parent) &&
-        parent.parent.expression === parent
+        (parent.parent.expression === parent ||
+          (isIdentifier(parent.parent.expression) &&
+            parent.parent.expression.text === 'readSettings' &&
+            parent.parent.arguments.length === 2 &&
+            parent.parent.arguments[0] === parent))
       const isSliceCommandProvider =
         isArrowFunction(parent) &&
         parent.body === node &&
@@ -653,4 +668,13 @@ describe('settings store architecture guard regressions', () => {
       'facade implementation actions are load,clearSettingsWriteError,featureAction,acceptCommittedSnapshot'
     )
   })
+})
+
+// Only the established read list may cross the bounded-read helper, never a Settings mutation.
+it('rejects a Settings write passed through the startup read helper', () => {
+  const source = readSource(storePath).replace(
+    'readSettings(window.api.settings.getSettings, epoch)',
+    'readSettings(window.api.settings.setTheme, epoch)'
+  )
+  expect(facadeBoundaryViolations(source)).toContain('Settings API escapes the slice boundary')
 })

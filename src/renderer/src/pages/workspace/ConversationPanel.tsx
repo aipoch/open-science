@@ -1,59 +1,57 @@
-import { replayAnnotationTarget } from '../../../../shared/replay-reference'
-import { SessionDiscussionSource } from './SessionDiscussionSource'
-import { composerContextRowClassName } from './SessionDiscussionBar'
-import { SessionDiscussionButton } from './SessionDiscussionButton'
-import { createSessionReplayItem } from './workspace-session-actions'
-import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
-import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
   PackageOperationIndicator
 } from '@/components/SessionPackageOperation'
-import { SessionInfoPopover } from './SessionInfoPopover'
-import { SessionHeaderMenu } from './SessionHeaderMenu'
-import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
+import { composerContextRowClassName } from './SessionDiscussionBar'
+import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { SessionHeaderMenu } from './SessionHeaderMenu'
+import { SessionInfoPopover } from './SessionInfoPopover'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
-import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
+import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
+import { createSessionReplayItem } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+import { NotificationBell } from '@/components/NotificationBell'
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
+import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { ResizablePanel } from '@/components/ui/resizable'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
+import { cn } from '@/lib/utils'
+import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
+import {
+  createSessionPlanPreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+import {
+  projectSessionActionability,
+  useSessionStore,
+  type ChatSession
+} from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { TFunction } from 'i18next'
-import { useTranslation } from 'react-i18next'
-import type {
-  ConnectorCredentialRequest,
-  SessionAgentConfiguration
-} from '../../../../shared/settings'
-import type {
-  AcpPermissionGrant,
-  AcpPermissionRequest,
-  AcpContextUsage,
-  DelegatedWorkUnavailableReason,
-  ElicitationAnswer,
-  ElicitationProjection,
-  ElicitationResponse,
-  PendingElicitationRequest
-} from '../../../../shared/acp'
-import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
-import type { NotebookSessionReference } from '../../../../shared/notebook'
-import type { JobSummary } from '../../../../shared/compute'
-import type {
-  PermissionProfileId,
-  SessionPermissionProfileState
-} from '../../../../shared/permission-profiles'
-import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
-import {
-  MAX_SESSION_PDF_CONTEXTS,
-  latestOutcomePrompt,
-  resolvePreparationNoticeBaseline
-} from '../../../../shared/session-persistence'
-import {
-  isReportableRunFailure,
-  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
-  visionRunFailureMessage
-} from '../../../../shared/run-error-classification'
 import {
   AlertTriangle,
   ArrowUp,
@@ -66,14 +64,14 @@ import {
   FileText,
   Flag,
   GitBranch,
+  ListChecks,
   Loader2,
   LockKeyhole,
-  ListChecks,
   Menu,
   MessageCircleMore,
   PanelRight,
-  Plus,
   Play,
+  Plus,
   RotateCcw,
   ScanEye,
   Square,
@@ -81,105 +79,109 @@ import {
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { useTranslation } from 'react-i18next'
+import type {
+  DelegatedWorkUnavailableReason,
+  ElicitationAnswer,
+  ElicitationProjection,
+  ElicitationResponse,
+  PendingElicitationRequest
+} from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest
+} from '../../../../shared/acp-permission-contract'
+import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
+import type { TextAnnotation } from '../../../../shared/annotation-contract'
+import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
+import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
+import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import {
-  isUnsupportedCodexAcpVersionError,
-  isCodexCliCompatibilityError
+  isCodexCliCompatibilityError,
+  isUnsupportedCodexAcpVersionError
 } from '../../../../shared/codex-runtime'
+import type { JobSummary } from '../../../../shared/compute'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type {
+  PermissionProfileId,
+  SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 import {
-  validateAnnotations,
-  type AnnotationValidationError,
-  type TextAnnotation
-} from '../../../../shared/annotations'
-import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
-import { DiagnosticDetails } from '@/components/diagnostic-details'
-import { ErrorNotice } from '@/components/error-notice'
-import { Button } from '@/components/ui/button'
-import { ResizablePanel } from '@/components/ui/resizable'
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
+  isReportableRunFailure,
+  visionRunFailureMessage
+} from '../../../../shared/run-error-classification'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import { useSpecialistStore } from '@/stores/specialist-store'
-import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
-import { ComposerEditor } from './composer/ComposerEditor'
-import { FileTypeIcon } from './file-type-icon'
-import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
-import {
-  appendArtifactMention,
-  docToSkillIds,
-  docToText,
-  docFromText,
-  pastedTextAttachmentDomId,
-  pastedTextPreviewName,
-  type ComposerPastedTextNode
-} from './composer/composer-doc'
+  MAX_SESSION_PDF_CONTEXTS,
+  latestOutcomePrompt,
+  resolvePreparationNoticeBaseline
+} from '../../../../shared/session-persistence'
+import type {
+  ConnectorCredentialRequest,
+  SessionAgentConfiguration
+} from '../../../../shared/settings'
+import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
+import { getAvatarColor } from '../settings/specialist-icons'
+import { BackgroundTasksChip } from './BackgroundTasksChip'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
-import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
-import { BackgroundTasksChip } from './BackgroundTasksChip'
-import { SessionBackgroundActivity } from './SessionBackgroundActivity'
-import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
-import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerSpecialistPicker } from './ComposerSpecialistPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
+import { ContextWindowDialog } from './ContextWindowDialog'
+import { NewConversationStart, SessionPackageEntryRow } from './EmptyConversationBanner'
+import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { ReadingContextPicker } from './ReadingContextPicker'
-import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
-import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
+import { ResizableBottomPanel } from './ResizableBottomPanel'
+import { SessionBackgroundActivity } from './SessionBackgroundActivity'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
-import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
+import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
+import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
-import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
-import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
-import { NewConversationStart, SessionPackageEntryRow } from './EmptyConversationBanner'
-import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
-import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
+import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
+import { BookmarksPopover } from './bookmarks/BookmarksPopover'
+import { useBookmarks } from './bookmarks/bookmark-context'
+import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import { ComposerEditor } from './composer/ComposerEditor'
+import {
+  appendArtifactMention,
+  docFromText,
+  docToSkillIds,
+  docToText,
+  pastedTextAttachmentDomId,
+  pastedTextPreviewName,
+  type ComposerPastedTextNode
+} from './composer/composer-doc'
+import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
+import { FileTypeIcon } from './file-type-icon'
+import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
-import { projectDelegatedQuestionQueue } from './subagent-release-projection'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { isPlanProgressVisible } from './session-plan/plan-progress'
 import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
 import {
-  createSessionPlanPreviewItem,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
-import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
-import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
-import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
-import { projectSessionSubagents } from './subagent-release-projection'
-import { ResizableBottomPanel } from './ResizableBottomPanel'
+  projectDelegatedQuestionQueue,
+  projectSessionSubagents
+} from './subagent-release-projection'
+import type { ConversationSubmissions } from './use-conversation-submissions'
+import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
+import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
+import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { getAvatarColor } from '../settings/specialist-icons'
-import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
-import { BookmarksPopover } from './bookmarks/BookmarksPopover'
-import { useBookmarks } from './bookmarks/bookmark-context'
-import type { ConversationSubmissions } from './use-conversation-submissions'
+import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -470,28 +472,33 @@ type ConversationPanelProps = {
   submissions: ConversationSubmissions
 }
 
+const renderConversationError = (
+  children: React.ReactNode,
+  onDismiss: () => void,
+  dismissLabel: string
+): React.JSX.Element => (
+  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label={dismissLabel}
+      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
+    >
+      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+    </button>
+    {children}
+  </div>
+)
+
 const DismissibleConversationError = ({
   children
 }: {
-  children: React.ReactNode
+  children: (onDismiss: () => void) => React.ReactNode
 }): React.JSX.Element | null => {
-  const { t } = useTranslation()
   const [dismissed, setDismissed] = useState(false)
   if (dismissed) return null
-
-  return (
-    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
-        aria-label={t('Dismiss error')}
-        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-      >
-        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-      </button>
-      {children}
-    </div>
-  )
+  const onDismiss = (): void => setDismissed(true)
+  return <>{children(onDismiss)}</>
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -974,6 +981,11 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const operationDiagnostic = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.diagnostics[activeSession.id] : undefined
+  )
+  const resumeDiagnostic =
+    operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
   const resolvedActionError =
     (isClaudeCliCompatibilityError(actionError ?? '')
       ? t(
@@ -983,6 +995,22 @@ const ConversationPanel = ({
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError
+  let resumeErrorDescription = resolvedActionError
+  if (resumeDiagnostic && resolvedActionError) {
+    if (/timed out/i.test(resumeDiagnostic.detail)) {
+      resumeErrorDescription = t(
+        'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
+      )
+    } else if (
+      /Runtime Segment does not match the adopted Agent context/i.test(resumeDiagnostic.detail)
+    ) {
+      resumeErrorDescription = t(
+        'The selected agent could not be attached to this conversation. Try Resume again.'
+      )
+    } else if (isReportableRunFailure(actionError)) {
+      resumeErrorDescription = t('Your conversation is preserved. Try Resume again.')
+    }
+  }
   const errorKey = JSON.stringify([
     activeSession?.id,
     legacyDisplayState?.status === 'error' ? legacyDisplayState.error : null,
@@ -1689,46 +1717,95 @@ const ConversationPanel = ({
                   </div>
                 ) : resolvedActionError || showLegacyRunErrorRow ? (
                   <DismissibleConversationError key={errorKey}>
-                    {/* Transient action errors and a run failure can coexist; show each on its own row
-                        so the run's report affordance is never suppressed by a transient error. */}
-                    {resolvedActionError ? (
-                      <span className="min-w-0 break-words pr-6">{resolvedActionError}</span>
-                    ) : null}
-                    {showLegacyRunErrorRow ? (
-                      <div className="flex flex-col items-stretch gap-2">
-                        <span className="min-w-0 break-words pr-6">{resolvedRunError}</span>
-                        {/* Actions stay with the run's own error, so the shown and reported text are
+                    {(onDismiss) => (
+                      <>
+                        {resolvedActionError && resumeDiagnostic ? (
+                          <ErrorNotice
+                            dismissButton={{ label: t('Dismiss error'), onClick: onDismiss }}
+                            data-testid="resume-operation-error"
+                            className="mb-2"
+                            title={t('Could not resume this conversation')}
+                            description={resumeErrorDescription ?? undefined}
+                            secondaryButton={
+                              activeSession && sessionTools.exportDiagnostics
+                                ? {
+                                    label: t('Export diagnostics…'),
+                                    onClick: () => sessionTools.exportDiagnostics?.(activeSession)
+                                  }
+                                : undefined
+                            }
+                          >
+                            <DiagnosticDetails
+                              key={resumeDiagnostic.detail}
+                              detail={resumeDiagnostic.detail}
+                              copyable
+                            />
+                          </ErrorNotice>
+                        ) : null}
+                        {(resolvedActionError && !resumeDiagnostic) ||
+                        showLegacyRunErrorRow ||
+                        showVisionModelSettings ||
+                        showCodexSettings
+                          ? renderConversationError(
+                              <>
+                                {/* Keep a coexisting run failure and its report affordance visible. */}
+                                {resolvedActionError && !resumeDiagnostic ? (
+                                  <span className="min-w-0 break-words pr-6">
+                                    {resolvedActionError}
+                                  </span>
+                                ) : null}
+                                {showLegacyRunErrorRow ? (
+                                  <div className="flex flex-col items-stretch gap-2">
+                                    <span className="min-w-0 break-words pr-6">
+                                      {resolvedRunError}
+                                    </span>
+                                    {/* Actions stay with the run's own error, so the shown and reported text are
                             always the same error. Shown only for an unknown failure — a recognized one
                             (app guidance or a known provider error) keeps its message but is not a bug
                             worth a GitHub issue. */}
-                        {isRunErrorReportable ? (
-                          <div className="flex flex-wrap items-center justify-end gap-1 self-end">
-                            <button
-                              type="button"
-                              onClick={() => openReportDialog()}
-                              className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                              aria-label={t('Report this error')}
-                            >
-                              <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                              {t('Report error')}
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {showVisionModelSettings || showCodexSettings ? (
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openSettingsToPanel(showVisionModelSettings ? 'model' : 'agent')
-                          }
-                          className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                        >
-                          {showVisionModelSettings ? t('Model settings') : t('Agent settings')}
-                        </button>
-                      </div>
-                    ) : null}
+                                    {isRunErrorReportable ? (
+                                      <div className="flex flex-wrap items-center justify-end gap-1 self-end">
+                                        <button
+                                          type="button"
+                                          onClick={() => openReportDialog()}
+                                          className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                          aria-label={t('Report this error')}
+                                        >
+                                          <Flag
+                                            className="size-3"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                          {t('Report error')}
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {showVisionModelSettings || showCodexSettings ? (
+                                  <div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openSettingsToPanel(
+                                          showVisionModelSettings ? 'model' : 'agent'
+                                        )
+                                      }
+                                      className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                    >
+                                      {showVisionModelSettings
+                                        ? t('Model settings')
+                                        : t('Agent settings')}
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </>,
+                              onDismiss,
+                              t('Dismiss error')
+                            )
+                          : null}
+                      </>
+                    )}
                   </DismissibleConversationError>
                 ) : null}
 

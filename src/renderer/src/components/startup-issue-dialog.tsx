@@ -16,10 +16,10 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { buildStartupIssueTitle, buildStartupIssueUrl } from '@/lib/startup-issue'
 import { cn } from '@/lib/utils'
-import type { DatabaseStartupError } from '../../../shared/database-startup'
+import type { StartupIssueDetails } from '@/lib/startup-issue'
 
 type StartupIssueDialogProps = {
-  error: DatabaseStartupError
+  error: StartupIssueDetails
   onClose: () => void
 }
 

@@ -1,7 +1,11 @@
+import {
+  trackLifecycleSettlement,
+  hasPendingLifecycleSettlement,
+  waitForLifecycleSettlement
+} from '../lifecycle-settlement'
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
@@ -9,37 +13,39 @@ import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpDeleteSessionRequest,
+  AcpHandoffFailure,
   AcpPermissionResponse,
-  ElicitationResponse,
   AcpPromptRequest,
-  AcpSteerFollowUpRequest,
-  AcpSteerFollowUpResult,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
   AcpRuntimeEvent,
   AcpRuntimeState,
-  AcpSetPermissionProfileRequest,
   AcpSessionAgentTarget,
+  AcpSetPermissionProfileRequest,
   AcpStateSnapshot,
-  AcpStateUpdate
+  AcpStateUpdate,
+  AcpSteerFollowUpRequest,
+  AcpSteerFollowUpResult,
+  ElicitationResponse
 } from '../../shared/acp'
-import type { AcpHandoffFailure } from '../../shared/acp'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import type { AgentFrameworkId } from '../../shared/settings'
-import type { MessageAttribution } from '../../shared/session-persistence'
-import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
-import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
-import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
+import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { MessageAttribution } from '../../shared/session-persistence'
+import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelChangeTarget } from '../agent-framework'
-import type { RootDelegatedWorkControl } from '../delegation/production-composition'
+import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
   DelegateMessageParkedError,
   DelegateMessagePreAcceptanceError,
   type DelegateMessageAcceptanceEvidence
 } from '../delegation/execution-port'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
+import { AcpRuntime } from './runtime'
+import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
@@ -188,6 +194,7 @@ class AcpRuntimeCoordinator {
     request: AcpResumeSessionRequest,
     response: AcpCreateSessionResponse
   ) => Promise<void>
+  private quitPreparationEpoch = 0
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
@@ -496,6 +503,7 @@ class AcpRuntimeCoordinator {
   }
 
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.quitPreparationEpoch += 1
     this.providerShutdownStartedForQuit = true
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
@@ -511,6 +519,7 @@ class AcpRuntimeCoordinator {
   async prepareForQuit(
     timeoutMs = QUIT_PREPARATION_TIMEOUT_MS
   ): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>> {
+    this.quitPreparationEpoch += 1
     this.promptAdmissionClosedForQuit = true
     const activePromptSessionIds = new Set(
       this.getActivePromptSessions().map(({ sessionId }) => sessionId)
@@ -553,7 +562,7 @@ class AcpRuntimeCoordinator {
         resolve(outcome)
       }
       const timer = setTimeout(() => finish('timeout'), Math.max(0, timeoutMs))
-      void cancelAndDrain().then(
+      void trackLifecycleSettlement(cancelAndDrain()).then(
         () => finish('completed'),
         () => finish('failed')
       )
@@ -564,8 +573,14 @@ class AcpRuntimeCoordinator {
   // only the admission state owned by prepareForQuit; completed prompt cancellation remains completed.
   abortQuitPreparation(): void {
     if (this.providerShutdownStartedForQuit) return
-    this.promptAdmissionClosedForQuit = false
-    this.durableQuitDetachedSessionIds.clear()
+    const epoch = this.quitPreparationEpoch
+    const reopen = (): void => {
+      if (epoch !== this.quitPreparationEpoch || this.providerShutdownStartedForQuit) return
+      this.promptAdmissionClosedForQuit = false
+      this.durableQuitDetachedSessionIds.clear()
+    }
+    if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(reopen)
+    else reopen()
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
@@ -579,8 +594,11 @@ class AcpRuntimeCoordinator {
   }
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
+    this.assertPromptAdmissionOpen()
     await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
     const runtime = await this.runtimeForTarget(request.agentTarget, undefined, request.cwd)
+    this.assertPromptAdmissionOpen()
     const pending = { runtime, projectId: request.projectId }
     this.pendingSessionCreations.add(pending)
     let response: AcpCreateSessionResponse
@@ -1047,7 +1065,8 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement())
+      return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.linearizeRootAdmission(request.sessionId, (cancellation) =>
         this.dispatchPrompt(
@@ -1405,7 +1424,8 @@ class AcpRuntimeCoordinator {
     delegatedMessageId?: string,
     cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement())
+      return this.rejectPromptForQuit()
     const origin =
       operation === 'sendAppContinuation' && request.provenanceContext?.promptMessageId
         ? this.getLatestUserPrompt(request.sessionId, request.provenanceContext.promptMessageId)
@@ -1998,7 +2018,7 @@ class AcpRuntimeCoordinator {
   ): ReturnType<AcpRuntime['buildReviewerSession']> {
     this.assertPromptAdmissionOpen()
     const built = await runtime.buildReviewerSession(request)
-    if (this.promptAdmissionClosedForQuit) {
+    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement()) {
       try {
         runtime.disposeReviewerSession(built.session)
       } finally {
@@ -2022,7 +2042,7 @@ class AcpRuntimeCoordinator {
   }
 
   private assertPromptAdmissionOpen(): void {
-    if (this.promptAdmissionClosedForQuit) {
+    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement()) {
       throw new Error('ACP prompt admission is closed because the app is quitting.')
     }
   }

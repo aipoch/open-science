@@ -31,7 +31,8 @@
     ],
     "contract": [],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
       "src/main/acp/runtime-library-evidence.test.ts",
@@ -42,7 +43,9 @@
       "src/main/literature/migration-writers.test.ts",
       "src/main/literature/pdf-attachment-reliability.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
-      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [],

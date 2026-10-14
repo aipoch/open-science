@@ -18,6 +18,7 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import type { BundledSkill } from '@aipoch/skills'
 
 const renameSourceModes = vi.hoisted(() => [] as number[])
+const renameFailures = vi.hoisted(() => [] as NodeJS.ErrnoException[])
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -31,6 +32,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
           code: 'EACCES'
         })
       }
+      const failure = renameFailures.shift()
+      if (failure) throw failure
       await actual.rename(...args)
     }
   }
@@ -46,6 +49,7 @@ let storageRoot: string | undefined
 
 beforeEach(() => {
   renameSourceModes.length = 0
+  renameFailures.length = 0
 })
 
 const makeWritable = async (root: string): Promise<void> => {
@@ -136,6 +140,49 @@ describe('provisionClaudeRuntime', () => {
     expect(renameSourceModes).toHaveLength(1)
     expect(renameSourceModes[0] & 0o200).not.toBe(0)
   })
+
+  it('publishes a complete projection after a transient Windows EPERM rename failure', async () => {
+    const root = await createStorageRoot()
+    renameFailures.push(
+      Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
+    )
+
+    const assets = await provisionClaudeRuntime({
+      storageRoot: root,
+      materializeProjection: materializePlugin()
+    })
+
+    expect(
+      await readFile(
+        join(assets.skillProjection.root, '.claude', 'skills', 'demo', 'SKILL.md'),
+        'utf8'
+      )
+    ).toContain('skill body')
+    expect((await stat(assets.skillProjection.root)).mode & 0o222).toBe(0)
+    expect(await readdir(getClaudeSkillProjectionRevisionsDir(root))).toEqual([
+      assets.skillProjection.revision
+    ])
+    expect(renameSourceModes).toHaveLength(2)
+  })
+
+  it.each(['EPERM', 'ENOSPC'])(
+    'preserves persistent %s publication errors and removes staging',
+    async (code) => {
+      const root = await createStorageRoot()
+      const error = Object.assign(new Error(`${code}: rename refused`), { code })
+      renameFailures.push(...Array.from({ length: 6 }, () => error))
+
+      await expect(
+        provisionClaudeRuntime({
+          storageRoot: root,
+          materializeProjection: materializePlugin()
+        })
+      ).rejects.toBe(error)
+
+      expect(renameSourceModes).toHaveLength(code === 'EPERM' ? 6 : 1)
+      expect(await readdir(getClaudeSkillProjectionRevisionsDir(root))).toEqual([])
+    }
+  )
 
   it('rejects a symbolic-link private profile without changing its victim', async () => {
     const root = await createStorageRoot()

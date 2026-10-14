@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Scroll anchor project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -16,10 +17,7 @@ test('does not re-anchor a historical turn when the reply row replaces the loade
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })

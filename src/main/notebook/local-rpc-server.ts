@@ -65,16 +65,14 @@ import type {
   WslSetupStatus,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
+import type { AuthenticatedDelegateCaller } from '../delegation/authenticated-delegate-caller'
+import type { DurableDelegateRequest } from '../delegation/delegate-request-contract'
 import {
   DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
   assertDelegateInputShape,
   assertDelegateRequestShape
 } from '../delegation/delegated-work-admission'
-import type {
-  AuthenticatedDelegateCaller,
-  DurableDelegateRequest,
-  DurableDelegatedWork
-} from '../delegation/durable-delegated-work'
+import type { DurableDelegatedWork } from '../delegation/durable-delegated-work-contract'
 import { StructuredOutputError } from '../delegation/structured-output'
 import {
   projectHostCapabilities,
@@ -102,7 +100,7 @@ import type {
 import { withDataRootWrite } from '../storage/migration-state'
 import { isRecord } from '../value-guards'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
-import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-service'
+import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
 import type {
   HostViewImageContext,
   HostViewImageResult,

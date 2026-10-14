@@ -3,9 +3,9 @@ import { ArrowUpRight } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest } from '../../../../shared/acp'
-import { useSpecialistStore } from '@/stores/specialist-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 import { SpecialistAvatar } from '../settings/specialist-avatar'
 
 // The redacted switch approval payload carried by the ACP request. Only public names travel in the

@@ -1,4 +1,4 @@
-import type { PersistedChatMessage } from './message'
+import type { PersistedChatMessage } from '../session-message-contract'
 import type { PersistedChatSession } from './session'
 
 type TurnMessage = Pick<PersistedChatMessage, 'id' | 'role' | 'relayedFrom' | 'responseToMessageId'>

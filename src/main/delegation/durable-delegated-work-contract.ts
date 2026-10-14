@@ -1,23 +1,15 @@
+import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpPermissionScope } from '../../shared/acp-permission-contract'
 import type { ArtifactFile } from '../../shared/artifacts'
-import type {
-  AcpAgentRuntimeUpdate,
-  AcpPermissionScope,
-  AcpPermissionRequest
-} from '../../shared/acp'
+import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { SpecialistView } from '../../shared/specialist'
+import type { DelegatedArtifactEvidence } from './artifact-evidence-contract'
 import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
-import type { JsonSchema } from './structured-output'
-import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
-import type { DelegatedArtifactEvidence } from './delegated-turn-lifecycle'
+import type { DurableDelegateRequest } from './delegate-request-contract'
 import type {
-  DelegateExecution,
-  DelegateMessageAcceptanceEvidence,
-  DelegatePermissionResponse,
-  DelegatedExecutionModelAdmission
-} from './execution-port'
-import type {
+  DelegatedQuestionAnswer,
   DelegatedWorkDurableRecords,
   DurableAttempt,
   DurableChildSummary,
@@ -25,19 +17,16 @@ import type {
   DurableCollectSelector,
   DurableDelegateObservation,
   DurableDelegateOutcome,
-  DurableDelegateResult,
-  DelegatedQuestionAnswer
+  DurableDelegateResult
 } from './delegated-work-record-types'
+import type {
+  DelegateExecution,
+  DelegateMessageAcceptanceEvidence,
+  DelegatePermissionResponse,
+  DelegatedExecutionModelAdmission
+} from './execution-port'
 
 type SessionKey = Readonly<{ projectId: string; sessionId: string }>
-
-type DurableDelegateRequest = Readonly<{
-  task: string
-  name: string
-  profile?: string
-  inputs?: readonly string[]
-  outputSchema?: JsonSchema
-}>
 
 type SpecialistDelegationProfile = Readonly<
   Pick<SpecialistView, 'id' | 'name' | 'displayName' | 'enabled' | 'setupPending' | 'revision'>
@@ -324,8 +313,8 @@ export type {
   DelegatedReviewProjectionScope,
   DurableDelegateRequest,
   DurableDelegatedWork,
-  DurableSendMessageOutcome,
   DurableSendMessageOptions,
+  DurableSendMessageOutcome,
   ParentMessageDelivery,
   ReadOnlyAgentFrameDetail,
   RecoveryOutcome,

@@ -44,7 +44,8 @@
       "src/main/notebook/windows-runtime-download.contract.test.ts"
     ],
     "consumer": [
-      "src/main/composition/session-packages.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "scripts/windows-runtime-cache-uninstall.test.ts",
@@ -576,7 +577,14 @@
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
       "src/renderer/src/stores/runtime-settings-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

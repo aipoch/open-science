@@ -453,3 +453,31 @@ it('ignores a rejected obsolete request after a newer command succeeds', async (
   await first
   expect(useUpdateStore.getState().status).toEqual(ready)
 })
+
+it('opens authoritative recovery and closes the modal for certified completion', async () => {
+  resetStore()
+  const recovery: UpdateStatus = {
+    state: 'ready',
+    current: '1',
+    reason: 'runtime-stop-unclean',
+    recovery: {
+      phase: 'stopped',
+      runtime: 'stopped-unclean',
+      installation: 'unchanged',
+      canCancel: false,
+      canRetryInstall: false,
+      canRecover: true
+    }
+  }
+  ;(window as unknown as { api: unknown }).api = {
+    update: {
+      recover: async () => recovery,
+      cancel: async () => ({ ...recovery, outcome: 'recovered' })
+    }
+  }
+  await useUpdateStore.getState().recover()
+  expect(useUpdateStore.getState().isDialogOpen).toBe(true)
+  await useUpdateStore.getState().cancel()
+  expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  expect(useUpdateStore.getState().status.outcome).toBe('recovered')
+})
