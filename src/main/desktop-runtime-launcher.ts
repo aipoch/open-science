@@ -1,6 +1,10 @@
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import { isRuntimeProcessAlive, waitForRuntimeStopped } from './runtime-stop-confirmation'
+import {
+  terminateVerifiedLegacyRuntime,
+  type LegacyTerminationDeps
+} from './legacy-service-termination'
 import { randomUUID } from 'node:crypto'
 import {
   backendStartupStatusSchema,
@@ -38,7 +42,8 @@ export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?:
 // delete a lock, kill a recorded PID or restart a different generation on connection loss.
 export async function discoverDesktopBackend(
   configRoot: string,
-  version: string
+  version: string,
+  terminationDeps?: Partial<LegacyTerminationDeps>
 ): Promise<DesktopEndpoint | undefined> {
   let owner: z.infer<typeof ownerSchema>
   let token: string
@@ -130,16 +135,22 @@ export async function discoverDesktopBackend(
           return
         }
         // A button may remain open for minutes: authenticate the exact owner again before acting.
-        const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
-          headers: {
-            authorization: `Bearer ${token}`,
-            'x-open-science-runtime-generation': owner.generation
-          },
-          signal: AbortSignal.timeout(1500),
-          redirect: 'error'
-        })
-        const current = response.ok ? await response.json() : undefined
-        if (current?.pid !== owner.pid || current?.generation !== owner.generation)
+        // An unreachable control endpoint is not an identity change; the verified fallback decides.
+        let current: { pid?: unknown; generation?: unknown; startupOptions?: unknown } | undefined
+        try {
+          const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+            headers: {
+              authorization: `Bearer ${token}`,
+              'x-open-science-runtime-generation': owner.generation
+            },
+            signal: AbortSignal.timeout(1500),
+            redirect: 'error'
+          })
+          current = response.ok ? await response.json() : undefined
+        } catch {
+          current = undefined
+        }
+        if (current && (current.pid !== owner.pid || current.generation !== owner.generation))
           throw new DesktopRuntimeStartupError(
             {
               ...issue,
@@ -150,11 +161,11 @@ export async function discoverDesktopBackend(
             undefined,
             legacy
               ? async () => {
-                  await discoverDesktopBackend(configRoot, version)
+                  await discoverDesktopBackend(configRoot, version, terminationDeps)
                 }
               : undefined
           )
-        if (JSON.stringify(current.startupOptions) !== JSON.stringify(startupOptions))
+        if (current && JSON.stringify(current.startupOptions) !== JSON.stringify(startupOptions))
           throw new DesktopRuntimeStartupError(
             {
               ...issue,
@@ -165,52 +176,65 @@ export async function discoverDesktopBackend(
             undefined,
             legacy
               ? async () => {
-                  await discoverDesktopBackend(configRoot, version)
+                  await discoverDesktopBackend(configRoot, version, terminationDeps)
                 }
               : undefined
           )
-        // The owner endpoint is distinct from the Web service port. Start Web through its
-        // authenticated control endpoint, then bind shutdown to that process's service record.
-        const started = await fetch(`http://127.0.0.1:${owner.port}/web/start?port=0`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'x-open-science-runtime-generation': owner.generation
-          },
-          signal: AbortSignal.timeout(5000),
-          redirect: 'error'
-        })
-        if (!started.ok)
-          throw new Error(
-            `The server refused the Web control request (HTTP ${started.status}). Its process cannot be stopped from here; quit it manually, then check again.`
+        const graceful = async (): Promise<void> => {
+          if (!current) throw new Error('The server control endpoint is unavailable.')
+          // The owner endpoint is distinct from the Web service port. Start Web through its
+          // authenticated control endpoint, then bind shutdown to that process's service record.
+          const started = await fetch(`http://127.0.0.1:${owner.port}/web/start?port=0`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'x-open-science-runtime-generation': owner.generation
+            },
+            signal: AbortSignal.timeout(5000),
+            redirect: 'error'
+          })
+          if (!started.ok)
+            throw new Error(
+              `The server refused the Web control request (HTTP ${started.status}). The verified process fallback decides next.`
+            )
+          const service = z
+            .object({ pid: z.literal(owner.pid), port: z.number().int().min(1).max(65535) })
+            .parse(JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8')))
+          const stopped = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(5000),
+            redirect: 'error'
+          })
+          if (!stopped.ok)
+            throw new Error(
+              `The server did not accept the shutdown request (HTTP ${stopped.status}).`
+            )
+          await stopped.arrayBuffer()
+          const lease = await waitForRuntimeStopped({
+            configRoot,
+            generation: owner.desktop!.generation,
+            pid: owner.pid,
+            // Legacy CLI shutdown predates clean-exit receipts. This user-confirmed startup
+            // transition waits for process exit and directory release, not installation authority.
+            requireCleanExit: !legacy
+          })
+          lease.release()
+        }
+        try {
+          await graceful()
+        } catch (error) {
+          // Only a legacy service may be force-stopped: it has no clean-exit receipt to protect.
+          if (!legacy) throw error
+          await terminateVerifiedLegacyRuntime(
+            { configRoot, generation: owner.desktop!.generation, pid: owner.pid },
+            terminationDeps
           )
-        const service = z
-          .object({ pid: z.literal(owner.pid), port: z.number().int().min(1).max(65535) })
-          .parse(JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8')))
-        const stopped = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(5000),
-          redirect: 'error'
-        })
-        if (!stopped.ok)
-          throw new Error(
-            `The server did not accept the shutdown request (HTTP ${stopped.status}). Quit it manually, then check again.`
-          )
-        await stopped.arrayBuffer()
-        const lease = await waitForRuntimeStopped({
-          configRoot,
-          generation: owner.desktop!.generation,
-          pid: owner.pid,
-          // Legacy CLI shutdown predates clean-exit receipts. This user-confirmed startup
-          // transition waits for process exit and directory release, not installation authority.
-          requireCleanExit: !legacy
-        })
-        lease.release()
+        }
       },
       legacy
         ? async () => {
-            await discoverDesktopBackend(configRoot, version)
+            await discoverDesktopBackend(configRoot, version, terminationDeps)
           }
         : undefined,
       startupOptions

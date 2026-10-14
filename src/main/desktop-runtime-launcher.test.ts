@@ -29,6 +29,9 @@ function proof(
     }
   }
 }
+function legacyProof(owner: { generation: string; pid: number }): object {
+  return { generation: owner.generation, pid: owner.pid }
+}
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'desktop-launch-'))
@@ -109,17 +112,55 @@ describe('desktop backend discovery', () => {
     )
     await expect(discoverDesktopBackend(root, 'test')).rejects.toThrow('older desktop runtime')
   })
-  it('names the failing control step and manual recovery when a service refuses shutdown', async () => {
+  it('force-stops a verified legacy service when graceful control is unavailable', async () => {
     const { root, owner, fetcher } = await fixture()
     owner.pid = process.pid
     await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
-    const error = await discoverDesktopBackend(root, 'different').catch((error) => error)
+    let alive = true
+    const signals: string[] = []
+    fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
+    const error = await discoverDesktopBackend(root, 'different', {
+      selfPid: -1,
+      inspect: async () => ({
+        commandLine: '/r/node /r/backend/out/backend/index.cjs --desktop',
+        parentPid: 1
+      }),
+      lockHeld: () => alive,
+      isAlive: () => alive,
+      signal: async (_pid, mode) => {
+        signals.push(mode)
+        if (mode === 'kill') alive = false
+      },
+      graceMs: 100,
+      settleMs: 100
+    }).catch((error) => error)
     fetcher.mockImplementation(async (url: string) =>
       url.endsWith('/owner')
-        ? new Response(JSON.stringify(proof(root, owner)))
+        ? new Response(JSON.stringify(legacyProof(owner)))
         : new Response(null, { status: 404 })
     )
-    await expect(error.stopAndContinue()).rejects.toThrow(/HTTP 404.*quit it manually/s)
+    await expect(error.stopAndContinue()).resolves.toBeUndefined()
+    expect(signals).toEqual(['terminate', 'kill'])
+  })
+  it('does not signal when graceful control fails and identity cannot be proven', async () => {
+    const { root, owner, fetcher } = await fixture()
+    owner.pid = process.pid
+    await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
+    const signals: string[] = []
+    fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
+    const error = await discoverDesktopBackend(root, 'different', {
+      selfPid: -1,
+      inspect: async () => ({ commandLine: '/usr/bin/other', parentPid: 1 }),
+      lockHeld: () => true,
+      signal: async (_pid, mode) => void signals.push(mode)
+    }).catch((error) => error)
+    fetcher.mockImplementation(async (url: string) =>
+      url.endsWith('/owner')
+        ? new Response(JSON.stringify(legacyProof(owner)))
+        : new Response(null, { status: 404 })
+    )
+    await expect(error.stopAndContinue()).rejects.toMatchObject({ code: 'identity-unproven' })
+    expect(signals).toEqual([])
   })
   it('does not stop a replacement owner after the confirmation was opened', async () => {
     const { root, owner, fetcher } = await fixture()
