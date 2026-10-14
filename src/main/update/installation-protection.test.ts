@@ -182,6 +182,59 @@ it.each(['home', 'explicit', 'environment', 'e2e'] as const)(
 )
 
 describe('installation protection', () => {
+  it.each([false, true])(
+    'waits for short coordinator contention but preserves exclusion (held=%s)',
+    async (held) => {
+      const f = fixture()
+      const directory = installationStateDirectory(f.location)
+      mkdirSync(directory, { recursive: true })
+      const script = `
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(process.argv[1]);
+      db.exec('PRAGMA journal_mode=MEMORY; BEGIN EXCLUSIVE');
+      process.stdout.write('locked');
+      process.stdin.once('data', () => {
+        ${held ? 'setInterval(() => {}, 1000)' : 'setTimeout(() => { db.close(); process.exit(0) }, 250)'}
+      });
+    `
+      const child = spawn(process.execPath, ['-e', script, join(directory, 'coordinator.sqlite')], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      const exit = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.stdout.once('data', () => resolve())
+          child.once('error', reject)
+          child.once('exit', () => reject(new Error('lock owner exited before readiness')))
+        })
+        child.stdin.write('attempt')
+        if (held) {
+          expect(() => registerInstallationRuntime({ ...f.location, ...f.runtime })).toThrow(
+            'Installation coordination is busy'
+          )
+          expect(readdirSync(directory).filter((name) => name.endsWith('.json'))).toEqual([])
+        } else {
+          const runtime = registerInstallationRuntime({ ...f.location, ...f.runtime })
+          try {
+            // The short coordinator lock is released, but the lifetime lease still excludes updates.
+            expect(() =>
+              beginInstallationUpdate({
+                ...f.options,
+                runtime: { ...f.runtime, generation: 'other' }
+              })
+            ).toThrow('Another service')
+          } finally {
+            runtime.release()
+          }
+        }
+      } finally {
+        child.kill('SIGKILL')
+        await exit
+      }
+    },
+    10_000
+  )
+
   it('preserves verified configuration across cancellation until successful startup consumes its operation', () => {
     const f = fixture()
     const record = beginInstallationUpdate(f.options)

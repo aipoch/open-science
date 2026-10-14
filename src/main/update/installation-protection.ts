@@ -149,10 +149,10 @@ export function installationStateDirectory(location: InstallationLocation): stri
     key
   )
 }
-function acquireLock(path: string): () => void {
+function acquireLock(path: string, busyTimeoutMs = 0): () => void {
   const db = new DatabaseSync(path)
   try {
-    db.exec('PRAGMA busy_timeout = 0; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE')
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE`)
   } catch (cause) {
     db.close()
     throw new UpdateLifecycleError(
@@ -173,7 +173,9 @@ function acquireLock(path: string): () => void {
 function coordinated<T>(location: InstallationLocation, run: (directory: string) => T): T {
   const directory = installationStateDirectory(location)
   mkdirSync(directory, { recursive: true, mode: 0o700 })
-  const unlock = acquireLock(join(directory, 'coordinator.sqlite'))
+  // Concurrent CLI/backend starts briefly share this coordinator. Match the bootstrap's bounded
+  // wait; lifetime/executor lock probes must remain nonblocking so a live owner is never awaited.
+  const unlock = acquireLock(join(directory, 'coordinator.sqlite'), 1500)
   try {
     return run(directory)
   } finally {

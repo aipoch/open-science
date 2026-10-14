@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
+import { spawn } from 'node:child_process'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { collectSmokeDiagnostics } from './package-smoke-diagnostics.mjs'
+
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+vi.mock('./package-smoke-diagnostics.mjs', () => ({ collectSmokeDiagnostics: vi.fn() }))
 
 import {
   authenticatePackagedAppEndpoint,
@@ -11,6 +18,7 @@ import {
   findAppBundle,
   findArtifact,
   packagedLaunchArguments,
+  launchAndProbe,
   parseArguments,
   parsePackagedAppEndpoint
 } from './macos-package-smoke.mjs'
@@ -18,10 +26,47 @@ import {
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.useRealTimers()
+  vi.resetAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })))
 })
 
 describe('macOS package smoke', () => {
+  it('captures the backend log and process state before cleaning up a timed-out launch', async () => {
+    vi.useFakeTimers()
+    const events: string[] = []
+    const child = Object.assign(new EventEmitter(), {
+      pid: undefined,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => events.push('kill'))
+    })
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    vi.mocked(collectSmokeDiagnostics).mockImplementation(async () => {
+      events.push('diagnostics')
+      return 'backend startup blocked: diagnostic evidence'
+    })
+    const probe = launchAndProbe({
+      executable: '/fixture/Open-Science',
+      expectedVersion: '1.0.0',
+      env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: '/isolated' },
+      userDataRoot: '/profile'
+    })
+    const outcome = expect(probe).rejects.toThrow(
+      /Timed out[\s\S]*connect-node-runtime[\s\S]*diagnostic evidence/
+    )
+    child.stdout.write('phase: connect-node-runtime')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await outcome
+    expect(events).toEqual(['diagnostics', 'kill'])
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(collectSmokeDiagnostics).toHaveBeenCalledWith({
+      configRoot: '/isolated',
+      pid: undefined,
+      desktop: true
+    })
+  })
+
   it('selects one DMG and ZIP and derives their shared version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-macos-artifacts-'))
     roots.push(root)

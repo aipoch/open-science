@@ -14,6 +14,7 @@ import {
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
 import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
+import { collectSmokeDiagnostics } from './package-smoke-diagnostics.mjs'
 
 const ARTIFACT_PATTERN = /^aipoch-open-science-(.+)-mac-(?:arm64|x64)\.(dmg|zip)$/
 const SMOKE_ROOT_PREFIX = 'open-science-macos-package-smoke-'
@@ -224,9 +225,14 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     if (exitCode !== 0) throw new Error(`Packaged macOS app exited with ${exitCode}.\n${output}`)
     return await readDesktopSqliteVersion(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, child.pid)
   } catch (error) {
+    const diagnostics = await collectSmokeDiagnostics({
+      configRoot: env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+      pid: child.pid,
+      desktop: true
+    })
     child.kill('SIGKILL')
     terminateSpawnedProcessGroup(child)
-    throw error
+    throw new Error(`${error.message}\n${diagnostics}`, { cause: error })
   }
 }
 
@@ -240,6 +246,9 @@ const smokeAppBundle = async ({
   expectLegacyProject = true,
   launches = 1
 }) => {
+  console.log(
+    `macOS smoke: ${appBundle}; profile=${storageRoot}; Gatekeeper=${gatekeeper}; launches=${launches}`
+  )
   await runProcess(
     '/usr/bin/codesign',
     ['--verify', '--deep', '--strict', '--verbose=2', appBundle],
@@ -274,6 +283,7 @@ const smokeAppBundle = async ({
   )
   const sqliteVersions = []
   for (let launch = 0; launch < launches; launch += 1) {
+    console.log(`macOS smoke: launch ${launch + 1}/${launches}`)
     sqliteVersions.push(await launchAndProbe({ executable, expectedVersion, env, userDataRoot }))
   }
   await verifyDatabaseMigrationLedger(storageRoot)

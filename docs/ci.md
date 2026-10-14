@@ -129,6 +129,33 @@ queue uses short Mac core plus focused native checks for sensitive changes. Full
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.
 
+## Focused macOS release diagnostics
+
+Use **Notarize macOS (dry-run)** (`notarize-dryrun.yml`) to diagnose the release path without
+publishing, changing tags or editing a GitHub Release. Set `source_run` to the original Release run
+ID and `architecture` to `arm64` or `x64`; this skips rebuilding and downloads that run's existing
+artifacts. Only same-repository Release pushes whose revision belongs to main history are accepted.
+The selected native runner, notarization tooling and final package smoke are shared with Release.
+
+Choose `operation=staple` after Apple has Accepted the original submission: it downloads the existing
+tickets, staples/validates the DMG and app inside the ZIP, then runs Gatekeeper and the real package
+smoke. It does not submit again. Use `operation=smoke` only for artifacts that already have tickets
+stapled; it still validates both tickets and runs Gatekeeper, without changing the source packages.
+`operation=notarize` submits once and waits; an empty `source_run` retains the signed-build path.
+Missing credentials fail a notarization dry run instead of reporting an untested success.
+
+Only explicit `NSURLErrorDomain Code=-1005` transport failures receive up to three attempts with
+10/30-second backoff, independently for wait, staple and validate. Wait attempts share a 15-minute
+budget. Rejections, credential/signature errors, unknown Error 68 and process timeouts fail closed.
+Submit is never automatically retried because a lost response may hide a successful submission.
+Inspect its captured output/Apple history before submitting again. A full job rerun still submits;
+use the staple dry run to investigate an already Accepted package without doing that.
+
+Dry runs emit no release certification and replace artifacts only in their own run. A green diagnostic
+run does not authorize publication. Package startup/shutdown failures are not retried: macOS reports
+the package/profile/launch and its backend log tail, and Linux records the CLI daemon PID state before
+cleanup. Tokens are redacted from these additional diagnostics; missing evidence remains explicit.
+
 ## Independent package tests
 
 Register independent packages and their dependencies in `scripts/ci/package-test-boundaries.json`.

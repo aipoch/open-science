@@ -1005,6 +1005,93 @@ describe('build verification throughput', () => {
     expect(release.jobs['release-sbom-poc'].needs).toBe('publish')
   })
 
+  it.each([
+    { certified: 'true', source: '', operation: 'notarize', arch: 'all', allowed: true },
+    { certified: 'true', source: '123', operation: 'notarize', arch: 'all', allowed: false },
+    { certified: 'true', source: '', operation: 'staple', arch: 'all', allowed: false },
+    { certified: 'true', source: '', operation: 'smoke', arch: 'all', allowed: false },
+    { certified: 'true', source: '', operation: 'notarize', arch: 'arm64', allowed: false },
+    { certified: 'false', source: '123', operation: 'staple', arch: 'arm64', allowed: true },
+    { certified: 'false', source: '123', operation: 'smoke', arch: 'x64', allowed: true },
+    { certified: 'false', source: '123', operation: 'skip', arch: 'arm64', allowed: false },
+    { certified: 'false', source: '123', operation: 'staple', arch: 'unknown', allowed: false }
+  ])(
+    'enforces the actual release/dry-run shell guard: %j',
+    ({ certified, source, operation, arch, allowed }) => {
+      const execute = (): void => {
+        execFileSync(
+          'bash',
+          [
+            '-e',
+            '-c',
+            step(workflow('notarize-mac.yml').jobs.notarize, 'Require unpublished build artifacts')
+              .run!
+          ],
+          {
+            stdio: 'pipe',
+            env: {
+              ...process.env,
+              FROM_RUN: 'true',
+              CERTIFIED_BUILD: certified,
+              SOURCE_RUN: source,
+              OPERATION: operation,
+              ARCHITECTURE: arch
+            }
+          }
+        )
+      }
+      if (allowed) expect(execute).not.toThrow()
+      else expect(execute).toThrow()
+    }
+  )
+
+  it('retries Apple transport operations without wrapping submission or weakening package gates', () => {
+    const notarize = workflow('notarize-mac.yml')
+    const job = notarize.jobs.notarize
+    const script = step(job, 'Notarize + staple').run ?? ''
+    expect(script.match(/xcrun notarytool submit/g)).toHaveLength(1)
+    expect(script).not.toContain('apple-notarization-retry.mjs notarytool submit')
+    expect(script).not.toContain('2>/dev/null')
+    for (const operation of ['notarytool wait', 'stapler staple', 'stapler validate']) {
+      expect(script).toContain(`apple-notarization-retry.mjs ${operation}`)
+    }
+    expect(script).toContain('if [ "$OPERATION" = "notarize" ]; then submit "$dmg"; fi')
+    expect(script).toContain('Accepted) [ "$wait_code" = 0 ]')
+    expect(step(job, 'Smoke test final macOS packages').run).toContain('--gatekeeper')
+    expect(step(job, 'Smoke test final macOS packages')['continue-on-error']).not.toBe(true)
+    expect(step(job, 'Remove App Store Connect API key').if).toBe('always()')
+  })
+
+  it('reuses source artifacts in focused dry runs without emitting release certification', () => {
+    const dryRun = workflow('notarize-dryrun.yml')
+    expect(dryRun.jobs.build.if).toContain("inputs.source_run == ''")
+    expect(dryRun.jobs.notarize.uses).toBe('./.github/workflows/notarize-mac.yml')
+    expect(dryRun.jobs.notarize.with).toMatchObject({
+      certified_build: false,
+      source_run: '${{ inputs.source_run }}',
+      architecture: '${{ inputs.architecture }}',
+      operation: '${{ inputs.operation }}'
+    })
+    expect(dryRun.jobs.notarize.if).toContain("needs.build.result == 'skipped'")
+    expect(Object.keys(dryRun.jobs)).toEqual(['validate', 'build', 'notarize'])
+    const job = workflow('notarize-mac.yml').jobs.notarize
+    expect(step(job, 'Download signed mac artifact (from this run)').with).toMatchObject({
+      'run-id': '${{ inputs.source_run || github.run_id }}',
+      'github-token': '${{ github.token }}'
+    })
+    expect(step(job, 'Validate reused release source').run).toContain(
+      'validate-notarize-source.mjs'
+    )
+    expect(step(job, 'Require unpublished build artifacts').run).toContain(
+      'Focused modes cannot produce release certification.'
+    )
+    expect(step(job, 'Refresh macOS certification evidence').if).toContain('inputs.certified_build')
+    expect(step(job, 'Gate on API key presence').run).toContain(
+      'Dry run requires Apple credentials'
+    )
+    expect(step(job, 'Re-emit stapled artifact (for publish)').with?.['run-id']).toBeUndefined()
+  })
+
   it('keeps reusable build workflows read-only, caller-scoped, and time-bounded', () => {
     const build = workflow('build.yml')
     const notarize = workflow('notarize-mac.yml')
@@ -1013,8 +1100,8 @@ describe('build verification throughput', () => {
     const release = workflow('release.yml')
 
     expect(build.permissions).toEqual({ contents: 'read' })
-    expect(notarize.permissions).toEqual({ contents: 'read' })
-    expect(dryRun.permissions).toEqual({ contents: 'read' })
+    expect(notarize.permissions).toEqual({ contents: 'read', actions: 'read' })
+    expect(dryRun.permissions).toEqual({ contents: 'read', actions: 'read' })
     // Packaging and notarization queue instead of cancelling; regression reruns supersede.
     expect(build.concurrency).toEqual({
       group: 'build-${{ github.workflow }}-${{ github.ref }}',
