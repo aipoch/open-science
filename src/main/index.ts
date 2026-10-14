@@ -774,25 +774,30 @@ async function startDesktop(): Promise<void> {
     app.exit(0)
   })
   startupDiagnostics?.phase('launch-node-runtime')
-  let launch: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
+  let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
+  // Shared by the first launch and the startup replacement of a stopping Runtime, so a replacement
+  // keeps the preserved service port and credential arguments of the original launch.
+  const launchInitialBackend = async (): Promise<void> => {
+    launch = await startOrAttachDesktopBackend({
+      onStatus: (status) => bootstrapLog.info('backend startup status', status),
+      configRoot,
+      profilePath,
+      version: app.getVersion(),
+      ...initialBackendPaths,
+      packaged: app.isPackaged,
+      args: [
+        ...credentialArgs,
+        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
+      ]
+    })
+    startedBackend = launch.startedProcess
+  }
   while (true) {
     try {
       if (initialRecoveryError) throw initialRecoveryError
       await installationStartup?.completeBeforeLaunch()
       installationStartup = undefined
-      launch = await startOrAttachDesktopBackend({
-        onStatus: (status) => bootstrapLog.info('backend startup status', status),
-        configRoot,
-        profilePath,
-        version: app.getVersion(),
-        ...initialBackendPaths,
-        packaged: app.isPackaged,
-        args: [
-          ...credentialArgs,
-          ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
-        ]
-      })
-      startedBackend = launch.startedProcess
+      await launchInitialBackend()
       startupBlocked = false
       break
     } catch (error) {
@@ -961,19 +966,8 @@ async function startDesktop(): Promise<void> {
       client = await connectDesktopRuntimeForStartup({
         connect: attach,
         version: app.getVersion(),
-        replaceRuntime: async () => {
-          // The old Runtime is waited out (or stopped after identity proof) by the launcher.
-          launch = await startOrAttachDesktopBackend({
-            onStatus: (status) => bootstrapLog.info('backend startup status', status),
-            configRoot,
-            profilePath,
-            version: app.getVersion(),
-            ...initialBackendPaths,
-            packaged: app.isPackaged,
-            args: credentialArgs
-          })
-          startedBackend = launch.startedProcess
-        }
+        // The old Runtime is waited out (or stopped after identity proof) by the launcher.
+        replaceRuntime: launchInitialBackend
       })
       startupBlocked = false
       startupFailure = undefined
