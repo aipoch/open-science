@@ -1,4 +1,4 @@
-import type { ModelReasoningEffort, ResolvedReasoningEffort } from '@aipoch/providers/catalog'
+import type { ModelReasoningEffort, ResolvedReasoningEffort } from '@aipoch/providers'
 import type {
   AgentFramework,
   AgentModelChangeTarget,

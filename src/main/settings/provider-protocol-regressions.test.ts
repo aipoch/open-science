@@ -3,7 +3,7 @@ import { ChatProviderCompatibilityBridge } from './chat-provider-compatibility'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import {
   normalizeOpenAiChatModelStepUsage,
-  streamChatToResponses
+  createResponsesAdapter
 } from '@aipoch/providers/protocol'
 import {
   CAPTURED_TOOL_IMAGE_PNG_BASE64,
@@ -249,19 +249,10 @@ describe('provider protocol report regressions', () => {
     const body = await response.text()
     const calls = sse(body).flatMap((chunk) => chunk.choices?.[0]?.delta?.tool_calls ?? [])
     expect.soft(calls.map((call) => call.index)).toEqual([0, 1])
-    let converted = ''
-    await streamChatToResponses(
-      new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
-      {
-        writeHead: vi.fn(),
-        write: (chunk) => {
-          converted += chunk
-          return true
-        },
-        end: vi.fn()
-      },
-      'test-model'
-    )
+    const adapter = createResponsesAdapter()
+    const turn = adapter.prepare({ body: { model: 'test-model', input: '', stream: true } })
+    const converted = await (await turn.convert(new Response(body))).text()
+    adapter.dispose()
     expect(
       sse(converted)
         .at(-1)

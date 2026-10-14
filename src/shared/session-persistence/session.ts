@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { AcpContextUsage, AcpTurnTokenUsage } from '../acp-usage-contract'
 import type { PersistedConversationGraph } from '../conversation-graph'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../model-preference-contract'
 import type { PermissionProfileId } from '../permission-profiles'
 import type { ActivePlanProjection } from '../session-plan/contract'
 import type { SessionRuntimeContext } from '../session-runtime-context'

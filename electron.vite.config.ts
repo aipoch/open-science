@@ -62,7 +62,7 @@ export default defineConfig(({ command }) => ({
               '@aipoch/connector-mcp-client/oauth-redirect',
               '@aipoch/compute',
               '@aipoch/diagnostics',
-              '@aipoch/providers/catalog',
+              '@aipoch/providers',
               '@aipoch/skills/document',
               '@aipoch/notebook-analysis/contracts',
               '@aipoch/environment/contracts',

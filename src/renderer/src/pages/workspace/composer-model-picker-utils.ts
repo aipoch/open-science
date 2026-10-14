@@ -4,7 +4,7 @@ import {
   configuredModelApiEndpoints,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import type { ChatApiEndpoint } from '@aipoch/providers/catalog'
+import type { ChatApiEndpoint } from '@aipoch/providers'
 import {
   ENDPOINT_PATHS,
   providerEndpoints,

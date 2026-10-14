@@ -1,4 +1,4 @@
-import type { ChatApiEndpoint } from '@aipoch/providers/catalog'
+import type { ChatApiEndpoint } from '@aipoch/providers'
 import {
   preferredEndpoint,
   providerValidationTargetMatches,

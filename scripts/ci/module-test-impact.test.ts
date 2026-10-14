@@ -584,7 +584,7 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'packages/providers/src/responses-request-adapter.ts',
+      'packages/providers/src/responses/request.ts',
       [
         'acp_runtime',
         'artifact_provenance',
@@ -628,7 +628,7 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'packages/providers/src/responses-response-adapter.ts',
+      'packages/providers/src/responses/response.ts',
       [
         'acp_runtime',
         'artifact_provenance',
@@ -672,7 +672,7 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'packages/providers/src/responses-protocol-types.ts',
+      'packages/providers/src/responses/types.ts',
       [
         'acp_runtime',
         'artifact_provenance',

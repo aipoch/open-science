@@ -1,17 +1,21 @@
 import {
   type ChatApiEndpoint,
-  customProviderRequiresKey,
-  getCustomProviderBaseUrlError,
-  type CustomProviderBaseUrlError,
   OFFICIAL_VENDORS,
-  defaultVendorModel,
   getOfficialVendor,
-  getOfficialVendorModelIds,
   resolveVendorModelApiEndpoints,
   type OfficialVendorId,
-  type CustomReasoningEffortTransport,
-  type ReasoningEffortPresetSetting
-} from '@aipoch/providers/catalog'
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  getOfficialVendorModelIds
+} from '../../../../shared/provider-model-policy'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError,
+  type CustomProviderBaseUrlError
+} from '../../../../shared/provider-url-policy'
+import { type ReasoningEffortPresetSetting } from '../../../../shared/reasoning-effort'
 
 import {
   claudeIsolatedProviderIdentity,

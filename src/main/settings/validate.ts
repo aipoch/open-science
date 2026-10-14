@@ -1,7 +1,7 @@
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
-import { type ChatApiEndpoint, usesVendorAnthropicApiKeyHeader } from '@aipoch/providers/catalog'
+import { type ChatApiEndpoint, usesVendorAnthropicApiKeyHeader } from '@aipoch/providers'
 
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { preferredEndpoint } from '../../shared/settings'
@@ -11,11 +11,13 @@ import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
   openAiCompletionsBase,
+  convertResponsesRequest
+} from '@aipoch/providers/protocol'
+import {
   ResponseBodyLimitError,
   readBoundedResponseText,
-  fetchProviderRequest,
-  responsesToChatRequest
-} from '@aipoch/providers/protocol'
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
 
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import type { ResolvedProvider } from './provider-env'
@@ -186,7 +188,10 @@ const buildOpenAiValidationRequest = (
 
   const body = JSON.stringify(
     requireBridgeToolCall
-      ? responsesToChatRequest(bridgeProbeResponsesBody(provider.model ?? ''), provider.model)
+      ? convertResponsesRequest({
+          body: bridgeProbeResponsesBody(provider.model ?? ''),
+          model: provider.model
+        })
       : {
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.

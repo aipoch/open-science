@@ -1,15 +1,17 @@
 import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
-import type { OfficialVendorId, CustomReasoningEffortTransport } from '@aipoch/providers/catalog'
+import type { OfficialVendorId, CustomReasoningEffortTransport } from '@aipoch/providers'
 
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
 import {
-  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-  readBoundedResponseText,
   normalizeOpenAiChatModelStepUsage,
-  fetchProviderRequest,
   resolveChatReasoningTransport
 } from '@aipoch/providers/protocol'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
 
 import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 import {

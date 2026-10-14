@@ -1,10 +1,10 @@
 import {
   resolveVendorModelReasoningEffort,
-  type OfficialVendorId,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
-} from '@aipoch/providers/catalog'
+} from './reasoning-effort'
+import { type OfficialVendorId } from '@aipoch/providers'
 
 import {
   isClaudeSubscriptionProvider,

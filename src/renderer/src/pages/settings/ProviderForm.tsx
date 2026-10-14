@@ -20,14 +20,16 @@ import {
 } from '@/components/ui/select'
 import {
   getOfficialVendor,
-  getOfficialVendorModelIds,
   resolveVendorApiKeyUrl,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
+import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
-  type CustomReasoningEffortTransport,
-  type ReasoningEffortPresetId,
-  customProviderRequiresKey
-} from '@aipoch/providers/catalog'
+  type ReasoningEffortPresetId
+} from '../../../../shared/reasoning-effort'
+import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
 
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'

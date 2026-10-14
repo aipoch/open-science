@@ -14,7 +14,7 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
-import type { ModelReasoningEffort, OfficialVendorId } from '@aipoch/providers/catalog'
+import type { ModelReasoningEffort, OfficialVendorId } from '@aipoch/providers'
 
 import {
   CODEX_ACP_CONFIGURABLE_PROVIDER_ID,

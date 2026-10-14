@@ -27,7 +27,7 @@ import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resol
 import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
 import { createLocalModelApi } from '../local-models/owner'
 import { runtimeMetadata } from '../runtime-metadata'
-import { ProviderTextGenerationService } from '@aipoch/providers/client'
+import { ProviderTextGenerationService } from '../literature/pdf-translation/text-generation'
 import type { SettingsService } from '../settings/service'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'

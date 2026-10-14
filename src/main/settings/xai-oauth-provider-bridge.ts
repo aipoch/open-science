@@ -6,7 +6,7 @@ import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
   fetchProviderRequest
-} from '@aipoch/providers/protocol'
+} from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,

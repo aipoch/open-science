@@ -11,11 +11,11 @@ import {
   configuredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
-  type ReasoningEffort,
   resolveReasoningEffortControl,
   type ReasoningEffortProfile
-} from '@aipoch/providers/catalog'
+} from '../../../../shared/reasoning-effort'
 import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
 
 import type { ProviderView } from '../../../../shared/settings'

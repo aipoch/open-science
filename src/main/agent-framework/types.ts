@@ -9,7 +9,7 @@ import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
   ResolvedReasoningEffort
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 
 import type { AgentFrameworkId, CodexSubscriptionTransport } from '../../shared/settings'

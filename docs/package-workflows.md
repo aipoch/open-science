@@ -88,7 +88,7 @@ runs in Source Regression, with a focused manual `portable` mode. Run
 
 The Providers verifier builds Diagnostics as a prerequisite without rerunning its unchanged unit
 suite when `--packages=providers` is selected. It builds and typechecks clean sources, packs both
-archives, then validates catalog browser bundling, public CJS/ESM types and identities, URL/protocol
+archives, then validates provider definitions browser bundling, public CJS/ESM types and identities, URL/protocol
 conversion and bounded direct text generation after removing source trees and pruning development
 dependencies. Provider/Bridge account, authentication and session ownership remain host contracts.
 

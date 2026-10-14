@@ -638,10 +638,13 @@ it('keeps provider units upstream of host adapters and selects real downstream c
   const { packageVerificationPlan } = await import('../package-verification-plan.mjs')
   const graph = { status: 'not-used', testFiles: [] }
   for (const path of [
-    'packages/providers/src/provider-registry.ts',
-    'packages/providers/src/responses-request-adapter.ts',
-    'packages/providers/src/provider-text-generation.ts',
-    'packages/providers/src/catalog.ts',
+    'packages/providers/src/providers/lookup.ts',
+    'packages/providers/src/responses/request.ts',
+    'packages/providers/src/responses/adapter.ts',
+    'packages/providers/src/responses/replay.ts',
+    'packages/providers/src/transport/sse.ts',
+    'packages/providers/src/text/generate.ts',
+    'packages/providers/src/providers.ts',
     'packages/providers/src/protocol.ts',
     'packages/providers/src/client.ts'
   ]) {
@@ -650,9 +653,9 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toEqual(
       expect.arrayContaining([
-        'packages/providers/src/provider-registry.test.ts',
-        'packages/providers/src/responses-conversion.test.ts',
-        'packages/providers/src/provider-text-generation.test.ts',
+        'packages/providers/src/providers/lookup.test.ts',
+        'packages/providers/src/responses/conversion.test.ts',
+        'packages/providers/src/text/generate.test.ts',
         'src/main/settings/responses-bridge.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/literature/pdf-translation/api-target.test.ts',
@@ -669,6 +672,10 @@ it('keeps provider units upstream of host adapters and selects real downstream c
   }
   for (const [path, test] of [
     ['src/main/settings/responses-bridge.ts', 'src/main/settings/responses-bridge.test.ts'],
+    [
+      'src/main/literature/pdf-translation/text-generation.ts',
+      'src/main/literature/pdf-translation/text-generation.test.ts'
+    ],
     [
       'src/main/literature/pdf-translation/api-target.ts',
       'src/main/literature/pdf-translation/api-target.test.ts'

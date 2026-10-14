@@ -22,7 +22,7 @@ import type {
 } from '../../shared/classification'
 import { encryptKey, hardenKeyMask, maskKey, tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
-import { fetchProviderRequest, readBoundedResponseText } from '@aipoch/providers/protocol'
+import { fetchProviderRequest, readBoundedResponseText } from '@aipoch/providers/transport'
 import { prepareClassificationImages } from './classification-images'
 import { netFetchStandard } from '../network-fetch'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -39,7 +39,10 @@ import {
 import { CLASSIFICATION_MODELS, classificationModelsForService } from '../../shared/classification'
 import type { ValidateProviderResult } from '../../shared/settings'
 import { classifyFetchError, classifyStatus, extractProviderErrorMessage } from './validate'
-import { customProviderRequiresKey, getCustomProviderBaseUrlError } from '@aipoch/providers/catalog'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../shared/provider-url-policy'
 const log = createLogger('classification')
 
 class ClassificationRequestError extends Error {

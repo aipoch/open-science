@@ -20,7 +20,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from '@aipoch/providers/protocol'
+import { fetchProviderRequest } from '@aipoch/providers/transport'
 
 const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',

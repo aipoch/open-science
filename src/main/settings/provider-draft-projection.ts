@@ -1,13 +1,15 @@
 import type { ProviderDraft } from '../../shared/settings'
 import {
-  defaultVendorModel,
   isOfficialVendorId,
-  resolveCustomModelContextWindow,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl,
   resolveVendorResponsesBaseUrl
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  resolveCustomModelContextWindow
+} from '../../shared/provider-model-policy'
 import type { ResolvedProvider } from './provider-env'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 

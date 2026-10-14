@@ -1,10 +1,10 @@
 import {
   type ChatApiEndpoint,
   type OfficialVendorId,
-  isModelBridgeSupported,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
+import { isModelBridgeSupported } from './provider-bridge-policy'
 
 import {
   isClaudeSubscriptionProvider,

@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type {
-  ReasoningEffort,
-  ReasoningEffortProfile,
-  ResolvedReasoningEffort
-} from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 
 import {
   buildActiveModelIncompatibleMessage,

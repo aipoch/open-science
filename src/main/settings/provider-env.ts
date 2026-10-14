@@ -5,7 +5,7 @@ import type {
   ChatApiEndpoint,
   OfficialVendorId,
   CustomReasoningEffortTransport
-} from '@aipoch/providers/catalog'
+} from '@aipoch/providers'
 
 import type {
   CodexSubscriptionAuthMode,

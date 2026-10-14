@@ -2,10 +2,10 @@ import { PdfTranslationError, type PdfTranslationApiModel } from '@aipoch/pdf-tr
 import { pdfTranslationApiModels } from '../../../shared/pdf-translation-models'
 import { resolveProviderEffectiveModel } from '../../../shared/provider-reasoning-effort'
 import type { SettingsSnapshot } from '../../../shared/settings'
-import type { ReasoningEffortProfile } from '@aipoch/providers/catalog'
+import type { ReasoningEffortProfile } from '../../../shared/reasoning-effort'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import type { ResolvedProvider } from '../../settings/provider-env'
-import type { ProviderTextGenerationTarget } from '@aipoch/providers/client'
+import type { ProviderTextGenerationTarget } from './text-generation'
 
 export async function capturePdfTranslationApiTarget(
   settings: {

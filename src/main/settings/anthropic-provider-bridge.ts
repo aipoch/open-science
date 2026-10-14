@@ -7,7 +7,8 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
-import { normalizeAnthropicBaseUrl, fetchProviderRequest } from '@aipoch/providers/protocol'
+import { normalizeAnthropicBaseUrl } from '@aipoch/providers/protocol'
+import { fetchProviderRequest } from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,

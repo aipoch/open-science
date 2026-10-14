@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ReasoningEffort } from '@aipoch/providers/catalog'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
 import {
   networkProxyValidationMessage,
   normalizeNetworkProxySettings,

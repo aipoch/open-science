@@ -173,7 +173,7 @@ describe('electron-builder local evidence exclusion', () => {
       'resources/notebook/python_loop.py',
       'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
       'node_modules/@aipoch/diagnostics/dist/node.js',
-      'node_modules/@aipoch/providers/dist/catalog.js',
+      'node_modules/@aipoch/providers/dist/providers.js',
       'node_modules/@aipoch/providers/dist/protocol.js',
       'node_modules/@aipoch/providers/dist/client.js',
       'node_modules/i18next/index.js',

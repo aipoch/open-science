@@ -1,10 +1,6 @@
-export {
-  ProviderTextGenerationError,
-  providerTextGenerationTargetKey,
-  ProviderTextGenerationService
-} from './provider-text-generation'
+export { createTextGenerationClient } from './text/generate'
+export { ProviderTextGenerationError } from './errors'
 export type {
-  ProviderTextGenerationConfiguration,
   ProviderTextGenerationTarget,
   ProviderTextGenerationRequest
-} from './provider-text-generation'
+} from './protocols/text-types'

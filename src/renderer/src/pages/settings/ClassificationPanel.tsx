@@ -47,7 +47,10 @@ import type {
 } from '../../../../shared/classification'
 
 import { classificationModelsForService } from '../../../../shared/classification'
-import { customProviderRequiresKey, getCustomProviderBaseUrlError } from '@aipoch/providers/catalog'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../../../shared/provider-url-policy'
 
 const SERVICE_NAMES: Record<ClassificationAdapter, string> = {
   typesafe: 'TypeSafe AI',

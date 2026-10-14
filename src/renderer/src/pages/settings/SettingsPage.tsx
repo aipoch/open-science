@@ -98,7 +98,7 @@ import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
-import { resolveVendorModelsUrl } from '@aipoch/providers/catalog'
+import { resolveVendorModelsUrl } from '@aipoch/providers'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,

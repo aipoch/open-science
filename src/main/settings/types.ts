@@ -5,11 +5,11 @@ import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   ChatApiEndpoint,
-  ReasoningEffort,
   OfficialVendorId,
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from '@aipoch/providers/catalog'
+  CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'

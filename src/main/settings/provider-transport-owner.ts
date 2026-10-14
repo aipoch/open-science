@@ -4,10 +4,7 @@ import type {
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import {
-  usesVendorAnthropicApiKeyHeader,
-  type ModelReasoningEffort
-} from '@aipoch/providers/catalog'
+import { usesVendorAnthropicApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
 
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,

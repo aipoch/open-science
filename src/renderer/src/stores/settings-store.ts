@@ -13,7 +13,8 @@ import {
   configuredModelKey
 } from '../../../shared/configured-model-catalog'
 import type { PackageMirror } from '../../../shared/mirror'
-import type { ChatApiEndpoint, ReasoningEffort, OfficialVendorId } from '@aipoch/providers/catalog'
+import type { ChatApiEndpoint, OfficialVendorId } from '@aipoch/providers'
+import type { ReasoningEffort } from '../../../shared/model-preference-contract'
 import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
