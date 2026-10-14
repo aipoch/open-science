@@ -1,4 +1,8 @@
-import { assertInstallationChannelCertified } from './update/channel-certification'
+import {
+  assertInstallationChannelCertified,
+  installationChannelFor,
+  usesSupervisedInstall
+} from './update/channel-certification'
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import {
   DesktopRuntimeStartupError,
@@ -37,6 +41,7 @@ import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import { acquireRuntimeDirectorySync, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
+import { prefetchSystemBootIdentity } from './system-boot-identity'
 import { installationRootForEntry } from './update/installation-protection'
 import {
   discardPreparedMacInstallation,
@@ -300,6 +305,10 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  if (process.platform === 'win32')
+    prefetchSystemBootIdentity().catch((error: unknown) =>
+      bootstrapLog.warn('boot identity prefetch failed', { error: String(error) })
+    )
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
   app.setAppLogsPath(join(profilePath, 'desktop-logs'))
   const diagnostics = initializeApplicationDiagnostics({
@@ -1177,6 +1186,8 @@ async function startDesktop(): Promise<void> {
   installElectronNetwork()
   const removeNativeBroadcast = installElectronBroadcast()
   let preparedMacInstallation: PreparedMacInstallation | undefined
+  const isLegacyInstall = (status: { localPath?: string }): boolean =>
+    !status.localPath || !usesSupervisedInstall(process.platform, status.localPath)
   const updateIntegration = createDesktopUpdateIntegration({
     location: { installationRoot: installationRootForEntry(backendPaths.entry) },
     client: () => client!,
@@ -1190,6 +1201,7 @@ async function startDesktop(): Promise<void> {
           'The authorized package gate is no longer ready. Cancel this update and prepare it again.'
         )
     },
+    legacyInstall: isLegacyInstall,
     verifyArtifact: async (status, signal) => {
       if (!status.localPath || !status.latest)
         throw new UpdateLifecycleError(
@@ -1206,13 +1218,7 @@ async function startDesktop(): Promise<void> {
           }
         )
       assertInstallationChannelCertified(
-        process.platform === 'darwin'
-          ? 'mac-zip'
-          : process.platform === 'win32'
-            ? 'windows-nsis'
-            : status.localPath.endsWith('.AppImage')
-              ? 'linux-appimage'
-              : 'linux-deb'
+        installationChannelFor(process.platform, status.localPath) ?? 'linux-deb'
       )
       if (process.platform === 'darwin') {
         if (preparedMacInstallation) {
@@ -1366,6 +1372,7 @@ async function startDesktop(): Promise<void> {
       ? {
           executeInstall: async (status, options) => {
             const operationId = status.recovery?.operationId
+            if (isLegacyInstall(status)) return 'legacy' as const
             if (!preparedMacInstallation || !operationId)
               throw new UpdateLifecycleError(
                 'install-failed',
@@ -1378,6 +1385,7 @@ async function startDesktop(): Promise<void> {
               { desktopPid: process.pid, relaunch: options.relaunch ?? true }
             )
             app.exit(0)
+            return undefined
           }
         }
       : {})

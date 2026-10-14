@@ -3,7 +3,7 @@ import type { DebSystemdGate } from './update/deb-systemd-gate'
 import { resumeBoundInstallationExecutor } from './update/installation-executor'
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { UpdateLifecycleError, type UpdateStatus } from '../shared/update'
+import { UpdateLifecycleError, type UpdateApplyOptions, type UpdateStatus } from '../shared/update'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import type { RuntimeDirectoryLease } from './runtime-ownership'
@@ -56,6 +56,9 @@ export function createDesktopUpdateIntegration(options: {
   currentVersion: string
   allowedProcessIds(): number[]
   verifyArtifact(status: UpdateStatus, signal?: AbortSignal): Promise<InstallationManifest>
+  // True when the downloaded channel lacks supervised-replacement acceptance. Such installs keep
+  // the pre-supervision electron-updater handoff behind the same runtime stop and occupancy checks.
+  legacyInstall?(status: UpdateStatus): boolean
   preparedDebGate?(): DebSystemdGate | undefined
   verifyInstallerReady?(): Promise<void>
   validateConfiguration(config: RuntimeStartupOptions): void
@@ -77,6 +80,7 @@ export function createDesktopUpdateIntegration(options: {
   | 'releaseInstallHandoff'
 > {
   let record: InstallationUpdateRecord | undefined = inspectInstallationUpdate(options.location)
+  let legacy: { config: RuntimeStartupOptions; stopped: boolean } | undefined
   let consent: { token: string; generation: string } | undefined
   let pending: Promise<unknown> | undefined
   let cancellation = new AbortController()
@@ -136,6 +140,13 @@ export function createDesktopUpdateIntegration(options: {
       }
       if (!record) {
         consent = undefined
+        if (legacy) {
+          const active = legacy
+          legacy = undefined
+          if (active.stopped) await options.restart(active.config)
+          else await options.client().invokeHost('desktop:update-abort')
+          options.setClosing(false)
+        }
         return { ...reset, state: 'ready', outcome: 'cancelled' }
       }
       options.onProgress?.({
@@ -274,11 +285,52 @@ export function createDesktopUpdateIntegration(options: {
       options.setClosing(false)
       return resultStatus
     })
+  const legacyGate = async (
+    active: NonNullable<typeof legacy>,
+    apply: UpdateApplyOptions | undefined
+  ): Promise<InstallReadiness> => {
+    options.setClosing(true)
+    try {
+      const result = (await options
+        .client()
+        .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
+      if (!result.completed || !result.reaped) {
+        options.setClosing(false)
+        return result
+      }
+      checkCancellation()
+      const lease = await options.client().stopRuntime()
+      options.retainLease(lease)
+      active.stopped = true
+      options.onStopped()
+      return result
+    } catch (error) {
+      if (!active.stopped) {
+        await options
+          .client()
+          .invokeHost('desktop:update-abort')
+          .catch(() => undefined)
+        options.setClosing(false)
+      }
+      if (error instanceof RuntimeStopError) {
+        options.onProgress?.({
+          diagnostics: JSON.stringify(
+            { code: error.code, message: error.message, evidence: error.evidence },
+            null,
+            2
+          )
+        })
+        throw new UpdateLifecycleError(error.code, error.message, undefined, { cause: error })
+      }
+      throw error
+    }
+  }
   return {
     prepareInstall: (status, apply = {}) =>
       exclusive(async () => {
         cancelRequested = false
         cancellation = new AbortController()
+        legacy = undefined
         if (pendingRestart)
           return {
             reason: 'install-failed',
@@ -365,6 +417,24 @@ export function createDesktopUpdateIntegration(options: {
             canRetryInstall: false
           }
         })
+        if (options.legacyInstall?.(status)) {
+          // Same occupancy proof as a supervised install: never replace files another runtime uses.
+          await inspectInstallationAvailability(
+            {
+              ...options.location,
+              runtime: {
+                pid: client.processId(),
+                generation: info.generation,
+                configRoot: info.startupOptions.configRoot
+              },
+              allowedProcessIds: options.allowedProcessIds()
+            },
+            cancellation.signal
+          )
+          checkCancellation()
+          legacy = { config: info.startupOptions, stopped: false }
+          return undefined
+        }
         const targetManifest = await options.verifyArtifact(status, cancellation.signal)
         checkCancellation()
         record = await beginInstallationUpdateAsync(
@@ -391,6 +461,7 @@ export function createDesktopUpdateIntegration(options: {
     installGate: (apply) =>
       exclusive(async () => {
         checkCancellation()
+        if (legacy) return legacyGate(legacy, apply)
         if (!record)
           throw new UpdateLifecycleError('install-failed', 'Installation protection is missing.')
         if (record.phase === 'stopped' && record.stoppedClean)
@@ -439,6 +510,10 @@ export function createDesktopUpdateIntegration(options: {
       checkCancellation()
       return exclusive(async () => {
         checkCancellation()
+        if (legacy) {
+          options.onHandoff()
+          return
+        }
         if (!record)
           throw new UpdateLifecycleError('install-failed', 'Installation protection is missing.')
         record = await advanceInstallationUpdateAsync(
@@ -629,6 +704,23 @@ export function createDesktopUpdateIntegration(options: {
         }
       }),
     releaseInstallHandoff: () => {
+      if (legacy && !record) {
+        const active = legacy
+        legacy = undefined
+        const release = exclusive(async () => {
+          if (active.stopped) await options.restart(active.config)
+          else await options.client().invokeHost('desktop:update-abort')
+          options.setClosing(false)
+        })
+        void release.catch((error: unknown) =>
+          options.onProgress?.({
+            reason: 'runtime-not-controlled',
+            error: error instanceof Error ? error.message : 'The live service could not resume.',
+            recovery: undefined
+          })
+        )
+        return
+      }
       if (record?.phase !== 'preparing' || pending) return
       // Restore live admission after a refused gate; the durable installation marker remains.
       const abort = exclusive(async () => {

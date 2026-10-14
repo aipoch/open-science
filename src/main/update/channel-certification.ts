@@ -35,3 +35,32 @@ export function assertInstallationChannelCertified(
     }
   )
 }
+
+export function installationChannelFor(
+  platform: NodeJS.Platform,
+  localPath: string
+): InstallationChannel | undefined {
+  if (platform === 'darwin') return 'mac-zip'
+  if (platform === 'win32') return 'windows-nsis'
+  if (platform === 'linux') return localPath.endsWith('.AppImage') ? 'linux-appimage' : 'linux-deb'
+  return undefined
+}
+
+// Non-throwing routing decision: only a certified channel may use the supervised replacement.
+// Windows stays on the legacy NSIS handoff until its supervised completion receipt lands.
+export function usesSupervisedInstall(
+  platform: NodeJS.Platform,
+  localPath: string,
+  acceptance: Readonly<
+    Partial<Record<InstallationChannel, ChannelAcceptance>>
+  > = productionAcceptance
+): boolean {
+  const channel = installationChannelFor(platform, localPath)
+  if (!channel || platform === 'win32') return false
+  try {
+    assertInstallationChannelCertified(channel, acceptance)
+    return true
+  } catch {
+    return false
+  }
+}

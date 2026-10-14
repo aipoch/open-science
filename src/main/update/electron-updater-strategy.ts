@@ -58,7 +58,8 @@ export interface MinimalAutoUpdater {
 }
 
 export type UpdateInstallationHooks = {
-  executeInstall?: (status: UpdateStatus, options: UpdateApplyOptions) => Promise<void>
+  // Resolving 'legacy' defers to electron-updater's own quitAndInstall for uncertified channels.
+  executeInstall?: (status: UpdateStatus, options: UpdateApplyOptions) => Promise<void | 'legacy'>
   prepareInstall?: (
     status: UpdateStatus,
     options: UpdateApplyOptions
@@ -840,9 +841,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
-      if (this.installationHooks.executeInstall)
-        await this.installationHooks.executeInstall(this.status, options)
-      else this.updater.quitAndInstall(true, options.relaunch ?? true)
+      const executed = await this.installationHooks.executeInstall?.(this.status, options)
+      if (!this.installationHooks.executeInstall || executed === 'legacy')
+        this.updater.quitAndInstall(true, options.relaunch ?? true)
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined

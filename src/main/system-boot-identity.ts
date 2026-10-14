@@ -1,5 +1,7 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+
+import { UpdateLifecycleError } from '../shared/update'
 
 // Fixed read-only OS query. No wall-clock fallback: an unknown boot cannot authorize recovery.
 const WINDOWS_BOOT_ID_SCRIPT = `Add-Type -TypeDefinition @'
@@ -16,29 +18,77 @@ public static class OpenScienceBootIdentity {
 }
 '@
 [OpenScienceBootIdentity]::Read()`
+const WINDOWS_POWERSHELL_ARGS = [
+  '-NoProfile',
+  '-NonInteractive',
+  '-Command',
+  WINDOWS_BOOT_ID_SCRIPT
+]
+
+// The boot identity is constant for the life of a boot, so a successful read is cached for the
+// process. Failures are never cached so a later attempt can succeed.
+let cachedIdentity: string | undefined
+let pendingWindowsRead: Promise<string> | undefined
+
+function bootIdentityUnavailable(detail: string, cause?: unknown): UpdateLifecycleError {
+  return new UpdateLifecycleError(
+    'install-failed',
+    `The system boot identity could not be read (${detail}). Recovery remains protected; retry once the check completes.`,
+    undefined,
+    cause === undefined ? undefined : { cause }
+  )
+}
+
+// Windows reads run off the main thread. Call early (for example at startup) so the synchronous
+// accessor below never has to spawn PowerShell on a critical path.
+export function prefetchSystemBootIdentity(): Promise<string> {
+  if (cachedIdentity) return Promise.resolve(cachedIdentity)
+  if (process.platform !== 'win32') {
+    try {
+      return Promise.resolve(systemBootIdentity())
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
+  const read = (pendingWindowsRead ??= new Promise<string>((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      WINDOWS_POWERSHELL_ARGS,
+      { encoding: 'utf8', timeout: 5000, windowsHide: true },
+      (error, stdout) => {
+        if (error) return reject(bootIdentityUnavailable('PowerShell query failed', error))
+        try {
+          cachedIdentity = normalizeKernelBootIdentity('windows', stdout)
+          resolve(cachedIdentity)
+        } catch (parseError) {
+          reject(bootIdentityUnavailable('unparseable kernel boot identity', parseError))
+        }
+      }
+    )
+  }))
+  const clear = (): void => {
+    if (pendingWindowsRead === read) pendingWindowsRead = undefined
+  }
+  read.then(clear, clear)
+  return read
+}
+
 export function systemBootIdentity(): string {
+  if (cachedIdentity) return cachedIdentity
   if (process.platform === 'linux')
-    return normalizeKernelBootIdentity(
+    return (cachedIdentity = normalizeKernelBootIdentity(
       'linux',
       readFileSync('/proc/sys/kernel/random/boot_id', 'utf8')
-    )
+    ))
   if (process.platform === 'darwin')
-    return normalizeDarwinBootIdentity(
+    return (cachedIdentity = normalizeDarwinBootIdentity(
       execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], {
         encoding: 'utf8',
         timeout: 5000
       })
-    )
-  if (process.platform === 'win32') {
-    const uuid = execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_BOOT_ID_SCRIPT],
-      { encoding: 'utf8', timeout: 5000 }
-    )
-      .trim()
-      .toLowerCase()
-    return normalizeKernelBootIdentity('windows', uuid)
-  }
+    ))
+  if (process.platform === 'win32')
+    throw bootIdentityUnavailable('the Windows boot identity has not been read yet')
   throw new Error('This operating system cannot prove a system restart for legacy recovery.')
 }
 
