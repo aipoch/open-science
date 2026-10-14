@@ -6663,6 +6663,118 @@ it.each(['reaped', 'unreaped', 'rejected'] as const)(
   }
 )
 
+describe('bounded ACP admission fences', () => {
+  const makeCoordinator = (
+    options: { prompt?: () => Promise<{ stopReason: string }>; neverCancel?: boolean } = {}
+  ): { coordinator: AcpRuntimeCoordinator; fakes: ReturnType<typeof createFakeRuntime>[] } => {
+    const fakes: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        callbacks,
+        frameworkId: 'opencode',
+        sessionIds: [`s-${fakes.length}-a`, `s-${fakes.length}-b`, `s-${fakes.length}-c`],
+        ...(options.prompt ? { prompt: options.prompt } : {})
+      })
+      if (options.neverCancel) fake.cancelPrompt.mockImplementation(() => new Promise(() => {}))
+      fakes.push(fake)
+      return fake.runtime
+    })
+    return { coordinator, fakes }
+  }
+
+  it('reopens admission after an update gate teardown never settles', async () => {
+    const { BackendShutdownCoordinator } = await import('../lifecycle-shutdown')
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const session = await coordinator.createSession()
+      const shutdown = new BackendShutdownCoordinator({
+        runtime: coordinator,
+        notebook: {
+          shutdownAll: () => new Promise(() => {}),
+          dispose: async () => ({ reaped: true })
+        },
+        sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+      })
+      const gate = shutdown.runForUpdateGate(20)
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(gate).resolves.toMatchObject({ completed: false })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+      await expect(
+        coordinator.sendPrompt({ sessionId: session.sessionId, text: 'after abandoned gate' })
+      ).resolves.toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('blocks new sessions while an update gate is still within its budget', async () => {
+    const { BackendShutdownCoordinator } = await import('../lifecycle-shutdown')
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const shutdown = new BackendShutdownCoordinator({
+        runtime: coordinator,
+        notebook: {
+          shutdownAll: () => new Promise(() => {}),
+          dispose: async () => ({ reaped: true })
+        },
+        sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+      })
+      void shutdown.runForUpdateGate(10_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(coordinator.createSession()).rejects.toThrow('admission is paused')
+    } finally {
+      await vi.advanceTimersByTimeAsync(60_000)
+      vi.useRealTimers()
+    }
+  })
+
+  it('reopens admission after a cancelled quit whose cancellation never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const prompt = createDeferred<{ stopReason: string }>()
+      const { coordinator, fakes } = makeCoordinator({
+        prompt: () => prompt.promise,
+        neverCancel: true
+      })
+      const session = await coordinator.createSession()
+      void coordinator
+        .sendPrompt({ sessionId: session.sessionId, text: 'long work' })
+        .catch(() => undefined)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes[0].sendPrompt).toHaveBeenCalledOnce()
+      const preparation = coordinator.prepareForQuit(10)
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(preparation).resolves.toBe('timeout')
+      coordinator.abortQuitPreparation()
+      await expect(coordinator.createSession()).rejects.toThrow('quitting')
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps rejecting prompts after a committed quit', async () => {
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const session = await coordinator.createSession()
+      await coordinator.prepareForQuit()
+      await coordinator.shutdownForQuit()
+      await vi.advanceTimersByTimeAsync(60_000)
+      await expect(coordinator.createSession()).rejects.toThrow('quitting')
+      await expect(
+        coordinator.sendPrompt({ sessionId: session.sessionId, text: 'after quit' })
+      ).rejects.toThrow('quitting')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 it('admits a new Codex runtime after cancelled quit cleanup settles', async () => {
   const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
     await import('../lifecycle-shutdown')
