@@ -99,16 +99,18 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
   const stopping = state.phase === 'stopping'
   const title = stopping
     ? t('Starting')
-    : legacy || legacyService
-      ? t('Quit the older app first')
-      : recovery
-        ? t('Recover app')
-        : t('Service version mismatch')
+    : legacyService
+      ? t('An older service is still running')
+      : legacy
+        ? t('Quit the older app first')
+        : recovery
+          ? t('Recover app')
+          : t('Service version mismatch')
   const description = stopping
     ? t('Stopping the old service, then checking its settings before starting the app.')
     : legacyService
       ? t(
-          'Finish your work and quit the original Open-Science app, then check again. If its service remains running, restart the computer and reopen this app. Your saved data and settings will be kept.'
+          'Open-Science can stop the older background service and open this version. Finish any work in other clients before continuing.'
         )
       : legacy
         ? t(
@@ -138,28 +140,35 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
           secondaryButton={
             stopping
               ? { label: t('Cancel'), disabled: true, onClick: () => undefined }
-              : {
-                  label: t('Quit', { context: 'verb', ns: 'common' }),
-                  disabled: busy,
-                  onClick: () => void api?.quit()
-                }
+              : legacyService
+                ? {
+                    label: t('Check again'),
+                    disabled: busy,
+                    onClick: () => {
+                      if (api) void perform(api.recover)
+                    }
+                  }
+                : {
+                    label: t('Quit', { context: 'verb', ns: 'common' }),
+                    disabled: busy,
+                    onClick: () => void api?.quit()
+                  }
           }
           primaryButton={
             legacy || stopping
               ? undefined
               : {
                   label: legacyService
-                    ? t('Check again')
+                    ? t('Stop service and continue')
                     : busy
                       ? t('Recovering…')
                       : recovery
                         ? t('Recover app')
                         : t('Continue'),
-                  disabled:
-                    busy || (recovery || legacyService ? !issue.canRecover : !issue.canStop),
+                  disabled: busy || (recovery ? !issue.canRecover : !issue.canStop),
                   loading: busy,
                   onClick: () => {
-                    if ((recovery || legacyService) && api) void perform(api.recover)
+                    if (recovery && api) void perform(api.recover)
                     else setConfirmation(true)
                   }
                 }
@@ -171,11 +180,15 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
               service: issue.runtimeVersion ?? '—'
             })}
           </p>
-          {failed ? (
+          {failed || (legacyService && state.phase === 'blocked' && issue.diagnostics) ? (
             <p role="status" className="mt-3 text-sm">
-              {t(
-                'Recovery has not been confirmed. Review the steps below or save diagnostics for help.'
-              )}
+              {legacyService
+                ? t(
+                    'The service could not be stopped or checked. Try again, or save diagnostics for help.'
+                  )
+                : t(
+                    'Recovery has not been confirmed. Review the steps below or save diagnostics for help.'
+                  )}
             </p>
           ) : null}
           <RuntimeDiagnostics text={issue.diagnostics ?? JSON.stringify(issue, null, 2)} />
@@ -184,9 +197,15 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
           testId="runtime-startup-confirmation-S17"
           open={confirmation}
           title={t('Stop the old service?')}
-          description={t(
-            'Stopping interrupts its tasks and disconnects other clients. Not all work is confirmed saved. This Desktop will run the service with the preserved settings and data locations, and quitting Desktop will stop it. The old service will not restart automatically.'
-          )}
+          description={
+            legacyService
+              ? t(
+                  'This will ask the older service to shut down and disconnect its clients. Open-Science will wait for it to exit, then open your saved data using this Desktop’s settings. Command-line launch options are not carried over.'
+                )
+              : t(
+                  'Stopping interrupts its tasks and disconnects other clients. Not all work is confirmed saved. This Desktop will run the service with the preserved settings and data locations, and quitting Desktop will stop it. The old service will not restart automatically.'
+                )
+          }
           cancelLabel={t('Cancel')}
           confirmLabel={t('Stop service')}
           onCancel={() => setConfirmation(false)}

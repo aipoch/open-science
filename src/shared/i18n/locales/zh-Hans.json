@@ -7267,6 +7267,10 @@
     "Update cancelled. The service is still running and the download is kept.": "更新已取消。服务仍在运行，下载仍然保留。",
     "View task": "查看任务",
     "The operation could not be completed. Review diagnostics and try again.": "操作未能完成。请查看诊断并重试。",
-    "Finish your work and quit the original Open-Science app, then check again. If its service remains running, restart the computer and reopen this app. Your saved data and settings will be kept.": "完成工作并退出原来的 Open-Science 应用，然后重新检查。如果其服务仍在运行，请重启电脑并重新打开此应用。已保存的数据和设置将会保留。"
+    "An older service is still running": "旧版后台服务仍在运行",
+    "Open-Science can stop the older background service and open this version. Finish any work in other clients before continuing.": "Open-Science 可以停止旧版后台服务并打开此版本。继续前，请先完成其他客户端中的工作。",
+    "Stop service and continue": "停止服务并继续",
+    "This will ask the older service to shut down and disconnect its clients. Open-Science will wait for it to exit, then open your saved data using this Desktop’s settings. Command-line launch options are not carried over.": "这将请求旧版服务正常退出并断开其客户端。Open-Science 会等待服务退出，然后使用此桌面应用的设置打开已保存的数据。命令行启动选项不会沿用。",
+    "The service could not be stopped or checked. Try again, or save diagnostics for help.": "无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。"
   }
 }

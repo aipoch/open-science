@@ -7595,6 +7595,10 @@
     "Update cancelled. The service is still running and the download is kept.": "Actualización cancelada. El servicio sigue funcionando y se conserva la descarga.",
     "View task": "Ver tarea",
     "The operation could not be completed. Review diagnostics and try again.": "No se pudo completar la operación. Revise el diagnóstico e inténtelo de nuevo.",
-    "Finish your work and quit the original Open-Science app, then check again. If its service remains running, restart the computer and reopen this app. Your saved data and settings will be kept.": "Termine su trabajo y cierre la aplicación Open-Science original; después, vuelva a comprobar. Si el servicio sigue en ejecución, reinicie el equipo y vuelva a abrir esta aplicación. Se conservarán los datos y ajustes guardados."
+    "An older service is still running": "Un servicio anterior sigue en ejecución",
+    "Open-Science can stop the older background service and open this version. Finish any work in other clients before continuing.": "Open-Science puede detener el servicio anterior en segundo plano y abrir esta versión. Termine su trabajo en otros clientes antes de continuar.",
+    "Stop service and continue": "Detener el servicio y continuar",
+    "This will ask the older service to shut down and disconnect its clients. Open-Science will wait for it to exit, then open your saved data using this Desktop’s settings. Command-line launch options are not carried over.": "Se solicitará al servicio anterior que se cierre y desconecte sus clientes. Open-Science esperará a que termine y abrirá los datos guardados con la configuración de esta aplicación de escritorio. No se conservarán las opciones de inicio de la línea de comandos.",
+    "The service could not be stopped or checked. Try again, or save diagnostics for help.": "No se pudo detener ni comprobar el servicio. Vuelva a intentarlo o guarde los diagnósticos para solicitar ayuda."
   }
 }

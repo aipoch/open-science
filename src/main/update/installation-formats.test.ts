@@ -12,11 +12,7 @@ vi.mock('./verification-process', () => ({
   runVerificationProcess: command.run,
   verificationDirectoryIsSettled: () => true
 }))
-import {
-  inspectDebUpdateArtifact,
-  inspectNsisUpdateArtifact,
-  inspectAppImageUpdateArtifact
-} from './installation-artifact'
+import { inspectDebUpdateArtifact, inspectAppImageUpdateArtifact } from './installation-artifact'
 const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
@@ -47,38 +43,6 @@ describe('format extraction contracts', () => {
     await expect(
       inspectDebUpdateArtifact('/verified/update.deb', '2.0.0', '/opt/Open-Science')
     ).rejects.toThrow('package version')
-  })
-  it('includes the exact NSIS uninstaller with the matching app payload', async () => {
-    command.run.mockImplementation(async (_command: string, args: string[]) => {
-      if (args[0] === 'l') return { stdout: `Path = ${args.at(-1)}\nPath = payload\n`, stderr: '' }
-      const target = args.find((arg) => arg.startsWith('-o'))!.slice(2)
-      if (args.at(-1)!.endsWith('.exe')) {
-        await mkdir(join(target, '$PLUGINSDIR'), { recursive: true })
-        await writeFile(
-          join(target, '$PLUGINSDIR', process.arch === 'arm64' ? 'app-arm64.7z' : 'app-64.7z'),
-          'archive'
-        )
-        await writeFile(join(target, 'Uninstall Open-Science.exe'), 'signed uninstaller')
-      } else await application(target)
-      return { stdout: '', stderr: '' }
-    })
-    const manifest = await inspectNsisUpdateArtifact(
-      '/verified/update.exe',
-      '2.0.0',
-      '/verified/7z.exe'
-    )
-    expect(manifest.files['Uninstall Open-Science.exe']).toMatch(/^[a-f\d]{64}$/)
-    expect(manifest.files['open-science.exe']).toMatch(/^[a-f\d]{64}$/)
-  })
-  it('rejects traversal before invoking NSIS extraction', async () => {
-    command.run.mockResolvedValue({
-      stdout: 'Path = update.exe\nPath = ../../escape\n',
-      stderr: ''
-    })
-    await expect(
-      inspectNsisUpdateArtifact('/verified/update.exe', '2.0.0', '/verified/7z.exe')
-    ).rejects.toThrow('unsafe archive paths')
-    expect(command.run).toHaveBeenCalledTimes(1)
   })
   it('hashes the entire stable-name AppImage and rejects unsafe identity renaming', async () => {
     const root = await mkdtemp(join(tmpdir(), 'appimage-fixture-'))

@@ -7734,6 +7734,10 @@
     "Update cancelled. The service is still running and the download is kept.": "Обновление отменено. Служба продолжает работать, загрузка сохранена.",
     "View task": "Открыть задачу",
     "The operation could not be completed. Review diagnostics and try again.": "Не удалось завершить операцию. Проверьте диагностику и повторите попытку.",
-    "Finish your work and quit the original Open-Science app, then check again. If its service remains running, restart the computer and reopen this app. Your saved data and settings will be kept.": "Завершите работу и закройте исходное приложение Open-Science, затем проверьте снова. Если его служба продолжает работать, перезагрузите компьютер и снова откройте это приложение. Сохранённые данные и настройки будут сохранены."
+    "An older service is still running": "Предыдущая фоновая служба всё ещё работает",
+    "Open-Science can stop the older background service and open this version. Finish any work in other clients before continuing.": "Open-Science может остановить предыдущую фоновую службу и открыть эту версию. Прежде чем продолжить, завершите работу в других клиентах.",
+    "Stop service and continue": "Остановить службу и продолжить",
+    "This will ask the older service to shut down and disconnect its clients. Open-Science will wait for it to exit, then open your saved data using this Desktop’s settings. Command-line launch options are not carried over.": "Предыдущей службе будет отправлен запрос на завершение, а её клиенты будут отключены. Open-Science дождётся завершения службы, затем откроет сохранённые данные с настройками этого настольного приложения. Параметры запуска командной строки не сохраняются.",
+    "The service could not be stopped or checked. Try again, or save diagnostics for help.": "Не удалось остановить или проверить службу. Повторите попытку или сохраните диагностику для получения помощи."
   }
 }

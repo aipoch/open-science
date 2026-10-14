@@ -330,3 +330,15 @@ it.each([false, true])(
     }
   }
 )
+
+it('deduplicates pending stops and allows a rejected stop to be retried', async () => {
+  const stop = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(undefined)
+  const error = new DesktopRuntimeStartupError(
+    { reason: 'legacy-service', desktopVersion: '2', canStop: true, canRecover: true },
+    'Older service',
+    stop
+  )
+  await expect(error.stopAndContinue()).rejects.toThrow('unavailable')
+  await Promise.all([error.stopAndContinue(), error.stopAndContinue()])
+  expect(stop).toHaveBeenCalledTimes(2)
+})

@@ -76,7 +76,7 @@ function handoff(f: ReturnType<typeof fixture>): string {
   const bytes = JSON.stringify({
     operationId: f.record.operationId,
     bootIdentity: f.record.bootIdentity,
-    channel: 'supervised-nsis',
+    channel: 'supervised-deb',
     installationRoot: f.record.installationRoot,
     recordPath: join(installationStateDirectory(f.location), 'update-in-progress.json'),
     oldManifestSha256: installationManifestIdentity(f.record.oldManifest),
@@ -84,7 +84,7 @@ function handoff(f: ReturnType<typeof fixture>): string {
   })
   writeFileSync(join(directory, 'request.json'), bytes)
   bindInstallationExecutor(f.location, f.record.operationId, {
-    channel: 'supervised-nsis',
+    channel: 'supervised-deb',
     directory,
     requestSha256: createHash('sha256').update(bytes).digest('hex')
   })

@@ -40,6 +40,7 @@ ${DEB_GATE_OBSERVER_SOURCE}
 const fs = require('node:fs'); const path = require('node:path'); const crypto = require('node:crypto'); const { DatabaseSync } = require('node:sqlite'); const { spawn } = require('node:child_process');
 const directory = path.dirname(process.argv[2]);
 const requestBytes = fs.readFileSync(process.argv[2]); const request = JSON.parse(requestBytes);
+if (!['supervised-mac', 'supervised-appimage', 'supervised-deb'].includes(request.channel)) throw new Error('Unsupported installation executor channel.');
 const digest = crypto.createHash('sha256').update(requestBytes).digest('hex');
 const database = new DatabaseSync(path.join(directory, 'executor.sqlite'));
 try { database.exec('PRAGMA busy_timeout=0; PRAGMA journal_mode=MEMORY; BEGIN EXCLUSIVE'); } catch { process.exit(2); }
@@ -83,30 +84,6 @@ async function main() {
         await new Promise(r=>setTimeout(r,100));
       }
       outcome='installed';
-    } else if (request.channel === 'supervised-nsis') {
-      const native=require(path.join(directory,'process_tree_native.node'));
-      const jobFile=path.join(directory,'native-job.json');
-      if(fs.existsSync(jobFile)) {
-        const oldJob=JSON.parse(fs.readFileSync(jobFile,'utf8')).name;
-        const deadline=Date.now()+10000;
-        while(!native.reapWindowsOwnedJob(oldJob)) { if(Date.now()>deadline) throw new Error('Previous installer Job has not settled'); await new Promise(r=>setTimeout(r,25)); }
-      }
-      const name='Local\\OpenScience.Delegation.'+crypto.randomUUID();
-      atomic('native-job.json',{name,operationId:request.operationId});
-      const environment=Object.entries(process.env).filter(([,v])=>v!==undefined).map(([k,v])=>k+'='+v);
-      if(process.platform==='win32' && (!path.win32.isAbsolute(request.installationRoot) || /[\"\0\r\n]/.test(request.installationRoot))) throw new Error('Invalid NSIS installation path');
-      // NSIS consumes /D through end-of-command-line; it must be last and unquoted.
-      // Only fixed switches and this validated absolute path use verbatim args. Native still quotes the executable.
-      const processHandle=native.spawnWindowsOwnedProcess(name,request.stagedBundle,['--updated','/S','/currentuser','/D='+request.installationRoot],environment,directory,true);
-      const {Socket}=require('node:net');
-      const pipes=processHandle.fds.map((fd,index)=>new Socket({fd,readable:index!==0,writable:index===0}));
-      pipes[0].end(); pipes.slice(1).forEach(pipe=>{pipe.on('error',()=>{});pipe.resume()});
-      for(;;) {
-        const code=native.windowsOwnedProcessExitCode(processHandle.handle), active=native.windowsOwnedJobActiveProcesses(name);
-        if(code!==null && active===0) { if(code!==0) throw new Error('Installer failed with exit '+code); break; }
-        await new Promise(r=>setTimeout(r,25));
-      }
-      outcome='installed';
     } else if (process.argv.includes('--observe-only') && !fs.existsSync(path.join(directory,'changing.json'))) {
       // No replacement transaction began. Recovery cancels preparation rather than starting installation.
       outcome='rolled-back';
@@ -128,7 +105,7 @@ async function main() {
   } catch(e) {
     error=String(e.message || e);
     try {
-      if (['supervised-nsis','supervised-deb'].includes(request.channel)) { outcome='failed'; }
+      if (request.channel === 'supervised-deb') { outcome='failed'; }
       else if (fs.existsSync(request.backup) && !fs.existsSync(request.installationRoot)) { fs.renameSync(request.backup,request.installationRoot); outcome='rolled-back'; }
       else if (!fs.existsSync(request.backup) && fs.existsSync(request.installationRoot) && fs.existsSync(request.stagedBundle)) outcome='rolled-back';
     } catch(rollback) { error += '; rollback: ' + String(rollback); outcome='failed'; }
@@ -146,7 +123,7 @@ main().catch(e=>{atomic('result.json',{operationId:request.operationId,requestSh
 `
 
 export type PreparedMacInstallation = {
-  channel?: 'supervised-mac' | 'supervised-appimage' | 'supervised-nsis' | 'supervised-deb'
+  channel?: 'supervised-mac' | 'supervised-appimage' | 'supervised-deb'
   debGate?: DebSystemdGate
   nativePath?: string
   launchPath?: string
@@ -428,10 +405,6 @@ export async function resumeBoundInstallationExecutor(
   const bytes = await readFile(join(directory, 'request.json'))
   if (createHash('sha256').update(bytes).digest('hex') !== record.executor.requestSha256)
     throw new Error('Installation executor request changed.')
-  if (record.executor.channel === 'supervised-nsis')
-    throw new Error(
-      'The original NSIS installer has no verified terminal result. Recovery cannot rerun it; an explicit original-channel repair is required while startup remains protected.'
-    )
   const request = JSON.parse(bytes.toString())
   const nodePath = join(directory, 'node'),
     executorPath = join(directory, 'executor.cjs')
@@ -454,11 +427,7 @@ export async function resumeBoundInstallationExecutor(
     database.exec('PRAGMA busy_timeout=0; BEGIN EXCLUSIVE')
     try {
       const receipt = JSON.parse(await readFile(join(directory, 'result.json'), 'utf8'))
-      if (
-        !['supervised-nsis', 'supervised-deb'].includes(record.executor.channel) ||
-        receipt.outcome !== 'failed'
-      )
-        return
+      if (record.executor.channel !== 'supervised-deb' || receipt.outcome !== 'failed') return
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
@@ -488,90 +457,6 @@ export async function resumeBoundInstallationExecutor(
         : reject(new Error(`Installation executor recovery did not settle (${code}, ${signal}).`))
     })
   })
-}
-
-/** Per-user NSIS only: no elevation broker or detached installer channel is admitted. */
-export async function prepareSupervisedNsisInstallation(
-  options: InstallationLocation & {
-    archive: string
-    targetVersion: string
-    sha512: string
-    runtimeNode: string
-    currentExecutable: string
-    nativeBinding: string
-    signal?: AbortSignal
-    sevenZip?: string
-  }
-): Promise<PreparedInstallation> {
-  if (process.platform !== 'win32')
-    throw new Error('NSIS supervision requires Windows native verification.')
-  const installationRoot = await realpath(options.installationRoot)
-  await access(installationRoot, constants.W_OK)
-  const quote = (value: string): string => "'" + value.replaceAll("'", "''") + "'"
-  const signatures = await runVerificationProcess(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `$ErrorActionPreference='Stop'; @(${quote(options.currentExecutable)},${quote(options.archive)}) | ForEach-Object { $s=Get-AuthenticodeSignature -LiteralPath $_; if($s.Status -ne 'Valid') { throw 'Untrusted installer signature' }; $s.SignerCertificate.Thumbprint }`
-    ],
-    { signal: options.signal }
-  )
-  const publishers = signatures.stdout
-    .trim()
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-  if (
-    publishers.length !== 2 ||
-    !/^[A-Fa-f0-9]{40,64}$/.test(publishers[0]) ||
-    publishers[0] !== publishers[1]
-  )
-    throw new Error(
-      'The installer and installed application must have the same trusted publisher certificate.'
-    )
-  const manifest = await inspectUpdateArtifact({ ...options, platform: 'win32' })
-  const state = installationStateDirectory(options)
-  await mkdir(state, { recursive: true, mode: 0o700 })
-  const directory = await mkdtemp(join(state, 'executor-'))
-  try {
-    const stagedBundle = join(directory, 'installer.exe'),
-      nodePath = join(directory, 'node.exe'),
-      executorPath = join(directory, 'executor.cjs'),
-      nativePath = join(directory, 'process_tree_native.node')
-    for (const [source, target] of [
-      [options.archive, stagedBundle],
-      [options.runtimeNode, nodePath],
-      [options.nativeBinding, nativePath]
-    ])
-      await copyFile(source, target, constants.COPYFILE_EXCL)
-    await verifyArtifactChecksum(stagedBundle, options.sha512, options.signal)
-    await writeFile(executorPath, INSTALLATION_EXECUTOR_SOURCE, { mode: 0o600 })
-    await runVerificationProcess(
-      nodePath,
-      [
-        '-e',
-        "const n=require(process.argv[1]);if(typeof n.windowsOwnedJobActiveProcesses!=='function'||typeof n.spawnWindowsOwnedProcess!=='function')process.exit(1);new(require('node:sqlite').DatabaseSync)(':memory:').close()",
-        nativePath
-      ],
-      { cwd: directory, signal: options.signal }
-    )
-    return {
-      channel: 'supervised-nsis',
-      directory,
-      stagedBundle,
-      nodePath,
-      executorPath,
-      nativePath,
-      installationRoot,
-      manifest,
-      launchPath: options.currentExecutable
-    }
-  } catch (error) {
-    if (verificationDirectoryIsSettled(directory))
-      await rm(directory, { recursive: true, force: true })
-    throw error
-  }
 }
 
 /** Requires already-authorized system package management; never starts an elevation dialog after stop. */

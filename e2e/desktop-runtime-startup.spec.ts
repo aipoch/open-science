@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { createServer } from 'node:http'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -212,6 +214,129 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
       const desktop = app.process()
       void app.close().catch(() => undefined)
       await expect.poll(() => desktop.exitCode, { timeout: 25000 }).toBe(0)
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// eslint-disable-next-line no-empty-pattern
+test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}) => {
+  test.skip(
+    process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+    'Source credential fixture'
+  )
+  const { build } = await import('esbuild')
+  const root = await mkdtemp(join(tmpdir(), 'legacy-guided-stop-'))
+  const config = join(root, 'config'),
+    profile = join(root, 'profile')
+  await mkdir(config)
+  const env = { ...launchEnvironment(config), OPEN_SCIENCE_USER_DATA: profile }
+  let app: ElectronApplication | undefined
+  let service: ChildProcess | undefined
+  try {
+    app = await electron.launch({ ...electronLaunchTarget(profile), env })
+    let page = await app.firstWindow()
+    await expect
+      .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })
+      .toMatchObject({ phase: 'ready' })
+    const project = await page.evaluate(() =>
+      window.api.projects.create({ name: 'Saved before upgrade' })
+    )
+    await app.close()
+    app = undefined
+    const entry = join(root, 'service.cjs')
+    await build({
+      stdin: {
+        contents: `
+import {createServer} from 'node:http';
+import {readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {startRuntimeControl} from './src/main/runtime-control';
+import {acquireRuntimeDirectorySync} from './src/main/runtime-ownership';
+const root=process.argv[2], lease=acquireRuntimeDirectorySync(root);
+let attempts=0;
+async function main() {
+ const server=createServer(async(req,res)=>{
+  const token=(await readFile(join(root,'web-token'),'utf8')).trim();
+  if(req.url!='/api/shutdown'||req.headers.authorization!=='Bearer '+token){res.writeHead(403).end();return;}
+  await writeFile(join(root,'shutdown-attempts'),String(++attempts));
+  if(attempts===1){res.writeHead(503).end();return;}
+  res.writeHead(202).end();
+  server.close(async()=>{await control.close();lease.release();});
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const port=server.address().port;
+ await writeFile(join(root,'web-service.json'),JSON.stringify({pid:process.pid,port}));
+ const control=await startRuntimeControl(root,'node',async()=>port,{path:join(root,'runtime.sock'),generation:randomUUID(),secret:'a'.repeat(64),version:'0.37.1'});
+ process.send('ready');
+}main();`,
+        resolveDir: process.cwd()
+      },
+      outfile: entry,
+      bundle: true,
+      packages: 'external',
+      platform: 'node',
+      format: 'cjs',
+      logLevel: 'silent'
+    })
+    service = spawn(process.execPath, [entry, config], {
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      env: { ...process.env, NODE_PATH: resolve('node_modules') }
+    })
+    await once(service, 'message')
+    service.disconnect()
+    app = await electron.launch({ ...electronLaunchTarget(profile), env })
+    page = await app.firstWindow()
+    const continueButton = page.getByRole('button', {
+      name: 'Stop service and continue',
+      exact: true
+    })
+    await expect(continueButton).toBeVisible()
+    await continueButton.click()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(service.exitCode).toBeNull()
+    await continueButton.click()
+    await page.getByRole('button', { name: 'Stop service', exact: true }).click()
+    await expect
+      .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
+      .toBe('1')
+    await expect(continueButton).toBeEnabled()
+    await expect(
+      page.getByText(
+        'The service could not be stopped or checked. Try again, or save diagnostics for help.',
+        { exact: true }
+      )
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Recover app', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeEnabled()
+    const replacement = app.waitForEvent('window')
+    await continueButton.click()
+    await page.getByRole('button', { name: 'Stop service', exact: true }).click()
+    const workspace = await replacement
+    await expect.poll(() => service!.exitCode).toBe(0)
+    await expect
+      .poll(() => workspace.evaluate(() => window.api.databaseStartup.getState()), {
+        timeout: 60000
+      })
+      .toMatchObject({ phase: 'ready' })
+    expect(
+      await workspace.evaluate(
+        async (id) => (await window.api.projects.list()).some((project) => project.id === id),
+        project.id
+      )
+    ).toBe(true)
+    expect(await readFile(join(config, 'shutdown-attempts'), 'utf8')).toBe('2')
+    expect(app.process().exitCode).toBeNull()
+  } finally {
+    await app?.close()
+    if (service && service.exitCode === null && service.signalCode === null) {
+      const exited = once(service, 'exit')
+      service.kill('SIGKILL')
+      await exited
     }
     await rm(root, { recursive: true, force: true })
   }

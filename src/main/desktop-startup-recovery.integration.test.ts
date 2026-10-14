@@ -19,7 +19,7 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true })
 })
 it.each([true, false])(
-  'only stops a mismatched process with verified startup settings (verified: %s)',
+  'gracefully stops a mismatched service with its supported protocol (modern: %s)',
   async (modern) => {
     root = await mkdtemp(join(tmpdir(), 'startup-recovery-'))
     const entry = join(root, 'fixture.ts')
@@ -72,7 +72,7 @@ async function main(){
     child.disconnect()
     const error = await discoverDesktopBackend(root, 'new').catch((error) => error)
     expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
-    expect(error.issue.canStop).toBe(modern)
+    expect(error.issue.canStop).toBe(true)
     if (modern) {
       expect(error.issue.reason).toBe('version-mismatch')
       expect(error.startupOptions.configRoot).toBe(root)
@@ -80,9 +80,8 @@ async function main(){
     } else {
       expect(error.issue).toMatchObject({ reason: 'legacy-service', canRecover: true })
       const originalFiles = (await readdir(root)).sort()
-      await expect(error.stopAndContinue()).rejects.toBe(error)
       await expect(error.recover()).rejects.toMatchObject({
-        issue: { reason: 'legacy-service', canStop: false }
+        issue: { reason: 'legacy-service', canStop: true }
       })
       expect(child.exitCode).toBeNull()
       expect(() => acquireRuntimeDirectorySync(root!)).toThrow()
@@ -90,16 +89,13 @@ async function main(){
         code: 'ENOENT'
       })
       expect((await readdir(root)).sort()).toEqual(originalFiles)
-      // Simulate the original client's normal quit, outside the new Desktop's authority.
-      const service = JSON.parse(await readFile(join(root, 'web-service.json'), 'utf8'))
-      const token = (await readFile(join(root, 'web-token'), 'utf8')).trim()
       const exited = once(child, 'exit')
-      const response = await fetch(`http://127.0.0.1:${service.port}/api/shutdown`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}` }
-      })
-      await response.arrayBuffer()
+      await error.stopAndContinue()
       await exited
+      await expect(readFile(join(root, 'shutdown-observed'), 'utf8')).resolves.toBe('yes')
+      await expect(readFile(join(root, 'runtime-exit.json'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
       await expect(error.recover()).resolves.toBeUndefined()
       await expect(discoverDesktopBackend(root, 'new')).resolves.toBeUndefined()
     }

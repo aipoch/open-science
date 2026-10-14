@@ -34,7 +34,10 @@ export class DesktopRuntimeStartupError extends Error {
 
   async stopAndContinue(): Promise<void> {
     if (!this.issue.canStop || !this.stop) throw this
-    this.stopOperation ??= this.stop()
+    this.stopOperation ??= this.stop().catch((error) => {
+      this.stopOperation = undefined
+      throw error
+    })
     await this.stopOperation
   }
 }

@@ -280,6 +280,12 @@ when its owned child exits. A disconnected borrowed backend follows the same vis
 unavailable state according to its authenticated liveness. Electron crashes with a surviving backend
 require separate lifecycle validation; this document does not claim that path is fully certified.
 
+When an older standalone Node service blocks startup, Desktop offers an explicit, authenticated
+graceful stop and waits for process exit and directory ownership release before continuing.
+Older protocols do not supply clean-exit receipts or launch settings: this transition uses the
+Desktop's settings and saved data, does not carry over CLI flags, and grants no installation
+recovery authority. Cancelling leaves the service running; a failed stop can be retried or rechecked.
+
 Native updates use the existing update/handoff gate and stop an owned Node before replacement.
 A CLI server requires explicit consent before Desktop stops it for an update and takes over the
 same configuration. Cancel leaves the service running. Unsupported configurations are refused
@@ -291,8 +297,9 @@ Data-root handoff retains the existing task/persistence gates. Relaunch requires
 exit and the matching clean record; missing/failed evidence enters recovery rather than installation.
 
 Production automatic replacement is gated by `src/main/update/channel-certification.ts`.
-The macOS ZIP, Windows per-user NSIS, Linux stable-name AppImage and Linux Debian entries are
-currently closed pending complete native installed-package acceptance. Downloads and update status
+The macOS ZIP, Linux stable-name AppImage and Linux Debian entries are
+currently closed pending complete native installed-package acceptance. Windows automatic installation
+is not implemented in this change and remains disabled. Downloads and update status
 remain available; attempting installation fails before the Runtime stop gate. There is no user
 environment-variable override and no automatic fallback to a manual installer. Isolated acceptance
 fixtures can supply evidence directly to the source API. Enabling a production entry requires a
