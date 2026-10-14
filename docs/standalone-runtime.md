@@ -357,6 +357,9 @@ Linux release validation item.
 
 ## Historical compatibility requiring review
 
+The [release compatibility policy](compatibility.md) defines stable interfaces and the direction
+of data upgrades. The 1.0 transition retains the historical compatibility paths below.
+
 These are retained compatibility paths, not a request to migrate user data:
 
 - No business database schema, session/message/Notebook file format or provider/account format

@@ -888,7 +888,6 @@
     "Base URL must not include query parameters or fragments.": "Базовый URL не должен содержать параметры запроса или фрагменты.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Базовый URL, ключ и модель для конечной точки Messages или Chat Completions",
     "Beaker": "Лабораторный стакан",
-    "Beta": "Бета",
     "Binary": "Бинарный",
     "Bind a personal specialist to this conversation.": "Привязать личного специалиста к этому диалогу.",
     "Block": "Заблокировать",

@@ -3,6 +3,9 @@
 The `open-science` command controls the local Open-Science service and submits research tasks without
 requiring browser interaction.
 
+The [release compatibility policy](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md)
+defines the 1.x contract for commands, machine-readable output and exit codes.
+
 ## Installation
 
 ### Standalone Node package

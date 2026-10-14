@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.37.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.37.2는 복원력을 강화합니다 — 시작 시 백엔드, 설정, 네트워크 오류를 스스로 복구하고, 런타임 연결 해제가 앱을 잠그지 않으며(종료는 항상 가능하고 수동 재연결도 제공), 큰 세션 및 노트북 스냅샷도 안정적으로 전송됩니다. 과학 PDF 구조 추출은 계속 개선되고, Linux CLI는 독립 실행형 .deb 및 .rpm 패키지로도 제공되며, Windows 백그라운드 하위 프로세스는 콘솔 창을 띄우지 않습니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **AIPOCH Open-Science v1.0.0** _(2026년 10월 업데이트)_. 이번 이정표는 로컬 우선 연구 작업 공간, 과학 에이전트, Python/R Notebook 실행, 문헌 도구, 이동 가능한 `.science` 연구 패키지를 아우릅니다. v0.37.2 이후의 개선 사항과 CLI 업그레이드 변경 사항은 [1.0.0 릴리스 노트](../../release-notes/1.0.0/ko.md)를 참조하세요. 다운로드는 계속 [최신 공개 릴리스](https://github.com/aipoch/open-science/releases/latest)를 기준으로 합니다.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

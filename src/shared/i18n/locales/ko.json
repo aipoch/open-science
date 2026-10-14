@@ -860,7 +860,6 @@
     "Base URL must not include query parameters or fragments.": "기본 URL에는 쿼리 매개변수나 프래그먼트를 포함할 수 없습니다.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Messages 또는 Chat Completions 엔드포인트의 기본 URL, 키, 모델",
     "Beaker": "비커",
-    "Beta": "베타",
     "Binary": "바이너리",
     "Bind a personal specialist to this conversation.": "개인 스페셜리스트를 이 대화에 바인딩합니다.",
     "Block": "블록",

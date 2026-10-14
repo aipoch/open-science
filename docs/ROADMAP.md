@@ -2,7 +2,7 @@
 
 Open-Science is an open-source, local-first AI research workbench. Researchers can move from literature and data to agent-assisted computation, inspectable results, and portable research records in one workspace, while choosing compatible models and compute infrastructure.
 
-This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed against `main` on **2026-10-12**, with package version **0.37.2**. Some changes on `main` may not yet be in an installed release; consult the [release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](../README.md) for setup and a product tour.
+This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed on **2026-10-13** for **1.0.0**, based on `main` at `382e40c55`. Consult the [published release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](../README.md) for setup and a product tour.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@ This roadmap separates **available capabilities**, **remaining gaps**, and **pos
 
 ## Where We Are Today
 
-The core research loop is available: organize a project, bring in papers and data, ask an agent to plan and execute, run Python or R locally or on SSH/Slurm infrastructure, review the outputs and their provenance, and preserve or transfer the research record. The product remains an evolving preview; having a capability does not imply that every model, platform, dataset, or recovery path behaves identically.
+The core research loop is available: organize a project, bring in papers and data, ask an agent to plan and execute, run Python or R locally or on SSH/Slurm infrastructure, review the outputs and their provenance, and preserve or transfer the research record. Having a capability does not imply that every model, platform, dataset, or recovery path behaves identically.
 
 The workbench now extends well beyond that initial loop:
 

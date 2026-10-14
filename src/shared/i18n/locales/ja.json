@@ -860,7 +860,6 @@
     "Base URL must not include query parameters or fragments.": "ベース URL にクエリパラメータやフラグメントを含めることはできません。",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Messages または Chat Completions エンドポイントのベース URL、キー、およびモデル",
     "Beaker": "ビーカー",
-    "Beta": "ベータ版",
     "Binary": "バイナリ",
     "Bind a personal specialist to this conversation.": "この会話に専属のスペシャリストを紐づけてください。",
     "Block": "ブロック",

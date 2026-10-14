@@ -1,0 +1,30 @@
+## ✨ Open-Science 1.0
+
+AIPOCH Open-Science est un environnement de recherche avec IA, open source et privilégiant le stockage local. La version 1.0 réunit littérature, données scientifiques, analyses assistées par agents, résultats inspectables et dossiers de recherche portables sous macOS, Windows et Linux.
+
+## 🚀 Fonctionnalités de recherche
+
+- **Projets et conversations :** organiser les recherches en projets et sessions, explorer les branches de messages et conversations annexes, copier une session pour suivre une autre piste et consulter plans, questions de clarification, activités des outils et notifications.
+- **Modèles et agents :** choisir Claude Code, OpenCode, Codex ou CodeBuddy avec des fournisseurs cloud compatibles, des points de terminaison personnalisés ou les connexions par abonnement Claude/Codex prises en charge. Configurer modèles et raisonnement, consulter la consommation et activer la mémoire du projet au besoin.
+- **Compétences, spécialistes et connecteurs :** installer et mettre à jour compétences et spécialistes depuis leurs places de marché, créer ou importer les siens, déléguer des tâches et accéder aux ressources scientifiques via des connecteurs intégrés ou des serveurs MCP personnalisés avec des autorisations délimitées.
+- **Python, R et calcul :** exécuter du code dans des environnements Notebook persistants, inspecter variables et historique, gérer les paquets et exporter en `.ipynb`. Lancer des tâches en arrière-plan localement ou sur des hôtes SSH et clusters Slurm configurés, avec annulation, reprise et collecte des résultats.
+- **Littérature et PDF :** gérer références, collections, étiquettes, notes et doublons ; trouver des textes intégraux en accès libre et sélectionner des articles selon des critères de recherche. Lire et annoter les PDF, extraire figures et tableaux, utiliser les sources en conversation et générer des bibliographies ou exporter en BibTeX/RIS.
+- **Fichiers et artefacts :** prévisualiser tableaux scientifiques, séquences, structures moléculaires, PDF, documents Office, images et code. Modifier les formats texte pris en charge et conserver des versions immuables avec le code, les entrées, l'historique d'exécution et les éléments d'environnement capturés.
+- **Relecture et vérification :** activer la relecture facultative d'un tour d'agent et de ses éléments disponibles. Dans l'application de bureau, réexécuter les versions d'artefacts admissibles avec une recette complète et un environnement utilisable, comparer les sorties et exporter les rapports de vérification et les paquets d'environnement capturés compatibles.
+- **Échange scientifique :** exporter branches, fichiers, enregistrements Notebook et éléments de vérification sélectionnés dans un paquet `.science`. L'importer pour une inspection en lecture seule et une lecture des étapes enregistrées, discuter du contenu ou créer une copie modifiable pour poursuivre. Exporter la provenance des artefacts en RO-Crate.
+- **Bureau, navigateur et automatisation :** utiliser le bureau, l'interface web locale, un navigateur mobile associé ou la CLI autonome et le Task SDK. L'interface propose l'anglais et huit traductions ; chaque accès conserve ses limites fonctionnelles documentées.
+- **Données locales et contrôle :** conserver les dossiers localement, examiner les autorisations des outils et dossiers, configurer les contrôles réseau pris en charge et exporter les diagnostics au besoin. Fournisseurs de modèles, connecteurs distants et hôtes de calcul échangent toujours des données avec leurs services configurés.
+
+## 🧭 Périmètre et limites
+
+- Les protocoles et fonctions des modèles dépendent du framework d'agent. Bureau, navigateur et CLI n'offrent pas les mêmes fonctions ; la protection du bac à sable dépend du chemin d'exécution et de la plateforme. WSL2 Bash reste une préversion à activer explicitement sous Windows x64.
+- La lecture d'une session enregistrée n'exécute pas de code. La vérification exige des entrées capturées et un environnement disponible ; elle ne garantit ni la reproduction déterministe d'une session entière ni la validité scientifique. Sélection bibliographique et relecture facultative appuient le jugement du chercheur.
+- Les enregistrements `.science` importés sont en lecture seule et ne restaurent pas les identifiants. Conversations annexes et signets privés sont exclus des paquets. Les paquets d'environnement doivent être complets et compatibles avec la plateforme cible.
+- Le calcul distant prend en charge SSH et Slurm. La soumission gérée de tâches GPU cloud, un moteur de calcul GPU local et l'édition collaborative en temps réel ne sont pas inclus dans 1.0.
+
+## 📦 Installation et mise à niveau
+
+- Les programmes d'installation et paquets CLI autonomes sont disponibles sur la [page officielle](https://aipoch.com/open-science/download) ou [GitHub Releases](https://github.com/aipoch/open-science/releases). Les archives CLI incluent Node et portent le nom `open-science-cli-<version>-<target>` ; adapter les scripts utilisant l'ancien préfixe.
+- Mettre à niveau la CLI avec son programme d'installation ou gestionnaire de paquets ; `open-science update` n'est plus disponible. Les mises à jour de bureau restent disponibles. Arrêter tous les profils utilisant une installation autonome avant de la remplacer et conserver des versions identiques du bureau et du backend.
+- 1.0 conserve les chemins existants de mise à niveau et d'importation des anciennes données ; le changement de version n'introduit aucun nouveau format ni migration. Sauvegarder le profil avant la mise à niveau. Rétrograder les exécutables ne restaure pas les données, que les anciennes versions peuvent ne pas lire.
+- La [politique de compatibilité 1.x](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md) couvre les interfaces CLI/SDK documentées, l'automatisation Task, les imports `.science` et les mises à niveau de profils prises en charge. Les correctifs de sécurité visent la dernière version stable et `main`.

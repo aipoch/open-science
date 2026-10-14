@@ -880,7 +880,6 @@
     "Base URL must not include query parameters or fragments.": "La URL base no debe incluir parámetros de consulta ni fragmentos.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "URL base, clave y modelo para un endpoint de Messages o Chat Completions",
     "Beaker": "Vaso de precipitados",
-    "Beta": "Beta",
     "Binary": "Binario",
     "Bind a personal specialist to this conversation.": "Vincule un especialista personal a esta conversación.",
     "Block": "Bloquear",
