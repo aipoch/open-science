@@ -2,8 +2,12 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLiteratureChanges } from './useLiteratureChanges'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+})
 it('coalesces mutation bursts and restores missed changes on visibility and replay without leaking subscriptions', async () => {
   let notify!: () => void
   const unsubscribe = vi.fn()
@@ -139,4 +143,23 @@ it('consumes only queued changes covered by a command refresh, preserving other 
   } finally {
     vi.useRealTimers()
   }
+})
+
+it('refreshes missed desktop changes only after reconciliation and unsubscribes on unmount', async () => {
+  const invalidate = vi.fn()
+  const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+  for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
+    expect(invalidate).not.toHaveBeenCalled()
+  }
+  await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+  expect(invalidate).toHaveBeenCalledExactlyOnceWith()
+  await act(async () => useDesktopRuntimeRecoveryStore.setState({ closing: true }))
+  expect(invalidate).toHaveBeenCalledOnce()
+  unmount()
+  await act(async () => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+  })
+  expect(invalidate).toHaveBeenCalledOnce()
 })

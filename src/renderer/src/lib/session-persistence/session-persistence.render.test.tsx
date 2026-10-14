@@ -3,6 +3,10 @@ import type { AcpRuntimeEvent } from '../../../../shared/acp'
 import { useWorkspaceOperationErrors } from '../acp/workspace-operation-error'
 import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import { act } from 'react'
+import {
+  useDesktopRuntimeRecoveryStore,
+  waitForDesktopSessionRecovery
+} from '@/stores/desktop-runtime-recovery-store'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -103,6 +107,7 @@ describe('session persistence startup', () => {
       await i18next.changeLanguage('en')
     })
     container.remove()
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   })
 
   const Probe = (): React.JSX.Element => {
@@ -1195,6 +1200,53 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
       'changes saved'
+    )
+  })
+
+  it('settles an incomplete reconnect read while keeping storage recovery and write gates active', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    await act(async () => root.render(<Probe />))
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    await act(async () =>
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 41 })
+    )
+    loadAll.mockResolvedValue({
+      ...emptyLoadResult(),
+      diagnostics: {
+        isComplete: false,
+        isProjectDeletionRecoveryComplete: false,
+        warnings: [],
+        failure: 'startup-reconciliation-failed'
+      }
+    })
+    const reconciled = vi.fn()
+    void waitForDesktopSessionRecovery(41).then(reconciled)
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' }))
+    expect(reconciled).toHaveBeenCalledOnce()
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('div')?.dataset.loading).toBe('false')
+    expect(container.querySelector('div')?.dataset.deletionReady).toBe('false')
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
+      'storage recovery could not finish'
+    )
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-2',
+        content: 'Must not save',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+    })
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(saveManifest).not.toHaveBeenCalled()
+    loadAll.mockResolvedValue(emptyLoadResult())
+    await act(async () =>
+      (container.querySelector('[data-testid="retry-load"]') as HTMLButtonElement).click()
+    )
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).toBe(
+      'sessions available'
     )
   })
 
