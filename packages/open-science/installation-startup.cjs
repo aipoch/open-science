@@ -11,7 +11,6 @@ const {
 } = require('node:fs')
 const { dirname, join, resolve } = require('node:path')
 const { homedir } = require('node:os')
-const { DatabaseSync } = require('node:sqlite')
 
 function installationRootForEntry(entryPath) {
   // AppImage mount directories change on every launch; coordinate the stable outer image.
@@ -43,6 +42,9 @@ function installationRootForEntry(entryPath) {
     : dirname(backend)
 }
 function protectInstallationStartup(entryPath, configRoot, stateRoot) {
+  // Loading node:sqlite emits an experimental warning on Node 22; ordinary CLI commands
+  // must not load it and contaminate their machine-readable output.
+  const { DatabaseSync } = require('node:sqlite')
   const root = installationRootForEntry(entryPath)
   const key = createHash('sha256')
     .update(process.platform === 'win32' ? root.toLowerCase() : root)
