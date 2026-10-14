@@ -149,6 +149,13 @@ The gate catches violations of the existing registration rules. It cannot infer 
 events or filesystem relationships; those still require the explicit contracts described below.
 Behavior tests and trusted-base Integrity preservation checks remain separate requirements.
 
+The workflow, fixed inventory and assertions execute from the candidate checkout. They are
+protected CI policy under `/scripts/ci/` and `/.github/workflows/`, requiring CI-owner approval;
+new commits dismiss stale approvals under the main-branch ruleset. Independence here means that
+registration data cannot select or skip its own checks. Changes to the checking policy itself use
+the existing [CI control-plane approval](ci.md#ci-control-plane-approval) process, while trusted-base
+Integrity continues to validate registration data and preservation rules.
+
 ## Module-impact registration
 
 Module registration is part of the same change as the source and tests, not a follow-up after CI
