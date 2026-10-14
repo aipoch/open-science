@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process'
 import {
   assertInstallationChannelCertified,
   installationChannelFor,
@@ -273,12 +274,40 @@ async function startDesktop(): Promise<void> {
       bootstrapLease.release()
     }
   }
+  const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
   let startupBlocked = false
+  // The backend this Desktop spawned (detached) while startup is not yet attached; a blocked-page quit
+  // must stop it, otherwise it keeps the runtime lock after the app is gone.
+  let startedBackend: ChildProcess | undefined
+  let blockedExit: Promise<void> | undefined
+  const exitFromBlockedStartup = (): Promise<void> =>
+    (blockedExit ??= (async () => {
+      try {
+        const child = startedBackend
+        if (client) {
+          await Promise.race([
+            client.quit().then((lease) => retainShutdownLease(lease)),
+            new Promise((resolve) => setTimeout(resolve, BLOCKED_QUIT_DEADLINE_MS).unref())
+          ])
+        } else if (child && child.exitCode === null && child.signalCode === null) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, BLOCKED_QUIT_DEADLINE_MS)
+            timer.unref()
+            child.once('exit', () => resolve())
+            child.kill('SIGTERM')
+          })
+        }
+      } catch {
+        // Quit must always complete; a failed stop is reported by the next launch's recovery.
+      } finally {
+        app.exit(0)
+      }
+    })())
   const holdStartupQuit = (event: Electron.Event): void => {
     event.preventDefault()
     startupQuitRequested = true
-    if (startupBlocked) app.exit(0)
+    if (startupBlocked) void exitFromBlockedStartup()
   }
   app.on('before-quit', holdStartupQuit)
   const packageFiles = new PackageFileOpenRelay(() => {
@@ -653,7 +682,7 @@ async function startDesktop(): Promise<void> {
       const window = createMainWindow(undefined, translate)
       startupWindow = window
       window.once('closed', () => {
-        if (startupWindow === window) app.exit(0)
+        if (startupWindow === window) void exitFromBlockedStartup()
       })
     }
     showMainWindow = () => {
@@ -763,6 +792,7 @@ async function startDesktop(): Promise<void> {
           ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
         ]
       })
+      startedBackend = launch.startedProcess
       startupBlocked = false
       break
     } catch (error) {
@@ -1343,6 +1373,7 @@ async function startDesktop(): Promise<void> {
           `--serve=${config.port}`
         ]
       })
+      startedBackend = launch.startedProcess
       client = await attach()
       notifications = makeNotifications()
       await verifyDesktopRecoveryReadiness(client, config)

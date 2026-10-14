@@ -136,7 +136,7 @@ vi.mock('../../resources/tray-light.ico?asset', () => ({ default: 'icon' }))
 vi.mock('../../resources/tray-dark.ico?asset', () => ({ default: 'icon' }))
 vi.mock('../../resources/tray.png?asset', () => ({ default: 'icon' }))
 vi.mock('./windows', () => ({
-  createMainWindow: vi.fn(),
+  createMainWindow: vi.fn(() => ({ once: vi.fn(), show: vi.fn() })),
   configureMainWindow: vi.fn(),
   isMainWindow: vi.fn()
 }))
@@ -326,3 +326,33 @@ it.each(['win32', 'linux', 'darwin'] as const)(
     }
   }
 )
+
+it('stops the backend it started when quitting from the attach-retry blocked page', async () => {
+  const exitHandlers: Array<() => void> = []
+  const child = {
+    exitCode: null as number | null,
+    signalCode: null as string | null,
+    kill: vi.fn(() => {
+      child.exitCode = 0
+      exitHandlers.splice(0).forEach((handler) => handler())
+      return true
+    }),
+    once: vi.fn((event: string, handler: () => void) => {
+      if (event === 'exit') exitHandlers.push(handler)
+    })
+  }
+  f.launch.mockResolvedValue({ startedProcess: child })
+  f.connect.mockRejectedValue(new Error('control could not be confirmed'))
+  await import('./index')
+  await vi.waitFor(() => expect(f.handlers.size).toBeGreaterThan(0))
+  const hold = f.app.on.mock.calls.find(([event]) => event === 'before-quit')![1]
+  await vi.waitFor(() => {
+    const event = { preventDefault: vi.fn() }
+    hold(event)
+    expect(child.kill).toHaveBeenCalled()
+  })
+  await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(0))
+  expect(child.kill.mock.invocationCallOrder[0]).toBeLessThan(
+    f.app.exit.mock.invocationCallOrder[0]
+  )
+})
