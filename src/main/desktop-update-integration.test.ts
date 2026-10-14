@@ -364,6 +364,45 @@ describe('Desktop installation orchestration', () => {
   })
 })
 
+const stopBeforeAbort = (invoke: ReturnType<typeof vi.fn>): void => {
+  invoke.mockRejectedValueOnce(new Error('gate unavailable'))
+}
+
+describe('supervised install admission release', () => {
+  it('releases admission when the update gate throws', async () => {
+    const { hooks, invoke, setClosing } = setup()
+    invoke.mockRejectedValueOnce(
+      Object.assign(new Error('Another Desktop controls this Runtime'), {
+        code: 'command-unavailable'
+      })
+    )
+    await hooks.prepareInstall!(status, {})
+    await expect(hooks.installGate!({})).rejects.toThrow('Another Desktop')
+    expect(setClosing).toHaveBeenCalledWith(true)
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the supervised stop is not confirmed', async () => {
+    const { hooks, stop, setClosing } = setup()
+    stop.mockRejectedValue(new RuntimeStopError('runtime-stop-timeout', {} as never))
+    await hooks.prepareInstall!(status, {})
+    await expect(hooks.installGate!({})).rejects.toMatchObject({ reason: 'runtime-stop-timeout' })
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the supervised handoff release cannot abort the gate', async () => {
+    const { hooks, invoke, setClosing, progress } = setup()
+    invoke.mockResolvedValueOnce({ completed: false, reaped: false, blockedBy: ['agent'] })
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    invoke.mockRejectedValue(new Error('abort unavailable'))
+    setClosing.mockClear()
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+})
+
 describe('legacy install for uncertified channels', () => {
   const legacy = (): true => true
   it('stops and confirms the runtime without a supervised record or artifact verification', async () => {
@@ -417,6 +456,18 @@ describe('legacy install for uncertified channels', () => {
     await hooks.installGate!({})
     hooks.releaseInstallHandoff!()
     await vi.waitFor(() => expect(restart).toHaveBeenCalledWith(config))
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the legacy handoff release cannot abort the gate', async () => {
+    const { hooks, invoke, setClosing, progress } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    stopBeforeAbort(invoke)
+    await expect(hooks.installGate!({})).rejects.toThrow()
+    invoke.mockRejectedValue(new Error('abort unavailable'))
+    setClosing.mockClear()
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
     expect(setClosing).toHaveBeenLastCalledWith(false)
   })
 

@@ -143,9 +143,12 @@ export function createDesktopUpdateIntegration(options: {
         if (legacy) {
           const active = legacy
           legacy = undefined
-          if (active.stopped) await options.restart(active.config)
-          else await options.client().invokeHost('desktop:update-abort')
-          options.setClosing(false)
+          try {
+            if (active.stopped) await options.restart(active.config)
+            else await options.client().invokeHost('desktop:update-abort')
+          } finally {
+            options.setClosing(false)
+          }
         }
         return { ...reset, state: 'ready', outcome: 'cancelled' }
       }
@@ -475,6 +478,7 @@ export function createDesktopUpdateIntegration(options: {
         await options.verifyInstallerReady?.()
         checkCancellation()
         options.setClosing(true)
+        let stopped = false
         try {
           const result = (await options
             .client()
@@ -489,10 +493,13 @@ export function createDesktopUpdateIntegration(options: {
           const lease = await options.client().stopRuntime()
           options.retainLease(lease)
           record = advanceInstallationUpdate(options.location, record.operationId, 'stopped', true)
+          stopped = true
           options.onStopped()
           publish()
           return { ...result, recovery: recovery() }
         } catch (error) {
+          // Any failure before a confirmed stop must not leave the app locked in its closing state.
+          if (!stopped) options.setClosing(false)
           if (error instanceof RuntimeStopError) {
             options.onProgress?.({
               diagnostics: JSON.stringify(
@@ -708,9 +715,12 @@ export function createDesktopUpdateIntegration(options: {
         const active = legacy
         legacy = undefined
         const release = exclusive(async () => {
-          if (active.stopped) await options.restart(active.config)
-          else await options.client().invokeHost('desktop:update-abort')
-          options.setClosing(false)
+          try {
+            if (active.stopped) await options.restart(active.config)
+            else await options.client().invokeHost('desktop:update-abort')
+          } finally {
+            options.setClosing(false)
+          }
         })
         void release.catch((error: unknown) =>
           options.onProgress?.({
@@ -724,8 +734,11 @@ export function createDesktopUpdateIntegration(options: {
       if (record?.phase !== 'preparing' || pending) return
       // Restore live admission after a refused gate; the durable installation marker remains.
       const abort = exclusive(async () => {
-        await options.client().invokeHost('desktop:update-abort')
-        options.setClosing(false)
+        try {
+          await options.client().invokeHost('desktop:update-abort')
+        } finally {
+          options.setClosing(false)
+        }
       })
       void abort.catch((error: unknown) =>
         options.onProgress?.({
