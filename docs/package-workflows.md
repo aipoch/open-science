@@ -88,17 +88,7 @@ runs in Source Regression, with a focused manual `portable` mode. Run
 
 ## Static impact diagnostic tool
 
-`packages/test-impact` is a private development package. `npm run analyze:test-impact -- --revision HEAD`
-builds the tool and prints static Git-revision evidence; the compiled CLI can print JSON without the
-build command's logging. Its JSON source configuration is `scripts/ci/test-impact-config.json`.
-Module ownership, manual consumers and explicit runtime relationships remain in their existing
-repository manifests. Current test selectors and generated consumer commands are unchanged.
-
-The report unions implementation and declaration dependencies, retains unresolved references and
-explicitly cannot authorize skipping tests. It does not execute candidate configurations or install
-candidate dependencies. See the package README for input boundaries and known limitations.
-
-`npm run check:packages -- --packages=test-impact` verifies an isolated build and installed API/CLI
-consumer. Source Regression's manual `static-impact` mode runs that same check on Ubuntu, Windows
-and macOS without installing the application or running unrelated suites. This is a diagnostic
-acceptance lane, not a change to the PR selector or scheduled full-suite policy.
+The private [test-impact package](../packages/test-impact/README.md) analyzes Git revisions without
+changing test selection. Run `npm run analyze:test-impact -- --revision HEAD` to generate evidence,
+and `npm run check:packages -- --packages=test-impact` to verify its build and installed API/CLI.
+Source Regression's manual `static-impact` mode runs the verifier on Linux, Windows and macOS.

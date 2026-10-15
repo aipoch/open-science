@@ -216,23 +216,11 @@ destructive changes, dirty checkouts and missing evidence retain the broad selec
 
 ## Derived consumer evidence
 
-Module records retain explicit ownership and behavioral contracts. The generated
-`scripts/ci/module-derived-consumers.json` stores additional structurally reachable tests;
-module/affected selection unions both sources and labels derived evidence in its explanation.
-The generator reuses the repository dependency reader, including type/mock references and
-runtime-loading declarations. This does not infer executed code coverage or retire contracts.
-
-Regenerate with `npm run generate:module-consumers`; verify with `npm run check:module-consumers`.
-The index is protected CI data, outside the module-record exemption. Editing it retains full CI
-routing in this rollout. Lightweight preflight reads only trusted JSON. Blocking CI Integrity
-recomputes candidate evidence from immutable Git blobs using trusted code, without importing
-candidate application or checker code. Missing, stale, forged or nonregular indexes fail.
-Old revisions predating the index retain their legacy rules; an established index cannot be
-removed. Local selection also rejects a missing index rather than treating it as empty.
-
-Existing explicit consumer registrations are preserved. A future reviewed migration must land
-a trusted preservation rule before moving historical entries; structural reachability alone
-cannot establish that an old entry was not an intentional dynamic behavior contract.
+The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
+selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
+Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
+missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+Older bases retain legacy rules; existing explicit contracts are not retired automatically.
 
 ## CI control-plane approval
 
@@ -407,26 +395,10 @@ enqueue a PR with a known failing required check and expect the queue to waive i
 
 ### Runtime module evidence diagnostic
 
-The **Source Regression** workflow accepts the manual `runtime-evidence` mode. It runs only
-five fixed test files (node-entry startup failure, two notebook-syntax owner files, real downstream
-parser use and a mocked parser-unavailable contract), collecting independent V8 observations for
-four source files and the built syntax index. Existing Vitest projects
-and setup remain in use; full-suite coverage thresholds do not apply to this partial report.
-The job summary shows source ownership, explicit test registration, and statement/function hits.
-The `runtime-module-evidence` artifact retains JSON, Markdown and individual run logs for seven days.
-Missing or failed collection is reported as unavailable and fails the diagnostic job, not as zero hits.
+Source Regression's manual `runtime-evidence` mode collects V8 coverage for five fixed test files.
+Locally, run `npm run pretest`, then `node scripts/ci/runtime-module-evidence.mjs`.
+Reports and logs go to `coverage/runtime-module-evidence/`; Actions retains them for seven days.
 
-Run the same diagnostic locally after `npm run pretest` with
-`node scripts/ci/runtime-module-evidence.mjs`; results are written under
-`coverage/runtime-module-evidence/`. The fixed include list is deliberately bounded: these are
-observations of particular files, not complete module coverage or proof that a consumer can be
-removed. Runtime data does not replace static/type, IPC, resource, platform or explicit contract
-relationships. The report is not consumed by test selection or registration validation.
-
-The syntax package exports `dist/index.js` without sourcemaps, so its compiled artifact is observed
-separately and explicitly attributed to the source owner; compiled/source counters are never merged.
-Positive controls require the owner test to hit the source and the real consumer to hit the artifact.
-A failed control marks that test's observations unavailable and fails the job. This also detects a
-shared worktree dependency install resolving packages outside the observed checkout. Use the isolated
-Actions checkout or a checkout-local dependency install for this diagnostic. Mocked contracts may
-legitimately have zero implementation hits and still protect consumer behavior.
+Use a checkout-local dependency install: positive controls check actual source and built-package
+execution separately. Missing observations or failed controls fail the job. Zero hits do not justify
+removing a test; these diagnostics do not change test selection.
