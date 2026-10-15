@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { prefetchSystemBootIdentity } from '../system-boot-identity'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -11,6 +12,11 @@ import {
 } from './installation-protection'
 import { cancelDebSystemdGate } from './deb-systemd-gate'
 vi.mock('./deb-systemd-gate', () => ({ cancelDebSystemdGate: vi.fn() }))
+// Match startup's asynchronous Windows boot query before creating durable update records.
+beforeAll(async () => {
+  await prefetchSystemBootIdentity()
+})
+
 const dirs: string[] = []
 afterEach(() => {
   dirs.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true }))

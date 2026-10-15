@@ -2584,6 +2584,29 @@ describe('PdfPreviewContent', () => {
     )
   })
 
+  it.each(['connected', 'disconnected'] as const)(
+    'reports rejected PDF releases only while the backend is connected (%s)',
+    async (phase) => {
+      const error = new Error('Preview release unavailable')
+      const report = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      vi.mocked(window.api.previewResources.release).mockRejectedValue(error)
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/report.pdf" name="report.pdf" source="local" />)
+      )
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase, epoch: phase === 'connected' ? 0 : 1 })
+        root.unmount()
+      })
+      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+      expect(destroyDocument).toHaveBeenCalled()
+      if (phase === 'connected') {
+        expect(report).toHaveBeenCalledWith('Failed to release PDF preview resource', error)
+      } else {
+        expect(report).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it.each(['web', 'desktop'] as const)(
     'reloads revoked %s PDF ranges while retaining zoom, position and the selected version',
     async (surface) => {

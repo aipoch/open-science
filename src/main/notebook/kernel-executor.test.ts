@@ -5010,13 +5010,16 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       }
     })
     try {
-      await executor.execute({
-        ...baseRequest(cwdDir),
-        kind: 'repl',
-        code: 'return 1',
-        sessionId: 'session',
-        projectId: 'project'
-      })
+      await expect(
+        executor.execute({
+          ...baseRequest(cwdDir),
+          kind: 'repl',
+          code: "console.log('warm')",
+          sessionId: 'session',
+          projectId: 'project'
+        })
+      ).resolves.toMatchObject({ status: 'completed', stdout: expect.stringContaining('warm') })
+      expect(await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).toHaveLength(1)
       await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
       writable = true
       await expect(executor.shutdown()).resolves.toEqual({ reaped: true })

@@ -619,6 +619,33 @@ describe('OfficePreviewRenderer', () => {
     root = createRoot(container)
   })
 
+  it('settles a rejected close acknowledgement when the renderer unmounts during shutdown', async () => {
+    await renderPreview()
+    close.mockRejectedValueOnce(new Error("No handler registered for 'office-preview:close'"))
+    await act(async () => {
+      root.unmount()
+      await flushMicrotasks()
+    })
+    expect(close).toHaveBeenCalledWith('office-session-1')
+    expect(removeStateListener).toHaveBeenCalledOnce()
+    root = createRoot(container)
+  })
+
+  it('releases a late open after unmount even when the close acknowledgement rejects', async () => {
+    let resolveOpen!: (value: ReturnType<typeof startedResult>) => void
+    open.mockReturnValueOnce(new Promise((resolve) => (resolveOpen = resolve)))
+    await renderPreview()
+    await act(async () => root.unmount())
+    close.mockRejectedValueOnce(new Error('Desktop connection closed'))
+    await act(async () => {
+      resolveOpen(startedResult())
+      await flushMicrotasks()
+    })
+    expect(close).toHaveBeenCalledWith('office-session-1')
+    expect(removeStateListener).toHaveBeenCalledOnce()
+    root = createRoot(container)
+  })
+
   it('applies a state that arrives before the open response', async () => {
     let resolveOpen: ((value: ReturnType<typeof startedResult>) => void) | undefined
     open.mockReturnValue(new Promise((resolve) => (resolveOpen = resolve)))
