@@ -498,10 +498,8 @@ describe('release and scheduled workflow topology', () => {
     expect(publicationPlan).toContain('identical|behind)')
     expect(publicationPlan).toContain('skipping stale publication')
     expect(publicationPlan).toContain('Cannot safely advance nightly')
-    expect(publish).toMatchObject({
-      needs: 'plan',
-      if: "needs.plan.outputs.should_publish == 'true'"
-    })
+    expect(publish.needs).toBe('plan')
+    expect(publish.if).toContain("needs.plan.outputs.should_publish == 'true'")
     expect(download.with).toMatchObject({
       'github-token': '${{ secrets.GITHUB_TOKEN }}',
       'run-id': '${{ env.SOURCE_RUN_ID }}',
@@ -561,6 +559,26 @@ describe('release and scheduled workflow topology', () => {
     expect(
       step(flow.jobs.plan, 'Require advisory certification and regression jobs to have passed').run
     ).toContain('--publish')
+  })
+
+  it('keeps dry-run artifact verification read-only and gates the write job on main publication', () => {
+    const flow = workflow('nightly-publish.yml')
+    const { verify, publish } = flow.jobs
+    expect(verify.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(verify.if).toBe(
+      "needs.plan.outputs.should_publish == 'true' && github.event_name == 'workflow_dispatch' && inputs.dry_run"
+    )
+    expect(publish.permissions).toEqual({ actions: 'read', contents: 'write' })
+    expect(publish.if).toBe(
+      "needs.plan.outputs.should_publish == 'true' && (github.event_name == 'workflow_run' ||\n (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && !inputs.dry_run))"
+    )
+    expect(verify.steps).toEqual(publish.steps!.slice(0, 3))
+    expect(verify.steps).toHaveLength(3)
+    expect(verify.steps!.map(({ name }) => name)).toEqual([
+      'Download prepared nightly artifacts',
+      'Verify prepared nightly metadata',
+      'Check existing nightly release'
+    ])
   })
 
   it('keeps credentials out of candidate gate execution', () => {

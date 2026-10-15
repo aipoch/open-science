@@ -138,12 +138,77 @@ jobs:
               ;;
           esac
 
+  verify:
+    permissions:
+      actions: read
+      contents: read
+    needs: plan
+    if: needs.plan.outputs.should_publish == 'true' && github.event_name == 'workflow_dispatch' && inputs.dry_run
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_RUN_ID: ${{ needs.plan.outputs.source_run_id }}
+      SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+    steps:
+      - name: Download prepared nightly artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          path: artifacts
+          pattern: '@(macos-*|linux-*|windows-x64|cli-*|nightly-ready)'
+          merge-multiple: true
+
+      - name: Verify prepared nightly metadata
+        run: |
+          test -s artifacts/SHA256SUMS.txt
+          test -s artifacts/RELEASE-CERTIFICATION.json
+          test -s artifacts/CLI-SHA256SUMS.txt
+          cd artifacts
+          sha256sum --check --strict SHA256SUMS.txt
+          sha256sum --check --strict CLI-SHA256SUMS.txt
+          # Require the exact five-target CLI set from this source, including in recovery dry-runs.
+          for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64; do
+            filename=$(jq -er --arg sha "$SOURCE_SHA" --arg target "$target" '
+              select(.sourceSha == $sha and .target == $target and
+                (.version | endswith("-nightly.g" + $sha[0:7])) ) | .filename' "$target.json")
+            test -s "$filename"
+            awk -v name="$filename" '$2 == name { found=1 } END { exit !found }' CLI-SHA256SUMS.txt
+          done
+
+      # Keep one long-lived GitHub Release and only update its assets and tag. Zenodo archives newly
+      # published releases but ignores edits, so deleting and recreating this release would create a
+      # new Zenodo version on every scheduled run. Advance the tag last so a failed upload is retried.
+      - name: Check existing nightly release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          error_file="$RUNNER_TEMP/nightly-refresh-error.log"
+          if ! release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq .id 2>"$error_file"); then
+            cat "$error_file" >&2
+            echo "The long-lived nightly release is missing; refusing to create a new Zenodo-visible release." >&2
+            echo "Follow the recovery procedure in release-notes/README.md." >&2
+            exit 1
+          fi
+
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>"$error_file"; then
+            cat "$error_file" >&2
+            echo "The long-lived nightly tag is missing; refusing to publish without a retry marker." >&2
+            echo "Follow the recovery procedure in release-notes/README.md." >&2
+            exit 1
+          fi
+
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
   publish:
     permissions:
       actions: read
       contents: write
     needs: plan
-    if: needs.plan.outputs.should_publish == 'true'
+    if: >-
+      needs.plan.outputs.should_publish == 'true' &&
+      (github.event_name == 'workflow_run' ||
+       (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && !inputs.dry_run))
     runs-on: ubuntu-latest
     env:
       SOURCE_RUN_ID: ${{ needs.plan.outputs.source_run_id }}
