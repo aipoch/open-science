@@ -10,13 +10,30 @@ export const runtimeEvidenceSample = {
   tests: [
     'src/main/node-entry.test.ts',
     'packages/notebook-syntax/src/index.test.ts',
-    'packages/notebook-syntax/src/unavailable.test.ts'
+    'packages/notebook-syntax/src/unavailable.test.ts',
+    'packages/notebook-analysis/src/source-analysis-sharing.test.ts',
+    'packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts'
   ],
   sources: [
     'src/main/node-entry.ts',
     'src/main/core-runtime.ts',
     'src/main/credential-identity/access.ts',
-    'packages/notebook-syntax/src/index.ts'
+    'packages/notebook-syntax/src/index.ts',
+    'packages/notebook-syntax/dist/index.js'
+  ],
+  // This package emits no sourcemap. Attribute ownership, never merge compiled/source counters.
+  artifactSources: {
+    'packages/notebook-syntax/dist/index.js': 'packages/notebook-syntax/src/index.ts'
+  },
+  positiveControls: [
+    {
+      test: 'packages/notebook-syntax/src/index.test.ts',
+      source: 'packages/notebook-syntax/src/index.ts'
+    },
+    {
+      test: 'packages/notebook-analysis/src/source-analysis-sharing.test.ts',
+      source: 'packages/notebook-syntax/dist/index.js'
+    }
   ]
 }
 export const runtimeEvidenceDirectory = 'coverage/runtime-module-evidence'
@@ -43,7 +60,10 @@ export function runtimeEvidenceRows(test, coverage, manifest, root, error) {
     Object.entries(coverage).map(([path, entry]) => [evidenceRelativePath(path, root), entry])
   )
   return runtimeEvidenceSample.sources.map((source) => {
-    const owners = Object.entries(manifest.modules).filter(([, m]) => m.ownerPaths.includes(source))
+    const ownedSource = runtimeEvidenceSample.artifactSources[source] ?? source
+    const owners = Object.entries(manifest.modules).filter(([, m]) =>
+      m.ownerPaths.includes(ownedSource)
+    )
     let observation = null
     let problem = error
     try {
@@ -81,6 +101,16 @@ export function assertEvidenceTestPassed(result, test, root) {
     throw new Error('Expected exactly the requested test file to execute successfully')
 }
 
+export function assertRuntimeEvidenceControl(test, rows) {
+  for (const control of runtimeEvidenceSample.positiveControls.filter((c) => c.test === test)) {
+    const row = rows.find((r) => r.test === test && r.source === control.source)
+    if (row?.error || !(row?.observation?.functions.hit > 0))
+      throw new Error(
+        `Positive control did not observe ${control.source}; check package resolution and coverage collection`
+      )
+  }
+}
+
 export function renderRuntimeEvidence(report) {
   const count = (value) => (value ? `${value.hit}/${value.total}` : 'unavailable')
   const lines = [
@@ -90,7 +120,11 @@ export function renderRuntimeEvidence(report) {
     '',
     'Fixed sample only; counts describe the listed source files, not entire modules. Zero hits do not prove a test can be removed. Missing or failed collection is unavailable, never zero.',
     '',
-    '| Test | Source | Module / explicit registration | Functions | Statements |',
+    'The syntax source and compiled artifact are observed separately: package consumers load dist/index.js without sourcemaps. Artifact ownership is explicitly attributed to src/index.ts; counters are not merged. Positive controls require source execution by the owner test and artifact execution by the real consumer.',
+    '',
+    'Compare startup failure, real parser use, and a mocked parser-unavailable contract. A mocked contract can remain valuable with zero implementation hits; execution alone also does not prove assertion quality.',
+    '',
+    '| Test | File | Module / explicit registration | Functions | Statements |',
     '| --- | --- | --- | --- | --- |'
   ]
   for (const row of report.rows) {
@@ -108,7 +142,7 @@ export function renderRuntimeEvidence(report) {
     )
   const missing = report.rows.filter((row) => row.error)
   if (missing.length)
-    lines.push('', `${missing.length} source observations are unavailable; see report.json.`)
+    lines.push('', `${missing.length} file observations are unavailable; see report.json.`)
   lines.push('', 'No tests are skipped and no module registrations are changed by this report.', '')
   return lines.join('\n')
 }
@@ -154,7 +188,7 @@ export function runRuntimeModuleEvidence() {
       { encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024 }
     )
     writeFileSync(join(directory, 'run.log'), `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
-    let coverage = {}
+    let rows
     let error
     try {
       if (result.error) throw result.error
@@ -165,19 +199,21 @@ export function runRuntimeModuleEvidence() {
         test,
         root
       )
-      coverage = JSON.parse(readFileSync(join(directory, 'coverage-final.json'), 'utf8'))
+      const coverage = JSON.parse(readFileSync(join(directory, 'coverage-final.json'), 'utf8'))
       if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage))
         throw new Error('Invalid coverage report')
+      rows = runtimeEvidenceRows(test, coverage, manifest, root)
+      assertRuntimeEvidenceControl(test, rows)
     } catch (failure) {
       error = failure.message
-      coverage = {}
+      rows = runtimeEvidenceRows(test, {}, manifest, root, error)
     }
     report.runs.push({
       test,
       seconds: (performance.now() - started) / 1000,
       ...(error ? { error } : {})
     })
-    report.rows.push(...runtimeEvidenceRows(test, coverage, manifest, root, error))
+    report.rows.push(...rows)
   }
   writeFileSync(join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n')
   const markdown = renderRuntimeEvidence(report)

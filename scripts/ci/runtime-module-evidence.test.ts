@@ -5,6 +5,7 @@ import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 import {
   assertEvidenceTestPassed,
+  assertRuntimeEvidenceControl,
   evidenceRelativePath,
   renderRuntimeEvidence,
   runtimeEvidenceRows,
@@ -20,6 +21,49 @@ const manifest = {
   }
 }
 const coverage = () => ({ [join(root, source)]: { s: { 0: 0, 1: 2 }, f: { 0: 0 } } })
+
+it('attributes compiled syntax ownership while retaining separate source and artifact counters', () => {
+  const [artifact, ownedSource] = Object.entries(runtimeEvidenceSample.artifactSources)[0]
+  const rows = runtimeEvidenceRows(
+    test,
+    {
+      [join(root, artifact)]: { s: { 0: 4, 1: 0 }, f: { 0: 2 } },
+      [join(root, ownedSource)]: { s: { 0: 0 }, f: { 0: 0 } }
+    },
+    {
+      modules: {
+        syntax: { ownerPaths: [ownedSource], testFiles: { consumer: [test] } }
+      }
+    },
+    root
+  )
+  expect(rows.find((row) => row.source === artifact)).toMatchObject({
+    modules: [{ id: 'syntax', registration: ['consumer'] }],
+    observation: { statements: { hit: 1, total: 2 }, functions: { hit: 1, total: 1 } }
+  })
+  expect(rows.find((row) => row.source === ownedSource)?.observation.functions.hit).toBe(0)
+})
+
+it('requires real hits from positive controls without rejecting mocked zero-hit contracts', () => {
+  const control = runtimeEvidenceSample.positiveControls[1]
+  const row = { ...control, observation: { functions: { hit: 1, total: 10 } } }
+  expect(() => assertRuntimeEvidenceControl(control.test, [row])).not.toThrow()
+  expect(() => assertRuntimeEvidenceControl(control.test, [])).toThrow('Positive control')
+  expect(() =>
+    assertRuntimeEvidenceControl(control.test, [{ ...row, error: 'collection failed' }])
+  ).toThrow('Positive control')
+  expect(() =>
+    assertRuntimeEvidenceControl(control.test, [{ ...row, test: 'another.test.ts' }])
+  ).toThrow('Positive control')
+  row.observation.functions.hit = 0
+  expect(() => assertRuntimeEvidenceControl(control.test, [row])).toThrow('Positive control')
+  expect(() =>
+    assertRuntimeEvidenceControl(
+      'packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts',
+      [row]
+    )
+  ).not.toThrow()
+})
 
 it('distinguishes zero function hits from unavailable collection and retains registration', () => {
   const rows = runtimeEvidenceRows(test, coverage(), manifest, root)

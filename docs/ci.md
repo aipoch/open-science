@@ -348,8 +348,9 @@ enqueue a PR with a known failing required check and expect the queue to waive i
 ### Runtime module evidence diagnostic
 
 The **Source Regression** workflow accepts the manual `runtime-evidence` mode. It runs only
-three fixed tests (node-entry startup failure and the two notebook-syntax owner test files),
-collecting independent V8 observations for four listed source files. Existing Vitest projects
+five fixed test files (node-entry startup failure, two notebook-syntax owner files, real downstream
+parser use and a mocked parser-unavailable contract), collecting independent V8 observations for
+four source files and the built syntax index. Existing Vitest projects
 and setup remain in use; full-suite coverage thresholds do not apply to this partial report.
 The job summary shows source ownership, explicit test registration, and statement/function hits.
 The `runtime-module-evidence` artifact retains JSON, Markdown and individual run logs for seven days.
@@ -361,3 +362,11 @@ Run the same diagnostic locally after `npm run pretest` with
 observations of particular files, not complete module coverage or proof that a consumer can be
 removed. Runtime data does not replace static/type, IPC, resource, platform or explicit contract
 relationships. The report is not consumed by test selection or registration validation.
+
+The syntax package exports `dist/index.js` without sourcemaps, so its compiled artifact is observed
+separately and explicitly attributed to the source owner; compiled/source counters are never merged.
+Positive controls require the owner test to hit the source and the real consumer to hit the artifact.
+A failed control marks that test's observations unavailable and fails the job. This also detects a
+shared worktree dependency install resolving packages outside the observed checkout. Use the isolated
+Actions checkout or a checkout-local dependency install for this diagnostic. Mocked contracts may
+legitimately have zero implementation hits and still protect consumer behavior.
