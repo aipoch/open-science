@@ -7588,6 +7588,20 @@
     "Your separate installation will not be updated. Check data compatibility before using it again.": "Votre installation distincte ne sera pas mise à jour. Vérifiez la compatibilité des données avant de la réutiliser.",
     "Continue opening Open-Science?": "Continuer à ouvrir Open-Science ?",
     "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Les tâches en cours seront arrêtées et les autres connexions fermées. Le travail non enregistré risque d’être perdu. Vos paramètres et emplacements de données seront conservés. Fermer cette application arrêtera ensuite aussi le travail en arrière-plan.",
-    "Search incomplete. Some pages could not be read.": "La recherche est incomplète. Certaines pages n’ont pas pu être lues."
+    "Search incomplete. Some pages could not be read.": "La recherche est incomplète. Certaines pages n’ont pas pu être lues.",
+    "Set two-column body": "Définir le corps sur deux colonnes",
+    "Applies to your next message. Select body text only; exclude tables.": "S’applique à votre prochain message. Sélectionnez uniquement le texte du corps et excluez les tableaux.",
+    "Redrawing replaces the body area on that page.": "Redessiner remplacera la zone de texte principal sur cette page.",
+    "Body areas: {{count}}_one": "{{count}} zone de texte principal",
+    "Body areas: {{count}}_many": "{{count}} zones de texte principal",
+    "Body areas: {{count}}_other": "{{count}} zones de texte principal",
+    "Clear this page": "Effacer cette page",
+    "Drag across both columns, then confirm the divider.": "Faites glisser sur les deux colonnes, puis confirmez la séparation.",
+    "Two-column body": "Corps sur deux colonnes",
+    "Column divider": "Séparation des colonnes",
+    "Save body area": "Enregistrer la zone de texte principal",
+    "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
+    "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
+    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
   }
 }

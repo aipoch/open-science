@@ -157,8 +157,10 @@ describe('Auto operation completeness against real tool registrations', () => {
           '6b43e2b69387c7310dee65d97674b94e608a349f987ef90d7dd5cee7ff675c7f',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
+        // Reviewed: desktop regions come only from the message snapshot; strict tool inputs
+        // preserve linked-PDF identity, mounted-server checks and single-use authorization.
         'literature/mcp-server.ts':
-          'd7baeae460b294940d198e2a16f701c399b7630da945f31226260f19decdae72',
+          'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
         'notebook/mcp-server.ts':
           'e2dc287c4bf562ed688bebedbadff44b9b8aa6498472f5fa37478d87bba73c60',
         'session-plan/plan-mcp-server.ts':

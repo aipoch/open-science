@@ -1034,6 +1034,25 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const hidePdfReadingEntry = contentItem.format === 'pdf' && (confirmedPdfPageCount ?? 0) <= 1
     const visiblePdfContextAction =
       hidePdfReadingEntry && pdfContextAction?.state === 'link' ? undefined : pdfContextAction
+    const pdfProseRegions = usePreviewWorkbenchStore((state) =>
+      readingContextBindingId
+        ? state.pdfProseRegionsByBindingId[readingContextBindingId]
+        : undefined
+    )
+    const pdfProseRegionsScope = usePreviewWorkbenchStore((state) => state.pdfProseRegionsScope)
+    const pdfProseRegionIdentityKey = JSON.stringify([
+      pdfProseRegionsScope,
+      readingContextBindingId
+    ])
+    const reportPdfProseRegions = useCallback(
+      (regions: NonNullable<PreviewInteractionPort['pdfProseRegions']>): void => {
+        if (!readingContextBindingId) return
+        if (usePreviewWorkbenchStore.getState().pdfProseRegionsScope !== pdfProseRegionsScope)
+          return
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(readingContextBindingId, regions)
+      },
+      [readingContextBindingId, pdfProseRegionsScope]
+    )
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
         setPdfPageCount((current) =>
@@ -1933,6 +1952,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
                           onPdfReadingPositionChange={reportPdfReadingPosition}
+                          pdfProseRegions={pdfProseRegions}
+                          pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                          onPdfProseRegionsChange={
+                            readingContextBindingId && !hidePdfReadingEntry
+                              ? reportPdfProseRegions
+                              : undefined
+                          }
                           onPdfTranslationChange={reportPdfTranslation}
                         />
                       ) : null
@@ -1968,6 +1994,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
                       onPdfReadingPositionChange={reportPdfReadingPosition}
+                      pdfProseRegions={pdfProseRegions}
+                      pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                      onPdfProseRegionsChange={
+                        readingContextBindingId && !hidePdfReadingEntry
+                          ? reportPdfProseRegions
+                          : undefined
+                      }
                       onPdfTranslationChange={reportPdfTranslation}
                     />
                   ) : null}
