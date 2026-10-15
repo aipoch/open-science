@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -338,7 +339,7 @@ describe('release and scheduled workflow topology', () => {
 
     expect(build.needs).toEqual(['setup'])
     expect(build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
-    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke', 'cli-artifacts'])
     expect(release.jobs.publish.needs).toEqual([
       'build',
       'package-smoke',
@@ -421,8 +422,8 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
-      needs: ['plan', 'build', 'package-smoke'],
-      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'",
+      needs: ['plan', 'build', 'package-smoke', 'cli-artifacts'],
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && needs.cli-artifacts.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
@@ -431,7 +432,7 @@ describe('release and scheduled workflow topology', () => {
     expect(step(prepare, 'Generate checksums').run).toContain('sha256sum')
     expect(step(prepare, 'Upload prepared nightly metadata').with).toMatchObject({
       name: 'nightly-ready',
-      'retention-days': 1,
+      'retention-days': 5,
       'if-no-files-found': 'error'
     })
   })
@@ -442,6 +443,7 @@ describe('release and scheduled workflow topology', () => {
     const publish = publishWorkflow.jobs.publish
     const download = step(publish, 'Download prepared nightly artifacts')
     const refresh = step(publish, 'Refresh nightly release')
+    const existing = step(publish, 'Check existing nightly release')
     const release = step(publish, 'Publish nightly pre-release')
     const advance = step(publish, 'Advance nightly tag')
     const workflowRun = publishWorkflow.on?.workflow_run as {
@@ -466,7 +468,7 @@ describe('release and scheduled workflow topology', () => {
     const checkout = step(plan, 'Checkout trusted gate code')
     expect(checkout.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}/)
     expect(checkout.with).toEqual({
-      ref: 'refs/heads/main',
+      ref: "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && github.sha || 'refs/heads/main' }}",
       'persist-credentials': false,
       'sparse-checkout': 'scripts/ci/nightly-publish-gates.mjs',
       'sparse-checkout-cone-mode': false
@@ -511,24 +513,172 @@ describe('release and scheduled workflow topology', () => {
     expect(
       publish.steps?.some(({ run }) => run?.includes('release-certification-evidence.mjs'))
     ).toBe(false)
-    expect(refresh.if).toBeUndefined()
-    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/tags/nightly')
-    expect(refresh.run).toContain('refusing to create a new Zenodo-visible release')
-    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/git/ref/tags/nightly')
-    expect(refresh.run).toContain('refusing to publish without a retry marker')
+    expect(existing.if).toBeUndefined()
+    expect(refresh.if).toBe("github.event_name != 'workflow_dispatch' || !inputs.dry_run")
+    expect(existing.run).toContain('repos/$GITHUB_REPOSITORY/releases/tags/nightly')
+    expect(existing.run).toContain('refusing to create a new Zenodo-visible release')
+    expect(existing.run).toContain('repos/$GITHUB_REPOSITORY/git/ref/tags/nightly')
+    expect(existing.run).toContain('refusing to publish without a retry marker')
     expect(refresh.run).not.toContain('--method PATCH')
     expect(refresh.run).not.toContain('--method POST')
     expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/$release_id/assets')
     expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/assets/$asset_id')
     expect(refresh.run).not.toContain('DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"')
     expect(refresh.run).not.toMatch(/\|\|\s*true/)
-    expect(release.if).toBeUndefined()
+    expect(release.if).toBe(refresh.if)
+    expect(advance.if).toBe(refresh.if)
     expect(advance.run).toContain('--method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly"')
     expect(advance.run).toContain('-F force=true')
     const publishSteps = publish.steps ?? []
     expect(publishSteps.indexOf(refresh)).toBeLessThan(publishSteps.indexOf(release))
     expect(publishSteps.indexOf(release)).toBeLessThan(publishSteps.indexOf(advance))
   })
+
+  it('makes manual publication opt-in and resolves source identity before planning or downloading', () => {
+    const flow = workflow('nightly-publish.yml')
+    expect(flow.on?.workflow_dispatch).toMatchObject({
+      inputs: {
+        source_run_id: { required: true, type: 'string' },
+        dry_run: { default: true, type: 'boolean' }
+      }
+    })
+    expect(flow.jobs.plan.if).toContain("github.ref == 'refs/heads/main' || inputs.dry_run")
+    expect(flow.jobs.plan.outputs).toMatchObject({
+      source_run_id: '${{ steps.source.outputs.source_run_id }}',
+      source_sha: '${{ steps.source.outputs.source_sha }}'
+    })
+    expect(flow.jobs.publish.env).toMatchObject({
+      SOURCE_RUN_ID: '${{ needs.plan.outputs.source_run_id }}',
+      SOURCE_SHA: '${{ needs.plan.outputs.source_sha }}'
+    })
+    const steps = flow.jobs.plan.steps!
+    expect(steps.indexOf(step(flow.jobs.plan, 'Resolve and validate source run'))).toBeLessThan(
+      steps.indexOf(
+        step(flow.jobs.plan, 'Require advisory certification and regression jobs to have passed')
+      )
+    )
+    expect(
+      step(flow.jobs.plan, 'Require advisory certification and regression jobs to have passed').run
+    ).toContain('--publish')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'runs recovery source ancestry checks and rejects unreachable or malformed sources',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'nightly-source-'))
+      const source = {
+        id: 123,
+        repository: { full_name: 'aipoch/open-science' },
+        head_repository: { full_name: 'aipoch/open-science' },
+        path: '.github/workflows/nightly.yml',
+        head_branch: 'main',
+        head_sha: 'a'.repeat(40),
+        status: 'completed',
+        conclusion: 'success',
+        event: 'workflow_dispatch'
+      }
+      const script = step(
+        workflow('nightly-publish.yml').jobs.plan,
+        'Resolve and validate source run'
+      ).run!
+      const run = (status: string, id = '123'): string =>
+        execFileSync(
+          'bash',
+          [
+            '-e',
+            '-o',
+            'pipefail',
+            '-c',
+            `gh() { case "$2" in */actions/runs/123) printf '%s' "$MOCK_SOURCE";; */compare/*...main) printf '%s' "$MOCK_STATUS";; *) return 99;; esac; }\n${script}`
+          ],
+          {
+            encoding: 'utf8',
+            stdio: 'pipe',
+            env: {
+              ...process.env,
+              RUNNER_TEMP: root,
+              GITHUB_OUTPUT: join(root, 'output'),
+              GITHUB_REPOSITORY: 'aipoch/open-science',
+              SOURCE_RUN_ID: id,
+              MOCK_SOURCE: JSON.stringify(source),
+              MOCK_STATUS: status
+            }
+          }
+        )
+      try {
+        run('ahead')
+        run('identical')
+        expect(readFileSync(join(root, 'output'), 'utf8')).toContain(
+          `source_sha=${source.head_sha}`
+        )
+        for (const status of ['behind', 'diverged', '']) expect(() => run(status)).toThrow()
+        expect(() => run('ahead', '../123')).toThrow()
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'checks actual prepared bytes and rejects missing, corrupt or foreign CLI artifacts before writes',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'nightly-artifacts-'))
+      const artifacts = join(root, 'artifacts')
+      mkdirSync(artifacts)
+      const sha = 'a'.repeat(40)
+      const sums: string[] = []
+      const targets = [
+        'darwin-arm64',
+        'darwin-x64',
+        'linux-x64-gnu',
+        'linux-arm64-gnu',
+        'win32-x64'
+      ]
+      for (const target of targets) {
+        const filename = `open-science-cli-1.0.0-nightly.gaaaaaaa-${target}.${target === 'win32-x64' ? 'zip' : 'tar.gz'}`
+        writeFileSync(join(artifacts, filename), target)
+        writeFileSync(
+          join(artifacts, `${target}.json`),
+          JSON.stringify({ filename, target, sourceSha: sha, version: '1.0.0-nightly.gaaaaaaa' })
+        )
+        sums.push(`${createHash('sha256').update(target).digest('hex')}  ${filename}\n`)
+      }
+      writeFileSync(join(artifacts, 'SHA256SUMS.txt'), sums.join(''))
+      writeFileSync(join(artifacts, 'CLI-SHA256SUMS.txt'), sums.join(''))
+      writeFileSync(join(artifacts, 'RELEASE-CERTIFICATION.json'), '{}')
+      const script = step(
+        workflow('nightly-publish.yml').jobs.publish,
+        'Verify prepared nightly metadata'
+      ).run!
+      const run = (): string =>
+        execFileSync(
+          'bash',
+          [
+            '-e',
+            '-o',
+            'pipefail',
+            '-c',
+            `${process.platform === 'darwin' ? 'sha256sum() { shasum -a 256 "$@"; }\n' : ''}${script}`
+          ],
+          { cwd: root, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, SOURCE_SHA: sha } }
+        )
+      try {
+        run()
+        const receipt = join(artifacts, 'darwin-arm64.json')
+        const original = readFileSync(receipt, 'utf8')
+        writeFileSync(receipt, original.replace(sha, 'b'.repeat(40)))
+        expect(run).toThrow()
+        writeFileSync(receipt, original)
+        const filename = JSON.parse(original).filename
+        writeFileSync(join(artifacts, filename), 'corrupt')
+        expect(run).toThrow()
+        rmSync(join(artifacts, filename))
+        expect(run).toThrow()
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('publishes stable release notes as the GitHub and Zenodo description', () => {
     const publish = workflow('release.yml').jobs.publish

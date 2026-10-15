@@ -94,7 +94,18 @@ be discovered in queue or scheduled validation, and non-mainline Windows failure
 discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one
 tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
 Nightly publication additionally requires the advisory runtime-certification and regression
-jobs of the source run to have succeeded.
+jobs of the source run to have succeeded, as well as all five standalone CLI archive legs and their
+complete-set check. `linux-cli`, `linux-arm64` and `windows-package` focused Nightly dispatches also
+repack and test the corresponding CLI archive but never prepare a publishable set.
+
+To recover after fixing a scheduled failure, run a full manual Nightly on `main`, then explicitly
+promote its run through **Nightly Publish**. `source_run_id` selects that completed run and `dry_run`
+defaults to true. The publisher checks source provenance, main ancestry, all publication gates,
+checksums and all five CLI artifacts before any release write. Run the dry-run first, then dispatch
+from `main` with `dry_run=false` to replace assets and advance the tag last. Branch dry-runs can test
+candidate gates; actual publication is main-only. Old desktop-only or partial diagnostic runs are
+not eligible. Metadata and CLI artifacts are retained for five days; rebuild after expiration.
+See [nightly recovery](../release-notes/README.md#recovering-a-stale-nightly).
 
 ## PR and issue labels
 
@@ -117,6 +128,11 @@ PRs and issues. Size labels and custom labels, including other `area:*` names, a
 Stable Releases include five standalone CLI archives alongside desktop installers. They reuse the
 certified backend and pinned Node bytes, with native signature, extracted-installation, source/version
 and complete-set checks before publication. See the [standalone runtime guide](standalone-runtime.md).
+Nightly also includes the five CLI archives with the desktop build's exact `-nightly.g<sha>` version,
+source revision and backend/Node payload. macOS nightly verifies valid ad-hoc or Developer ID signatures
+without requiring notarization. Windows nightly permits unsigned binaries but rejects invalid existing
+signatures; stable Release checks remain unchanged. Nightly does not publish CLI
+deb/rpm packages, npm packages or Homebrew updates.
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
 credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
 for a GitHub Release.
