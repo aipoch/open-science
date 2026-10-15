@@ -1489,9 +1489,12 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it('avoids optional GPU downloads while retaining native loading in CPU runtime checks', () => {
-    const steps = workflow.jobs.runtime_checks.steps
-    expect(steps?.find(({ name }) => name === 'Install dependencies')).toMatchObject({
+  it.each([
+    ['runtime_checks', 'Install dependencies'],
+    ['linux_runtime', 'Install application dependencies']
+  ])('avoids optional GPU downloads while retaining native loading in %s', (job, installStep) => {
+    const steps = workflow.jobs[job].steps
+    expect(steps?.find(({ name }) => name === installStep)).toMatchObject({
       env: { ONNXRUNTIME_NODE_INSTALL: 'skip' },
       run: 'node scripts/ci/npm-ci.mjs'
     })
