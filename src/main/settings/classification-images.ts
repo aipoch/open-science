@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { MAX_DECODED_IMAGE_PIXELS } from '../raster-image-safety'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -31,7 +32,7 @@ export const prepareClassificationImages = async (
     const source = sharp(Buffer.from(image.data, 'base64'), {
       animated: true,
       failOn: 'error',
-      limitInputPixels: 40_000_000
+      limitInputPixels: MAX_DECODED_IMAGE_PIXELS
     })
     const metadata = await source.metadata()
     if ((metadata.pages ?? 1) > 1)

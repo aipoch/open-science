@@ -392,6 +392,29 @@ it.each([
     expect(body.state.images).toHaveLength(1)
   }
 )
+it('falls back when an image exceeds the shared decoded-pixel limit', async () => {
+  await configure()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 4001, height: 4000, channels: 3, background: 'white' }
+  })
+    .png()
+    .toBuffer()
+
+  expect(
+    await owner.selectSkills({
+      ...request(),
+      loadImages: async () => [
+        {
+          mimeType: 'image/png',
+          data: imageBytes.toString('base64'),
+          byteLength: imageBytes.byteLength
+        }
+      ]
+    })
+  ).toBeUndefined()
+  expect(fetchMock).not.toHaveBeenCalled()
+})
 it('classifies ambiguous linked-PDF requests conservatively', async () => {
   await configure()
   fetchMock.mockResolvedValueOnce(readingResponse(0.92, 0.52))
