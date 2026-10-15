@@ -5,7 +5,12 @@
 macOS, Linux and Windows runners. `workflow_dispatch` selects all platforms or one platform,
 and either `core` or the smaller `detector` dry-run. Neither mode publishes builds, changes tags,
 or changes PR checks/rulesets. The schedule takes effect only after the workflow reaches the
-default branch. Manual runs do not open tracking issues.
+default branch. Manual and PR runs do not open tracking issues.
+
+PRs changing the lifecycle workflow or harness also run the three-platform core collection,
+including detector checks, against the exact PR head commit. This bounded trigger provides
+native Windows evidence before a new workflow is available for manual dispatch on the default
+branch. It does not add a required check or change PR Gate.
 
 Scheduled failures use `report-scheduled-failure.mjs` and the existing `ci-scheduled-failure`
 tracking mechanism. A later complete scheduled success closes that workflow's issue. A cancelled,
