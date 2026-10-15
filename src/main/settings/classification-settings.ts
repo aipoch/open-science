@@ -23,6 +23,7 @@ import type {
 import { encryptKey, hardenKeyMask, maskKey, tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
 import { fetchProviderRequest } from './provider-fetch'
+import { prepareClassificationImages } from './classification-images'
 import { readBoundedResponseText } from './bounded-response'
 import { netFetchStandard } from '../network-fetch'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -53,7 +54,7 @@ class ClassificationRequestError extends Error {
 const CLASSIFICATION_ENDPOINTS = {
   typesafe: 'https://api.typesafe.ai/v1/systemone',
   openrouter: 'https://openrouter.ai/api/alpha/decisions',
-  opencode: 'https://opencode.ai/zen/v1/systemone'
+  opencode: 'https://opencode.ai/inference/v1/systemone'
 } satisfies Record<Exclude<Service['adapter'], 'custom'>, string>
 const empty = (): StoredClassificationSettings => ({ revision: 0, services: [] })
 type Service = z.infer<typeof classificationServiceSchema>
@@ -371,6 +372,7 @@ export class ClassificationSettingsOwner {
   }
   readonly selectSkills: ClassifySkills = async ({
     text,
+    loadImages,
     catalog,
     signal,
     observeUsage,
@@ -401,7 +403,7 @@ export class ClassificationSettingsOwner {
       return undefined
     }
     const candidates = boundedSkillSelectorCatalog(catalog)
-    if (!text.trim() || !candidates.length) {
+    if ((!text.trim() && !loadImages) || !candidates.length) {
       log.info('classification selection skipped', { reason: 'empty-input' })
       return []
     }
@@ -413,7 +415,8 @@ export class ClassificationSettingsOwner {
       signal,
       observeUsage,
       state.revision,
-      usageContext
+      usageContext,
+      loadImages
     )
   }
   readonly selectReadingRoute: ClassifyReadingRoute = async ({
@@ -647,7 +650,8 @@ export class ClassificationSettingsOwner {
     signal: AbortSignal,
     observeUsage: ((value: ClassificationUsage) => void) | undefined,
     revision: number | undefined,
-    usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>
+    usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>,
+    loadImages?: Parameters<ClassifySkills>[0]['loadImages']
   ): Promise<{ name: string; path: string }[] | undefined> {
     if (revision === undefined) return undefined
     // Conservative byte budget stays below TypeSafe's context budget even for CJK input.
@@ -684,7 +688,8 @@ export class ClassificationSettingsOwner {
         revision,
         'capability-selection',
         undefined,
-        { ...usageContext, scenario: 'capability-selection' }
+        { ...usageContext, scenario: 'capability-selection' },
+        loadImages
       )
       observeUsage?.({
         eventId: randomUUID(),
@@ -754,7 +759,8 @@ export class ClassificationSettingsOwner {
     purpose:
       'save-validation' | 'probe' | 'capability-selection' | 'reading-route' | 'smart-collections',
     observeRequest?: (event: ClassificationRequestUsage) => Promise<void>,
-    usageContext?: ClassificationUsageContext
+    usageContext?: ClassificationUsageContext,
+    loadImages?: Parameters<ClassifySkills>[0]['loadImages']
   ): Promise<{
     result: {
       model: string
@@ -802,10 +808,26 @@ export class ClassificationSettingsOwner {
         throw new ClassificationRequestError({ ok: false, category: 'auth' })
       phase = 'configuration'
       controller.signal.throwIfAborted()
-      const body = JSON.stringify({ model: modelId, state, questions })
+      if ((initial.classification?.revision ?? 0) !== revision)
+        throw new Error('Classification settings changed.')
+      const assets = loadImages
+        ? await prepareClassificationImages(await loadImages(controller.signal), controller.signal)
+        : undefined
+      controller.signal.throwIfAborted()
+      const hasImages = assets !== undefined && Object.keys(assets).length > 0
+      if (loadImages && !state.trim() && !hasImages)
+        throw new Error('Classification input is empty.')
+      const body = JSON.stringify({
+        model: modelId,
+        state: hasImages ? { text: state, images: Object.keys(assets) } : state,
+        questions,
+        ...(hasImages ? { assets } : {})
+      })
+      if (hasImages && Buffer.byteLength(body, 'utf8') > 16 * 1024 * 1024)
+        throw new Error('Classification image request exceeds the body budget.')
       for (let attempt = 0; attempt < 2; attempt += 1) {
         phase = 'settings'
-        const current = attempt === 0 ? initial : await this.repository.getSettings()
+        const current = attempt === 0 && !loadImages ? initial : await this.repository.getSettings()
         phase = 'configuration'
         if ((current.classification?.revision ?? 0) !== revision)
           throw new Error('Classification settings changed.')
@@ -822,6 +844,7 @@ export class ClassificationSettingsOwner {
         })
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (key) headers.Authorization = `Bearer ${key}`
+        if (hasImages) headers['TypeSafe-Danger-Zone-Images'] = 'true'
         const event = {
           eventId: randomUUID(),
           providerId: target.providerId ?? `classification:${target.id}`,
@@ -839,7 +862,9 @@ export class ClassificationSettingsOwner {
             this.fetchImpl,
             target.adapter === 'custom'
               ? target.baseUrl!
-              : CLASSIFICATION_ENDPOINTS[target.adapter],
+              : target.adapter === 'openrouter' && hasImages
+                ? 'https://openrouter.ai/api/v1/systemone'
+                : CLASSIFICATION_ENDPOINTS[target.adapter],
             {
               method: 'POST',
               headers,

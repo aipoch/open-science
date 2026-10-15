@@ -50,7 +50,7 @@ type NotebookTurnInputs = Readonly<{
   references: FileReference[]
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
-  promptContent: Pick<AcpPromptContentOwner, 'prepare'>
+  promptContent: Pick<AcpPromptContentOwner, 'prepare' | 'loadClassificationImages'>
   imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
   presentation: Pick<
     AcpSessionPresentationPolicy,
@@ -290,6 +290,14 @@ class AcpPromptPreparationOwner {
                 text,
                 catalog,
                 signal: input.signal,
+                loadImages: async (signal) =>
+                  this.options.promptContent.loadClassificationImages({
+                    appSessionId: input.request.sessionId,
+                    projectId: input.projectId,
+                    currentImages: input.request.currentImages,
+                    currentUploads: input.request.attachments ?? [],
+                    signal
+                  }),
                 usageContext: { projectId: context.projectId, sessionId: context.sessionId },
                 observeUsage: (entry) => usage.push(entry)
               })

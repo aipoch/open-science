@@ -24,7 +24,7 @@ type TestContextTurn = ContextWindowTurnHandle & {
 type Fixture = {
   owner: AcpPromptPreparationOwner
   prepare: (overrides?: Record<string, unknown>) => Promise<PreparedPromptHandle>
-  promptContent: { prepare: Mock }
+  promptContent: { prepare: Mock; loadClassificationImages: Mock }
   contextUsage: { beginTurn: Mock; replacePromptSkillDocuments: Mock }
   turn: TestContextTurn
   turnSkill: { prepareProvider: Mock }
@@ -58,6 +58,7 @@ const setup = (
   const turn = contextTurn()
   const promptClose = vi.fn()
   const promptContent = {
+    loadClassificationImages: vi.fn(async () => []),
     prepare: vi.fn(
       async (input: {
         references: readonly FileReference[]
@@ -1002,6 +1003,44 @@ describe('AcpPromptPreparationOwner', () => {
 
 describe('optional main-prompt classification', () => {
   const catalog = [{ name: 'Research', description: 'Research', path: '/allowed/SKILL.md' }]
+  it('loads only current-turn images for Jev capability selection', async () => {
+    const classifySkills = vi.fn(async (input) => {
+      await input.loadImages(input.signal)
+      return [{ name: 'Research', path: '/allowed/SKILL.md' }]
+    })
+    const fixture = setup(undefined, undefined, undefined, { classifySkills })
+    const currentImage = { mimeType: 'image/png' as const, data: 'aA==', byteLength: 1 }
+    const attachment = {
+      id: 'upload-1',
+      sessionId: 'session-1',
+      name: 'image.png',
+      originalName: 'image.png',
+      path: '/managed/image.png',
+      mimeType: 'image/png',
+      size: 1
+    }
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      await input.codex.selectSkills(
+        input.selectionText,
+        catalog,
+        input.codex.signal,
+        input.codex.observeUsage
+      )
+      return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+    })
+
+    await fixture.prepare({
+      request: request({ currentImages: [currentImage], attachments: [attachment] })
+    })
+
+    expect(fixture.promptContent.loadClassificationImages).toHaveBeenCalledWith({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      currentImages: [currentImage],
+      currentUploads: [attachment],
+      signal: expect.any(AbortSignal)
+    })
+  })
   it.each(['selected', 'fallback', 'error', 'stale', 'reviewer', 'task'] as const)(
     'handles %s without misattributing usage or applying stale results',
     async (mode) => {

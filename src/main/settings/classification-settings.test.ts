@@ -147,6 +147,41 @@ it('validates a new service before writing any credential or configuration', asy
   expect(saved.revision).toBe(1)
   expect(fetchMock).toHaveBeenCalledOnce()
 })
+it('sends current images through the Jev System One endpoint on OpenCode', async () => {
+  await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen classifier',
+    apiKey: 'zen-key'
+  })
+  await owner.mutate({ revision: 1, kind: 'bind', binding: { serviceId, modelId: 'jev-1.13' } })
+  fetchMock.mockClear()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 320, height: 280, channels: 3, background: 'blue' }
+  })
+    .png()
+    .toBuffer()
+  const image = {
+    mimeType: 'image/png' as const,
+    data: imageBytes.toString('base64'),
+    byteLength: imageBytes.byteLength
+  }
+  expect(await owner.selectSkills({ ...request(), loadImages: async () => [image] })).toEqual([
+    { name: candidate.name, path: candidate.path }
+  ])
+  const [url, init] = fetchMock.mock.calls[0]!
+  expect(url).toBe('https://opencode.ai/inference/v1/systemone')
+  expect(init?.headers).toMatchObject({
+    Authorization: 'Bearer zen-key',
+    'TypeSafe-Danger-Zone-Images': 'true'
+  })
+  expect(JSON.parse(String(init?.body)).assets).toHaveProperty(
+    JSON.parse(String(init?.body)).state.images[0]
+  )
+})
 it('rejects a new invalid key without creating settings and redacts validation details', async () => {
   fetchMock.mockResolvedValueOnce(
     new Response(JSON.stringify({ error: { message: 'Invalid synthetic-bad-key' } }), {
@@ -241,7 +276,8 @@ it('preserves historical unconfigured behavior and never registers a chat provid
   await configure()
   expect((await repository.getSettings()).providers).toEqual([])
   expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
-    'jev-latest'
+    'jev-latest',
+    'jev-preview'
   ])
   expect((await owner.snapshot()).services[0]).toMatchObject({
     configured: true,
@@ -314,6 +350,48 @@ it('sends only text and candidate metadata, maps paths locally, and separates us
     })
   )
 })
+it.each([
+  ['TypeSafe', configure, 'https://api.typesafe.ai/v1/systemone', 'jev-preview'],
+  [
+    'OpenRouter',
+    () => configureRouter(false),
+    'https://openrouter.ai/api/v1/systemone',
+    'typesafe/jev-1.14'
+  ]
+] as const)(
+  'sends current images to Jev through %s System One',
+  async (_provider, setup, endpoint, model) => {
+    await setup()
+    if (model === 'typesafe/jev-1.14') {
+      await owner.mutate({ revision: 2, kind: 'bind', binding: { serviceId, modelId: model } })
+      fetchMock.mockClear()
+    } else {
+      await owner.mutate({ revision: 2, kind: 'bind', binding: { serviceId, modelId: model } })
+      fetchMock.mockClear()
+    }
+    const { default: sharp } = await import('sharp')
+    const imageBytes = await sharp({
+      create: { width: 320, height: 280, channels: 3, background: 'red' }
+    })
+      .png()
+      .toBuffer()
+    const image = {
+      mimeType: 'image/png' as const,
+      data: imageBytes.toString('base64'),
+      byteLength: imageBytes.byteLength
+    }
+    expect(
+      await owner.selectSkills({ ...request(), text: '', loadImages: async () => [image] })
+    ).toEqual([{ name: candidate.name, path: candidate.path }])
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(endpoint)
+    expect(init?.headers).toMatchObject({ 'TypeSafe-Danger-Zone-Images': 'true' })
+    const body = JSON.parse(String(init?.body))
+    expect(body.model).toBe(model)
+    expect(body.assets).toHaveProperty(body.state.images[0])
+    expect(body.state.images).toHaveLength(1)
+  }
+)
 it('classifies ambiguous linked-PDF requests conservatively', async () => {
   await configure()
   fetchMock.mockResolvedValueOnce(readingResponse(0.92, 0.52))
@@ -737,7 +815,7 @@ it.each([true, false])(
       'jev-1.13-free'
     ])
     for (const [url, init] of fetchMock.mock.calls) {
-      expect(url).toBe('https://opencode.ai/zen/v1/systemone')
+      expect(url).toBe('https://opencode.ai/inference/v1/systemone')
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer zen-key' })
       expect(init?.redirect).toBe('manual')
       expect(JSON.parse(String(init?.body))).toHaveProperty('questions')
@@ -1232,6 +1310,31 @@ it('supports a loopback custom TypeSafe-compatible endpoint without an API key',
     binding: { serviceId, modelId: model }
   })
   expect(bound.capabilitySelection).toEqual({ serviceId, modelId: model })
+
+  fetchMock.mockClear()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 320, height: 280, channels: 3, background: 'green' }
+  })
+    .png()
+    .toBuffer()
+  const image = {
+    mimeType: 'image/png' as const,
+    data: imageBytes.toString('base64'),
+    byteLength: imageBytes.byteLength
+  }
+  expect(
+    await owner.selectSkills({ ...request(), text: '', loadImages: async () => [image] })
+  ).toEqual([{ name: candidate.name, path: candidate.path }])
+  const [imageUrl, imageInit] = fetchMock.mock.calls[0]!
+  expect(imageUrl).toBe(endpoint)
+  expect(imageInit?.headers).toMatchObject({
+    'Content-Type': 'application/json',
+    'TypeSafe-Danger-Zone-Images': 'true'
+  })
+  expect(JSON.parse(String(imageInit?.body)).assets).toHaveProperty(
+    JSON.parse(String(imageInit?.body)).state.images[0]
+  )
 })
 
 it('requires a key for a remote custom TypeSafe-compatible endpoint', async () => {
@@ -1339,7 +1442,7 @@ it.each(['typesafe', 'openrouter', 'opencode', 'custom'] as const)(
         : adapter === 'openrouter'
           ? 'https://openrouter.ai/api/alpha/decisions'
           : adapter === 'opencode'
-            ? 'https://opencode.ai/zen/v1/systemone'
+            ? 'https://opencode.ai/inference/v1/systemone'
             : 'https://classifier.example.test/decisions'
     )
     const body = JSON.parse(String(init?.body))
