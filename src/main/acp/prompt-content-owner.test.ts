@@ -1,7 +1,18 @@
 import sharp from 'sharp'
 import * as attachmentMedia from '../uploads/attachment-media'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
-import { access, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  truncate,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -149,6 +160,37 @@ describe('classification image uploads', () => {
     expect(images[0]).toMatchObject({ mimeType: 'image/png' })
     expect(Buffer.from(images[0]!.data, 'base64').byteLength).toBe(images[0]!.byteLength)
     expect(openLatest).not.toHaveBeenCalled()
+  })
+
+  it('rejects a path replaced with an external symlink after upload authorization', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [attachment] = await stageUploadFixtures(uploads, {
+      files: [
+        { name: 'current-image.png', mimeType: 'image/png', content: imageBytes.toString('base64') }
+      ]
+    })
+    const resolveManagedUploadPath = uploads.resolveManagedUploadPath.bind(uploads)
+    const externalDir = join(root, 'external')
+    await mkdir(externalDir)
+    await writeFile(join(externalDir, 'current-image.png'), imageBytes)
+    vi.spyOn(uploads, 'resolveManagedUploadPath').mockImplementation(async (...args) => {
+      const authorizedPath = await resolveManagedUploadPath(...args)
+      const authorizedDir = dirname(authorizedPath)
+      await rename(authorizedDir, join(root, 'original-upload'))
+      await symlink(externalDir, authorizedDir, process.platform === 'win32' ? 'junction' : 'dir')
+      return authorizedPath
+    })
+    const loader = new AcpClassificationImageLoader({ uploadRepository: uploads })
+
+    await expect(
+      loader.load({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        currentUploads: [attachment!],
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('Classification upload changed while it was being opened.')
   })
 })
 

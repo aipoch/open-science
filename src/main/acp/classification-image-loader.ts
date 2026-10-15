@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
+import { open, realpath, stat } from 'node:fs/promises'
 
 import type { AcpMessageImage } from '../../shared/acp-image-contract'
 import {
@@ -65,10 +65,31 @@ export class AcpClassificationImageLoader {
             sessionId: attachment.versionId ? attachment.sessionId : input.appSessionId
           }
         )
-        const fileInfo = await stat(filePath)
-        if (!fileInfo.isFile() || fileInfo.size > MAX_AUTO_PROCESS_IMAGE_BYTES)
-          throw new Error('Classification image exceeds the processing limit.')
-        bytes = await readFile(filePath)
+        const handle = await open(filePath, 'r')
+        try {
+          // The repository returned this canonical, authorized path. Open it once, then confirm
+          // that the pathname and handle still identify the same in-root file before reading.
+          if ((await realpath(filePath)) !== filePath)
+            throw new Error('Classification upload changed while it was being opened.')
+          const fileInfo = await handle.stat({ bigint: true })
+          const currentInfo = await stat(filePath, { bigint: true })
+          if (fileInfo.dev !== currentInfo.dev || fileInfo.ino !== currentInfo.ino)
+            throw new Error('Classification upload changed while it was being opened.')
+          if (!fileInfo.isFile() || fileInfo.size > BigInt(MAX_AUTO_PROCESS_IMAGE_BYTES))
+            throw new Error('Classification image exceeds the processing limit.')
+          bytes = await handle.readFile()
+          const afterRead = await handle.stat({ bigint: true })
+          if (
+            afterRead.size !== fileInfo.size ||
+            afterRead.mtimeNs !== fileInfo.mtimeNs ||
+            afterRead.ctimeNs !== fileInfo.ctimeNs
+          )
+            throw new Error('Classification upload changed while it was being read.')
+          if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES)
+            throw new Error('Classification image exceeds the processing limit.')
+        } finally {
+          await handle.close()
+        }
       }
       input.signal.throwIfAborted()
       const prepared = await prepareModelImageData(bytes)
