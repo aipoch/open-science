@@ -838,7 +838,7 @@ const CODEX_ACP_REVIEWER_MCP_REPLACEMENT =
 
 // Reviewer cannot submit without this server. Native required-server startup waits for tools/list
 // and fails before model dispatch; optional MCP servers retain the upstream startup grace period.
-export const patchCodexAcpReviewerMcpSource = (source: string): string => {
+const patchCodexAcpReviewerMcpSource = (source: string): string => {
   const variants = [CODEX_ACP_REVIEWER_MCP_SOURCE, CODEX_ACP_REVIEWER_MCP_REPLACEMENT]
   const matches = variants.filter((variant) => source.includes(variant))
   if (matches.length === 1 && source.split(matches[0]).length === 2) {
