@@ -262,6 +262,28 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       join(fixture, 'packages/resilient-download/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/resilient-download'))}, test: {name:'resilient-download',include:['src/**/*.test.ts']}}`
     )
+    const literaturePackages = [
+      'pdf-structure',
+      'pdf-translation',
+      'literature-citations',
+      'journal-catalog',
+      'literature-discovery',
+      'literature-screening',
+      'literature-library',
+      'literature-reading'
+    ]
+    for (const name of literaturePackages) {
+      const root = join(fixture, 'packages', name)
+      mkdirSync(join(root, 'test'), { recursive: true })
+      writeFileSync(
+        join(root, 'test/contract.test.ts'),
+        'import { it } from "vitest"; it("contract", () => {})'
+      )
+      writeFileSync(
+        join(root, 'vitest.config.ts'),
+        `export default {root: ${JSON.stringify(root)}, test: {name: ${JSON.stringify(name)}, include: ['test/**/*.test.ts']}}`
+      )
+    }
     const list = (portable: string, excluded = [core], scope = ''): Array<{ file: string }> =>
       JSON.parse(
         execFileSync(
@@ -293,7 +315,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         core,
         'packages/compute',
         'packages/durable-files',
-        'packages/resilient-download'
+        'packages/resilient-download',
+        ...literaturePackages.map((name) => `packages/${name}`)
       ]).map(({ file }) => normalize(file))
     ).toEqual([join(fixture, 'src/host.test.ts')])
     // A trusted baseline predating these standalone packages must still discover the new package, exactly once.
@@ -310,12 +333,13 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         'packages/durable-files/src/publication.test.ts',
         'packages/durable-files/src/publication.architecture.test.ts',
         'packages/durable-files/src/publication.integration.test.ts',
-        'packages/resilient-download/src/transport.test.ts'
+        'packages/resilient-download/src/transport.test.ts',
+        ...literaturePackages.map((name) => `packages/${name}/test/contract.test.ts`)
       ]
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(11)
+    expect(list('0')).toHaveLength(19)
     // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
     for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
       const file = join(fixture, path)
@@ -337,8 +361,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
       expect([...host, ...packages].sort()).toEqual(baseline)
     }
-    expect(list('0', [], 'host')).toHaveLength(13)
-    expect(list('0', [], 'packages')).toHaveLength(13)
+    expect(list('0', [], 'host')).toHaveLength(21)
+    expect(list('0', [], 'packages')).toHaveLength(21)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

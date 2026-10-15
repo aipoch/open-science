@@ -11,6 +11,8 @@ import {
   LITERATURE_CITATION_STYLES,
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   type LiteratureCitationLocale,
+  type LiteratureCitationStylesRequest,
+  type LiteratureCitationStylesResult,
   type LiteratureCitationStyle,
   type BibliographicRecord,
   type CitationImportWarning,
@@ -269,19 +271,46 @@ const loadEngine = async (
 
 class LiteratureCitationFormatter {
   private enginePromise: Promise<WasmCitationEngine> | undefined
+  private stylesRevision = -1
 
   constructor(private readonly styleLibrary?: LiteratureCitationStyleLibrary) {}
 
   private engine(): Promise<WasmCitationEngine> {
-    this.enginePromise ??= loadEngine(this.styleLibrary).catch((error) => {
+    const revision = this.styleLibrary?.revision ?? 0
+    if (this.stylesRevision !== revision) {
       this.enginePromise = undefined
-      throw error
-    })
+      this.stylesRevision = revision
+    }
+    if (!this.enginePromise) {
+      const loading = loadEngine(this.styleLibrary).catch((error) => {
+        if (this.enginePromise === loading) this.enginePromise = undefined
+        throw error
+      })
+      this.enginePromise = loading
+    }
     return this.enginePromise
   }
 
-  invalidateStyles(): void {
-    this.enginePromise = undefined
+  /** Style mutation and formatter refresh are one package operation. */
+  async citationStyles(
+    request: LiteratureCitationStylesRequest
+  ): Promise<LiteratureCitationStylesResult> {
+    const library = this.styleLibrary
+    if (!library) throw new Error('A citation style library is required for style management.')
+    if (request.kind === 'preview') {
+      const [styles, preview] = await Promise.all([
+        library.list(),
+        this.formatStyleExample(request.styleId)
+      ])
+      return { styles, preview: { styleId: request.styleId, ...preview } }
+    }
+    let changedStyleId: string | undefined
+    if (request.kind === 'import') changedStyleId = await library.import(request.content)
+    else if (request.kind === 'delete') {
+      await library.delete(request.styleId)
+      changedStyleId = request.styleId
+    }
+    return { styles: await library.list(), ...(changedStyleId ? { changedStyleId } : {}) }
   }
 
   async formatReferences(

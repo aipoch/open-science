@@ -1,9 +1,16 @@
+import type { LiteratureRendererHost } from '../renderer-host'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { completeLiteraturePdfDraft, extractLiteraturePdfDraft } from './literature-pdf-metadata'
 
 const pdf = vi.hoisted(() => ({ getDocument: vi.fn() }))
-vi.mock('../../workspace/previews/pdfjs', () => ({ pdfjsLib: pdf }))
+const literatureRendererHost: Pick<LiteratureRendererHost, 'api' | 'loadPdf'> = {
+  get api() {
+    return window.api
+  },
+  loadPdf: async (input) =>
+    pdf.getDocument('resource' in input ? { managed: true } : { data: input.data })
+}
 const title = 'Proteins regulate replication through stabilization'
 const doi = '10.1234/article'
 const fallback = literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'paper' })
@@ -50,7 +57,7 @@ afterEach(() => {
 describe('PDF terminal publication DOI fallback', () => {
   it('checks the prominent first-page title before adopting the publication DOI and reuses its lookup', async () => {
     const { file, lookup, getPage, destroy } = setup()
-    const draft = await extractLiteraturePdfDraft(window.api, file, fallback)
+    const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
     expect(draft.identifiers).toEqual([{ scheme: 'doi', value: doi, isPrimary: true }])
     expect((await completeLiteraturePdfDraft(window.api, draft)).title).toBe(title)
     expect(lookup).toHaveBeenCalledExactlyOnceWith(doi)
@@ -64,7 +71,9 @@ describe('PDF terminal publication DOI fallback', () => {
     `Accepted 11 February 2025\nPublished 19 March 2025\nReferences\n${doi}`
   ])('does not query an ambiguous or reference-only tail: %s', async (last) => {
     const { file, lookup } = setup(last)
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).identifiers).toEqual([])
+    expect(
+      (await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).identifiers
+    ).toEqual([])
     expect(lookup).not.toHaveBeenCalled()
   })
   it('rejects a real referenced work even when its title occurs in the body or embedded metadata', async () => {
@@ -73,12 +82,14 @@ describe('PDF terminal publication DOI fallback', () => {
       item(title)
     ])
     lookup.mockResolvedValue({ ...resolved, title })
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).identifiers).toEqual([])
+    expect(
+      (await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).identifiers
+    ).toEqual([])
   })
   it('retains the local draft when lookup fails', async () => {
     const { file, lookup, destroy } = setup()
     lookup.mockRejectedValue(new Error('offline'))
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).title).toBe(
+    expect((await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).title).toBe(
       'Generic publisher title'
     )
     expect(destroy).toHaveBeenCalledOnce()
@@ -92,7 +103,7 @@ describe('PDF terminal publication DOI fallback', () => {
       }),
       cleanup
     }))
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).title).toBe(
+    expect((await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).title).toBe(
       'Generic publisher title'
     )
     expect(cleanup).toHaveBeenCalledTimes(3)
@@ -102,32 +113,38 @@ describe('PDF terminal publication DOI fallback', () => {
     'does not query without a substantial prominent title: %s',
     async (text) => {
       const { file, lookup } = setup(publication, [item(text, 18)])
-      expect((await extractLiteraturePdfDraft(window.api, file, fallback)).identifiers).toEqual([])
+      expect(
+        (await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).identifiers
+      ).toEqual([])
       expect(lookup).not.toHaveBeenCalled()
     }
   )
   it('preserves a detected PMID as a secondary identifier', async () => {
     const { file } = setup(publication, [item(title, 18), item('PMID: 40106570')])
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).identifiers).toEqual([
+    expect(
+      (await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).identifiers
+    ).toEqual([
       { scheme: 'doi', value: doi, isPrimary: true },
       { scheme: 'pmid', value: '40106570', isPrimary: false }
     ])
   })
   it('keeps an existing first-page DOI without reading the last page', async () => {
     const { file, lookup, getPage } = setup(publication, [item(title, 18), item('10.1234/front')])
-    expect((await extractLiteraturePdfDraft(window.api, file, fallback)).identifiers[0].value).toBe(
-      '10.1234/front'
-    )
+    expect(
+      (await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)).identifiers[0].value
+    ).toBe('10.1234/front')
     expect(getPage.mock.calls.map(([n]) => n)).toEqual([1, 2])
     expect(lookup).not.toHaveBeenCalled()
   })
   it('does not reread a one-page PDF or read an oversized file', async () => {
     const { file, getPage } = setup('', [item(title, 18)], 1)
-    await extractLiteraturePdfDraft(window.api, file, fallback)
+    await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
     expect(getPage.mock.calls.map(([n]) => n)).toEqual([1])
     const oversized = new File([], 'large.pdf')
     Object.defineProperty(oversized, 'size', { value: 51 * 1024 * 1024 })
-    expect(await extractLiteraturePdfDraft(window.api, oversized, fallback)).toBe(fallback)
+    expect(await extractLiteraturePdfDraft(literatureRendererHost, oversized, fallback)).toBe(
+      fallback
+    )
     expect(pdf.getDocument).toHaveBeenCalledOnce()
   })
 })
@@ -168,7 +185,7 @@ it('extracts and completes a real PDF using PDF.js font geometry and text joinin
   const realPdf = await import('pdfjs-dist/legacy/build/pdf.mjs')
   pdf.getDocument.mockImplementation(realPdf.getDocument)
   const file = new File([publicationPdf()], 'article.pdf', { type: 'application/pdf' })
-  const local = await extractLiteraturePdfDraft(window.api, file, fallback)
+  const local = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
   expect(local.identifiers).toEqual([{ scheme: 'doi', value: doi, isPrimary: true }])
   expect((await completeLiteraturePdfDraft(window.api, local)).title).toBe(title)
   expect(lookup).toHaveBeenCalledExactlyOnceWith(doi)
@@ -214,7 +231,7 @@ it('retains first-page text when embedded metadata and a later page fail', async
     cleanup
   }))
   const notice = vi.fn()
-  const draft = await extractLiteraturePdfDraft(window.api, file, fallback, notice)
+  const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback, notice)
   expect(draft.title).toBe(title)
   expect(draft.identifiers[0].value).toBe(doi)
   expect(notice).toHaveBeenCalledWith({ textUnavailable: true })
@@ -234,7 +251,7 @@ it('uses XMP title and authors when Info contains only a filename', async () => 
         ]
     }
   })
-  const draft = await extractLiteraturePdfDraft(window.api, file, fallback)
+  const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
   expect(draft).toMatchObject({
     title,
     creators: [{ familyName: 'Alice Example' }, { familyName: 'Bob Example' }],
@@ -245,7 +262,7 @@ it('uses XMP title and authors when Info contains only a filename', async () => 
 it('reports PDFs with no text while retaining embedded metadata', async () => {
   const { file, destroy } = setup('', [], 1)
   const notice = vi.fn()
-  const draft = await extractLiteraturePdfDraft(window.api, file, fallback, notice)
+  const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback, notice)
   expect(draft.title).toBe('Generic publisher title')
   expect(notice).toHaveBeenCalledWith({ textUnavailable: true })
   expect(destroy).toHaveBeenCalledOnce()
@@ -271,7 +288,7 @@ it('does not replace a prominent PDF title with a cited paper returned by DOI lo
     title: 'A different cited paper',
     abstract: 'Wrong abstract'
   })
-  const draft = await extractLiteraturePdfDraft(window.api, file, fallback)
+  const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
   const notice = vi.fn()
   const completed = await completeLiteraturePdfDraft(window.api, draft, notice)
   expect(completed.abstract).toBe('')
@@ -302,15 +319,11 @@ it('uses geometry to end a structured abstract even when the final line has no E
     })),
     1
   )
-  const draft = await extractLiteraturePdfDraft(window.api, file, fallback)
+  const draft = await extractLiteraturePdfDraft(literatureRendererHost, file, fallback)
   expect(draft.abstract).toContain('Background:')
   expect(draft.abstract).toContain('Conclusions: The evidence supports further investigation.')
   expect(draft.abstract).not.toContain('body text')
 })
-
-vi.mock('../../workspace/previews/managed-pdf-document', () => ({
-  createManagedPdfLoadingTask: () => pdf.getDocument({ managed: true })
-}))
 
 it.each(['upload-version', 'artifact-version'] as const)(
   'extracts the exact Workspace %s through a released preview capability',
@@ -329,7 +342,7 @@ it.each(['upload-version', 'artifact-version'] as const)(
       path: `${kind}:version`,
       checksum: 'a'.repeat(64)
     }
-    expect((await extractLiteraturePdfDraft(window.api, source, fallback)).title).toBe(
+    expect((await extractLiteraturePdfDraft(literatureRendererHost, source, fallback)).title).toBe(
       'Generic publisher title'
     )
     expect(acquire).toHaveBeenCalledExactlyOnceWith({
@@ -354,7 +367,7 @@ it('releases an oversized Workspace PDF without allocating or parsing its bytes'
   const notice = vi.fn()
   expect(
     await extractLiteraturePdfDraft(
-      window.api,
+      literatureRendererHost,
       {
         kind: 'upload-version',
         projectId: 'project',

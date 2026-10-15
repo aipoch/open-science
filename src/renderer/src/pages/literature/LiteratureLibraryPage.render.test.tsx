@@ -600,7 +600,7 @@ describe('LiteratureLibraryPage', () => {
     const title = await screen.findByLabelText('Title')
     expect((title as HTMLInputElement).value).toBe('workspace paper')
     expect(extractLiteraturePdfDraft).toHaveBeenCalledWith(
-      window.api,
+      expect.objectContaining({ api: window.api }),
       source,
       expect.anything(),
       expect.any(Function)

@@ -1,7 +1,7 @@
+import type { LiteraturePreviewItem } from '../renderer-host'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import type { useFileDropZone } from '@/hooks/useFileDropZone'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type {
@@ -92,7 +92,7 @@ export function LiteratureDetailOverview({
   addPdf: (file: File) => Promise<void>
   pdfError: string | undefined
   detailController: LiteratureDetailController
-  setPreviewItem: React.Dispatch<React.SetStateAction<PreviewFileItem | undefined>>
+  setPreviewItem: React.Dispatch<React.SetStateAction<LiteraturePreviewItem | undefined>>
   pdfDropZoneProps: ReturnType<typeof useFileDropZone>['dropZoneProps']
   isDraggingPdf: boolean
 }): React.JSX.Element | null {

@@ -5,14 +5,13 @@ import {
 } from '@aipoch/journal-catalog/contracts'
 import {
   LITERATURE_CITATION_LOCALES,
-  LITERATURE_CSL_MAX_BYTES,
   LITERATURE_IMPORT_WARNINGS,
   LITERATURE_ITEM_TYPES,
   LITERATURE_RECORD_IMPORT_FORMATS,
   LITERATURE_RECORD_IMPORT_MAX_BYTES,
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
-  literatureCitationStylePreviewSchema,
-  literatureCitationStyleViewSchema,
+  literatureCitationStylesRequestSchema,
+  literatureCitationStylesResultSchema,
   literatureIdentifierInputSchema
 } from '@aipoch/literature-citations/contracts'
 import {
@@ -569,26 +568,6 @@ const literatureFormatReferencesRequestSchema = z
     itemIds: z.array(nonEmptyTextSchema).min(1).max(200),
     styleId: nonEmptyTextSchema.max(200),
     locale: z.enum(LITERATURE_CITATION_LOCALES)
-  })
-  .strict()
-
-const literatureCitationStylesRequestSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('list') }).strict(),
-  z
-    .object({ kind: z.literal('import'), content: z.string().min(1).max(LITERATURE_CSL_MAX_BYTES) })
-    .strict(),
-  z.object({ kind: z.literal('delete'), styleId: nonEmptyTextSchema }).strict(),
-  z.object({ kind: z.literal('preview'), styleId: nonEmptyTextSchema }).strict()
-])
-
-const literatureCitationStylesResultSchema = z
-  .object({
-    styles: z.array(literatureCitationStyleViewSchema),
-    changedStyleId: nonEmptyTextSchema.optional(),
-    preview: literatureCitationStylePreviewSchema
-      .extend({ styleId: nonEmptyTextSchema })
-      .strict()
-      .optional()
   })
   .strict()
 

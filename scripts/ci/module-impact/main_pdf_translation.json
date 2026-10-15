@@ -85,7 +85,6 @@
     "src/main/literature/pdf-translation/api-target.ts",
     "src/main/literature/pdf-translation/api-target.test.ts",
     "src/main/literature/pdf-translation/diagnostics.test.ts",
-    "src/main/literature/pdf-translation/cache-revision.test.ts",
     "src/main/literature/pdf-translation/pdf-cache.ts",
     "src/main/literature/pdf-translation/pdf-cache.test.ts",
     "test/pdf-translation-preservation.ts",
@@ -107,7 +106,11 @@
     "src/main/literature/pdf-translation/ipc.ts",
     "src/main/literature/pdf-translation/usage.ts"
   ],
-  "consumerModules": ["desktop_composition", "shared_application_contracts", "workspace_previews"],
+  "consumerModules": [
+    "desktop_composition",
+    "shared_application_contracts",
+    "workspace_previews"
+  ],
   "testFiles": {
     "owner": [
       "src/main/literature/pdf-translation/index.test.ts",
@@ -120,7 +123,6 @@
       "src/main/literature/pdf-translation/local-worker.integration.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
-      "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "test/pdf-translation-preservation.test.ts",
       "test/pdf-translation-native-verification.test.ts"
@@ -496,6 +498,8 @@
       "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions"],
+  "capabilityOverlays": [
+    "e2e_regressions"
+  ],
   "fallbackCapability": "main_runtime"
 }

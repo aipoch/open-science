@@ -74,7 +74,6 @@ export async function composeResearchCatalog({
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
   journalAttributes: JournalAttributes
-  literatureCitationStyles: LiteratureCitationStyleLibrary
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
   literatureReferenceResolver: LiteratureReferenceResolver
@@ -236,7 +235,6 @@ export async function composeResearchCatalog({
     memoryService,
     journalAttributes,
     literatureCatalog,
-    literatureCitationStyles,
     literatureCitationFormatter,
     literatureCitationDocument,
     literatureReferenceResolver,

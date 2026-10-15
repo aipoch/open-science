@@ -1,8 +1,11 @@
+import type {
+  LiteraturePreviewItem,
+  LiteratureReadingDocument,
+  LiteratureProject,
+  LiteratureProjectCreation
+} from '../renderer-host'
 import { useLiteratureHost } from '../renderer-host'
 
-import { type PdfReadingDocument } from '@/stores/navigation-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { type useProjectStore } from '@/stores/project-store'
 import type {
   LiteratureCatalogSearchRequest,
   LiteratureItemView
@@ -11,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useLiteratureClient } from '../literature-read-pages'
-type PendingLiteratureReading = readonly PdfReadingDocument[]
+type PendingLiteratureReading = readonly LiteratureReadingDocument[]
 const isItem = (entry: unknown): entry is LiteratureItemView =>
   typeof entry === 'object' && entry !== null && 'item' in entry && 'metadataRevision' in entry
 
@@ -28,8 +31,8 @@ export function useLiteratureReading({
   detailController,
   buildEntriesRequest
 }: {
-  selectedProject: ReturnType<typeof useProjectStore.getState>['projects'][number] | undefined
-  setPreviewItem: React.Dispatch<React.SetStateAction<PreviewFileItem | undefined>>
+  selectedProject: LiteratureProject | undefined
+  setPreviewItem: React.Dispatch<React.SetStateAction<LiteraturePreviewItem | undefined>>
   isBatching: boolean
   selectionStore: LiteratureSelectionStore
   items: LiteratureItemView[]
@@ -55,8 +58,8 @@ export function useLiteratureReading({
     targetProjectId: string,
     reading?: PendingLiteratureReading | undefined
   ) => Promise<void>
-  requestReadWithAgent: (item: PreviewFileItem) => void
-  readingProjectFormDialog: ReturnType<typeof useProjectFormDialog>
+  requestReadWithAgent: (item: LiteraturePreviewItem) => void
+  readingProjectFormDialog: LiteratureProjectCreation
   requestReadSelection: () => Promise<void>
 } {
   const { readLiteratureSelectionPage } = useLiteratureClient()
@@ -141,7 +144,7 @@ export function useLiteratureReading({
   )
   const selectedReadingProjectId = selectedProject?.id
   const requestReadWithAgent = useCallback(
-    (item: PreviewFileItem): void => {
+    (item: LiteraturePreviewItem): void => {
       setReadingSelectionEntries(undefined)
       const source = resolvePdfContextTarget(item)
       if (!source) return

@@ -79,7 +79,7 @@ it('keeps the Library page out of eager integration entrypoints', () => {
   }
 })
 
-it('keeps application transport, stores and sibling feature implementations behind the host port', () => {
+it('keeps transport, store types and sibling implementations behind the feature-owned host port', () => {
   const violations: string[] = []
   const visit = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -92,18 +92,7 @@ it('keeps application transport, stores and sibling feature implementations behi
       const source = readFileSync(file, 'utf8')
       if (/\bwindow\s*(?:\?\.)?\.\s*api\b/.test(source))
         violations.push(`${entry.name}: global transport`)
-      const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
-      for (const node of tree.statements) {
-        if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) continue
-        const clause = node.importClause
-        if (clause?.isTypeOnly) continue
-        if (
-          clause?.namedBindings &&
-          ts.isNamedImports(clause.namedBindings) &&
-          clause.namedBindings.elements.every((item) => item.isTypeOnly)
-        )
-          continue
-        const target = node.moduleSpecifier.text
+      for (const target of imports(file)) {
         if (
           /\/stores\//.test(target) ||
           /\/(workspace|home)\//.test(target) ||

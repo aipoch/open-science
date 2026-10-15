@@ -76,7 +76,10 @@ async function setup() {
     }
   }
   const request = { ...input, cache: { source: 'source', checkpointKey: checkpoint.key } }
-  const owner = { readCheckpoint: vi.fn(async () => checkpoint as PdfTranslationCheckpoint | null) }
+  const owner = {
+    recordLayout: vi.fn(async () => {}),
+    readCheckpoint: vi.fn(async () => checkpoint as PdfTranslationCheckpoint | null)
+  }
   const native = new PdfTranslationWriter(() => 'unused')
   const writer = {
     valid: native.valid.bind(native),
@@ -100,7 +103,7 @@ async function setup() {
   const publish = async (): Promise<PdfTranslationPdfResult> => {
     const result = await cache.generate(request, caller)
     expect(result?.cacheToken).toBeDefined()
-    await cache.confirm(report(result!), caller)
+    await cache.recordLayout(report(result!), caller)
     return result!
   }
   return {
@@ -123,7 +126,7 @@ it('publishes only after verification and survives restart; authorized source bi
   const f = await setup()
   const generated = await f.cache.generate(f.request, f.caller)
   await expect(readdir(f.directory)).rejects.toThrow()
-  await f.cache.confirm(f.report(generated!), f.caller)
+  await f.cache.recordLayout(f.report(generated!), f.caller)
   expect(await readdir(f.directory)).toHaveLength(1)
   const restarted = new PdfTranslationPdfCache(f.options)
   const hit = await restarted.generate(
@@ -161,7 +164,7 @@ it('returns no token and writes no directory for a read-only package checkpoint'
   f.owner.readCheckpoint.mockResolvedValue(null)
   const result = await f.cache.generate(f.request, f.caller)
   expect(result?.cacheToken).toBeUndefined()
-  await f.cache.confirm(f.report(result!), f.caller)
+  await f.cache.recordLayout(f.report(result!), f.caller)
   await expect(readdir(f.directory)).rejects.toThrow()
 })
 
@@ -193,7 +196,7 @@ it('adapts a workspace source and checkpoint in both cache directions', async ()
   const request = { ...f.request, cache: { ...f.request.cache, source } }
   const result = await f.cache.generate(request, f.caller)
   expect(result?.cacheToken).toBeDefined()
-  await f.cache.confirm({ ...f.report(result!), source }, f.caller)
+  await f.cache.recordLayout({ ...f.report(result!), source }, f.caller)
   expect((await f.cache.generate(request, f.caller))?.cacheHit).toBe(true)
   for (const args of f.owner.readCheckpoint.mock.calls)
     expect(args).toEqual([source, f.caller, f.checkpoint.key])

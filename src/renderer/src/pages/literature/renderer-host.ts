@@ -1,17 +1,93 @@
 import { createContext, useContext, type ComponentType } from 'react'
 import type { UploadStagingApi } from '@/lib/upload-transfer'
 import type { OpenScienceAPI } from '../../../../shared/renderer-contract-catalog'
-import type { useNavigationStore } from '@/stores/navigation-store'
-import type { useProjectStore } from '@/stores/project-store'
-import type { useTagStore } from '@/stores/tag-store'
-import type { useSettingsStore } from '@/stores/settings-store'
-import type { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { ReactNode } from 'react'
+import type { PDFDocumentLoadingTask } from 'pdfjs-dist'
+import type { Project } from '../../../../shared/projects'
+import type { PdfAnnotation, PdfAnnotationSource } from '../../../../shared/pdf-annotations'
 import type {
-  createBookmarkPreviewItem,
-  requestPdfAnnotationReveal
-} from '../workspace/annotations/annotation-reveal'
-import type { resolvePdfContextTarget } from '../workspace/use-pdf-context-action'
+  LiteratureScopeReference,
+  SessionPdfContextSource
+} from '../../../../shared/session-persistence'
+import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
+import type {
+  NcbiCredentialsView,
+  OpenAlexCredentialView,
+  OpenAlexCredentialValidation,
+  SetOpenAlexCredentialRequest,
+  ValidateOpenAlexCredentialRequest
+} from '../../../../shared/settings'
+
+export type LiteratureProject = Project
+/** Only PDF preview data crosses the feature boundary; workbench state stays in the host. */
+export type LiteraturePreviewItem = {
+  id: string
+  projectId?: string
+  sessionId: string
+  title: string
+  type: 'file'
+  format: 'pdf'
+  source?: 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
+  path: string
+  name: string
+  mimeType?: string
+  size?: number
+  managedFileId?: string
+  artifactId?: string
+  selectedVersionId?: string
+  versionNumber?: number
+}
+export type LiteratureReadingDocument = Readonly<{
+  item: LiteraturePreviewItem
+  source: SessionPdfContextSource
+}>
+export type LiteratureProjectCreation = {
+  openCreateDialog(): void
+  isOpen: boolean
+  dialog: ReactNode
+}
+export type LiteratureNavigation = {
+  activeProjectId: string | undefined
+  pendingLiteratureItemId: string | undefined
+  pendingLiteratureAnnotation: PdfAnnotation | undefined
+  pendingLiteratureLibrarySection: 'library' | undefined
+  pendingLiteratureProjectId: string | undefined
+  pendingLiteratureCollectionId: string | undefined
+  pendingLiteraturePdfImport: PdfAnnotationSource | undefined
+  consumeLiteratureItem(expectedItemId?: string): string | undefined
+  consumeLiteratureLibrarySection(): 'library' | undefined
+  consumeLiteratureProject(expectedProjectId?: string): string | undefined
+  consumeLiteratureCollection(expectedCollectionId?: string): string | undefined
+  consumeLiteraturePdfImport(source: PdfAnnotationSource): PdfAnnotationSource | undefined
+  openProject(projectId: string, origin: 'user', afterNavigate?: () => void): boolean
+  openSession(
+    projectId: string,
+    sessionId: string,
+    origin: 'user',
+    afterNavigate?: () => void
+  ): boolean
+  openLiteratureItem(
+    itemId: string,
+    origin: 'user',
+    annotation?: PdfAnnotation,
+    afterNavigate?: () => void
+  ): void
+  returnFromLibrary(origin: 'user'): void
+  startLiteratureReviewConversation(
+    projectId: string,
+    scope: LiteratureScopeReference,
+    prompt: string
+  ): boolean
+  startPdfReadingConversation(
+    projectId: string,
+    item: LiteraturePreviewItem,
+    source: SessionPdfContextSource
+  ): boolean
+  startPdfReadingConversations(
+    projectId: string,
+    documents: readonly LiteratureReadingDocument[]
+  ): boolean
+}
 
 export type LiteratureRendererApi = Pick<
   OpenScienceAPI,
@@ -31,61 +107,52 @@ type SelectorStore<State> = {
 
 export type LiteratureRendererHost = {
   readonly api: LiteratureRendererApi
-  useNavigationStore: SelectorStore<
-    Pick<
-      ReturnType<typeof useNavigationStore.getState>,
-      | 'activeProjectId'
-      | 'startLiteratureReviewConversation'
-      | 'pendingLiteratureItemId'
-      | 'pendingLiteratureAnnotation'
-      | 'pendingLiteratureLibrarySection'
-      | 'consumeLiteratureLibrarySection'
-      | 'consumeLiteratureItem'
-      | 'pendingLiteratureProjectId'
-      | 'consumeLiteratureProject'
-      | 'pendingLiteratureCollectionId'
-      | 'consumeLiteratureCollection'
-      | 'openProject'
-      | 'pendingLiteraturePdfImport'
-      | 'consumeLiteraturePdfImport'
-      | 'openSession'
-      | 'openLiteratureItem'
-      | 'returnFromLibrary'
-      | 'startPdfReadingConversation'
-      | 'startPdfReadingConversations'
-    >
-  >
-  useProjectStore: SelectorStore<
-    Pick<ReturnType<typeof useProjectStore.getState>, 'projects' | 'isLoaded' | 'loadProjects'>
-  >
-  useTagStore: SelectorStore<
-    Pick<ReturnType<typeof useTagStore.getState>, 'load' | 'listen' | 'revision' | 'status'>
-  >
-  useSettingsStore: SelectorStore<
-    Pick<
-      ReturnType<typeof useSettingsStore.getState>,
-      | 'ncbi'
-      | 'openAlex'
-      | 'encryptionAvailable'
-      | 'loadConnectors'
-      | 'validateOpenAlexCredential'
-      | 'setOpenAlexCredential'
-      | 'isSettingsOpen'
-      | 'openSettingsToClassification'
-    >
-  >
-  useProjectFormDialog: typeof useProjectFormDialog
+  useNavigationStore: SelectorStore<LiteratureNavigation>
+  useProjectStore: SelectorStore<{
+    projects: LiteratureProject[]
+    isLoaded: boolean
+    loadProjects(): Promise<void>
+  }>
+  useTagStore: SelectorStore<{
+    load(): Promise<void>
+    listen(): () => void
+    revision: number
+    status: 'idle' | 'loading' | 'ready' | 'error'
+  }>
+  useSettingsStore: SelectorStore<{
+    ncbi: NcbiCredentialsView
+    openAlex: OpenAlexCredentialView
+    encryptionAvailable: boolean
+    loadConnectors(): Promise<void>
+    validateOpenAlexCredential(
+      request: ValidateOpenAlexCredentialRequest
+    ): Promise<OpenAlexCredentialValidation>
+    setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<void>
+    isSettingsOpen: boolean
+    openSettingsToClassification(): void
+  }>
+  useProjectFormDialog(options?: {
+    onCreated?: (project: LiteratureProject) => void
+    onCreateCancelled?: () => void
+  }): LiteratureProjectCreation
   FilePreviewDialog: ComponentType<{
-    item: PreviewFileItem | undefined
+    item: LiteraturePreviewItem | undefined
     onClose: (skipGuard?: boolean) => void
     allowReadingContext?: boolean
-    onReadWithAgent?: (item: PreviewFileItem) => void
+    onReadWithAgent?: (item: LiteraturePreviewItem) => void
     onFocusFallback?: () => void
   }>
-  ProjectFormDialog: ComponentType<ReturnType<typeof useProjectFormDialog>['dialogProps']>
-  createBookmarkPreviewItem: typeof createBookmarkPreviewItem
-  requestPdfAnnotationReveal: typeof requestPdfAnnotationReveal
-  resolvePdfContextTarget: typeof resolvePdfContextTarget
+  createBookmarkPreviewItem(
+    target: { id: string; kind: 'pdf' } & PdfAnnotation['target']
+  ): LiteraturePreviewItem | undefined
+  requestPdfAnnotationReveal(
+    annotation: PdfAnnotation,
+    options?: { activatePreview: boolean; signal?: AbortSignal }
+  ): Promise<'revealed' | 'source-unavailable' | 'locator-unsupported'>
+  resolvePdfContextTarget(item: LiteraturePreviewItem): SessionPdfContextSource | undefined
+  loadPdf(
+    input: { resource: ManagedPreviewResource } | { data: Uint8Array }
+  ): Promise<PDFDocumentLoadingTask>
 }
 
 export const LiteratureHostContext = createContext<LiteratureRendererHost | undefined>(undefined)

@@ -1,3 +1,4 @@
+import type { LiteraturePreviewItem } from './renderer-host'
 import { useLiteratureHost } from './renderer-host'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { LITERATURE_JOB_MAX_ITEMS } from '@aipoch/literature-discovery/jobs'
@@ -96,8 +97,6 @@ import {
 
 import { cn } from '@/lib/utils'
 
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-
 import type {
   LiteratureCitationStyle,
   LiteratureCitationStyleView,
@@ -175,7 +174,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     createBookmarkPreviewItem,
     requestPdfAnnotationReveal,
     useProjectFormDialog,
-    ProjectFormDialog,
     FilePreviewDialog: LiteratureFilePreviewDialog
   } = useLiteratureHost()
 
@@ -311,7 +309,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const [projectLinkError, setProjectLinkError] = useState<string>()
   const [collectionLinkError, setCollectionLinkError] = useState<string>()
-  const [previewItem, setPreviewItem] = useState<PreviewFileItem>()
+  const [previewItem, setPreviewItem] = useState<LiteraturePreviewItem>()
   const [annotationToReveal, setAnnotationToReveal] = useState<PdfAnnotation>()
 
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
@@ -2758,7 +2756,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           readingProjectQuery={readingProjectQuery}
           startReadingInProject={startReadingInProject}
         />
-        <ProjectFormDialog {...readingProjectFormDialog.dialogProps} />
+        {readingProjectFormDialog.dialog}
         {batchReading ? (
           <LiteratureReadingDialog
             {...batchReading}
@@ -2775,7 +2773,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }}
           />
         ) : null}
-        <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
+        {batchProjectFormDialog.dialog}
         <LiteratureFilePreviewDialog
           onFocusFallback={focusPreviewFallback}
           item={previewItem}

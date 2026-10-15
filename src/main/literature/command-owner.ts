@@ -1,5 +1,4 @@
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
-import type { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
 import type {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
@@ -24,14 +23,9 @@ import { transactLiterature } from './transact'
 type LiteratureCommandServices = Readonly<{
   journalAttributes: Pick<JournalAttributes, 'run'>
   literatureBatchJobs: Pick<LiteratureBatchJobs, 'run'>
-  literatureCitationStyles: Pick<LiteratureCitationStyleLibrary, 'list' | 'import' | 'delete'>
   literatureCitationFormatter: Pick<
     LiteratureCitationFormatter,
-    | 'formatStyleExample'
-    | 'invalidateStyles'
-    | 'formatReferences'
-    | 'exportReferences'
-    | 'parseReferences'
+    'citationStyles' | 'formatReferences' | 'exportReferences' | 'parseReferences'
   >
   literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
@@ -65,7 +59,6 @@ type LiteratureCommandServices = Readonly<{
 export const createLiteratureCommandOwner = ({
   journalAttributes,
   literatureBatchJobs,
-  literatureCitationStyles,
   literatureCitationFormatter,
   literatureReferenceResolver,
   literatureMetadataEnricher,
@@ -80,28 +73,7 @@ export const createLiteratureCommandOwner = ({
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: (request) =>
-    withCitationStyleErrors(async () => {
-      if (request.kind === 'preview') {
-        const [styles, preview] = await Promise.all([
-          literatureCitationStyles.list(),
-          literatureCitationFormatter.formatStyleExample(request.styleId)
-        ])
-        return { styles, preview: { styleId: request.styleId, ...preview } }
-      }
-      let changedStyleId: string | undefined
-      if (request.kind === 'import') {
-        changedStyleId = await literatureCitationStyles.import(request.content)
-        literatureCitationFormatter.invalidateStyles()
-      } else if (request.kind === 'delete') {
-        await literatureCitationStyles.delete(request.styleId)
-        changedStyleId = request.styleId
-        literatureCitationFormatter.invalidateStyles()
-      }
-      return {
-        styles: await literatureCitationStyles.list(),
-        ...(changedStyleId ? { changedStyleId } : {})
-      }
-    }),
+    withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
   lookupMetadata: async (doi) => {
     const [resolved] = await literatureReferenceResolver.resolve([
       doi.startsWith('pmid:') ? doi : 'doi:' + doi

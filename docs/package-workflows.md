@@ -80,11 +80,42 @@ selects every registered package explicitly. This is the first place to debug th
 
 ## Package and host test layers
 
+Literature, Journal Catalog, PDF Structure and PDF Translation own their tests, fixtures and Vitest
+configuration inside each package. The root runner loads those configurations as independent projects;
+it does not apply host aliases, dotenv, i18n or DOM setup to them. Each package suite is discovered
+once, and pure host selection does not load those projects. Run `npm --prefix packages/<name> test`
+for a package's own suite (after installing its declared dependencies); use `check:packages` for the
+additional repository-external source build/test and installed-tarball consumer checks. The shared
+verifier only orchestrates these checks and supplies sibling tarballs, never host source or test setup.
+
+Host tests own adapters, lifecycle, persistence and UI integration against public package contracts.
+Changing host integration does not change an upstream package and therefore does not select its unit
+suite. Package changes select their own suite and affected downstream consumers. Shared dependency,
+compiler or test-policy changes still require broader verification. Explicit root `npm test` remains
+the full acceptance command; use affected selection for ordinary host changes.
+
 PRs run changed package suites and bounded host adapter/contracts; downstream suites and more distant
 host consumers remain blocking in merge queue. `test:affected -- --tier pr` explains/exercises the PR
 selection; the default remains the complete affected queue selection. Full portable Ubuntu regression
 runs in Source Regression, with a focused manual `portable` mode. Run
 `node scripts/ci/audit-package-consumers.mjs HEAD` for per-package host dependency evidence.
+
+### Literature integration boundary
+
+Domain operations belong to their package: citation style management includes formatter refresh;
+PDF layout recording includes cache publication; the optional PDF SQLite adapter owns checkpoint
+JSON projections and incremental commit semantics. Host adapters supply source authority, transaction
+connections, historical identity conversion, platform resource remapping and diagnostics. They do not
+coordinate these domain steps or reproduce package storage layouts.
+
+The Literature renderer's `public/host` entry defines its own structural navigation, settings,
+project and PDF-preview ports. It does not derive them from host stores or hooks. Project creation is
+an injected action/state/rendered-dialog capability; PDF loading is injected for both local and
+managed sources. The host adapter connects those ports to application stores, Workspace previews and
+project forms. Architecture checks reject static, type-only and dynamic implementation imports in the
+feature. Shared transport DTOs and UI components are still repository dependencies: this renderer is
+an extraction-ready feature boundary, not yet a separately distributed renderer npm package or plugin
+loader.
 
 ## Static impact diagnostic tool
 
