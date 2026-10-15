@@ -144,19 +144,9 @@ stapled; it still validates both tickets and runs Gatekeeper, without changing t
 `operation=notarize` submits once and waits; an empty `source_run` retains the signed-build path.
 Missing credentials fail a notarization dry run instead of reporting an untested success.
 
-Both release and dry-run ticket operations run in a command-local macOS sandbox that denies
-outbound UDP/443. This makes CFNetwork fall back to HTTPS over TCP: hosted-runner diagnostics
-reproduced repeated `-1005` failures over HTTP/3, while the same artifact's four ticket requests
-succeeded over HTTP/2 without retries. The restriction covers only `stapler staple/validate` and
-their wrapper process; it changes no host firewall, proxy or TLS settings. Submission and notary
-status polling keep their normal transport. `sandbox-exec` is deprecated, so this is a runner-side
-workaround, not an upstream Apple fix; a missing/unsupported sandbox fails the job instead of
-silently reverting to the failing path.
-
-Reused-artifact staple/smoke dry runs additionally capture CFNetwork protocol and numeric timing
-summaries. Raw network logs are deleted and not uploaded, and authenticated notary operations are
-excluded from this capture. The HTTP/3 evidence does not establish that native stapler shares the
-specific iOS simulator defect in [Apple forum 777999](https://developer.apple.com/forums/thread/777999).
+Stapler uses a command-local sandbox to block UDP/443 and fall back to HTTPS over TCP; notarization
+submission and polling are unaffected. This workaround uses deprecated `sandbox-exec` and fails closed
+if unavailable. Reused-artifact dry runs report transport summaries and delete raw network logs.
 
 Only explicit `NSURLErrorDomain Code=-1005` transport failures receive up to three attempts with
 10/30-second backoff, independently for wait, staple and validate. Wait attempts share a 15-minute
@@ -166,17 +156,12 @@ Inspect its captured output/Apple history before submitting again. A full job re
 use the staple dry run to investigate an already Accepted package without doing that.
 
 Dry runs emit no release certification and replace artifacts only in their own run. A green diagnostic
-run does not authorize publication. The macOS smoke copies the complete app off the mounted DMG
-with `ditto`, detaches the image, then verifies and launches the installed copy in an isolated test
-directory. This follows [Apple's installation test guidance](https://developer.apple.com/library/archive/technotes/tn2206/)
-and avoids treating compressed-image execution as installed-app startup. The notarized path assesses
-both the DMG and the installed app with Gatekeeper. ZIP, legacy-profile, fresh-install and reopen
-checks remain separate, and the 60-second startup deadline is unchanged.
+run does not authorize publication. macOS smoke installs the app from the DMG, unmounts the image,
+then verifies and launches the installed copy. Gatekeeper, ZIP, migration, fresh-install and reopen
+checks remain in place, with a 60-second startup deadline.
 
-Package startup/shutdown failures are not retried: macOS reports launch/ready/exit timings,
-the package/profile/launch, backend log tail and owned-process stack samples on failure;
-Linux records the CLI daemon PID state before
-cleanup. Tokens are redacted from these additional diagnostics; missing evidence remains explicit.
+Startup/shutdown failures are not retried. macOS reports phase timings, backend logs and owned-process
+stack samples; Linux records CLI daemon PID state before cleanup. Diagnostic tokens are redacted.
 
 ## Independent package tests
 
