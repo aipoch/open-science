@@ -296,11 +296,14 @@ describe('direct research discussion navigation', () => {
       })
     )
     expect(mocks.preview).toHaveBeenCalledWith({
-      id: 'replay:source',
+      id: 'tool:source:replay',
+      type: 'tool',
+      toolKind: 'replay',
       projectId: 'source-project',
-      sourceSessionId: 'source',
-      sourceTitle: 'Original research',
-      workspaceProjectId: 'source-project',
+      sessionId: 'source',
+      replaySourceProjectId: 'source-project',
+      replaySourceSessionId: 'source',
+      title: 'Original research',
       replayAutomatic: true
     })
     expect(mocks.clearSelection).not.toHaveBeenCalled()
@@ -435,7 +438,7 @@ describe('direct research discussion navigation', () => {
     )
     expect(mocks.selectedSessionId).toBe('source')
     expect(mocks.preview).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceSessionId: 'source' })
+      expect.objectContaining({ replaySourceSessionId: 'source' })
     )
     expect(mocks.ask).not.toHaveBeenCalled()
     expect(mocks.sessions).toHaveLength(2)
