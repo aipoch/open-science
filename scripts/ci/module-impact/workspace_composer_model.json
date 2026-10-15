@@ -254,8 +254,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "renderer_state"
-  ],
+  "capabilityOverlays": ["renderer_state"],
   "fallbackCapability": "renderer_view"
 }

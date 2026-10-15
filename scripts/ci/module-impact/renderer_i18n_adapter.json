@@ -1,10 +1,6 @@
 {
-  "ownerPaths": [
-    "src/renderer/src/pages/workspace/workspace-translate-clause.ts"
-  ],
-  "interfacePaths": [
-    "src/renderer/src/pages/workspace/workspace-translate-clause.ts"
-  ],
+  "ownerPaths": ["src/renderer/src/pages/workspace/workspace-translate-clause.ts"],
+  "interfacePaths": ["src/renderer/src/pages/workspace/workspace-translate-clause.ts"],
   "testFiles": {
     "owner": [],
     "contract": [],

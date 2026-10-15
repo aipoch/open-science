@@ -1,10 +1,6 @@
 {
-  "ownerPaths": [
-    "src/main/projects/prisma-client.ts"
-  ],
-  "interfacePaths": [
-    "src/main/projects/prisma-client.ts"
-  ],
+  "ownerPaths": ["src/main/projects/prisma-client.ts"],
+  "interfacePaths": ["src/main/projects/prisma-client.ts"],
   "testFiles": {
     "owner": [],
     "contract": [
@@ -270,10 +266,6 @@
     ]
   },
   "consumerModules": [],
-  "capabilityOverlays": [
-    "e2e_delegation",
-    "e2e_regressions",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
