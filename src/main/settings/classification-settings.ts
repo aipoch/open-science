@@ -54,7 +54,7 @@ class ClassificationRequestError extends Error {
 const CLASSIFICATION_ENDPOINTS = {
   typesafe: 'https://api.typesafe.ai/v1/systemone',
   openrouter: 'https://openrouter.ai/api/alpha/decisions',
-  opencode: 'https://opencode.ai/inference/v1/systemone'
+  opencode: 'https://opencode.ai/zen/v1/systemone'
 } satisfies Record<Exclude<Service['adapter'], 'custom'>, string>
 const empty = (): StoredClassificationSettings => ({ revision: 0, services: [] })
 type Service = z.infer<typeof classificationServiceSchema>

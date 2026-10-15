@@ -147,7 +147,7 @@ it('validates a new service before writing any credential or configuration', asy
   expect(saved.revision).toBe(1)
   expect(fetchMock).toHaveBeenCalledOnce()
 })
-it('sends current images through the Jev System One endpoint on OpenCode', async () => {
+it('sends current images through the Jev System One endpoint on OpenCode Zen', async () => {
   await owner.mutate({
     revision: 0,
     kind: 'save',
@@ -173,7 +173,7 @@ it('sends current images through the Jev System One endpoint on OpenCode', async
     { name: candidate.name, path: candidate.path }
   ])
   const [url, init] = fetchMock.mock.calls[0]!
-  expect(url).toBe('https://opencode.ai/inference/v1/systemone')
+  expect(url).toBe('https://opencode.ai/zen/v1/systemone')
   expect(init?.headers).toMatchObject({
     Authorization: 'Bearer zen-key',
     'TypeSafe-Danger-Zone-Images': 'true'
@@ -838,7 +838,7 @@ it.each([true, false])(
       'jev-1.13-free'
     ])
     for (const [url, init] of fetchMock.mock.calls) {
-      expect(url).toBe('https://opencode.ai/inference/v1/systemone')
+      expect(url).toBe('https://opencode.ai/zen/v1/systemone')
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer zen-key' })
       expect(init?.redirect).toBe('manual')
       expect(JSON.parse(String(init?.body))).toHaveProperty('questions')
@@ -1465,7 +1465,7 @@ it.each(['typesafe', 'openrouter', 'opencode', 'custom'] as const)(
         : adapter === 'openrouter'
           ? 'https://openrouter.ai/api/alpha/decisions'
           : adapter === 'opencode'
-            ? 'https://opencode.ai/inference/v1/systemone'
+            ? 'https://opencode.ai/zen/v1/systemone'
             : 'https://classifier.example.test/decisions'
     )
     const body = JSON.parse(String(init?.body))
