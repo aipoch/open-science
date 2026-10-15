@@ -7292,6 +7292,18 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "每行输入一个确切的公网主机名，不含 URL 或通配符。保存仅为此配置授权这些主机。",
     "Could not update this local configuration. Your experiment has not been started.": "无法更新此本地配置。实验尚未启动。",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "使用唯一的大写环境变量名称，不允许设置运行时控制变量。",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "记录变更的模型、服务或参数，每行一项。这些差异将随结果保存。"
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "记录变更的模型、服务或参数，每行一项。这些差异将随结果保存。",
+    "Set two-column body": "设置双栏正文",
+    "Applies to your next message. Select body text only; exclude tables.": "此设置适用于你的下一条消息。仅选择正文，排除表格。",
+    "Redrawing replaces the body area on that page.": "重新绘制会替换该页的正文区域。",
+    "Body areas: {{count}}_other": "{{count}} 个正文区域",
+    "Clear this page": "清除本页",
+    "Drag across both columns, then confirm the divider.": "拖动选中两栏，然后确认分隔线。",
+    "Two-column body": "双栏正文",
+    "Column divider": "栏间分隔线",
+    "Save body area": "保存正文区域",
+    "Body areas are unavailable on rotated pages.": "旋转页面无法设置正文区域。",
+    "You can configure up to 32 pages.": "最多可配置 32 页。",
+    "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。"
   }
 }

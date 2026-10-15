@@ -7620,6 +7620,20 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "Saisissez un nom d’hôte public exact par ligne, sans URL ni caractère générique. L’enregistrement autorise uniquement ces hôtes pour cette configuration.",
     "Could not update this local configuration. Your experiment has not been started.": "Impossible de mettre à jour cette configuration locale. L’expérience n’a pas été lancée.",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "Utilisez des noms uniques de variables d’environnement en majuscules. Les variables de contrôle de l’environnement d’exécution ne sont pas autorisées.",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Notez les modèles, services ou paramètres modifiés, un changement par ligne. Ces différences accompagneront les résultats."
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Notez les modèles, services ou paramètres modifiés, un changement par ligne. Ces différences accompagneront les résultats.",
+    "Set two-column body": "Définir le corps sur deux colonnes",
+    "Applies to your next message. Select body text only; exclude tables.": "S’applique à votre prochain message. Sélectionnez uniquement le texte du corps et excluez les tableaux.",
+    "Redrawing replaces the body area on that page.": "Redessiner remplacera la zone de texte principal sur cette page.",
+    "Body areas: {{count}}_one": "{{count}} zone de texte principal",
+    "Body areas: {{count}}_many": "{{count}} zones de texte principal",
+    "Body areas: {{count}}_other": "{{count}} zones de texte principal",
+    "Clear this page": "Effacer cette page",
+    "Drag across both columns, then confirm the divider.": "Faites glisser sur les deux colonnes, puis confirmez la séparation.",
+    "Two-column body": "Corps sur deux colonnes",
+    "Column divider": "Séparation des colonnes",
+    "Save body area": "Enregistrer la zone de texte principal",
+    "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
+    "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
+    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
   }
 }

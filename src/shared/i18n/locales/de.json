@@ -7452,6 +7452,19 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "Geben Sie pro Zeile einen exakten öffentlichen Hostnamen ohne URL oder Platzhalter ein. Speichern autorisiert nur diese Hosts für diese Konfiguration.",
     "Could not update this local configuration. Your experiment has not been started.": "Diese lokale Konfiguration konnte nicht aktualisiert werden. Ihr Experiment wurde nicht gestartet.",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "Verwenden Sie eindeutige Umgebungsvariablennamen in Großbuchstaben. Laufzeit-Steuervariablen sind nicht zulässig.",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Erfassen Sie geänderte Modelle, Dienste oder Parameter mit einer Änderung pro Zeile. Diese Unterschiede werden mit den Ergebnissen gespeichert."
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Erfassen Sie geänderte Modelle, Dienste oder Parameter mit einer Änderung pro Zeile. Diese Unterschiede werden mit den Ergebnissen gespeichert.",
+    "Set two-column body": "Zweispaltigen Textbereich festlegen",
+    "Applies to your next message. Select body text only; exclude tables.": "Gilt für Ihre nächste Nachricht. Wählen Sie nur den Fließtext aus; Tabellen müssen ausgeschlossen bleiben.",
+    "Redrawing replaces the body area on that page.": "Beim erneuten Zeichnen wird der Textbereich auf dieser Seite ersetzt.",
+    "Body areas: {{count}}_one": "{{count}} Textbereich",
+    "Body areas: {{count}}_other": "{{count}} Textbereiche",
+    "Clear this page": "Diese Seite leeren",
+    "Drag across both columns, then confirm the divider.": "Ziehen Sie über beide Spalten und bestätigen Sie anschließend die Trennlinie.",
+    "Two-column body": "Zweispaltiger Textbereich",
+    "Column divider": "Spaltentrennlinie",
+    "Save body area": "Textbereich speichern",
+    "Body areas are unavailable on rotated pages.": "Auf gedrehten Seiten sind Textbereiche nicht verfügbar.",
+    "You can configure up to 32 pages.": "Sie können bis zu 32 Seiten konfigurieren.",
+    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet."
   }
 }

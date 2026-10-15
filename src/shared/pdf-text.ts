@@ -914,7 +914,7 @@ const hasNativeRunInHeading = (
   )
 }
 
-export const joinPdfTextItems = (items: readonly PdfTextItem[]): string => {
+const joinPdfTextItemsWithWhitespace = (items: readonly PdfTextItem[]): string => {
   let text = ''
   let previousItem: PdfTextItem | undefined
   for (const [index, item] of items.entries()) {
@@ -947,5 +947,370 @@ export const joinPdfTextItems = (items: readonly PdfTextItem[]): string => {
     if (item.hasEOL) text += '\n'
     previousItem = item
   }
-  return text.trim()
+  return text
+}
+
+export const joinPdfTextItems = (items: readonly PdfTextItem[]): string =>
+  joinPdfTextItemsWithWhitespace(items).trim()
+
+/** Explicit, caller-confirmed prose bounds in an unrotated CropBox, normalized from top left. */
+export type PdfProseRegion = Readonly<{
+  page: number
+  left: number
+  top: number
+  right: number
+  bottom: number
+  split: number
+}>
+
+const invalidProseRegion = (reason: string): never => {
+  throw new Error(`PDF_READING_REGION_INVALID: ${reason}`)
+}
+
+export const validatePdfProseRegions = (regions: readonly PdfProseRegion[]): void => {
+  if (regions.length === 0 || regions.length > 32)
+    invalidProseRegion('Specify between 1 and 32 confirmed two-column prose regions.')
+  for (const [index, region] of regions.entries()) {
+    if (
+      !Number.isSafeInteger(region.page) ||
+      region.page < 1 ||
+      region.page > 1_000_000 ||
+      ![region.left, region.top, region.right, region.bottom, region.split].every(
+        (value) => Number.isFinite(value) && value >= 0 && value <= 1
+      ) ||
+      !(region.left < region.split && region.split < region.right && region.top < region.bottom)
+    )
+      invalidProseRegion(
+        'Region coordinates must be finite normalized bounds with an interior column split.'
+      )
+    if (
+      regions
+        .slice(0, index)
+        .some(
+          (other) =>
+            other.page === region.page &&
+            Math.max(other.left, region.left) < Math.min(other.right, region.right) &&
+            Math.max(other.top, region.top) < Math.min(other.bottom, region.bottom)
+        )
+    )
+      invalidProseRegion('Prose regions on the same page must not overlap.')
+  }
+}
+
+type ProseRun = {
+  item: PdfTextItem
+  tail: PdfTextItem[]
+  x: number
+  right: number
+  top: number
+  bottom: number
+  height: number
+}
+
+// A confirmed physical row only needs glyph spacing. Source line ends describe draw order;
+// they cannot terminate a geometrically reconstructed row. Page-level
+// caption and label inference is inappropriate here and repeatedly scans a growing row.
+const joinProseLine = (items: readonly PdfTextItem[]): string => {
+  const parts: string[] = []
+  let previous: PdfTextItem | undefined
+  let last = ''
+  for (const item of items) {
+    const value = item.str ?? ''
+    if (value) {
+      if (
+        last &&
+        !/\s/u.test(last) &&
+        !/^\s/u.test(value) &&
+        previous &&
+        hasWordGap(previous, item)
+      )
+        parts.push(' ')
+      parts.push(value)
+      last = value.at(-1) ?? last
+      previous = item
+    }
+  }
+  return parts.join('').trim()
+}
+
+// Geometry cannot distinguish prose from a table. Only an explicit region may reorder text;
+// no punctuation, word-count, width-variation, or inferred-gutter classifiers are used.
+export const joinPdfProseTextItems = (
+  items: readonly PdfTextItem[],
+  regions: readonly PdfProseRegion[] = [],
+  pageBounds?: readonly number[]
+): string => {
+  if (regions.length === 0) return joinPdfTextItems(items)
+  validatePdfProseRegions(regions)
+  if (
+    !pageBounds ||
+    pageBounds.length !== 4 ||
+    !pageBounds.every(Number.isFinite) ||
+    pageBounds[2] <= pageBounds[0] ||
+    pageBounds[3] <= pageBounds[1]
+  )
+    invalidProseRegion('The PDF page has no valid CropBox.')
+  const [x0, y0, x1, y1] = pageBounds!
+  const width = x1 - x0,
+    height = y1 - y0
+  const runs: ProseRun[] = []
+  const leading: PdfTextItem[] = []
+  for (const item of items) {
+    if (!item.str?.trim()) {
+      const previous = runs.at(-1)
+      if (previous) previous.tail.push(item)
+      else leading.push(item)
+      continue
+    }
+    const t = item.transform
+    if (
+      !t ||
+      t.length !== 6 ||
+      !t.every(Number.isFinite) ||
+      t[0] <= 0 ||
+      t[3] <= 0 ||
+      t[1] !== 0 ||
+      t[2] !== 0 ||
+      !Number.isFinite(item.width) ||
+      item.width! <= 0 ||
+      !Number.isFinite(item.height) ||
+      item.height! <= 0 ||
+      (item.dir && item.dir !== 'ltr')
+    ) {
+      // Unsupported prose can stay native only when trustworthy bounds exclude every
+      // region. Keep native layout inference unchanged; RTL uses a conservative
+      // upright envelope covering either advance direction from its anchor.
+      let box = nativeRunBox(item.dir === 'rtl' ? { ...item, dir: 'ltr' } : item)
+      if (item.dir === 'rtl') {
+        if (box && t![1] === 0 && t![2] === 0) box = [box[0] - item.width!, box[1], box[2], box[3]]
+        else box = undefined
+      }
+      if (
+        !box ||
+        !box.every(Number.isFinite) ||
+        regions.some(
+          (region) =>
+            (box![2] - x0) / width > region.left &&
+            (box![0] - x0) / width < region.right &&
+            (y1 - box![1]) / height > region.top &&
+            (y1 - box![3]) / height < region.bottom
+        )
+      )
+        invalidProseRegion(
+          'Explicit prose ordering requires upright left-to-right text with valid geometry.'
+        )
+      runs.push({
+        item,
+        tail: [],
+        x: (box![0] - x0) / width,
+        right: (box![2] - x0) / width,
+        top: (y1 - box![3]) / height,
+        bottom: (y1 - box![1]) / height,
+        height: item.height! / height
+      })
+      continue
+    }
+    runs.push({
+      item,
+      tail: [],
+      x: (t![4] - x0) / width,
+      right: (t![4] + item.width! - x0) / width,
+      top: (y1 - t![5] - item.height!) / height,
+      bottom: (y1 - t![5]) / height,
+      height: item.height! / height
+    })
+  }
+  const owner = new Map<number, { end: number; text: string }>()
+  const selected = new Set<number>()
+  const consumedSpaces = new Set<PdfTextItem>()
+  for (const region of regions) {
+    const columns: ProseRun[][] = [[], []]
+    const indices: number[] = []
+    for (const [index, run] of runs.entries()) {
+      const intersects =
+        run.right > region.left &&
+        run.x < region.right &&
+        run.bottom > region.top &&
+        run.top < region.bottom
+      if (!intersects) continue
+      if (
+        run.x < region.left ||
+        run.right > region.right ||
+        run.top < region.top ||
+        run.bottom > region.bottom ||
+        (run.x < region.split && run.right > region.split)
+      )
+        invalidProseRegion(
+          'A region boundary or column split cuts through text; adjust its bounds.'
+        )
+      indices.push(index)
+      columns[run.right <= region.split ? 0 : 1].push(run)
+    }
+    if (columns.some((column) => column.length === 0))
+      invalidProseRegion('Each confirmed region must contain text in both columns.')
+    const start = indices[0],
+      end = indices.at(-1)!
+    if (end - start + 1 !== indices.length || indices.some((index) => selected.has(index)))
+      invalidProseRegion(
+        'Region text is interleaved with content outside its bounds; select separate contiguous blocks.'
+      )
+    const lines: string[] = []
+    const physicalRows: ProseRun[][][] = [[], []]
+    const positions = new Map<ProseRun, { column: number; row: number; cell: number }>()
+    for (const [columnIndex, column] of columns.entries()) {
+      // The fixed row anchor avoids a drifting baseline chain. The tolerance concerns glyph
+      // alignment only; it does not infer the document's layout or prose semantics.
+      const sorted = [...column].sort((a, b) => a.bottom - b.bottom || a.x - b.x)
+      let previousBottom = -Infinity
+      for (let index = 0; index < sorted.length;) {
+        const first = sorted[index]
+        let end = index + 1
+        while (
+          end < sorted.length &&
+          sorted[end].bottom - first.bottom <= Math.min(first.height, sorted[end].height) * 0.2
+        )
+          end++
+        const row = sorted.slice(index, end).sort((a, b) => a.x - b.x)
+        if (row.some((run) => run.top < previousBottom - 1e-9))
+          invalidProseRegion(
+            'Overlapping line bands, including shifted scripts, cannot be safely ordered.'
+          )
+        previousBottom = row.reduce((bottom, run) => Math.max(bottom, run.bottom), -Infinity)
+        for (let cell = 1; cell < row.length; cell++)
+          if (row[cell].x < row[cell - 1].right - 1e-9)
+            invalidProseRegion('Overlapping text runs cannot be safely ordered in this region.')
+        const rowIndex = physicalRows[columnIndex].length
+        physicalRows[columnIndex].push(row)
+        row.forEach((run, cell) => positions.set(run, { column: columnIndex, row: rowIndex, cell }))
+        index = end
+      }
+    }
+    const separators = new Map<ProseRun, PdfTextItem[]>()
+    const regionIndices = new Set(indices)
+    // A positioned space can be drawn before any regional glyph, even in an outside
+    // run's source tail. Geometry owns it; native output must not emit it a second time.
+    for (let index = -1; index < runs.length; index++) {
+      const source = runs[index]
+      for (const space of index === -1 ? leading : source.tail) {
+        if (!space.str || consumedSpaces.has(space)) continue
+        if (!regionIndices.has(index) && !space.transform) continue
+        if (regionIndices.has(index) && !/^[^\S\r\n]+$/u.test(space.str))
+          invalidProseRegion(
+            'Whitespace inside a prose region must have an unambiguous horizontal position.'
+          )
+        const t = space.transform
+        let before: ProseRun | undefined
+        if (
+          t?.length === 6 &&
+          t.every(Number.isFinite) &&
+          t[0] > 0 &&
+          t[3] > 0 &&
+          t[1] === 0 &&
+          t[2] === 0 &&
+          Number.isFinite(space.width) &&
+          space.width! > 0 &&
+          (!space.dir || space.dir === 'ltr')
+        ) {
+          const left = (t[4] - x0) / width,
+            right = (t[4] + space.width! - x0) / width,
+            bottom = (y1 - t[5]) / height
+          if (
+            left < region.left ||
+            right > region.right ||
+            bottom < region.top ||
+            bottom > region.bottom
+          )
+            continue
+          if (!/^[^\S\r\n]+$/u.test(space.str))
+            invalidProseRegion(
+              'Whitespace inside a prose region must have an unambiguous horizontal position.'
+            )
+          consumedSpaces.add(space)
+          // PDF.js may synthesize a space spanning the source-flow column transition.
+          // Such a carrier is not a separator between either column's physical neighbors.
+          if (left < region.split && right > region.split) continue
+          const rows = physicalRows[right <= region.split ? 0 : 1]
+          let lo = 0,
+            hi = rows.length
+          while (lo < hi) {
+            const mid = (lo + hi) >>> 1
+            if (rows[mid][0].bottom < bottom) lo = mid + 1
+            else hi = mid
+          }
+          const row = [rows[lo - 1], rows[lo]].find(
+            (candidate) =>
+              candidate &&
+              Math.abs(candidate[0].bottom - bottom) <=
+                Math.min(candidate[0].height, t[3] / height) * 0.2
+          )
+          if (!row) invalidProseRegion('Whitespace cannot be assigned to a physical prose row.')
+          lo = 0
+          hi = row!.length
+          while (lo < hi) {
+            const mid = (lo + hi) >>> 1
+            if (row![mid].right <= left + 1e-9) lo = mid + 1
+            else hi = mid
+          }
+          if (lo === 0 && right <= row![0].x + 1e-9) continue
+          if (lo === row!.length && left >= row!.at(-1)!.right - 1e-9) continue
+          if (lo === 0 || lo === row!.length || right > row![lo].x + 1e-9)
+            invalidProseRegion('Whitespace overlaps text instead of separating physical neighbors.')
+          before = row![lo - 1]
+        } else {
+          if (!regionIndices.has(index)) continue
+          // Without geometry, only unchanged source adjacency proves which word gap owns it.
+          const previous = positions.get(source),
+            next = positions.get(runs[index + 1])
+          if (
+            !previous ||
+            !next ||
+            previous.column !== next.column ||
+            previous.row !== next.row ||
+            previous.cell + 1 !== next.cell
+          )
+            invalidProseRegion('Whitespace without geometry cannot be safely reordered.')
+          before = source
+        }
+        const gap = separators.get(before!) ?? []
+        gap.push(space)
+        separators.set(before!, gap)
+      }
+    }
+    for (const rows of physicalRows) {
+      for (const row of rows) {
+        const parts = row.flatMap((run) => [run.item, ...(separators.get(run) ?? [])])
+        const last = row.at(-1)!
+        const lineEnds =
+          Number(Boolean(last.item.hasEOL)) +
+          last.tail.reduce((count, item) => count + Number(Boolean(item.hasEOL)), 0)
+        lines.push(joinProseLine(parts) + '\n'.repeat(Math.max(1, lineEnds)))
+      }
+    }
+    owner.set(start, { end, text: lines.join('') })
+    for (const index of indices) selected.add(index)
+  }
+  const chunks: string[] = []
+  let native: PdfTextItem[] = leading.filter((item) => !consumedSpaces.has(item))
+  const flush = (): void => {
+    const text = joinPdfTextItemsWithWhitespace(native)
+    if (text) chunks.push(text)
+    native = []
+  }
+  for (let index = 0; index < runs.length; index++) {
+    const replacement = owner.get(index)
+    if (replacement) {
+      flush()
+      chunks.push(replacement.text)
+      index = replacement.end
+    } else
+      native.push(runs[index].item, ...runs[index].tail.filter((item) => !consumedSpaces.has(item)))
+  }
+  flush()
+  return chunks
+    .reduce(
+      (text, chunk) =>
+        text + (text && !text.endsWith('\n') && !chunk.startsWith('\n') ? '\n' : '') + chunk,
+      ''
+    )
+    .trim()
 }
