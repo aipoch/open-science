@@ -48,6 +48,7 @@ import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { PrismaClient } from '@prisma/client'
 import { withPackageTransfer } from './transfer'
 import { PackageCleanupPendingError } from './cleanup'
+import { readSession } from './inspection'
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs/promises')>())
@@ -2907,8 +2908,14 @@ it('exports duplicate Artifact Version bytes as one self-contained object', asyn
   )
 })
 
-it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation'] as const)(
-  'includes a foreign immutable file referenced only by %s',
+it.each([
+  'pdf-context',
+  'pdf-prose-context',
+  'pdf-annotation',
+  'text-annotation',
+  'image-annotation'
+] as const)(
+  'includes a foreign immutable file referenced only by %s through import and fork',
   async (kind) => {
     const source = await createProvenanceTestFixture()
     initDataRoot(source.storageRoot)
@@ -2962,6 +2969,8 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
       }),
       checksum: sha256(content)
     }
+    const proseRegion = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
+    const hasPdfContext = kind === 'pdf-context' || kind === 'pdf-prose-context'
     await new SessionRepository(source.storageRoot).saveSession({
       id: 'session-1',
       projectId: 'project-1',
@@ -2979,7 +2988,7 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
           eventIds: [],
           createdAt: 1,
           updatedAt: 1,
-          ...(kind === 'pdf-context'
+          ...(hasPdfContext
             ? {
                 pdfContext: {
                   version: 1,
@@ -2997,7 +3006,10 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
                       checksum: sha256(content),
                       linkedAt: 1
                     }
-                  ]
+                  ],
+                  ...(kind === 'pdf-prose-context'
+                    ? { proseRegionsByBindingId: { 'binding-1': [proseRegion] } }
+                    : {})
                 }
               }
             : {}),
@@ -3069,7 +3081,7 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
       imported.projectId,
       imported.sessionId
     )
-    if (kind === 'pdf-context')
+    if (hasPdfContext)
       expect(session?.messages[0].pdfContext?.bindings[0].sourceVersionId).toBe(version.id)
     else expect(session?.messages[0].annotations).toHaveLength(1)
     const fork = await importer.fork(imported)
@@ -3082,10 +3094,40 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
       where: { id: forkOrigin.identities['version-1'] }
     })
     expect(await readFile(join(target.storageRoot, forkVersion.contentStorageKey))).toEqual(content)
-    if (kind === 'pdf-context') {
+    if (hasPdfContext) {
       const binding = forkSession.messages[0].pdfContext!.bindings[0]
       expect(binding.sourceVersionId).toBe(forkVersion.id)
       expect(binding.bindingId).not.toBe(session!.messages[0].pdfContext!.bindings[0].bindingId)
+      if (kind === 'pdf-prose-context') {
+        const importedContext = session!.messages[0].pdfContext!
+        expect(importedContext.proseRegionsByBindingId).toEqual({
+          [importedContext.bindings[0].bindingId]: [proseRegion]
+        })
+        expect(forkSession.messages[0].pdfContext!.proseRegionsByBindingId).toEqual({
+          [binding.bindingId]: [proseRegion]
+        })
+        // Local identities change on each import; the archived source remains immutable.
+        const original = await new SessionRepository(source.storageRoot).loadSession(
+          'project-1',
+          'session-1'
+        )
+        expect(original!.messages[0].pdfContext!.proseRegionsByBindingId).toEqual({
+          'binding-1': [proseRegion]
+        })
+        const retained = await readSession(
+          join(
+            target.storageRoot,
+            'artifacts',
+            imported.projectId,
+            imported.sessionId,
+            '.session-package',
+            'source'
+          )
+        )
+        expect(retained.messages[0].pdfContext!.proseRegionsByBindingId).toEqual({
+          'binding-1': [proseRegion]
+        })
+      }
     } else {
       const annotation = forkSession.messages[0].annotations![0]
       expect(annotation.id).not.toBe(session!.messages[0].annotations![0].id)
