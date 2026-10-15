@@ -86,6 +86,9 @@ skip a head that the last successful scheduled run already covered (shared `skip
 be published under the rolling `nightly` tag, and manual runs never count as coverage because
 the runs API cannot report which dispatch mode they selected. Manual runs always execute.
 Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
+Manual Nightly `windows-package` runs the native receipt-publication and submission-recovery gate
+before packaging, even though it skips portable verification. Use this mode to diagnose Windows
+package failures without publication; a passing dry-run does not certify stable-release signing.
 Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
 be discovered in queue or scheduled validation, and non-mainline Windows failures may first be
 discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one

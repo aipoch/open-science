@@ -138,10 +138,10 @@ describe('release and scheduled workflow topology', () => {
     }
   })
 
-  it('blocks verified Windows builds on real receipt publication and submission recovery', () => {
+  it('blocks Windows builds including package dry-runs on real receipt publication and submission recovery', () => {
     const build = workflow('build.yml').jobs.build
     const gate = step(build, 'Verify Windows receipt publication and submission recovery')
-    expect(gate.if).toBe("${{ matrix.platform == 'win' && !inputs.skip_verify }}")
+    expect(gate.if).toBe("${{ matrix.platform == 'win' }}")
     expect(gate['continue-on-error']).not.toBe(true)
     expect(gate.run).toContain('npx vitest run')
     expect(gate.run).toContain('src/main/notebook/file-evidence-publication.integration.test.ts')

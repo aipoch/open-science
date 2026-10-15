@@ -344,8 +344,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
 
+      # Package dry-runs must retain this native gate even when portable verification is skipped.
       - name: Verify Windows receipt publication and submission recovery
-        if: ${{ matrix.platform == 'win' && !inputs.skip_verify }}
+        if: ${{ matrix.platform == 'win' }}
         run: >-
           npx vitest run
           src/main/notebook/file-evidence-publication.integration.test.ts
