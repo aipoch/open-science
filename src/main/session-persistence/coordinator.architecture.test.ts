@@ -1902,9 +1902,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/research-runs/inspection.test.ts',
       'src/main/research-runs/ipc.test.ts',
       'src/main/replay-viewer/desktop-embed.integration.test.ts',
-      'src/main/notebook/managed-execution-service.macos.integration.test.ts',
-      'src/main/notebook/managed-research-acceptance.macos.integration.test.ts',
-      'src/main/runtime-view/tuanzi.macos.integration.test.ts'
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
