@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'

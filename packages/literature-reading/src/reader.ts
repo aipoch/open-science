@@ -6,7 +6,7 @@ import type {
 } from './full-text-index.js'
 import type { DocumentReference, TextExtraction } from './ports.js'
 export type ReadingOptions<Reference extends DocumentReference> = {
-  index: LiteratureIndex
+  index?: LiteratureIndex
   /** Resolve current authority first, then return a loader for verified bounded text. */
   authorize(reference: Reference): Promise<() => Promise<TextExtraction>>
   /** Stable identity for every extraction-affecting option owned by the caller. */
@@ -50,7 +50,7 @@ export type SearchDocumentsResult = {
     }
 )
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
-  .update('open-science-pdfjs-verified-bytes-native-v4')
+  .update('literature-reading-provided-text-v1')
   .digest('hex')
 const DOCUMENT_BATCH_CHARS = 16_000
 const INDEX_CHUNK_CHARS = 5_000
@@ -349,7 +349,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     }
     const descriptors = [...descriptorByExtractionId.values()]
     const fallbackResponse = (
-      reason: 'empty-bm25' | 'bm25-error' | 'cjk-query'
+      reason: 'empty-bm25' | 'bm25-error' | 'cjk-query' | 'no-index'
     ): SearchDocumentsResult => {
       const passages = fallbackSearch(descriptors, query)
       this.options.log?.('Literature retrieval completed', {
@@ -394,6 +394,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     // unicode61 cannot match concepts embedded in unsegmented CJK sentences. Route the
     // entire query through lexical retrieval even when an English term would match FTS.
     if (CJK_CHARACTER.test(query)) return fallbackResponse('cjk-query')
+    if (!this.options.index) return fallbackResponse('no-index')
     let index: LiteratureFullTextIndex | undefined
     try {
       index = await this.options.index.open()

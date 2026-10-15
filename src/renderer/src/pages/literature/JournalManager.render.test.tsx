@@ -1,15 +1,7 @@
 // @vitest-environment jsdom
-import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { StrictMode } from 'react'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within
-} from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { read } from 'styled-exceljs'
 import { JournalManager } from './JournalManager'
@@ -19,6 +11,20 @@ import type {
   JournalRequest,
   JournalResult
 } from '@aipoch/journal-catalog/contracts'
+
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: (listener) => {
+    recoveryListeners.add(listener)
+    return () => {
+      recoveryListeners.delete(listener)
+    }
+  }
+})
 
 const valueRender = vi.hoisted(() => vi.fn())
 vi.mock('./JournalAttributes', async () => {
@@ -48,7 +54,7 @@ vi.mock('./imports/LiteratureImportDialogFrame', () => ({
 }))
 afterEach(() => {
   cleanup()
-  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+  recoveryListeners.clear()
   window.localStorage.removeItem('open-science:journal-source-years')
 })
 beforeAll(() => {
@@ -285,7 +291,7 @@ it('cancels file preparation, terminates the parser and leaves persisted data al
   }
 })
 
-it.each(['event', 'desktop'] as const)(
+it.each(['event', 'host recovery'] as const)(
   'preserves a dirty draft on %s changes and reloads after an explicit cancel',
   async (transport) => {
     let stored = structuredClone(dataset)
@@ -315,8 +321,7 @@ it.each(['event', 'desktop'] as const)(
     act(() => {
       if (transport === 'event') changed()
       else {
-        useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
-        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        recover()
       }
     })
     await screen.findByText(
@@ -335,7 +340,7 @@ it.each(['event', 'desktop'] as const)(
   }
 )
 
-it.each(['web', 'desktop'] as const)(
+it.each(['web', 'host recovery'] as const)(
   'refreshes a clean manager on %s reconnect and handles remote deletion',
   async (transport) => {
     let datasets = [structuredClone(dataset)]
@@ -352,11 +357,8 @@ it.each(['web', 'desktop'] as const)(
     if (transport === 'web')
       act(() => window.dispatchEvent(new Event('open-science:web-events-open')))
     else {
-      for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
-        await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
-        expect(screen.getByRole('button', { name: 'Customize columns' })).toBeTruthy()
-      }
-      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+      expect(screen.getByRole('button', { name: 'Customize columns' })).toBeTruthy()
+      await act(async () => recover())
     }
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Customize columns' })).toBeNull()
@@ -366,8 +368,7 @@ it.each(['web', 'desktop'] as const)(
     view.unmount()
     journals.mockClear()
     await act(async () => {
-      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
-      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      recover()
     })
     expect(journals).not.toHaveBeenCalled()
   }

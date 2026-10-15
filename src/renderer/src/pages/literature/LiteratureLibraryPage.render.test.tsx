@@ -1,20 +1,13 @@
+// @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { configureTestRuntimeMetadata } from '../../../../../test/runtime-metadata'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
-// @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within
-} from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { i18next } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -39,6 +32,9 @@ import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
 import { LiteratureSearchInput } from './list/LiteratureSearchInput'
+
+// Integration: exercise the real navigation, project and preview adapters.
+const { render } = createLiteratureTestRenderer(literatureRendererHost)
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -601,7 +597,7 @@ describe('LiteratureLibraryPage', () => {
     const title = await screen.findByLabelText('Title')
     expect((title as HTMLInputElement).value).toBe('workspace paper')
     expect(extractLiteraturePdfDraft).toHaveBeenCalledWith(
-      window.api,
+      expect.objectContaining({ api: window.api }),
       source,
       expect.anything(),
       expect.any(Function)

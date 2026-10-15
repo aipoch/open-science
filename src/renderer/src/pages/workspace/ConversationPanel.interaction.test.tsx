@@ -8,7 +8,7 @@ import { parseSideChatAnnotationText, type Annotation } from '../../../../shared
 import { SideChatPanel } from './SideChatPanel'
 // @vitest-environment jsdom
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

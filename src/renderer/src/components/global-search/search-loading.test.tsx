@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { cleanup, renderHook, waitFor } from '../../../../../test/renderer/literature'
+import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useSearchResults } from './use-search-results'
 import { useSearchSummaryCounts } from './use-search-summary-counts'

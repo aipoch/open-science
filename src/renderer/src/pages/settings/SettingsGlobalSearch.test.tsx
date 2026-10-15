@@ -3,7 +3,7 @@ import { i18next } from '@/i18n'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LOCALES } from '../../../../shared/locale'

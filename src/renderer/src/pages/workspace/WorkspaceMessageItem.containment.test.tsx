@@ -2,7 +2,7 @@
 // Completing a streamed Agent row must not re-enable content-visibility. The 10rem intrinsic
 // fallback is taller than a one-line reply, and that height flash pushes a live tool below it.
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

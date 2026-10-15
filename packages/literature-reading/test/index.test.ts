@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createIndex, sql as migrationSqlExecutor, openDatabase } from './sqlite.js'
+import { createIndex, memoryIndex } from './memory-index.js'
 
 const HASH_A = 'a'.repeat(64)
 const HASH_B = 'b'.repeat(64)
@@ -31,22 +31,11 @@ describe('LiteratureFullTextIndex', () => {
   })
 
   const setLastAccessed = async (value: string): Promise<void> => {
-    const client = openDatabase(root)
-    await client.execute(
-      `UPDATE "LiteratureIndexDocument" SET "lastAccessedAt" = datetime('now', ?)`,
-      value
-    )
-    await client.close()
+    const age = value === '-2 days' ? 2 * 86400000 : 12 * 3600000
+    for (const id of memoryIndex(root).documents.keys())
+      memoryIndex(root).accessed.set(id, Date.now() - age)
   }
-
-  const lastAccessedEpoch = async (): Promise<number> => {
-    const client = openDatabase(root)
-    const rows = await client.query<Array<{ value: bigint | number }>>(
-      `SELECT CAST(strftime('%s', "lastAccessedAt") AS INTEGER) AS "value" FROM "LiteratureIndexDocument" LIMIT 1`
-    )
-    await client.close()
-    return Number(rows[0]?.value ?? 0)
-  }
+  const lastAccessedEpoch = async (): Promise<number> => [...memoryIndex(root).accessed.values()][0]
 
   it('retains selected matches when unrelated documents enter or leave the shared index', async () => {
     const chunks = (contents: string[]): LiteratureIndexChunk[] =>
@@ -117,7 +106,7 @@ describe('LiteratureFullTextIndex', () => {
     ])
   })
 
-  it('deletes stale FTS rows when an extraction is replaced', async () => {
+  it('replaces complete extraction content without retaining old search matches', async () => {
     await index.replace({
       extractionId: 'extraction-1',
       documentChecksum: HASH_A,
@@ -183,7 +172,7 @@ describe('LiteratureFullTextIndex', () => {
     await expect(index.hasExtraction('expired-extraction')).resolves.toBe(true)
   })
 
-  it('sweeps an existing idle sidecar without waiting for another search', async () => {
+  it('sweeps an existing idle index without waiting for another search', async () => {
     await index.replace({
       extractionId: 'expired-extraction',
       documentChecksum: HASH_A,
@@ -280,13 +269,12 @@ describe('LiteratureFullTextIndex', () => {
     const searchReadStarted = new Promise<void>((resolve) => {
       searchRead = resolve
     })
-    const originalQuery = migrationSqlExecutor.query.bind(migrationSqlExecutor)
-    vi.spyOn(migrationSqlExecutor, 'query').mockImplementation(async (...args) => {
-      const rows = await originalQuery(...args)
-      if (String(args[1]).includes('FROM "LiteratureIndexChunkFts"')) {
-        searchRead()
-        await searchRelease
-      }
+    const backend = memoryIndex(root).store
+    const originalSearch = backend.search.bind(backend)
+    vi.spyOn(backend, 'search').mockImplementation(async (input) => {
+      const rows = await originalSearch(input)
+      searchRead()
+      await searchRelease
       return rows
     })
 
@@ -297,16 +285,6 @@ describe('LiteratureFullTextIndex', () => {
     await Promise.all([search, sweep])
 
     await expect(index.hasExtraction('extraction-1')).resolves.toBe(true)
-  })
-
-  it('creates sidecars with incremental auto-vacuum enabled', async () => {
-    const client = openDatabase(root)
-    const rows = await client.query<Array<{ autoVacuum: bigint | number }>>(
-      `SELECT "auto_vacuum" AS "autoVacuum" FROM pragma_auto_vacuum`
-    )
-    await client.close()
-
-    expect(Number(rows[0]?.autoVacuum)).toBe(2)
   })
 
   it('flushes hourly and sweeps every three hours until stopped', async () => {
@@ -412,4 +390,24 @@ describe('LiteratureFullTextIndex', () => {
     expect(results.filter(({ pageStart }) => pageStart === 1)).toHaveLength(1)
     expect(results.some(({ pageStart }) => pageStart === 2)).toBe(true)
   })
+})
+
+it('retries failed access flushes and closes the failed handle', async () => {
+  const root = 'flush-retry'
+  const owner = createIndex(root),
+    backend = memoryIndex(root).store
+  const close = vi.spyOn(backend, 'close')
+  const touch = vi.spyOn(backend, 'touch').mockRejectedValueOnce(new Error('offline'))
+  owner.pendingAccesses.add('pending-extraction')
+  try {
+    await expect(owner.flushPendingAccesses()).rejects.toThrow('offline')
+    expect(owner.pendingAccesses.has('pending-extraction')).toBe(true)
+    expect(close).toHaveBeenCalledOnce()
+    await owner.flushPendingAccesses()
+    expect(owner.pendingAccesses.size).toBe(0)
+    expect(touch).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.restoreAllMocks()
+  }
 })

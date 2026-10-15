@@ -2,7 +2,7 @@
 // Pins how WorkspacePage gates image attachments on the active provider's supportsImageInput flag,
 // in both the staging path (onStageAttachmentFiles) and the final send path (onSendMessage).
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 

@@ -1,12 +1,26 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '../../../../../test/renderer/literature'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLiteratureChanges } from './useLiteratureChanges'
-import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { renderHook } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: (listener) => {
+    recoveryListeners.add(listener)
+    return () => {
+      recoveryListeners.delete(listener)
+    }
+  }
+})
 
 afterEach(() => {
   cleanup()
-  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+  recoveryListeners.clear()
 })
 it('coalesces mutation bursts and restores missed changes on visibility and replay without leaking subscriptions', async () => {
   let notify!: () => void
@@ -145,21 +159,17 @@ it('consumes only queued changes covered by a command refresh, preserving other 
   }
 })
 
-it('refreshes missed desktop changes only after reconciliation and unsubscribes on unmount', async () => {
+it('refreshes missed changes on host recovery and unsubscribes on unmount', async () => {
   const invalidate = vi.fn()
   const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
-  for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
-    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
-    expect(invalidate).not.toHaveBeenCalled()
-  }
-  await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+  expect(invalidate).not.toHaveBeenCalled()
+  expect(recoveryListeners.size).toBe(1)
+  await act(async () => recover())
   expect(invalidate).toHaveBeenCalledExactlyOnceWith()
-  await act(async () => useDesktopRuntimeRecoveryStore.setState({ closing: true }))
-  expect(invalidate).toHaveBeenCalledOnce()
   unmount()
   await act(async () => {
-    useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
-    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    expect(recoveryListeners.size).toBe(0)
+    recover()
   })
   expect(invalidate).toHaveBeenCalledOnce()
 })

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ComposerDraft } from './pages/workspace/composer-contract'
 import type { ReactNode } from 'react'
-import { cleanup, render, screen } from '../../../test/renderer/literature'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const root = vi.hoisted(() => ({ render: vi.fn() }))

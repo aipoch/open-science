@@ -1,15 +1,7 @@
 // @vitest-environment jsdom
 
 import { StrictMode } from 'react'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  renderHook,
-  screen,
-  within
-} from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'

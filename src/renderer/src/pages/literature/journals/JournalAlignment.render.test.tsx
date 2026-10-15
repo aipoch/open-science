@@ -1,22 +1,29 @@
 // @vitest-environment jsdom
-import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor
-} from '../../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from '../JournalAttributes'
 import { JournalAlignment } from './JournalAlignment'
 
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: (listener) => {
+    recoveryListeners.add(listener)
+    return () => {
+      recoveryListeners.delete(listener)
+    }
+  }
+})
+
 afterEach(() => {
   cleanup()
-  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+  recoveryListeners.clear()
 })
 const report: NonNullable<JournalResult['alignment']> = {
   token: '11111111-1111-4111-8111-111111111111',
@@ -54,7 +61,7 @@ it('opens an expanded alignment panel without starting a scan', () => {
   expect(journals).not.toHaveBeenCalled()
 })
 
-it.each(['event', 'desktop'] as const)(
+it.each(['event', 'host recovery'] as const)(
   'checks and pages the library, keeps candidates read-only and invalidates after a %s change',
   async (transport) => {
     let changed!: () => void
@@ -128,8 +135,7 @@ it.each(['event', 'desktop'] as const)(
     act(() => {
       if (transport === 'event') changed()
       else {
-        useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
-        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        recover()
       }
     })
     expect(

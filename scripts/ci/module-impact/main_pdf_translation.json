@@ -6,7 +6,6 @@
     "src/main/literature/pdf-translation/api-target.test.ts",
     "src/main/literature/pdf-translation/api-target.ts",
     "src/main/literature/pdf-translation/application-commands.ts",
-    "src/main/literature/pdf-translation/cache-revision.test.ts",
     "src/main/literature/pdf-translation/checkpoint-adapter.ts",
     "src/main/literature/pdf-translation/checkpoint-repository.ts",
     "src/main/literature/pdf-translation/checkpoints.test.ts",
@@ -101,7 +100,9 @@
     "test/pdf-translation-preservation.test.ts",
     "test/pdf-translation-preservation.ts",
     "resources/pdf-translation-local/worker.mjs",
-    "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+    "src/main/literature/pdf-translation/local-worker.integration.test.ts",
+    "src/main/literature/pdf-translation/sqlite-checkpoint-storage.ts",
+    "src/main/literature/pdf-translation/sqlite-checkpoint-storage.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/pdf-translation/application-commands.ts",
@@ -115,7 +116,6 @@
     "owner": [
       "src/main/literature/pdf-translation/agent-target.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
-      "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",
@@ -126,7 +126,8 @@
       "src/main/literature/pdf-translation/writer.test.ts",
       "test/pdf-translation-native-verification.test.ts",
       "test/pdf-translation-preservation.test.ts",
-      "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+      "src/main/literature/pdf-translation/local-worker.integration.test.ts",
+      "src/main/literature/pdf-translation/sqlite-checkpoint-storage.test.ts"
     ],
     "contract": [
       "src/main/literature/pdf-translation/ipc.test.ts",

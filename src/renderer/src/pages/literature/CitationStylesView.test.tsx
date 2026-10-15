@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within
-} from '../../../../../test/renderer/literature'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-
 import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
-
 import { CitationStylesView } from './CitationStylesView'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 afterEach(cleanup)
 

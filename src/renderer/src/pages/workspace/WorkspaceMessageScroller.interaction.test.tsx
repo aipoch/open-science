@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
@@ -43,9 +44,16 @@ import { normalizeSessionFile } from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
-;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
 import type { ComposerDoc } from './composer/composer-doc'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
 // click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
@@ -404,9 +412,6 @@ const createHandoffEvent = (
     artifactIds: ['artifact-1']
   }
 })
-
-// Load the integration host after this suite's preview-store mock values are initialized.
-const { createRoot } = await import('../../../../../test/renderer/literature')
 
 describe('WorkspaceMessageScroller artifact click behavior', () => {
   let container: HTMLDivElement

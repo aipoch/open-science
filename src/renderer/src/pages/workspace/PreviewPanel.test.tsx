@@ -2,7 +2,7 @@ import { ANNOTATION_DRAG_TYPE, annotationTransfers } from './annotations/annotat
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 // @vitest-environment jsdom
 import { act, StrictMode, useEffect } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useNavigationStore } from '@/stores/navigation-store'

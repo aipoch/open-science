@@ -1,1 +1,1 @@
-export { useLiteratureChanges } from '../useLiteratureChanges'
+export { isCollectionOnlyChange, useLiteratureChanges } from '../useLiteratureChanges'

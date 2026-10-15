@@ -6,7 +6,7 @@
 // last-write-wins across multiple broadcasts, Main-Agent (null) clearing, and the pending
 // chip being shown while the current reply completes under the old agent.
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 import { useNavigationStore } from '@/stores/navigation-store'

@@ -2,7 +2,7 @@
 import { act, useState, useImperativeHandle, type Ref } from 'react'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { PreviewFileSurfaceHandle } from './PreviewFileSurface'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 vi.mock('./PreviewFileSurface', () => ({
   PreviewFileSurface: ({

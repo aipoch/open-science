@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
-import { createRoot, type Root } from '../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { i18next } from './i18n'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'

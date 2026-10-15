@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createIndex, openDatabase } from './sqlite.js'
+import { createIndex, memoryIndex } from './memory-index.js'
 import { createHash } from 'node:crypto'
 let root: string
 beforeEach(async () => {
@@ -116,7 +116,7 @@ it('indexes bounded overlapping chunks with original page and text offsets', asy
   expect(chunks.at(-1)).toMatchObject({ pageStart: 2, pageEnd: 2 })
   for (const chunk of chunks) expect(text.slice(chunk.textStart, chunk.textEnd)).toBe(chunk.content)
 })
-it.each(['sqlite-error', 'no-match', 'cjk'] as const)(
+it.each(['index-error', 'no-match', 'cjk'] as const)(
   'falls back to bounded lexical search for %s',
   async (mode) => {
     const { reader, index } = setup(
@@ -124,8 +124,8 @@ it.each(['sqlite-error', 'no-match', 'cjk'] as const)(
         ? '--- Page 2 ---\n这是临床研究证据'
         : '--- Page 2 ---\nclinical cohort evidence'
     )
-    if (mode === 'sqlite-error')
-      vi.spyOn(index, 'open').mockRejectedValueOnce(new Error('sqlite unavailable'))
+    if (mode === 'index-error')
+      vi.spyOn(index, 'open').mockRejectedValueOnce(new Error('index unavailable'))
     if (mode === 'no-match')
       vi.spyOn(LiteratureFullTextIndex.prototype, 'search').mockResolvedValueOnce([])
     const result = await reader.searchDocuments(
@@ -208,19 +208,12 @@ it.each(['bm25', 'fallback'] as const)(
     expect(authorize).toHaveBeenCalledTimes(3)
     if (mode === 'bm25') {
       expect(onIndexError).not.toHaveBeenCalled()
-      const db = openDatabase(root)
-      try {
-        const rows = await db.query<{ extractionId: string; extractorFingerprint: string }[]>(
-          'SELECT "extractionId", "extractorFingerprint" FROM "LiteratureIndexDocument"'
-        )
-        expect(rows).toHaveLength(2)
-        expect(new Set(rows.map((row) => row.extractionId)).size).toBe(2)
-        expect(rows.map((row) => row.extractorFingerprint).sort()).toEqual(
-          [fingerprint('native'), fingerprint('explicit')].sort()
-        )
-      } finally {
-        await db.close()
-      }
+      const rows = [...memoryIndex(root).documents.values()]
+      expect(rows).toHaveLength(2)
+      expect(new Set(rows.map((row) => row.extractionId)).size).toBe(2)
+      expect(rows.map((row) => row.extractorFingerprint).sort()).toEqual(
+        [fingerprint('native'), fingerprint('explicit')].sort()
+      )
     }
   }
 )
@@ -264,4 +257,24 @@ it('shares the six-extraction cache limit across caller strategies', async () =>
   expect(extract).toHaveBeenCalledTimes(7)
   await reader.readDocument({ ...reference(), strategy: '0' })
   expect(extract).toHaveBeenCalledTimes(8)
+})
+
+it('reads and searches with no index or persistence capability', async () => {
+  const onIndexError = vi.fn()
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: 'cohort evidence',
+      pageCount: 1,
+      truncated: false
+    }),
+    onIndexError
+  })
+  expect(await reader.readDocument(reference())).toMatchObject({
+    passage: { text: 'cohort evidence' }
+  })
+  expect(await reader.searchDocuments([reference()], 'cohort')).toMatchObject({
+    retrievalMode: 'fallback',
+    passages: [{ content: 'cohort evidence' }]
+  })
+  expect(onIndexError).not.toHaveBeenCalled()
 })

@@ -1,4 +1,4 @@
-import type { LiteratureRendererApi } from '../renderer-host'
+import type { LiteratureRendererApi, LiteratureRendererHost } from '../renderer-host'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
@@ -302,11 +302,12 @@ const parseLiteraturePdfMetadata = (
 }
 
 const extractLiteraturePdfDraft = async (
-  api: Pick<LiteratureRendererApi, 'literature' | 'previewResources'>,
+  host: Pick<LiteratureRendererHost, 'api' | 'loadPdf'>,
   file: File | PdfAnnotationSource,
   fallback: LiteratureItemInput,
   onNotice?: Notice
 ): Promise<LiteratureItemInput> => {
+  const { api, loadPdf } = host
   let resource: ManagedPreviewResource | undefined
   try {
     if ('kind' in file) {
@@ -324,13 +325,9 @@ const extractLiteraturePdfDraft = async (
       onNotice?.({ textUnavailable: true })
       return fallback
     }
-    const loadingTask = resource
-      ? (await import('../../workspace/previews/managed-pdf-document')).createManagedPdfLoadingTask(
-          resource
-        )
-      : (await import('../../workspace/previews/pdfjs')).pdfjsLib.getDocument({
-          data: new Uint8Array(await (file as File).arrayBuffer())
-        })
+    const loadingTask = await loadPdf(
+      resource ? { resource } : { data: new Uint8Array(await (file as File).arrayBuffer()) }
+    )
     let document: Awaited<typeof loadingTask.promise>
     try {
       document = await loadingTask.promise

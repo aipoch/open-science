@@ -1,14 +1,6 @@
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within
-} from '../../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReplayDocument, ReplayStep } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'

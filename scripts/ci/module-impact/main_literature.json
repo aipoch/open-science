@@ -62,7 +62,11 @@
     "src/main/literature/screening-adapter.ts",
     "src/main/literature/screening-store.ts",
     "src/main/literature/discovery-contract.ts",
-    "src/main/literature/package-source.ts"
+    "src/main/literature/package-source.ts",
+    "src/main/literature/full-text-index-storage.ts",
+    "src/main/literature/full-text-index-schema.ts",
+    "src/main/literature/full-text-index-storage.test.ts",
+    "src/main/literature/full-text-index-sqlite-fixture.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -87,7 +91,8 @@
     "src/main/literature/discovery-adapters.ts",
     "src/main/literature/screening-adapter.ts",
     "src/main/literature/screening-store.ts",
-    "src/main/literature/package-source.ts"
+    "src/main/literature/package-source.ts",
+    "src/main/literature/full-text-index-sqlite-fixture.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -123,7 +128,8 @@
       "src/main/literature/smart-collections.test.ts",
       "src/main/literature/journal-attributes.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
-      "src/main/literature/pdf-structure/engine-adapter.test.ts"
+      "src/main/literature/pdf-structure/engine-adapter.test.ts",
+      "src/main/literature/full-text-index-storage.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",

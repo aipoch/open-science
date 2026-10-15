@@ -141,3 +141,73 @@ for (const mode of ['api', 'local']) {
 console.log(
   'Packed API-only and local-only translation workflows, leases, usage and shutdown passed.'
 )
+
+// Independent installed consumer: whole-object storage, no SQL schema or serialized row fields.
+const { PdfTranslationCheckpoints } = await import('@aipoch/pdf-translation/storage')
+let saved
+const repository = {
+  canPersist: async () => true,
+  async transaction(operation) {
+    let working = structuredClone(saved)
+    const result = await operation({
+      requireSource: async () => ({ sizeBytes: 12n }),
+      requireDocument: async () => 'consumer-document',
+      findLatest: async () => structuredClone(working ?? null),
+      readHeader: async () => working ?? null,
+      readMetadata: async () => working?.checkpoint ?? null,
+      insert: async (record) => {
+        working = structuredClone(record)
+      },
+      commit: async (_id, expectedRevision, change) => {
+        if (working.checkpoint.revision !== expectedRevision) return false
+        working.checkpoint = structuredClone(change.checkpoint)
+        return true
+      }
+    })
+    saved = working
+    return result
+  }
+}
+const checkpoints = () =>
+  new PdfTranslationCheckpoints({
+    getClient: async () => repository,
+    resolveSource: async (sourceId) => ({ sourceId, checksum: 'a'.repeat(64) })
+  })
+const store = checkpoints()
+const admitted = await store.open(
+  {
+    resourceRequestKey: 'installed',
+    sourceId: 'custom:paper',
+    fingerprint: 'fp',
+    language: 'Chinese',
+    glossary: [],
+    sources: ['cell', '12']
+  },
+  'b'.repeat(64),
+  { frameworkId: 'consumer', modelId: 'model' }
+)
+const progress = await store.append(admitted, 0, '细胞', new AbortController().signal)
+assert.deepEqual((await checkpoints().read('custom:paper')).translations, ['细胞'])
+await assert.rejects(
+  store.append(admitted, 0, '细胞', new AbortController().signal),
+  /another window/
+)
+const cancellation = new AbortController()
+const transaction = repository.transaction.bind(repository)
+repository.transaction = (operation) =>
+  transaction((tx) =>
+    operation({
+      ...tx,
+      commit: async (...args) => {
+        const changed = await tx.commit(...args)
+        cancellation.abort()
+        return changed
+      }
+    })
+  )
+await assert.rejects(store.append(progress, 1, '12', cancellation.signal))
+assert.equal(saved.checkpoint.revision, progress.revision)
+assert.deepEqual(saved.checkpoint.translations, ['细胞'])
+console.log(
+  'Packed typed checkpoint consumer: reopen, CAS conflicts and cancellation rollback passed.'
+)

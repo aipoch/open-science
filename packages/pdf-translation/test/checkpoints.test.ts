@@ -58,7 +58,7 @@ it('rechecks source authority inside every transaction and rolls back denied cha
       store.append(checkpoint, 0, 'ATP 增加。', new AbortController().signal)
     ).rejects.toThrow('denied')
     await expect(store.read('version')).rejects.toThrow('denied')
-    expect([...h.rows().values()][0].revision).toBe(1)
+    expect([...h.rows().values()][0].checkpoint.revision).toBe(1)
   }
 })
 
@@ -126,3 +126,140 @@ it('runs and reopens a custom-source workflow using only injected inference and 
     await owner.shutdown()
   }
 })
+
+it('preserves independently published layouts and reports with a full-object consumer', async () => {
+  const h = setup(),
+    store = h.create(),
+    signal = new AbortController().signal
+  const first = (await store.open(input, 'b'.repeat(64), model))!
+  const saved = await store.append(first, 0, 'ATP 增加。', signal)
+  const snapshot = {
+    version: 1 as const,
+    parserVersion: 'test',
+    fingerprint: input.fingerprint,
+    pages: [{ width: 612, height: 792 }],
+    units: input.sources.map((source, index) => ({
+      id: `unit-${index}`,
+      source,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.1, y: 0.1 + index * 0.2, width: 0.8, height: 0.1 },
+          items: [{ index, text: source }]
+        }
+      ]
+    })),
+    coverage: {
+      pageCount: 1,
+      textItemCount: 2,
+      includedItemCount: 2,
+      excludedItemCount: 0,
+      pagesWithoutText: [],
+      exclusions: [],
+      warnings: []
+    }
+  }
+  await store.saveSnapshot({ source: input.sourceId, checkpointKey: saved.key, snapshot }, signal)
+  await store.recordLayout(
+    {
+      source: input.sourceId,
+      checkpointKey: saved.key,
+      generatedAt: Date.now(),
+      units: [{ sourceIndex: 0, source: input.sources[0], translation: 'ATP 增加。' }]
+    },
+    signal
+  )
+  const reports = (await h.create().read(input.sourceId))!.layoutReports
+  const completed = await store.append(saved, 1, '结果为 12。', signal)
+  expect(await h.create().read(input.sourceId)).toMatchObject({
+    layoutSnapshot: snapshot,
+    layoutReports: reports,
+    translations: completed.translations
+  })
+  const replaced = await store.append(completed, 0, 'ATP 上升。', signal, true)
+  expect((await h.create().read(input.sourceId))!.layoutReports).toEqual([])
+  expect((await h.create().read(input.sourceId))!.layoutSnapshot).toEqual(snapshot)
+  const resumed = (await h.create().read(input.sourceId))!
+  const reader = h.create()
+  const reopened = (await reader.open(
+    { ...input, checkpoint: { key: resumed.key, revision: resumed.revision } },
+    'b'.repeat(64),
+    model
+  ))!
+  const latest = await reader.append(reopened, 0, 'ATP 进一步增加。', signal, true)
+  expect(latest.layoutSnapshot).toEqual(snapshot)
+  expect(latest.revision).toBe(replaced.revision + 1)
+})
+
+it.each(['pinLayout', 'updateLayoutReports'] as const)(
+  'rolls back %s when cancellation wins after the mutation',
+  async (method) => {
+    const h = setup(),
+      store = h.create(),
+      controller = new AbortController()
+    const first = (await store.open(input, 'b'.repeat(64), model))!
+    const saved = await store.append(first, 0, 'ATP 增加。', controller.signal)
+    const before = h.rows()
+    const transaction = h.database.transaction.bind(h.database)
+    h.database.transaction = (operation) =>
+      transaction((tx) =>
+        operation({
+          ...tx,
+          async pinLayout(...args) {
+            await tx.pinLayout(...args)
+            if (method === 'pinLayout') controller.abort()
+          },
+          async updateLayoutReports(...args) {
+            await tx.updateLayoutReports(...args)
+            if (method === 'updateLayoutReports') controller.abort()
+          }
+        })
+      )
+    const action =
+      method === 'pinLayout'
+        ? store.saveSnapshot(
+            {
+              source: input.sourceId,
+              checkpointKey: saved.key,
+              snapshot: {
+                version: 1,
+                parserVersion: 'test',
+                fingerprint: input.fingerprint,
+                pages: [{ width: 612, height: 792 }],
+                units: input.sources.map((source, index) => ({
+                  id: `unit-${index}`,
+                  source,
+                  fragments: [
+                    {
+                      pageNumber: 1,
+                      rect: { x: 0.1, y: 0.1 + index * 0.2, width: 0.8, height: 0.1 },
+                      items: [{ index, text: source }]
+                    }
+                  ]
+                })),
+                coverage: {
+                  pageCount: 1,
+                  textItemCount: 2,
+                  includedItemCount: 2,
+                  excludedItemCount: 0,
+                  pagesWithoutText: [],
+                  exclusions: [],
+                  warnings: []
+                }
+              }
+            },
+            controller.signal
+          )
+        : store.recordLayout(
+            {
+              source: input.sourceId,
+              checkpointKey: saved.key,
+              generatedAt: Date.now(),
+              units: [{ sourceIndex: 0, source: input.sources[0], translation: 'ATP 增加。' }]
+            },
+            controller.signal
+          )
+    await expect(action).rejects.toThrow()
+    expect(h.rows()).toEqual(before)
+  }
+)

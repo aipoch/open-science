@@ -14,7 +14,9 @@ import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 
 import { useLiteratureHost, type LiteratureRendererHost } from '../renderer-host'
 
-export function createJournalAttributeStore(host: Pick<LiteratureRendererHost, 'api' | 'onRecovered'>): {
+export function createJournalAttributeStore(
+  host: Pick<LiteratureRendererHost, 'api' | 'onRecovered'>
+): {
   useJournalDatasets(): JournalDataset[]
   useJournalSourceYears(): JournalSourceYears
   useDisplayedJournalDatasets(): JournalDataset[]

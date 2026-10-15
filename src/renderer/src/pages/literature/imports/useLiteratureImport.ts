@@ -119,7 +119,8 @@ export function useLiteratureImport({
   beginManualImport: (resetDraft?: boolean) => void
   closeRecordImport: () => void
 } {
-  const { api: hostApi } = useLiteratureHost()
+  const host = useLiteratureHost()
+  const { api: hostApi } = host
 
   const { t } = useTranslation()
   const [isCreatingItem, setIsCreatingItem] = useState(false)
@@ -289,7 +290,7 @@ export function useLiteratureImport({
             if (importMetadataGenerationRef.current === generation)
               setPendingImportMetadataNotice(pdfMetadataNoticeLabel(value, t))
           }
-          const local = await extractLiteraturePdfDraft(hostApi, file, fallback, notice)
+          const local = await extractLiteraturePdfDraft(host, file, fallback, notice)
           if (importMetadataGenerationRef.current !== generation) return local
           return completeLiteraturePdfDraft(hostApi, local, notice)
         }

@@ -314,14 +314,11 @@ export function Fixture(): React.JSX.Element {
           }}
         />
         <WorkspaceLiteratureToolCard
-          summary={{
-            action: 'save',
-            libraryScope: 'project',
-            documentNames: [],
-            documentCount: 0,
-            savedCount: candidates.length,
-            candidateIds: candidates.map(({ id }) => id)
-          }}
+          summary={buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            { results: candidates.map(({ id }) => ({ kind: 'candidate', id, state: 'pending' })) }
+          )}
         />
         <WorkspaceLiteratureToolCard
           isApproval

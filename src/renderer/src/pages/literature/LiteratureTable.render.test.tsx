@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '../../../../../test/renderer/literature'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureTableScrollArea, LiteratureTextTooltip } from './LiteratureTable'
 import { TooltipProvider } from '@/components/ui/tooltip'

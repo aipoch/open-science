@@ -1,21 +1,26 @@
 import assert from 'node:assert/strict'
-import { DatabaseSync } from 'node:sqlite'
 import { LiteratureIndex, LiteratureReader } from '@aipoch/literature-reading'
-const database = new DatabaseSync('reading.sqlite')
+const documents = new Map()
 const db = {
-  execute: async (sql, ...values) => Number(database.prepare(sql).run(...values).changes),
-  query: async (sql, ...values) => database.prepare(sql).all(...values),
-  transaction: async (work) => {
-    database.exec('BEGIN')
-    try {
-      const result = await work(db)
-      database.exec('COMMIT')
-      return result
-    } catch (error) {
-      database.exec('ROLLBACK')
-      throw error
-    }
+  hasExtraction: async (id) => documents.has(id),
+  deleteExtraction: async (id) => {
+    documents.delete(id)
   },
+  replace: async (input) => {
+    documents.set(input.extractionId, structuredClone(input))
+  },
+  search: async ({ extractionIds, terms, limit }) =>
+    extractionIds
+      .flatMap((extractionId) =>
+        (documents.get(extractionId)?.chunks ?? [])
+          .filter((chunk) =>
+            terms.some((term) => chunk.content.toLowerCase().includes(term.toLowerCase()))
+          )
+          .map((chunk) => ({ ...chunk, extractionId, rank: -1 }))
+      )
+      .slice(0, limit),
+  touch: async () => {},
+  purgeExpired: async () => {},
   close: async () => {}
 }
 const index = new LiteratureIndex({ open: async () => db, exists: async () => true })
@@ -46,4 +51,8 @@ assert.ok(page)
 await reader.readDocument(reference)
 assert.equal(admitted, 2)
 assert.equal(extracted, 1)
-database.close()
+const result = await reader.searchDocuments([reference], 'trial')
+assert.equal(result.retrievalMode, 'bm25')
+assert.ok(result.passages[0].content.includes('randomized trial'))
+await index.flushPendingAccesses()
+console.log('Packed reader and typed in-memory index: authorization, cache and search passed.')

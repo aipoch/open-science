@@ -1,4 +1,5 @@
-import { LiteratureIndex, type IndexDatabase } from '../src/index.js'
+import { LiteratureIndex } from '@aipoch/literature-reading'
+import { openSqliteLiteratureIndex, type IndexDatabase } from './full-text-index-storage'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
@@ -36,11 +37,14 @@ export function createIndex(root: string): LiteratureIndex {
     exists: async () => existsSync(indexPath(root)),
     open: async () => {
       const db = openDatabase(root)
-      return {
-        ...db,
-        query: (statement, ...values) => sql.query(db, statement, ...values),
-        execute: (statement, ...values) => sql.execute(db, statement, ...values)
-      }
+      return openSqliteLiteratureIndex(
+        {
+          ...db,
+          query: (statement, ...values) => sql.query(db, statement, ...values),
+          execute: (statement, ...values) => sql.execute(db, statement, ...values)
+        },
+        () => {}
+      )
     }
   })
 }

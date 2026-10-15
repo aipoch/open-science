@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { PropsWithChildren } from 'react'
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {

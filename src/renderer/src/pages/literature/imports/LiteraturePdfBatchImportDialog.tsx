@@ -40,7 +40,8 @@ export function LiteraturePdfBatchImportDialog({
   createDraft: (file: File) => LiteratureItemInput
   onClose: () => void
 }): React.JSX.Element {
-  const { api: hostApi } = useLiteratureHost()
+  const host = useLiteratureHost()
+  const { api: hostApi } = host
 
   const { t } = useTranslation()
   const [rows, setRows] = useState<Row[]>(() =>
@@ -99,7 +100,7 @@ export function LiteraturePdfBatchImportDialog({
             if (!disposed)
               row.metadataNotice = pdfMetadataNoticeLabel(value, metadataTranslation.current)
           }
-          const local = await extractLiteraturePdfDraft(hostApi, row.file, row.draft, notice)
+          const local = await extractLiteraturePdfDraft(host, row.file, row.draft, notice)
           if (disposed) return
           const draft = await completeLiteraturePdfDraft(hostApi, local, notice)
           if (disposed) return
@@ -143,7 +144,7 @@ export function LiteraturePdfBatchImportDialog({
           .catch(() => undefined)
       }
     }
-  }, [hostApi])
+  }, [host, hostApi])
 
   const run = async (): Promise<void> => {
     if (running.current || reading) return

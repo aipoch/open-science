@@ -3,7 +3,7 @@
 // request-size overflow. ConversationPanel only renders the note; the canSendMessage gate is computed
 // here, so without this a manual prompt could race the recovery resend into the same session.
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 

@@ -3,7 +3,7 @@
 // Covers: fail-closed send gate (both holes), Retry re-invoking the barrier,
 // double-send draft-restore prevention, and badge/chip display correctness.
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 import { useNavigationStore } from '@/stores/navigation-store'

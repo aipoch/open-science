@@ -5,7 +5,7 @@
 // quietly falling back to zh-Hans, so both scripts are asserted separately. The About status line
 // is a switch over update states, so each interpolated branch is rendered rather than just one.
 import { act } from '@testing-library/react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'

@@ -1,31 +1,21 @@
-import type { PdfTranslationCheckpoint } from './contracts.js'
+import type { PdfTranslationCheckpoint, PdfTranslationEdition } from './contracts.js'
 export type TranslationCheckpointIdentity = Pick<PdfTranslationCheckpoint, 'sourceId' | 'checksum'>
+/** Opaque consumer identities and a domain snapshot; no database rows or serialized fields. */
 export type TranslationStoredCheckpoint = {
   id: string
   contentId: string
   checksum: string
   sizeBytes: bigint
-  revision: number
-  payloadJson: string
-  layoutSnapshotJson: string | null
-  blocks: { sourceIndex: number; translation: string | null; revision: number }[]
-}
-export type TranslationEditionRow = {
-  id: string
-  key: string
-  language: string
-  glossary: string
-  concurrency: number
-  model: string
-  updatedAt: Date | number
+  checkpoint: PdfTranslationCheckpoint
 }
 export type TranslationCheckpointCommit = {
-  revision: number
-  base?: { payloadJson: string; layoutSnapshotJson: string | null }
-  block?: { sourceIndex: number; translation: string | null }
-  layoutReportsJson?: string
+  checkpoint: PdfTranslationCheckpoint
+  /** Optional single-block change. Consumers may store the complete checkpoint instead,
+   * preserving independently pinned layoutSnapshot and layoutReports unless reports are supplied below. */
+  changedBlock?: { sourceIndex: number; translation: string | null }
+  layoutReports?: NonNullable<PdfTranslationCheckpoint['layoutReports']>
 }
-/** All methods share one transaction. An error must roll back every mutation, including source registration. */
+/** Atomic admission: errors, cancellation and a failed CAS must leave no partial mutations. */
 export interface TranslationTransaction {
   requireSource(identity: TranslationCheckpointIdentity): Promise<{ sizeBytes: bigint }>
   requireDocument(
@@ -34,25 +24,36 @@ export interface TranslationTransaction {
   ): Promise<string>
   findLatest(contentId: string, checkpointKey?: string): Promise<TranslationStoredCheckpoint | null>
   read(id: string, contentId?: string): Promise<TranslationStoredCheckpoint | null>
-  list(contentId: string): Promise<TranslationEditionRow[]>
+  list(contentId: string): Promise<PdfTranslationEdition[]>
   delete(id: string, contentId: string): Promise<boolean>
-  insert(row: Omit<TranslationStoredCheckpoint, 'blocks'>): Promise<void>
+  insert(record: TranslationStoredCheckpoint): Promise<void>
   readHeader(
     id: string
   ): Promise<Pick<TranslationStoredCheckpoint, 'contentId' | 'checksum' | 'sizeBytes'> | null>
-  readBase(
+  /** Current metadata, including independently published layout results. */
+  readMetadata(
     id: string
-  ): Promise<Pick<TranslationStoredCheckpoint, 'payloadJson' | 'layoutSnapshotJson'> | null>
-  readLayoutReports(id: string): Promise<string | null>
-  pinLayout(id: string, snapshotJson: string): Promise<void>
-  updatePayload(id: string, payloadJson: string): Promise<void>
-  /** CAS against the live revision. false means no changes; base replacement or one block commits atomically. */
+  ): Promise<Pick<
+    PdfTranslationCheckpoint,
+    'key' | 'fingerprint' | 'sources' | 'layoutSnapshot' | 'layoutReports'
+  > | null>
+  readLayoutReports(id: string): Promise<PdfTranslationCheckpoint['layoutReports']>
+  pinLayout(
+    id: string,
+    snapshot: NonNullable<PdfTranslationCheckpoint['layoutSnapshot']>
+  ): Promise<void>
+  updateLayoutReports(
+    id: string,
+    reports: NonNullable<PdfTranslationCheckpoint['layoutReports']>
+  ): Promise<void>
+  /** Compare with the current revision atomically. false means no changes were applied. */
   commit(
     id: string,
     expectedRevision: number,
     change: TranslationCheckpointCommit
   ): Promise<boolean>
 }
+/** Optional checkpoint capability. Consumers choose storage, serialization and resource ownership. */
 export interface TranslationDatabase {
   canPersist(identity: TranslationCheckpointIdentity): Promise<boolean>
   transaction<T>(operation: (tx: TranslationTransaction) => Promise<T>): Promise<T>

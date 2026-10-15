@@ -2,7 +2,7 @@
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { act, Component, type ReactNode } from 'react'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { createRoot, type Root } from '../../../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {

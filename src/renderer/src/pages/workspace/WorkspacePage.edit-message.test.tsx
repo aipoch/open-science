@@ -2,7 +2,7 @@
 // Pins the inline edit-resend flow: the gate follows the same settled-run conditions as sending, and
 // confirming an inline edit resends the adjusted prompt as a new turn without attachments.
 import { act } from 'react'
-import { createRoot, type Root } from '../../../../../test/renderer/literature'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 

@@ -22,7 +22,18 @@ const FilePreviewDialog = lazy(() =>
 function LiteratureFilePreview(
   props: ComponentProps<LiteratureRendererHost['FilePreviewDialog']>
 ): ReactElement {
-  return createElement(Suspense, { fallback: null }, createElement(FilePreviewDialog, props))
+  return createElement(
+    Suspense,
+    { fallback: null },
+    createElement(FilePreviewDialog, {
+      ...props,
+      onReadWithAgent: props.onReadWithAgent
+        ? (item) => {
+            if (item.format === 'pdf') props.onReadWithAgent?.({ ...item, format: 'pdf' })
+          }
+        : undefined
+    })
+  )
 }
 
 export const literatureRendererHost: LiteratureRendererHost = {
@@ -37,10 +48,28 @@ export const literatureRendererHost: LiteratureRendererHost = {
   useProjectStore,
   useTagStore,
   useSettingsStore,
-  useProjectFormDialog,
+  useProjectFormDialog(options) {
+    const form = useProjectFormDialog(options)
+    return {
+      openCreateDialog: form.openCreateDialog,
+      isOpen: form.dialogProps.open,
+      dialog: createElement(ProjectFormDialog, form.dialogProps)
+    }
+  },
   FilePreviewDialog: memo(LiteratureFilePreview),
-  ProjectFormDialog,
-  createBookmarkPreviewItem,
+  createBookmarkPreviewItem(target) {
+    const item = createBookmarkPreviewItem(target)
+    return item?.format === 'pdf' ? { ...item, format: 'pdf' } : undefined
+  },
   requestPdfAnnotationReveal: (...args) => requestPdfAnnotationReveal(...args),
-  resolvePdfContextTarget
+  resolvePdfContextTarget,
+  async loadPdf(input) {
+    return 'resource' in input
+      ? (
+          await import('@/pages/workspace/previews/managed-pdf-document')
+        ).createManagedPdfLoadingTask(input.resource)
+      : (await import('@/pages/workspace/previews/pdfjs')).pdfjsLib.getDocument({
+          data: input.data
+        })
+  }
 }

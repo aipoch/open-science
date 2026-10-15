@@ -868,7 +868,6 @@
       "test/pdf-translation-native-verification.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
-      "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/connectors/registry.test.ts",
       "src/main/connectors/skill-doc.test.ts",

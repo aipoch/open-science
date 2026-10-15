@@ -6,16 +6,41 @@ import { useLiteratureClient } from './literature-read-pages'
 import { useLiteratureChanges } from './useLiteratureChanges'
 import { useJournalDatasets } from './journals/journal-attribute-store'
 import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { useLiteratureHost } from './renderer-host'
 
 // A minimal consumer supplies only the capabilities exercised by these surfaces.
 const host = (literature: object): LiteratureRendererHost =>
   ({
-    api: { literature, projects: {} }
-  }) as LiteratureRendererHost
+    api: { literature, projects: {} },
+    onRecovered: () => () => {}
+  }) as unknown as LiteratureRendererHost
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+})
+
+it('requires the test to supply every capability it exercises', () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const consumer = createLiteratureTestRenderer({})
+  expect(() => consumer.renderHook(() => useLiteratureHost().loadPdf)).toThrow(
+    'Literature test capability was not supplied: loadPdf'
+  )
+})
+
+it('keeps injected test hosts stable on rerender and distinct across mounts', () => {
+  const consumer = createLiteratureTestRenderer({})
+  const first = consumer.renderHook(useLiteratureHost)
+  const original = first.result.current
+  first.rerender()
+  expect(first.result.current).toBe(original)
+  const second = consumer.renderHook(useLiteratureHost)
+  expect(second.result.current).not.toBe(original)
+  first.unmount()
+  const third = consumer.renderHook(useLiteratureHost)
+  expect(third.result.current).not.toBe(original)
+  expect(third.result.current).not.toBe(second.result.current)
 })
 
 it('requires an explicit host instead of silently reading the application bridge', () => {
@@ -65,6 +90,12 @@ it('removes subscriptions and discards queued invalidations on unmount before re
       return remove
     })
   })
+  const removeRecovery = vi.fn()
+  let recovered: (() => void) | undefined
+  ports.onRecovered = (listener) => {
+    recovered = listener
+    return removeRecovery
+  }
   const invalidate = vi.fn()
   function Consumer(): null {
     useLiteratureChanges(invalidate)
@@ -81,6 +112,7 @@ it('removes subscriptions and discards queued invalidations on unmount before re
     await Promise.resolve()
   })
   expect(remove).toHaveBeenCalledTimes(1)
+  expect(removeRecovery).toHaveBeenCalledTimes(1)
   expect(invalidate).not.toHaveBeenCalled()
   render(
     <LiteratureRendererProvider host={ports}>
@@ -89,6 +121,8 @@ it('removes subscriptions and discards queued invalidations on unmount before re
   )
   await act(async () => changed?.({ revision: 2, itemIds: ['new'] }))
   expect(invalidate).toHaveBeenCalledTimes(1)
+  await act(async () => recovered?.())
+  expect(invalidate).toHaveBeenCalledTimes(2)
 })
 
 it('does not carry journal responses or operation state into a new mounted instance', async () => {
