@@ -17,6 +17,7 @@ import { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { AcpConnectionResourceOwner } from './connection-resource-owner'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import { AcpClassificationImageLoader } from './classification-image-loader'
 import { ContextUsageTracker } from './context-usage-tracker'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
@@ -559,6 +560,10 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               })
           }
         : {})
+    }),
+    classificationImageLoader: new AcpClassificationImageLoader({
+      uploadRepository,
+      managedFileVersions: options.artifacts?.managedFileVersions
     }),
     sessionPresentationPolicy: new AcpSessionPresentationPolicy(),
     promptOutcomeFinalizer: new AcpPromptOutcomeFinalizer()

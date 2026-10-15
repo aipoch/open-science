@@ -24,7 +24,8 @@ type TestContextTurn = ContextWindowTurnHandle & {
 type Fixture = {
   owner: AcpPromptPreparationOwner
   prepare: (overrides?: Record<string, unknown>) => Promise<PreparedPromptHandle>
-  promptContent: { prepare: Mock; loadClassificationImages: Mock }
+  promptContent: { prepare: Mock }
+  classificationImages: { load: Mock }
   contextUsage: { beginTurn: Mock; replacePromptSkillDocuments: Mock }
   turn: TestContextTurn
   turnSkill: { prepareProvider: Mock }
@@ -58,7 +59,6 @@ const setup = (
   const turn = contextTurn()
   const promptClose = vi.fn()
   const promptContent = {
-    loadClassificationImages: vi.fn(async () => []),
     prepare: vi.fn(
       async (input: {
         references: readonly FileReference[]
@@ -78,6 +78,7 @@ const setup = (
       }
     )
   }
+  const classificationImages = { load: vi.fn(async () => []) }
   const contextUsage = {
     beginSession: vi.fn(),
     beginTurn: vi.fn(() => turn),
@@ -93,6 +94,7 @@ const setup = (
   const registerTurnInputs = vi.fn(async () => undefined)
   const owner = new AcpPromptPreparationOwner({
     promptContent,
+    classificationImages,
     imageInputCompatibility,
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
@@ -168,6 +170,7 @@ const setup = (
     owner,
     prepare,
     promptContent,
+    classificationImages,
     contextUsage,
     turn,
     turnSkill,
@@ -1033,7 +1036,7 @@ describe('optional main-prompt classification', () => {
       request: request({ currentImages: [currentImage], attachments: [attachment] })
     })
 
-    expect(fixture.promptContent.loadClassificationImages).toHaveBeenCalledWith({
+    expect(fixture.classificationImages.load).toHaveBeenCalledWith({
       appSessionId: 'session-1',
       projectId: 'project-1',
       currentImages: [currentImage],

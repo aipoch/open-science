@@ -185,6 +185,7 @@ const composeAcpRuntimePromptOwners = (
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,
+    classificationImages: base.classificationImageLoader,
     imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,
     contextUsage: base.contextUsageTracker,
