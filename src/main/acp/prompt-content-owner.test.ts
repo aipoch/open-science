@@ -86,6 +86,42 @@ describe('PDF preparation routing', () => {
 })
 
 describe('classification image uploads', () => {
+  it('reads the current managed head for classification, matching prompt preparation', async () => {
+    const lease = createTrustedLease(imageBytes)
+    const openLatest = vi.fn(async () => lease)
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: {} as UploadRepository,
+      managedFileVersions: { openLatest } as never,
+      fileReferenceResolver: new FileReferenceResolver([])
+    })
+    const attachment: UploadedAttachment = {
+      id: 'upload-file-1',
+      versionId: 'stale-attachment-version',
+      sessionId: 'session-1',
+      name: 'current-image.png',
+      originalName: 'current-image.png',
+      path: 'upload-version:stale-attachment-version',
+      mimeType: 'image/png',
+      size: imageBytes.byteLength,
+      createdAt: '2026-10-15T00:00:00.000Z'
+    }
+
+    const images = await owner.loadClassificationImages({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      currentUploads: [attachment],
+      signal: new AbortController().signal
+    })
+
+    expect(images).toHaveLength(1)
+    expect(openLatest).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-1'
+    })
+    expect(lease.close).toHaveBeenCalledOnce()
+  })
+
   it('reads an unpublished current upload through the scoped upload capability', async () => {
     const root = await createRoot()
     const uploads = new UploadRepository(root)

@@ -69,7 +69,7 @@ type ResourceSnapshotScope = Readonly<{
 
 type AcpPromptContentOwnerOptions = {
   uploadRepository?: UploadRepository
-  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest' | 'openVersion'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
   fileReferenceResolver: FileReferenceResolver
   inlineImageBudgetBytes?: number
   createResourceSnapshotStore?: (scope: ResourceSnapshotScope) => TurnResourceSnapshotStore
@@ -247,10 +247,7 @@ class AcpPromptContentOwner {
           projectId: input.projectId,
           fileId: attachment.id
         }
-        const lease = await this.options.managedFileVersions.openVersion(
-          identity,
-          attachment.versionId
-        )
+        const lease = await this.options.managedFileVersions.openLatest(identity)
         try {
           if (lease.size > MAX_AUTO_PROCESS_IMAGE_BYTES)
             throw new Error('Classification image exceeds the processing limit.')
