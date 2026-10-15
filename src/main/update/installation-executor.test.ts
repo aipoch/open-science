@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { prefetchSystemBootIdentity } from '../system-boot-identity'
+import { afterEach, beforeAll, expect, it } from 'vitest'
 import {
   copyFileSync,
   mkdtempSync,
@@ -25,11 +26,11 @@ import {
   inspectInstallationUpdate,
   installationStateDirectory
 } from './installation-protection'
-// Boot acquisition is covered separately; transaction fixtures need a stable boot.
-vi.mock('../system-boot-identity', async (original) => ({
-  ...(await original<typeof import('../system-boot-identity')>()),
-  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
-}))
+// Match startup's asynchronous Windows boot query before creating durable update records.
+beforeAll(async () => {
+  await prefetchSystemBootIdentity()
+})
+
 const directories: string[] = []
 afterEach(() => directories.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true })))
 it.each([

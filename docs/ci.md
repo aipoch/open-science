@@ -86,6 +86,9 @@ skip a head that the last successful scheduled run already covered (shared `skip
 be published under the rolling `nightly` tag, and manual runs never count as coverage because
 the runs API cannot report which dispatch mode they selected. Manual runs always execute.
 Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
+Manual Nightly `windows-package` runs the native receipt-publication and submission-recovery gate
+before packaging, even though it skips portable verification. Use this mode to diagnose Windows
+package failures without publication; a passing dry-run does not certify stable-release signing.
 Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
 be discovered in queue or scheduled validation, and non-mainline Windows failures may first be
 discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one
@@ -144,6 +147,10 @@ stapled; it still validates both tickets and runs Gatekeeper, without changing t
 `operation=notarize` submits once and waits; an empty `source_run` retains the signed-build path.
 Missing credentials fail a notarization dry run instead of reporting an untested success.
 
+Stapler uses a command-local sandbox to block UDP/443 and fall back to HTTPS over TCP; notarization
+submission and polling are unaffected. This workaround uses deprecated `sandbox-exec` and fails closed
+if unavailable. Reused-artifact dry runs report transport summaries and delete raw network logs.
+
 Only explicit `NSURLErrorDomain Code=-1005` transport failures receive up to three attempts with
 10/30-second backoff, independently for wait, staple and validate. Wait attempts share a 15-minute
 budget. Rejections, credential/signature errors, unknown Error 68 and process timeouts fail closed.
@@ -152,9 +159,12 @@ Inspect its captured output/Apple history before submitting again. A full job re
 use the staple dry run to investigate an already Accepted package without doing that.
 
 Dry runs emit no release certification and replace artifacts only in their own run. A green diagnostic
-run does not authorize publication. Package startup/shutdown failures are not retried: macOS reports
-the package/profile/launch and its backend log tail, and Linux records the CLI daemon PID state before
-cleanup. Tokens are redacted from these additional diagnostics; missing evidence remains explicit.
+run does not authorize publication. macOS smoke installs the app from the DMG, unmounts the image,
+then verifies and launches the installed copy. Gatekeeper, ZIP, migration, fresh-install and reopen
+checks remain in place, with a 60-second startup deadline.
+
+Startup/shutdown failures are not retried. macOS reports phase timings, backend logs and owned-process
+stack samples; Linux records CLI daemon PID state before cleanup. Diagnostic tokens are redacted.
 
 ## Independent package tests
 

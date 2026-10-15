@@ -180,6 +180,8 @@ jobs:
       - name: Notarize + staple
         if: steps.gate.outputs.enabled == 'true'
         env:
+          # Diagnose public ticket transport only; never log authenticated notary requests.
+          CFNETWORK_DIAGNOSTICS: ${{ !inputs.certified_build && inputs.source_run != '' && inputs.operation != 'notarize' && '3' || '0' }}
           OPERATION: ${{ inputs.operation }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -188,6 +190,32 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           nt="$RUNNER_TEMP/notarytool.json"
           shopt -s nullglob
+          # Avoid CloudKit's observed HTTP/3 connection loss without changing host networking or TLS.
+          # shortcut: sandbox-exec is deprecated; remove this workaround after Apple fixes the path.
+          stapler_prefix=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote udp "*:443"))')
+          echo 'Stapler transport: UDP/443 denied in command sandbox'
+
+          if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]; then
+            sw_vers
+            xcodebuild -version
+            xcrun --find stapler
+            network_log="$RUNNER_TEMP/stapler-network.jsonl"
+            (umask 077; touch "$network_log")
+            sudo /usr/bin/log stream --style ndjson --level debug \
+              --predicate 'process == "stapler"' > "$network_log" 2>&1 &
+            network_pid=$!
+            finish_network_diagnostics() {
+              local code=$?
+              trap - EXIT
+              sudo kill -TERM "$network_pid" || true
+              wait "$network_pid" || true
+              node scripts/ci/apple-notarization-retry.mjs --summarize-network "$network_log" || \
+                echo '::warning::CFNetwork summaries unavailable'
+              rm -f "$network_log"
+              exit "$code"
+            }
+            trap finish_network_diagnostics EXIT
+          fi
 
           if [ "$OPERATION" = "notarize" ] && { [ -z "${KEY_ID:-}" ] || [ -z "${ISSUER:-}" ]; }; then
             echo "::error::APPLE_API_KEY_ID / APPLE_API_ISSUER are not set — cannot notarize"; exit 1
@@ -242,9 +270,9 @@ jobs:
           for dmg in "${dmgs[@]}"; do
             if [ "$OPERATION" = "notarize" ]; then submit "$dmg"; fi
             if [ "$OPERATION" != "smoke" ]; then
-              node scripts/ci/apple-notarization-retry.mjs stapler staple "$dmg"
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$dmg"
             fi
-            node scripts/ci/apple-notarization-retry.mjs stapler validate "$dmg"
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$dmg"
           done
 
           for zip in "${zips[@]}"; do
@@ -253,16 +281,16 @@ jobs:
             app=$(find "$work" -maxdepth 1 -name '*.app' -print -quit)
             if [ -z "$app" ]; then echo "no .app inside $zip" >&2; exit 1; fi
             if [ "$OPERATION" != "smoke" ]; then
-              node scripts/ci/apple-notarization-retry.mjs stapler staple "$app"
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$app"
             fi
-            node scripts/ci/apple-notarization-retry.mjs stapler validate "$app"
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$app"
             if [ "$OPERATION" != "smoke" ]; then
               ditto -c -k --keepParent "$app" "$zip"
             fi
             rm -rf "$work"
           done
 
-      # Stapling/repacking changes the shipped bytes. Mount/extract and launch both final artifacts,
+      # Stapling/repacking changes the shipped bytes. Install/extract and launch both final artifacts,
       # and require Gatekeeper assessment before their refreshed hashes can be certified.
       - name: Smoke test final macOS packages
         if: steps.gate.outputs.enabled == 'true'

@@ -138,10 +138,10 @@ describe('release and scheduled workflow topology', () => {
     }
   })
 
-  it('blocks verified Windows builds on real receipt publication and submission recovery', () => {
+  it('blocks Windows builds including package dry-runs on real receipt publication and submission recovery', () => {
     const build = workflow('build.yml').jobs.build
     const gate = step(build, 'Verify Windows receipt publication and submission recovery')
-    expect(gate.if).toBe("${{ matrix.platform == 'win' && !inputs.skip_verify }}")
+    expect(gate.if).toBe("${{ matrix.platform == 'win' }}")
     expect(gate['continue-on-error']).not.toBe(true)
     expect(gate.run).toContain('npx vitest run')
     expect(gate.run).toContain('src/main/notebook/file-evidence-publication.integration.test.ts')
@@ -1060,6 +1060,27 @@ describe('build verification throughput', () => {
     expect(step(job, 'Smoke test final macOS packages').run).toContain('--gatekeeper')
     expect(step(job, 'Smoke test final macOS packages')['continue-on-error']).not.toBe(true)
     expect(step(job, 'Remove App Store Connect API key').if).toBe('always()')
+  })
+
+  it('limits CFNetwork capture to unauthenticated diagnostics and exports only summaries', () => {
+    const capture = step(workflow('notarize-mac.yml').jobs.notarize, 'Notarize + staple')
+    expect(capture.env?.CFNETWORK_DIAGNOSTICS).toBe(
+      "${{ !inputs.certified_build && inputs.source_run != '' && inputs.operation != 'notarize' && '3' || '0' }}"
+    )
+    expect(capture.run).toContain('--predicate \'process == "stapler"\'')
+    expect(capture.run).toContain('--summarize-network "$network_log"')
+    expect(capture.run).toContain('trap finish_network_diagnostics EXIT')
+    expect(capture.run).toContain('exit "$code"')
+    expect(capture.run).toContain('rm -f "$network_log"')
+    expect(capture.run).toContain('(deny network-outbound (remote udp "*:443"))')
+    expect(capture.run!.indexOf('stapler_prefix=(')).toBeLessThan(
+      capture.run!.indexOf('if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]')
+    )
+    expect(capture.run).not.toContain('stapler_prefix=()')
+    expect(capture.run?.match(/"\$\{stapler_prefix\[@\]\}" node/g)).toHaveLength(4)
+    expect(capture.run).not.toContain(
+      'stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs notarytool'
+    )
   })
 
   it('reuses source artifacts in focused dry runs without emitting release certification', () => {

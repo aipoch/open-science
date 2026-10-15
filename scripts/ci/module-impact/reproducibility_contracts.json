@@ -920,6 +920,7 @@
       "src/main/settings/provider-protocol-regressions.test.ts",
       "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
       "src/main/settings/authenticated-provider-redirects.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/native-responses-compatibility.test.ts",
       "src/main/settings/responses-bridge.integration.test.ts",

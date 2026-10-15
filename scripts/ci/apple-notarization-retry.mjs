@@ -1,8 +1,44 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
+
+// CFNetwork logs can contain headers and bodies. Export only protocol and numeric timing fields.
+export const summarizeAppleNetworkLog = (text) => {
+  const summaries = []
+  for (const line of text.split('\n')) {
+    let entry
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!entry.processImagePath?.endsWith('/stapler')) continue
+    const message = entry.eventMessage ?? ''
+    const metrics = {}
+    for (const key of [
+      'transaction_duration_ms',
+      'request_duration_ms',
+      'response_duration_ms',
+      'response_status',
+      'connection',
+      'reused',
+      'request_bytes',
+      'response_bytes'
+    ]) {
+      const value = message.match(new RegExp(`\\b${key}=(-?\\d+(?:\\.\\d+)?)(?=[, }])`))?.[1]
+      if (value !== undefined) metrics[key] = Number(value)
+    }
+    const protocol = message.match(
+      /\bprotocol="?(h[123]|http\/?[123](?:\.\d)?|quic|tcp)"?(?=[, }])/i
+    )?.[1]
+    if (protocol) metrics.protocol = protocol
+    if (Object.keys(metrics).length) summaries.push({ pid: entry.processID, ...metrics })
+  }
+  return summaries
+}
 
 // Error 68 also covers permanent ticket/signature failures. Retry only explicit transport evidence.
 // https://developer.apple.com/library/archive/qa/qa1941/_index.html
@@ -80,13 +116,17 @@ export const runAppleCommand = async (
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  runAppleCommand(process.argv.slice(2))
-    .then((result) => {
-      process.stdout.write(result.stdout)
-      process.exitCode = result.code
-    })
-    .catch((error) => {
-      console.error(error.message)
-      process.exitCode = 1
-    })
+  if (process.argv[2] === '--summarize-network') {
+    const summaries = summarizeAppleNetworkLog(await readFile(process.argv[3], 'utf8'))
+    console.log(JSON.stringify({ networkSummaries: summaries }, null, 2))
+  } else
+    runAppleCommand(process.argv.slice(2))
+      .then((result) => {
+        process.stdout.write(result.stdout)
+        process.exitCode = result.code
+      })
+      .catch((error) => {
+        console.error(error.message)
+        process.exitCode = 1
+      })
 }

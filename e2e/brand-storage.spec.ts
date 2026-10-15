@@ -32,7 +32,7 @@ for (const mode of ['fresh', 'legacy', 'custom'] as const) {
     expect(state.name).toBe(state.packaged ? 'Open-Science' : 'Open-Science (DEV)')
     expect(state.title).toContain('Open-Science')
     expect(state.menus.join(' ')).not.toMatch(/Open Science|OpenScience/)
-    expect(await realpath(state.logs)).toBe(await realpath(join(state.profile, 'logs')))
+    expect(await realpath(state.logs)).toBe(await realpath(join(state.profile, 'desktop-logs')))
     await app.page.screenshot({ path: testInfo.outputPath(`${mode}-onboarding.png`) })
     let page = await app.completeOnboarding()
     if (mode !== 'fresh')

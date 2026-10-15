@@ -445,7 +445,14 @@ it.skipIf(process.platform === 'win32')(
     ).toMatchObject({ status: 1 })
     expect(
       spawnSync('bash', ['-eu', '-c', script], {
-        env: { ...process.env, FROM_RUN: 'true' },
+        env: {
+          ...process.env,
+          FROM_RUN: 'true',
+          SOURCE_RUN: '',
+          OPERATION: 'notarize',
+          ARCHITECTURE: 'all',
+          CERTIFIED_BUILD: 'true'
+        },
         encoding: 'utf8'
       })
     ).toMatchObject({ status: 0 })

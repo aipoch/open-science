@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -71,6 +71,39 @@ const renderMemoryPanel = async (
   await act(async () => root.render(<MemoryPanel {...{ view, onNavigate, onOpenProject }} />))
 }
 
+const deferredCategorySave = (): {
+  promise: Promise<string>
+  resolve(value: string): void
+  reject(error: Error): void
+} => {
+  let resolve!: (value: string) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<string>((resolveSave, rejectSave) => {
+    resolve = resolveSave
+    reject = rejectSave
+  })
+  return { promise, resolve, reject }
+}
+
+const renderNavigatingMemoryPanel = async (
+  initialView: MemoryView,
+  onNavigate: (view: MemoryView) => void
+): Promise<void> => {
+  const Harness = (): React.JSX.Element => {
+    const [view, setView] = useState(initialView)
+    return (
+      <MemoryPanel
+        view={view}
+        onNavigate={(nextView) => {
+          onNavigate(nextView)
+          setView(nextView)
+        }}
+      />
+    )
+  }
+  await act(async () => root.render(<Harness />))
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -121,6 +154,136 @@ describe('MemoryPanel', () => {
     fireEvent.change(guidance!, { target: { value: 'Save reusable findings' } })
     expect(create?.disabled).toBe(false)
   })
+
+  it.each(['create', 'edit'] as const)(
+    'locks the category draft during %s and closes only after success',
+    async (mode) => {
+      const pending = deferredCategorySave()
+      const createCategory = vi.fn(() => pending.promise)
+      const updateCategory = vi.fn(async () => {
+        await pending.promise
+      })
+      const onNavigate = vi.fn()
+      useMemoryStore.setState({
+        categories: [aboutYouCategory(), customCategory({ guidance: 'Original guidance' })],
+        createCategory,
+        updateCategory
+      })
+      await renderNavigatingMemoryPanel(
+        mode === 'create' ? { kind: 'create' } : { kind: 'edit', categoryId: 'category-a' },
+        onNavigate
+      )
+      const name = container.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+      const guidance = container.querySelector<HTMLTextAreaElement>(
+        'textarea[name="memory-category-guidance"]'
+      )!
+      const autoRecall = container.querySelector<HTMLButtonElement>('[role="switch"]')!
+      const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Cancel'
+      )!
+      const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+      fireEvent.change(name, { target: { value: 'Submitted category' } })
+      fireEvent.change(guidance, { target: { value: 'Submitted guidance' } })
+      fireEvent.click(autoRecall)
+      fireEvent.submit(container.querySelector('form')!)
+
+      expect(name.disabled).toBe(true)
+      expect(guidance.disabled).toBe(true)
+      expect(autoRecall.disabled).toBe(true)
+      expect(cancel.disabled).toBe(true)
+      expect(submit.disabled).toBe(true)
+      expect(submit.textContent).toBe('Saving…')
+      fireEvent.click(cancel)
+      fireEvent.click(autoRecall)
+      fireEvent.submit(container.querySelector('form')!)
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(autoRecall.getAttribute('aria-checked')).toBe('false')
+      const save = mode === 'create' ? createCategory : updateCategory
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(save).toHaveBeenCalledWith({
+        ...(mode === 'edit' ? { id: 'category-a', expectedRevision: 1 } : {}),
+        name: 'Submitted category',
+        guidance: 'Submitted guidance',
+        autoRecall: false
+      })
+
+      await act(async () => pending.resolve('category-a'))
+
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'list' })
+      expect(container.querySelector('input[name="memory-category-name"]')).toBeNull()
+      expect(container.querySelector('[data-slot="memory-panel"]')).not.toBeNull()
+    }
+  )
+
+  it.each(['create', 'edit'] as const)(
+    'unlocks the category draft after failed %s and saves an edited retry',
+    async (mode) => {
+      const pending = deferredCategorySave()
+      const createCategory = vi
+        .fn<ReturnType<typeof useMemoryStore.getState>['createCategory']>()
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValue('category-a')
+      const updateCategory = vi
+        .fn<ReturnType<typeof useMemoryStore.getState>['updateCategory']>()
+        .mockImplementationOnce(async () => {
+          await pending.promise
+        })
+        .mockResolvedValue(undefined)
+      const onNavigate = vi.fn()
+      useMemoryStore.setState({
+        categories: [aboutYouCategory(), customCategory({ guidance: 'Original guidance' })],
+        createCategory,
+        updateCategory
+      })
+      await renderNavigatingMemoryPanel(
+        mode === 'create' ? { kind: 'create' } : { kind: 'edit', categoryId: 'category-a' },
+        onNavigate
+      )
+      const name = container.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+      const guidance = container.querySelector<HTMLTextAreaElement>(
+        'textarea[name="memory-category-guidance"]'
+      )!
+      const autoRecall = container.querySelector<HTMLButtonElement>('[role="switch"]')!
+      const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Cancel'
+      )!
+      const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+      fireEvent.change(name, { target: { value: 'Keep this category draft' } })
+      fireEvent.change(guidance, { target: { value: 'Keep this guidance draft' } })
+      fireEvent.click(autoRecall)
+      fireEvent.submit(container.querySelector('form')!)
+
+      await act(async () => pending.reject(new Error('Memory could not be updated.')))
+
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(name.disabled).toBe(false)
+      expect(guidance.disabled).toBe(false)
+      expect(autoRecall.disabled).toBe(false)
+      expect(cancel.disabled).toBe(false)
+      expect(submit.disabled).toBe(false)
+      expect(name.value).toBe('Keep this category draft')
+      expect(guidance.value).toBe('Keep this guidance draft')
+      expect(autoRecall.getAttribute('aria-checked')).toBe('false')
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        'Memory could not be updated.'
+      )
+      fireEvent.change(name, { target: { value: 'Retry category' } })
+      fireEvent.change(guidance, { target: { value: 'Retry guidance' } })
+      fireEvent.click(autoRecall)
+      await act(async () => fireEvent.submit(container.querySelector('form')!))
+
+      const save = mode === 'create' ? createCategory : updateCategory
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(save).toHaveBeenLastCalledWith({
+        ...(mode === 'edit' ? { id: 'category-a', expectedRevision: 1 } : {}),
+        name: 'Retry category',
+        guidance: 'Retry guidance',
+        autoRecall: true
+      })
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'list' })
+      expect(container.querySelector('input[name="memory-category-name"]')).toBeNull()
+    }
+  )
 
   it('keeps a note draft bound to its original revision after an external snapshot', async () => {
     const updateEntry = vi

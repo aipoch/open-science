@@ -2733,7 +2733,10 @@ export const PdfPreviewContent = ({
           try {
             await window.api.previewResources.release({ resourceId })
           } catch (error) {
-            console.error('Failed to release PDF preview resource', error)
+            // A disconnected backend has already revoked its preview resources.
+            if (desktopRuntimeWritable()) {
+              console.error('Failed to release PDF preview resource', error)
+            }
           }
         }
       })()
