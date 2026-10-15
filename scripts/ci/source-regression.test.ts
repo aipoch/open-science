@@ -21,6 +21,7 @@ type Step = {
   with?: Record<string, unknown>
 }
 type Job = {
+  permissions?: Record<string, string>
   'timeout-minutes'?: number
   env?: Record<string, string>
   if?: string
@@ -326,7 +327,8 @@ describe('independent source regression', () => {
             'presentation',
             'workspace-images',
             'presentation-screening',
-            'runtime-evidence'
+            'runtime-evidence',
+            'static-impact'
           ]
         }
       }
@@ -339,6 +341,7 @@ describe('independent source regression', () => {
       'cancel-in-progress': true
     })
     expect(Object.keys(scheduled.jobs)).toEqual([
+      'static_impact',
       'runtime_evidence',
       'regression',
       'portable',
@@ -405,7 +408,7 @@ describe('independent source regression', () => {
   it('runs both scheduled rounds even when main has not changed', () => {
     expect(scheduled.jobs).not.toHaveProperty('plan')
     expect(scheduled.jobs.regression.if).toBe(
-      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' }}"
+      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
     )
     expect(scheduled.jobs.regression.steps.some(({ run }) => run?.includes('previous'))).toBe(false)
   })
@@ -718,3 +721,26 @@ it.skipIf(process.platform === 'win32')(
     }
   }
 )
+
+it('runs the same isolated test-impact verifier on three operating systems only on explicit dispatch', () => {
+  const job = scheduled.jobs.static_impact
+  expect(job.if).toBe(
+    "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'static-impact' }}"
+  )
+  expect(job.permissions).toEqual({ contents: 'read' })
+  expect(job.strategy).toEqual({
+    'fail-fast': false,
+    matrix: { os: ['ubuntu-latest', 'windows-latest', 'macos-15'] }
+  })
+  expect(job.steps.filter((step) => step.run).map((step) => step.run)).toEqual([
+    'npm run check:test-impact-package'
+  ])
+  expect(
+    job.steps.some(
+      (step) => step.uses?.startsWith('actions/setup-node@') && step.with?.['node-version'] === 24
+    )
+  ).toBe(true)
+  expect(scheduled.jobs.regression.if).toContain("inputs.mode != 'static-impact'")
+  for (const name of ['portable', 'portable_report', 'packages', 'report'])
+    expect(scheduled.jobs[name].if).not.toContain('static-impact')
+})

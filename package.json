@@ -115,7 +115,9 @@
     "build:reproducibility": "node scripts/build-dev-packages.mjs --packages=reproducibility",
     "check:reproducibility-package": "node scripts/check-reproducibility-package.mjs",
     "check:durable-files-package": "node scripts/check-durable-files-package.mjs",
-    "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs"
+    "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
+    "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
+    "check:test-impact-package": "node scripts/check-test-impact-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -272,6 +274,7 @@
     "unified": "^11.0.5",
     "vite": "^7.2.6",
     "vitest": "^4.1.11",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@aipoch/test-impact": "file:packages/test-impact"
   }
 }

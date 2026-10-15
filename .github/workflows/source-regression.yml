@@ -19,6 +19,7 @@ on:
           - workspace-images
           - presentation-screening
           - runtime-evidence
+          - static-impact
 
 permissions:
   actions: read
@@ -29,6 +30,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  static_impact:
+    name: Static impact tool (${{ matrix.os }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'static-impact' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Verify isolated tool and installed consumer
+        run: npm run check:test-impact-package
+
   runtime_evidence:
     name: Runtime module evidence (diagnostic sample)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'runtime-evidence' }}
@@ -61,7 +83,7 @@ jobs:
 
   regression:
     name: Complete source regression (macOS)
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}
     runs-on: macos-15
     # Serial suites, including accessibility, total 170 minutes; reserve setup and upload time.
     timeout-minutes: 190
