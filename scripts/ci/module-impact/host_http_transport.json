@@ -10,6 +10,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/stage-default-envs.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/agent-process.test.ts",
@@ -448,6 +450,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -679,7 +682,11 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/runtime-network-node.integration.test.ts"
+      "src/main/runtime-network-node.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "consumerModules": ["settings_service_facade"],

@@ -16,7 +16,7 @@ import type {
 
 type Sources = Pick<
   SessionDiagnosticWorkerInput,
-  'dataRoot' | 'configRoot' | 'logPath' | 'appVersion'
+  'dataRoot' | 'configRoot' | 'logPath' | 'desktopLogPath' | 'legacyDesktopLogPath' | 'appVersion'
 > & {
   sensitiveContent?: SensitiveContentFailure
   sensitiveContentSources?: SensitiveContentSource[]
@@ -91,7 +91,9 @@ const assertOutsideSources = async (path: string, sources: Sources): Promise<voi
   const roots = [
     sources.dataRoot,
     sources.configRoot,
-    ...(sources.logPath ? [dirname(sources.logPath)] : [])
+    ...(sources.logPath ? [dirname(sources.logPath)] : []),
+    ...(sources.desktopLogPath ? [dirname(sources.desktopLogPath)] : []),
+    ...(sources.legacyDesktopLogPath ? [dirname(sources.legacyDesktopLogPath)] : [])
   ]
   for (const root of roots) {
     if (within(await canonical(root), destination)) {

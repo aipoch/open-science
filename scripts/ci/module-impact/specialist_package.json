@@ -80,6 +80,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
@@ -666,10 +668,14 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/internal-web-event-stream.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },

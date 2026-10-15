@@ -38,7 +38,9 @@ export async function createBackendBuilder({
           ...windowsSigningBuildDefines(process.env),
           ...wsl2BuildDefines(process.platform, development, process.env)
         },
-        banner: { js: 'const __entryUrl = require("node:url").pathToFileURL(__filename).href;' },
+        banner: {
+          js: `${entry === join(root, 'src/main/node-entry.ts') ? `(() => { const module = { exports: {} }; ${await readFile(join(root, 'packages/open-science/installation-startup.cjs'), 'utf8')} globalThis[Symbol.for('open-science.installation-bootstrap')] = module.exports.protectInstallationStartup(__filename, process.env.OPEN_SCIENCE_CONFIG_ROOT || 'bootstrap'); })();` : ''}\nconst __entryUrl = require("node:url").pathToFileURL(__filename).href;`
+        },
         plugins: [
           {
             name: 'open-science-node-resources',

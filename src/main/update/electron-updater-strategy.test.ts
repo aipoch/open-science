@@ -1228,7 +1228,8 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status.state).toBe('ready')
     expect(status.latest).toBe('0.3.0')
-    expect(status.error).toContain('Please try again')
+    expect(status.error).toBe('teardown failed')
+    expect(status.reason).toBe('runtime-stop-timeout')
   })
 
   it('apply refuses to install when the teardown completed but a tree was not cleanly reaped', async () => {
@@ -1603,4 +1604,71 @@ describe('read-only installation update admission', () => {
       expect.objectContaining({ state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
     )
   })
+  it('preserves authoritative force permission and lets cancellation win over a late recheck', async () => {
+    const updater = new FakeUpdater()
+    let finish!: () => void
+    const cancelInstall = vi.fn(async () => ({
+      reason: undefined,
+      recovery: undefined,
+      outcome: 'cancelled' as const
+    }))
+    const strategy = createStrategy({
+      updater,
+      broadcast: vi.fn(),
+      installGate: async () => ({
+        completed: false,
+        reaped: false,
+        blockedBy: ['agent'],
+        canForce: true
+      }),
+      recheckInstall: () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ reason: 'active-work', canForce: true })
+        }),
+      cancelInstall
+    })
+    await markUpdateReady(strategy, updater)
+    expect(await strategy.apply()).toMatchObject({ reason: 'active-work', canForce: true })
+    const checking = strategy.recheck()
+    const cancelling = strategy.cancel()
+    expect(cancelInstall).toHaveBeenCalledOnce()
+    finish()
+    await checking
+    expect(await cancelling).toMatchObject({ outcome: 'cancelled', reason: undefined })
+    expect(strategy.getStatus().outcome).toBe('cancelled')
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+})
+
+it.each([false, true])('uses exclusive custom installer hook, failure=%s', async (fail) => {
+  const updater = new FakeUpdater()
+  const executeInstall = vi.fn(async () => {
+    if (fail) throw new Error('executor unavailable')
+  })
+  const strategy = createStrategy({
+    updater,
+    currentVersion: '0.2.0',
+    broadcast: vi.fn(),
+    executeInstall
+  })
+  await markUpdateReady(strategy, updater)
+  await strategy.apply()
+  expect(executeInstall).toHaveBeenCalledOnce()
+  expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  if (fail) expect(strategy.getStatus().error).toContain('executor unavailable')
+})
+
+it('falls through to electron-updater quitAndInstall when the custom hook defers as legacy', async () => {
+  const updater = new FakeUpdater()
+  const executeInstall = vi.fn(async () => 'legacy' as const)
+  const strategy = createStrategy({
+    updater,
+    currentVersion: '0.2.0',
+    broadcast: vi.fn(),
+    executeInstall
+  })
+  await markUpdateReady(strategy, updater)
+  await strategy.apply()
+  expect(executeInstall).toHaveBeenCalledOnce()
+  expect(updater.quitAndInstall).toHaveBeenCalledOnce()
 })

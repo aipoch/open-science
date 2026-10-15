@@ -141,6 +141,54 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it('keeps 16 options in choice mode and submits all checked values in option order', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const options = Array.from({ length: 16 }, (_, i) => ({
+      value: `option-${i}`,
+      label: `Option ${i + 1}`
+    }))
+    const expandedFields: ElicitationField[] = [
+      { ...fields[0], kind: 'multi-select', options },
+      fields[1]
+    ]
+    const expandedRequest = { ...request, fields: expandedFields }
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          request={expandedRequest}
+          elicitation={{
+            message: request.message,
+            fields: expandedFields,
+            state: 'pending',
+            draftAnswers: [{ fieldId: 'question_0', value: ['option-0'] }]
+          }}
+          onRespond={onRespond}
+        />
+      )
+    )
+    expect(container.querySelectorAll('[data-elicitation-option-row]')).toHaveLength(16)
+    const click = async (value: string): Promise<void> => {
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(`[data-testid="elicitation-option-${value}"]`)!
+          .click()
+      )
+    }
+    await click('option-15')
+    await click('option-1')
+    await click('option-0')
+    expect(container.textContent).toContain('2 selected')
+    const finish = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Finish'
+    )!
+    await act(async () => finish.click())
+    expect(onRespond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: [{ fieldId: 'question_0', value: ['option-1', 'option-15'] }]
+      })
+    )
+  })
+
   it('presents a provider-native multi-select question as one step instead of a whole form', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }

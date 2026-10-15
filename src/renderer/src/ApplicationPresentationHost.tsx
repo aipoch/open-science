@@ -1,3 +1,4 @@
+import { RuntimeUpdateOutcomeNotice } from '@/components/runtime-update-outcome-notice'
 import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { lazy, memo, Suspense, useCallback, useRef, useState } from 'react'
@@ -442,6 +443,7 @@ const ApplicationPresentationContent = ({
           />
         )}
       </DeferredPresentationOwner>
+      <RuntimeUpdateOutcomeNotice />
       <DeferredPresentationOwner active={activePresentation === 'update'}>
         {(active) => <UpdateDialog active={active} />}
       </DeferredPresentationOwner>

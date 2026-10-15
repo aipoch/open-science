@@ -22,8 +22,9 @@ describe.skipIf(process.platform !== 'win32')('Notebook uninstall host invocatio
     )
     const ownershipRoot = join(root, profile, '0f3cd2a44c3d4e4e9f1e2a5b')
     // Load the existing invocation function without running the script's destructive lifecycle.
-    // Replace only UAC with an ordinary native launch: argument serialization remains the real
-    // Windows PowerShell Start-Process implementation, and the real host validates its arguments.
+    // Replace only UAC with an ordinary native launch using the same serialized command line.
+    // Retain the Process handle from launch: Start-Process can lose a short-lived redirected child.
+    // The real host still validates the production argument quoting.
     // The empty fixture has no owned resources, so the host's remove command is a safe no-op.
     const command = `
 $ErrorActionPreference = 'Stop'
@@ -36,9 +37,18 @@ function Test-CurrentUserIsAdministrator { return $false }
 function Start-Process {
   param($FilePath, $ArgumentList, $Verb, [switch]$Wait, [switch]$PassThru, $WindowStyle)
   if ($Verb -ne 'RunAs') { throw 'Expected the non-administrator uninstall path.' }
-  $process = Microsoft.PowerShell.Management\\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WindowStyle Hidden -Wait -PassThru -RedirectStandardError ${quote(join(root, 'stderr.txt'))}
-  [Console]::Error.Write([System.IO.File]::ReadAllText(${quote(join(root, 'stderr.txt'))}))
-  return $process
+  $start = New-Object System.Diagnostics.ProcessStartInfo
+  $start.FileName = $FilePath
+  $start.Arguments = $ArgumentList -join ' '
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardError = $true
+  $process = [System.Diagnostics.Process]::Start($start)
+  try {
+    [Console]::Error.Write($process.StandardError.ReadToEnd())
+    $process.WaitForExit()
+    return [PSCustomObject]@{ ExitCode = $process.ExitCode }
+  } finally { $process.Dispose() }
 }
 $HostPath = ${quote(host)}
 $installationId = '0f3cd2a44c3d4e4e9f1e2a5b'

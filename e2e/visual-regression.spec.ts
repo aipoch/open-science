@@ -18,6 +18,11 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
   })
+  // Runtime probes depend on the host and can finish between captures. HomePage render tests
+  // cover the repair action; keep its transient status out of these layout baselines.
+  await page.addStyleTag({
+    content: 'button[aria-label="Open environment repair"] { visibility: hidden !important; }'
+  })
 }
 
 const setVisualState = async (

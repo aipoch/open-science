@@ -448,8 +448,14 @@ describe('arrayexpress_get_experiment_samples', () => {
       {}
     )) as Record<string, unknown>
     expect(out.error).toBe('no_sdrf')
-    expect(out.n_samples).toBe(0)
-    expect(out.samples).toEqual([])
+    expect(out).toMatchObject({
+      n_samples: 0,
+      n_samples_returned: 0,
+      sample_id_column: null,
+      n_rows_total: 0,
+      n_rows_returned: 0,
+      samples: []
+    })
   })
 
   it('parses SDRF rows and disambiguates repeated headers', async () => {
@@ -469,6 +475,9 @@ describe('arrayexpress_get_experiment_samples', () => {
       'Characteristics[organism]#2'
     ])
     expect(out.n_samples).toBe(1)
+    expect(out.sample_id_column).toBe('Source Name')
+    expect(out.n_rows_total).toBe(1)
+    expect(out.n_rows_returned).toBe(1)
     expect((out.samples as Array<Record<string, string>>)[0]).toEqual({
       'Source Name': 'S1',
       'Characteristics[organism]': 'Homo',
@@ -490,11 +499,15 @@ describe('arrayexpress_get_experiment_samples', () => {
       sdrf_file: 'empty.sdrf.txt',
       headers: [],
       n_samples: 0,
+      n_samples_returned: 0,
+      sample_id_column: null,
+      n_rows_total: 0,
+      n_rows_returned: 0,
       samples: []
     })
   })
 
-  it('pads short SDRF rows and caps returned samples without losing the total', async () => {
+  it('pads short SDRF rows and caps returned rows without guessing a sample count', async () => {
     const fetchImpl = sdrfFetch('Sample\tValue\nS1\nS2\tmeasured\n', 'samples.sdrf.txt', 30)
 
     const out = (await engine(fetchImpl).call(
@@ -503,10 +516,324 @@ describe('arrayexpress_get_experiment_samples', () => {
       {}
     )) as Record<string, unknown>
 
-    expect(out.n_samples).toBe(2)
-    expect(out.n_samples_returned).toBe(1)
+    expect(out.n_samples).toBeNull()
+    expect(out.n_samples_returned).toBeNull()
+    expect(out.sample_id_column).toBeNull()
+    expect(out.n_rows_total).toBe(2)
+    expect(out.n_rows_returned).toBe(1)
     expect(out.rows_truncated).toBe(true)
     expect(out.samples).toEqual([{ Sample: 'S1', Value: '' }])
+  })
+
+  it('counts distinct sources while retaining paired-file relationship rows under a cap', async () => {
+    const descriptor = tool('arrayexpress_get_experiment_samples')
+    expect(descriptor.returns).toContain('"n_samples": int|null')
+    expect(descriptor.returns).toContain('"n_samples_returned": int|null')
+    expect(descriptor.returns).toContain('"n_rows_total": int')
+    expect(descriptor.returns).toContain('"n_rows_returned": int')
+    expect(descriptor.returns).toContain('without deduplication')
+    expect(descriptor.description).toContain('not independent biological replicates')
+    const text = [
+      'Source Name\tComment[ENA_SAMPLE]\tAssay Name\tComment[ENA_RUN]\tFASTQ_URI',
+      'S1\tSAMEA1\tA1\tERR1\tS1_1.fastq.gz',
+      'S1\tSAMEA1\tA1\tERR1\tS1_2.fastq.gz',
+      'S2\tSAMEA2\tA2\tERR2\tS2_1.fastq.gz',
+      'S2\tSAMEA2\tA2\tERR2\tS2_2.fastq.gz'
+    ].join('\n')
+    const out = (await engine(sdrfFetch(text, 'paired.sdrf.txt')).call(
+      tool('arrayexpress_get_experiment_samples'),
+      { accession: 'E-MTAB-1', max_rows_returned: 2 },
+      {}
+    )) as Record<string, unknown>
+
+    expect(out).toMatchObject({
+      sample_id_column: 'Source Name',
+      n_samples: 2,
+      n_samples_returned: 1,
+      n_rows_total: 4,
+      n_rows_returned: 2,
+      rows_truncated: true
+    })
+    expect(out.samples).toEqual([
+      {
+        'Source Name': 'S1',
+        'Comment[ENA_SAMPLE]': 'SAMEA1',
+        'Assay Name': 'A1',
+        'Comment[ENA_RUN]': 'ERR1',
+        FASTQ_URI: 'S1_1.fastq.gz'
+      },
+      {
+        'Source Name': 'S1',
+        'Comment[ENA_SAMPLE]': 'SAMEA1',
+        'Assay Name': 'A1',
+        'Comment[ENA_RUN]': 'ERR1',
+        FASTQ_URI: 'S1_2.fastq.gz'
+      }
+    ])
+  })
+
+  it('prefers Sample Name over Source Name and preserves identifier case', async () => {
+    const out = (await engine(
+      sdrfFetch(
+        'Source Name\t SaMpLe NaMe \tValue\nsource1\tS1\tfirst\nsource1\ts1\tsecond\nsource2\t S1 \tthird\n',
+        'samples.sdrf.txt'
+      )
+    ).call(tool('arrayexpress_get_experiment_samples'), { accession: 'E-MTAB-1' }, {})) as Record<
+      string,
+      unknown
+    >
+
+    expect(out).toMatchObject({
+      sample_id_column: 'SaMpLe NaMe',
+      n_samples: 2,
+      n_samples_returned: 2,
+      n_rows_total: 3,
+      n_rows_returned: 3,
+      rows_truncated: false
+    })
+    expect((out.samples as Array<Record<string, string>>)[2]['SaMpLe NaMe']).toBe(' S1 ')
+  })
+
+  it.each(['Source Name', 'Sample Name', '"Sample Name"'])(
+    'unwraps identity values only for counting and preserves raw rows: %s',
+    async (column) => {
+      const values = ['S1', ' "S1" ', 's1', '"s1"']
+      const out = (await engine(
+        sdrfFetch(
+          `${column}\tValue\n${values.map((value, index) => `${value}\t${index}`).join('\n')}\n`,
+          'quoted-identities.sdrf.txt'
+        )
+      ).call(
+        tool('arrayexpress_get_experiment_samples'),
+        { accession: 'E-MTAB-1', max_rows_returned: 2 },
+        {}
+      )) as Record<string, unknown>
+
+      expect(out).toMatchObject({
+        headers: [column, 'Value'],
+        sample_id_column: column,
+        n_samples: 2,
+        n_samples_returned: 1,
+        n_rows_total: 4,
+        n_rows_returned: 2,
+        rows_truncated: true,
+        samples: [
+          { [column]: 'S1', Value: '0' },
+          { [column]: ' "S1" ', Value: '1' }
+        ]
+      })
+    }
+  )
+
+  it.each(['""', ' "" '])('treats a quoted empty identity as unknown: %j', async (value) => {
+    const out = (await engine(
+      sdrfFetch(`Source Name\tValue\nS1\tfirst\n${value}\tsecond\n`, 'empty-identity.sdrf.txt')
+    ).call(tool('arrayexpress_get_experiment_samples'), { accession: 'E-MTAB-1' }, {})) as Record<
+      string,
+      unknown
+    >
+
+    expect(out).toMatchObject({
+      n_samples: null,
+      n_samples_returned: null,
+      n_rows_total: 2,
+      n_rows_returned: 2,
+      samples: [
+        { 'Source Name': 'S1', Value: 'first' },
+        { 'Source Name': value, Value: 'second' }
+      ]
+    })
+  })
+
+  it('uses the first repeated identity header without merging distinct columns', async () => {
+    const out = (await engine(
+      sdrfFetch(
+        'Sample Name\tSample Name\tSource Name\nS1\tother1\tsource1\nS1\tother2\tsource2\n',
+        'repeated.sdrf.txt'
+      )
+    ).call(tool('arrayexpress_get_experiment_samples'), { accession: 'E-MTAB-1' }, {})) as Record<
+      string,
+      unknown
+    >
+
+    expect(out.headers).toEqual(['Sample Name', 'Sample Name#2', 'Source Name'])
+    expect(out).toMatchObject({ sample_id_column: 'Sample Name', n_samples: 1, n_rows_total: 2 })
+    expect(out.samples).toEqual([
+      { 'Sample Name': 'S1', 'Sample Name#2': 'other1', 'Source Name': 'source1' },
+      { 'Sample Name': 'S1', 'Sample Name#2': 'other2', 'Source Name': 'source2' }
+    ])
+  })
+
+  it.each([
+    ['Source Name\t"Sample Name"', 'source1\tsample1\nsource1\tsample2', '"Sample Name"'],
+    ['"Source Name"', 'source1\nsource2', '"Source Name"'],
+    ['Source Name\t " SaMpLe NaMe " ', 'source1\tsample1\nsource1\tsample2', '" SaMpLe NaMe "']
+  ])(
+    'recognizes quoted identity headers without changing record keys: %j',
+    async (header, rows, column) => {
+      const out = (await engine(sdrfFetch(`${header}\n${rows}\n`, 'quoted.sdrf.txt')).call(
+        tool('arrayexpress_get_experiment_samples'),
+        { accession: 'E-MTAB-1' },
+        {}
+      )) as Record<string, unknown>
+
+      expect(out).toMatchObject({
+        sample_id_column: column,
+        n_samples: 2,
+        n_samples_returned: 2,
+        n_rows_total: 2,
+        n_rows_returned: 2
+      })
+      expect(out.headers).toEqual(header.split('\t').map((name) => name.trim()))
+      expect((out.samples as Array<Record<string, string>>).map((row) => row[column])).toEqual(
+        column === '"Source Name"' ? ['source1', 'source2'] : ['sample1', 'sample2']
+      )
+    }
+  )
+
+  it('skips leading and post-header comments before parsing and applying the row cap', async () => {
+    const text = [
+      '# leading comment\twith\textra fields',
+      'Sample Name\tValue',
+      '# post-header comment\twith\textra fields',
+      'S1#lot\tmeasured#value',
+      '# between-row comment',
+      'S2\tsecond'
+    ].join('\n')
+    const out = await engine(sdrfFetch(text, 'comments.sdrf.txt')).call(
+      tool('arrayexpress_get_experiment_samples'),
+      { accession: 'E-MTAB-1', max_rows_returned: 1 },
+      {}
+    )
+
+    expect(out).toMatchObject({
+      headers: ['Sample Name', 'Value'],
+      sample_id_column: 'Sample Name',
+      n_samples: 2,
+      n_samples_returned: 1,
+      n_rows_total: 2,
+      n_rows_returned: 1,
+      samples: [{ 'Sample Name': 'S1#lot', Value: 'measured#value' }],
+      rows_truncated: true
+    })
+  })
+
+  it('returns an empty parsed row set for a comments-only SDRF', async () => {
+    const out = await engine(
+      sdrfFetch('# comment\n# another\tcomment\n', 'comments.sdrf.txt')
+    ).call(tool('arrayexpress_get_experiment_samples'), { accession: 'E-MTAB-1' }, {})
+    expect(out).toMatchObject({
+      headers: [],
+      sample_id_column: null,
+      n_samples: 0,
+      n_samples_returned: 0,
+      n_rows_total: 0,
+      n_rows_returned: 0,
+      samples: [],
+      rows_truncated: false
+    })
+  })
+
+  it('fetches only the first SDRF file sorted by path and documents that count scope', async () => {
+    const descriptor = tool('arrayexpress_get_experiment_samples')
+    expect(descriptor.description).toContain('first SDRF file sorted by path')
+    expect(descriptor.returns).toContain('counts and relationship rows refer to that file')
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/biostudies/files/'))
+        return textRes(
+          url.endsWith('/a.sdrf.txt')
+            ? 'Sample Name\tValue\nS1\tfirst\n'
+            : 'Sample Name\tValue\nS2\tsecond\nS3\tthird\n'
+        )
+      return jsonRes({
+        accno: 'E-MTAB-1',
+        section: {
+          files: ['b.sdrf.txt', 'a.sdrf.txt'].map((path) => ({
+            path,
+            attributes: [{ name: 'Type', value: 'SDRF File' }]
+          }))
+        }
+      })
+    })
+    const out = await engine(fetchImpl).call(descriptor, { accession: 'E-MTAB-1' }, {})
+
+    expect(out).toMatchObject({
+      sdrf_file: 'a.sdrf.txt',
+      n_samples: 1,
+      n_samples_returned: 1,
+      n_rows_total: 1,
+      n_rows_returned: 1,
+      samples: [{ 'Sample Name': 'S1', Value: 'first' }]
+    })
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.ebi.ac.uk/biostudies/api/v1/studies/E-MTAB-1',
+      'https://www.ebi.ac.uk/biostudies/files/E-MTAB-1/a.sdrf.txt'
+    ])
+  })
+
+  it.each([
+    ['Source Name\tValue\nS1\tfirst\n \tsecond\n', 'Source Name', null, 1],
+    ['Source Name\tValue\n\tfirst\nS2\tsecond\n', 'Source Name', null, null],
+    ['Value\tSample Name\nfirst\tS1\nsecond\n', 'Sample Name', null, 1],
+    ['Sample Name\tSource Name\n\tsource1\nS2\tsource2\n', 'Sample Name', null, null],
+    ['Assay Name\tComment[ENA_SAMPLE]\nA1\tSAMEA1\nA2\tSAMEA2\n', null, null, null],
+    [' source NAME \tValue\nS1\tfirst\nS1\tsecond\n', 'source NAME', 1, 1]
+  ])(
+    'counts all and returned row identities independently: %j',
+    async (text, column, total, returned) => {
+      const out = (await engine(sdrfFetch(text, 'identity.sdrf.txt')).call(
+        tool('arrayexpress_get_experiment_samples'),
+        { accession: 'E-MTAB-1', max_rows_returned: 1 },
+        {}
+      )) as Record<string, unknown>
+
+      expect(out).toMatchObject({
+        sample_id_column: column,
+        n_samples: total,
+        n_samples_returned: returned,
+        n_rows_total: 2,
+        n_rows_returned: 1,
+        rows_truncated: true
+      })
+    }
+  )
+
+  it.each([
+    ['Sample Name\tValue\n', 'Sample Name'],
+    ['Assay Name\tValue\n', null]
+  ])('counts a header-only SDRF as an empty row set: %j', async (text, column) => {
+    const out = await engine(sdrfFetch(text, 'header.sdrf.txt')).call(
+      tool('arrayexpress_get_experiment_samples'),
+      { accession: 'E-MTAB-1' },
+      {}
+    )
+    expect(out).toMatchObject({
+      sample_id_column: column,
+      n_samples: 0,
+      n_samples_returned: 0,
+      n_rows_total: 0,
+      n_rows_returned: 0,
+      samples: []
+    })
+  })
+
+  it('returns a zero sample count for a zero-row cap even when the total count is unknown', async () => {
+    const out = await engine(
+      sdrfFetch('Assay Name\tValue\nA1\tfirst\n', 'unidentified.sdrf.txt')
+    ).call(
+      tool('arrayexpress_get_experiment_samples'),
+      { accession: 'E-MTAB-1', max_rows_returned: 0 },
+      {}
+    )
+    expect(out).toMatchObject({
+      sample_id_column: null,
+      n_samples: null,
+      n_samples_returned: 0,
+      n_rows_total: 1,
+      n_rows_returned: 0,
+      samples: [],
+      rows_truncated: true
+    })
   })
 
   it('rejects SDRF rows wider than the header instead of truncating them', async () => {
@@ -807,6 +1134,164 @@ describe('metabolights_get_studies', () => {
       rows_truncated: true
     })
   })
+
+  it('preserves every column of an ISA sample table with repeated ontology and unit headers', async () => {
+    const rawHeaders = [
+      'Sample Name',
+      'Characteristics[organism]',
+      'Term Source REF',
+      'Term Accession Number',
+      'Characteristics[organism part]',
+      'Term Source REF',
+      'Term Accession Number',
+      'Characteristics[age]',
+      'Unit',
+      'Characteristics[weight]',
+      'Unit'
+    ]
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        content: {
+          studyIdentifier: 'MTBLS1',
+          sampleTable: {
+            fields: Object.fromEntries(
+              rawHeaders.map((header, index) => [`${index}~${header}`, { index, header }]).reverse()
+            ),
+            data: [
+              [
+                'S1',
+                'Homo sapiens',
+                'NCBITaxon',
+                '9606',
+                'liver',
+                'UBERON',
+                'UBERON:0002107',
+                42,
+                'year',
+                70,
+                'kg'
+              ],
+              ['S2', 'Homo sapiens', 'NCBITaxon']
+            ]
+          }
+        }
+      })
+    )
+    const out = (await engine(fetchImpl).call(
+      tool('metabolights_get_studies'),
+      { accessions: ['MTBLS1'], include_samples: true },
+      {}
+    )) as { records: Array<Record<string, unknown>> }
+
+    expect(out.records[0].sample_count).toBe(2)
+    expect(out.records[0].sample_table).toEqual({
+      headers: [
+        'Sample Name',
+        'Characteristics[organism]',
+        'Term Source REF',
+        'Term Accession Number',
+        'Characteristics[organism part]',
+        'Term Source REF#2',
+        'Term Accession Number#2',
+        'Characteristics[age]',
+        'Unit',
+        'Characteristics[weight]',
+        'Unit#2'
+      ],
+      rows: [
+        {
+          'Sample Name': 'S1',
+          'Characteristics[organism]': 'Homo sapiens',
+          'Term Source REF': 'NCBITaxon',
+          'Term Accession Number': '9606',
+          'Characteristics[organism part]': 'liver',
+          'Term Source REF#2': 'UBERON',
+          'Term Accession Number#2': 'UBERON:0002107',
+          'Characteristics[age]': 42,
+          Unit: 'year',
+          'Characteristics[weight]': 70,
+          'Unit#2': 'kg'
+        },
+        {
+          'Sample Name': 'S2',
+          'Characteristics[organism]': 'Homo sapiens',
+          'Term Source REF': 'NCBITaxon',
+          'Term Accession Number': '',
+          'Characteristics[organism part]': '',
+          'Term Source REF#2': '',
+          'Term Accession Number#2': '',
+          'Characteristics[age]': '',
+          Unit: '',
+          'Characteristics[weight]': '',
+          'Unit#2': ''
+        }
+      ],
+      n_rows_total: 2,
+      rows_truncated: false
+    })
+  })
+
+  it.each([
+    {
+      name: 'literal suffixes',
+      rawHeaders: ['Unit', 'Unit', 'Unit#2', 'Unit', 'Unit#3'],
+      headers: ['Unit', 'Unit#4', 'Unit#2', 'Unit#5', 'Unit#3'],
+      cells: ['year', 'kg', 'literal#2', 'cm', 'literal#3'],
+      firstRow: {
+        Unit: 'year',
+        'Unit#4': 'kg',
+        'Unit#2': 'literal#2',
+        'Unit#5': 'cm',
+        'Unit#3': 'literal#3'
+      }
+    },
+    {
+      name: 'fallback names',
+      rawHeaders: [undefined, 'column_0', 'column_0#2'],
+      headers: ['column_0', 'column_0#3', 'column_0#2'],
+      cells: ['fallback', 'original', 'literal'],
+      firstRow: { column_0: 'fallback', 'column_0#3': 'original', 'column_0#2': 'literal' }
+    }
+  ])(
+    'reserves literal and fallback headers before disambiguation: $name',
+    async ({ rawHeaders, headers, cells, firstRow }) => {
+      const data = [cells, ['short']]
+      const fetchImpl = vi.fn().mockResolvedValue(
+        jsonRes({
+          content: {
+            studyIdentifier: 'MTBLS1',
+            sampleTable: {
+              fields: Object.fromEntries(
+                rawHeaders.map((header, index) => [`field_${index}`, { index, header }]).reverse()
+              ),
+              data
+            }
+          }
+        })
+      )
+      const descriptor = tool('metabolights_get_studies')
+      for (const maxRows of [0, 1, 2]) {
+        const out = (await engine(fetchImpl).call(
+          descriptor,
+          { accessions: ['MTBLS1'], include_samples: true, max_sample_rows_returned: maxRows },
+          {}
+        )) as { records: Array<Record<string, unknown>> }
+
+        expect(out.records[0].sample_count).toBe(2)
+        expect(out.records[0].sample_table).toEqual({
+          headers,
+          rows: [
+            firstRow,
+            Object.fromEntries(headers.map((header, index) => [header, index === 0 ? 'short' : '']))
+          ].slice(0, maxRows),
+          n_rows_total: 2,
+          rows_truncated: maxRows < 2
+        })
+      }
+      expect(descriptor.description).toContain('unique column keys')
+      expect(descriptor.returns).toContain('without claiming an existing original header')
+    }
+  )
 })
 
 describe('metabolights_get_study_files', () => {

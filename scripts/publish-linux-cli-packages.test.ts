@@ -36,7 +36,7 @@ beforeEach(async () => {
         filename,
         format,
         sha256: await digest(join(directory, filename)),
-        sourceArchive: `open-science-${version}-${target}.tar.gz`,
+        sourceArchive: `open-science-cli-${version}-${target}.tar.gz`,
         sourceArchiveSha256: 'b'.repeat(64)
       }
       reports.push(report)

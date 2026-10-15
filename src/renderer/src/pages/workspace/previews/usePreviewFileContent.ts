@@ -1,3 +1,4 @@
+import { desktopRuntimeWritable } from '../../../stores/desktop-runtime-recovery-store'
 import { useContext, useEffect, useRef, useState } from 'react'
 import { PreviewInitialPosition } from './PreviewInitialPosition'
 import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
@@ -238,6 +239,8 @@ export const usePreviewFileContent = ({
   }, [fileKey])
 
   useEffect(() => {
+    if (!desktopRuntimeWritable()) return
+
     let canceled = false
     const abortController = new AbortController()
 

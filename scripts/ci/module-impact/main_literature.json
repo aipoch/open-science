@@ -124,11 +124,13 @@
       "src/main/literature/pdf-structure/engine-adapter.test.ts"
     ],
     "contract": [
+      "src/main/acp/auto-operation-inventory.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",

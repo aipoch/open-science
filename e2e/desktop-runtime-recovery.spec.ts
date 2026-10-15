@@ -1,3 +1,4 @@
+import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test, expect } from '@playwright/test'
@@ -75,7 +76,7 @@ const cleanupRecoveryFixture = async ({
 // Uses the actual Electron main process and private pipe; no application test IPC is installed.
 for (const borrowed of [false, true])
   test(`manual recovery restores files and drafts with ${borrowed ? 'borrowed' : 'owned'} backend`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-recovery-'))
+    const root = await mkdtemp(join(tmpdir(), 'open-science-recovery-with spaces-'))
     const roots = {
       storageRoot: join(root, 'storage'),
       userDataRoot: join(root, 'profile'),
@@ -363,7 +364,7 @@ for (const borrowed of [false, true])
       await app.evaluate(({ dialog }) => {
         dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
       })
-      await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+      await page.getByRole('button', { name: 'Quit', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ closing: false, phase: 'disconnected' })
@@ -599,7 +600,7 @@ for (const borrowed of [false, true])
         signal: AbortSignal.timeout(5000)
       })
       expect(health.status).toBe(200)
-      expect(await health.json()).toEqual({ pid: before.pid, generation: before.generation })
+      expect(await health.json()).toMatchObject({ pid: before.pid, generation: before.generation })
       expect(processHasExited(before.pid)).toBe(false)
       await app.close()
       app = undefined
@@ -629,8 +630,9 @@ for (const borrowed of [false, true])
     }
   })
 
-test('exits from the recovery notice when the original backend has really stopped', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'open-science-unavailable-recovery-'))
+// eslint-disable-next-line no-empty-pattern
+test('exits from the recovery notice when the original backend has really stopped', async ({}, testInfo) => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-unavailable-recovery-with spaces-'))
   const roots = {
     storageRoot: join(root, 'storage'),
     userDataRoot: join(root, 'profile'),
@@ -647,6 +649,16 @@ test('exits from the recovery notice when the original backend has really stoppe
   let owner: RuntimeOwner | undefined
   try {
     app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
+    await app.evaluate(({ dialog }) => {
+      dialog.showErrorBox = (_title, message) => {
+        process
+          .getBuiltinModule('node:fs')
+          .writeFileSync(
+            process.env.OPEN_SCIENCE_CONFIG_ROOT + '/unexpected-error-box.txt',
+            message
+          )
+      }
+    })
     const page = await app.firstWindow()
     await expect
       .poll(() => page.evaluate(() => window.api?.desktopRuntime?.getState()), { timeout: 60_000 })
@@ -660,23 +672,67 @@ test('exits from the recovery notice when the original backend has really stoppe
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(homeNewProjectButton(page)).toBeVisible()
-    await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
-      env,
-      timeout: 30_000
-    })
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
+    try {
+      await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+        env,
+        timeout: 30_000
+      })
+    } catch (error) {
+      const processes = await promisify(execFile)('ps', [
+        '-o',
+        'pid=,ppid=,stat=,etime=,command=',
+        '-p',
+        `${owner!.pid},${app.process().pid}`
+      ]).catch(() => ({ stdout: 'Unavailable' }))
+      let directoryLock: string
+      try {
+        acquireRuntimeDirectorySync(roots.storageRoot).release()
+        directoryLock = 'available'
+      } catch (lockError) {
+        directoryLock = String(lockError)
+      }
+      const evidence = {
+        at: new Date().toISOString(),
+        processes: processes.stdout,
+        directoryLock,
+        exitRecord: await readFile(join(roots.storageRoot, 'runtime-exit.json'), 'utf8').catch(
+          () => 'missing'
+        ),
+        owner: await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8').catch(
+          () => 'missing'
+        )
+      }
+      console.log('CLI stop failure evidence', JSON.stringify(evidence))
+      await testInfo.attach('cli-stop-failure', {
+        body: JSON.stringify(evidence),
+        contentType: 'application/json'
+      })
+      throw error
+    }
+    expect(
+      await readFile(join(roots.storageRoot, 'unexpected-error-box.txt'), 'utf8').catch(() => '')
+    ).toBe('')
     await expect
       .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
       .toMatchObject({ phase: 'unavailable' })
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0)
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
     })
     const desktopProcess = app.process()
-    await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+    await page.getByRole('button', { name: 'Quit', exact: true }).click()
     await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
     app = undefined
   } finally {
+    for (const [name, path] of [
+      ['runtime-log', join(roots.storageRoot, 'logs', 'main.log')],
+      ['desktop-log', join(roots.userDataRoot, 'desktop-logs', 'main.log')],
+      ['error-box', join(roots.storageRoot, 'unexpected-error-box.txt')]
+    ])
+      await testInfo.attach(name, {
+        body: await readFile(path).catch(() => Buffer.from('Unavailable')),
+        contentType: 'text/plain'
+      })
     await cleanupRecoveryFixture({ app, owner, env, root, storageRoot: roots.storageRoot })
   }
 })
@@ -689,7 +745,7 @@ for (const scenario of [
   'system shutdown during confirmation'
 ] as const)
   test(`disconnected desktop handles ${scenario}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-disconnected-quit-'))
+    const root = await mkdtemp(join(tmpdir(), 'open-science-disconnected-quit-with spaces-'))
     const roots = {
       storageRoot: join(root, 'storage'),
       userDataRoot: join(root, 'profile'),

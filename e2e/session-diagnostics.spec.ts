@@ -345,3 +345,116 @@ test('exports selected diagnostics without changing the persisted session', asyn
   expect(after).toBe(baseline)
   expect(await readFile(sourcePath, 'utf8')).toBe(malformed)
 })
+
+test('exports separate Desktop and Runtime diagnostic evidence through real IPC', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = app.page
+  const application = (app as unknown as { application: ElectronApplication }).application
+  const paths = await application.evaluate(({ app }) => ({
+    configRoot: process.env.OPEN_SCIENCE_CONFIG_ROOT!,
+    desktopLog: process.getBuiltinModule('node:path').join(app.getPath('logs'), 'main.log')
+  }))
+  const identity = await page.evaluate(async (cwd) => {
+    const project = await window.api.projects.create({ name: 'Diagnostic transport fixture' })
+    const sessionId = 'diagnostic-transport-session'
+    await window.api.sessions.saveSession({
+      id: sessionId,
+      projectId: project.id,
+      cwd,
+      title: 'Diagnostic transport fixture',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: []
+    })
+    return { projectId: project.id, sessionId }
+  }, paths.configRoot)
+  const secret = 'windows-diagnostic-synthetic-secret'
+  const budgets = { queuedBytes: 21, bufferedBytes: 8, byteBudget: 34, frameBudget: 5 }
+  // Synthetic records make the redaction assertion deterministic. Real Desktop/Runtime log
+  // sources, authenticated IPC, inspection and bundled export worker remain unchanged.
+  await appendFile(
+    paths.desktopLog,
+    JSON.stringify({
+      t: new Date().toISOString(),
+      level: 'error',
+      scope: 'desktop',
+      msg: 'desktop evidence failure',
+      data: {
+        ...identity,
+        error: { message: 'Stop failed api_key=' + secret, code: 'EIO' }
+      }
+    }) + '\n'
+  )
+  await appendFile(
+    join(paths.configRoot, 'logs', 'main.log'),
+    JSON.stringify({
+      t: new Date().toISOString(),
+      level: 'warn',
+      scope: 'desktop-transport',
+      msg: 'transport evidence failure',
+      data: budgets
+    }) + '\n'
+  )
+  const inspection = await page.evaluate(
+    (identity) =>
+      window.api.sessions.inspectDiagnostics({
+        ...identity,
+        operationId: 'windows-inspect-evidence'
+      }),
+    identity
+  )
+  for (const id of ['log:main.log', 'desktop-log:main.log'])
+    expect(inspection.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id, available: true })])
+    )
+  const archivePath = testInfo.outputPath('desktop-runtime-diagnostics.tar.gz')
+  await mkdir(testInfo.outputPath(), { recursive: true })
+  await application.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: path })
+  }, archivePath)
+  const result = await page.evaluate(
+    (identity) =>
+      window.api.sessions.exportDiagnostics({
+        ...identity,
+        operationId: 'windows-export-evidence',
+        selectedItems: ['log:main.log', 'desktop-log:main.log']
+      }),
+    identity
+  )
+  expect(result).toMatchObject({ status: 'exported', path: archivePath })
+  const extracted = testInfo.outputPath('desktop-runtime-diagnostics')
+  await mkdir(extracted)
+  await extract({ file: archivePath, cwd: extracted })
+  const desktop = await readFile(join(extracted, 'logs', 'desktop', 'main.log'), 'utf8')
+  const runtime = await readFile(join(extracted, 'logs', 'main.log'), 'utf8')
+  expect(desktop).toContain('Stop failed')
+  expect(desktop).toContain('EIO')
+  expect(desktop).not.toContain(secret)
+  expect(desktop).not.toContain('transport evidence failure')
+  const record = runtime
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((line) => line.event === 'transport evidence failure')
+  expect(record.diagnostics).toMatchObject(budgets)
+  expect(runtime).not.toContain('desktop evidence failure')
+  await writeFile(
+    testInfo.outputPath('diagnostic-proof.json'),
+    JSON.stringify(
+      {
+        scope:
+          'real source IPC and exporter; synthetic error records; native save picker substituted',
+        identity,
+        inspection,
+        result,
+        budgets
+      },
+      null,
+      2
+    )
+  )
+  await page.screenshot({ path: testInfo.outputPath('diagnostic-source-desktop.png') })
+})

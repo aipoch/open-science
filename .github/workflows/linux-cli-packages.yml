@@ -92,11 +92,11 @@ jobs:
         run: |
           mkdir -p out/cli-input
           gh release download "$SOURCE_RELEASE" --dir out/cli-input \
-            --pattern "open-science-$VERSION-$TARGET.tar.gz" --pattern SHA256SUMS.txt
-          gh attestation verify "out/cli-input/open-science-$VERSION-$TARGET.tar.gz" --repo "$GITHUB_REPOSITORY"
+            --pattern "open-science-cli-$VERSION-$TARGET.tar.gz" --pattern SHA256SUMS.txt
+          gh attestation verify "out/cli-input/open-science-cli-$VERSION-$TARGET.tar.gz" --repo "$GITHUB_REPOSITORY"
       - name: Verify source and prepare unchanged payload
         run: |
-          filename="open-science-$VERSION-$TARGET.tar.gz"
+          filename="open-science-cli-$VERSION-$TARGET.tar.gz"
           if [ -n "$SOURCE_RELEASE" ]; then
             checksum=$(awk -v name="$filename" '$2 == name { print $1 }' out/cli-input/SHA256SUMS.txt)
           else

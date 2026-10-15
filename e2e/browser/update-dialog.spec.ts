@@ -5,7 +5,10 @@ test('recovers historical records only after confirmation in the update dialog',
 }, testInfo) => {
   await page.goto('/update-dialog.html?refused-restart&legacy')
   const dialog = page.getByRole('dialog', { name: 'Update available' })
-  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  await page
+    .getByTestId('runtime-update-dialog')
+    .getByRole('button', { name: 'Restart to update', exact: true })
+    .click()
   const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
   await expect(recover).toBeInViewport()
   await recover.click()
@@ -38,7 +41,10 @@ test('keeps the update dialog open when Escape arrives during recovery autofocus
 }, testInfo) => {
   await page.goto('/update-dialog.html?refused-restart&legacy')
   const dialog = page.getByRole('dialog', { name: 'Update available' })
-  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  await page
+    .getByTestId('runtime-update-dialog')
+    .getByRole('button', { name: 'Restart to update', exact: true })
+    .click()
   const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
   const confirmation = page.getByRole('alertdialog', { name: 'Back up records and retry' })
   const cancel = confirmation.getByRole('button', { name: 'Cancel', exact: true })
@@ -80,7 +86,10 @@ test('shows a refused restart reason without scrolling through release notes', a
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/update-dialog.html?refused-restart')
   const dialog = page.getByRole('dialog', { name: 'Update available' })
-  await dialog.getByRole('button', { name: 'Restart to update', exact: true }).click()
+  await page
+    .getByTestId('runtime-update-dialog')
+    .getByRole('button', { name: 'Restart to update', exact: true })
+    .click()
   const error = dialog.getByRole('alert')
   await expect(error).toContainText('Could not fully stop background processes before updating.')
   await expect(dialog.getByRole('button', { name: 'Restart to update', exact: true })).toBeEnabled()

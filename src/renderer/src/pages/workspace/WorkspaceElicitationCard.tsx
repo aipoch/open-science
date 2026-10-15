@@ -606,7 +606,9 @@ const WorkspaceElicitationCard = ({
         : [...selectedValues, answer.value]
       const nextValues = {
         ...values,
-        [choiceQuestion.choiceField.id]: nextSelectedValues,
+        [choiceQuestion.choiceField.id]: choiceQuestion.choiceField
+          .options!.filter((option) => nextSelectedValues.includes(option.value))
+          .map((option) => option.value),
         [choiceQuestion.customField.id]: undefined
       }
       setValues(nextValues)
@@ -744,7 +746,10 @@ const WorkspaceElicitationCard = ({
         </p>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
         <form className="mt-2" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
-          <div className="space-y-0.5">
+          {choiceQuestion.choiceField.kind === 'multi-select' ? (
+            <p className="mb-1 text-xs text-text-300">{t('Select one or more options')}</p>
+          ) : null}
+          <div className="max-h-[min(24rem,50vh)] space-y-0.5 overflow-y-auto">
             {choiceQuestion.choiceField.options?.map((option, index) => {
               const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
               return (

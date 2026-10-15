@@ -4308,15 +4308,26 @@ export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules, 
   }
 }
 
-// Some legends print their first line slightly larger than the remaining
-// paragraph. Recover only a closed, flush, uniformly spaced smaller-font tail
-// beside an independently proved graphic; do not widen the generic font gate.
+// Some legends print their first line larger than the remaining paragraph.
+// Recover only a closed, flush, uniformly spaced smaller-font tail beside an
+// independently proved graphic; do not widen the generic font gate.
 function findNativeSmallerFigureCaption(start, runs, page) {
+  const width = start.right - start.x
+  const abbreviatedLead = /\bw\.r\.t\.$/i.test(start.text.trim())
   if (
     captionKind(start.text) !== 'figure' ||
     start.text.length < 35 ||
-    /[.!?]$/.test(start.text.trim()) ||
-    start.right - start.x < page.width * 0.35
+    (/[.!?]$/.test(start.text.trim()) && !abbreviatedLead) ||
+    width < page.width * 0.3
+  )
+    return
+  if (
+    runs.some(
+      (line) =>
+        line.y > start.y &&
+        line.y - start.y < start.fontSize * 6 &&
+        /^\d+(?:\.\d+)*\s+[A-Z][A-Z\s-]{4,}$/.test(line.text.trim())
+    )
   )
     return
   const em = start.fontSize
@@ -4325,18 +4336,20 @@ function findNativeSmallerFigureCaption(start, runs, page) {
       (l) =>
         l.y > start.y + em * 0.2 &&
         l.y - start.y < em * 14 &&
-        Math.abs(l.x - start.x) <= em * 0.2 &&
+        (Math.abs(l.x - start.x) <= em * 0.2 ||
+          (l.x - start.x >= em * 1.8 && l.x - start.x <= em * 4)) &&
         l.right <= start.right + em * 0.2
     )
     .sort((a, b) => a.y - b.y || a.x - b.x)
   const first = following[0]
   if (
     !first ||
-    first.fontSize < em * 0.86 ||
-    first.fontSize > em * 0.94 ||
-    Math.abs(first.x - start.x) > em * 0.2 ||
+    first.fontSize < em * 0.68 ||
+    first.fontSize > em * 1.01 ||
+    (Math.abs(first.x - start.x) > em * 0.2 &&
+      (first.x - start.x < em * 1.8 || first.x - start.x > em * 4)) ||
     first.y < start.y + em * 0.95 ||
-    first.y - start.y > em * 1.4 ||
+    first.y - start.y > em * 3 ||
     first.right > start.right + em * 0.2
   )
     return
@@ -4345,11 +4358,11 @@ function findNativeSmallerFigureCaption(start, runs, page) {
     const previous = tail.at(-1) ?? start
     if (
       Math.abs(line.fontSize - first.fontSize) > em * 0.02 ||
-      Math.abs(line.x - start.x) > em * 0.2 ||
+      Math.abs(line.x - first.x) > em * 0.2 ||
       line.right > start.right + em * 0.2 ||
       line.y < previous.y + first.fontSize * 0.95 ||
-      line.y - previous.y > em * 1.4 ||
-      (tail.length && Math.abs(line.y - previous.y - first.fontSize * 1.11) > em * 0.2) ||
+      line.y - previous.y > em * 1.5 ||
+      (tail.length && Math.abs(line.y - previous.y - first.fontSize * 1.11) > em * 0.4) ||
       captionKind(line.text) ||
       /^\d+(?:\.\d+)*\s+[A-Z][A-Z\s-]{4,}$/.test(line.text.trim()) ||
       /^Notes?\s*[:.]/i.test(line.text)
@@ -4361,28 +4374,69 @@ function findNativeSmallerFigureCaption(start, runs, page) {
   }
   const last = tail.at(-1)
   if (
-    tail.length < 2 ||
+    !tail.length ||
     !/[.!?]$/.test(last.text.trim()) ||
     last.right - last.x >= (start.right - start.x) * 0.98 ||
     tail.slice(0, -1).some((l) => l.right - l.x < (start.right - start.x) * 0.85)
   )
     return
-  const singleGraphic = (page.graphicsBounds ?? []).some((g) => {
-    if (g.kind !== 'image' && g.kind !== 'path') return false
-    const r = (g.paintedNormalizedRect ?? g.normalizedRect).map(
-      (v, n) => v * (n % 2 ? page.height : page.width)
+  const nearbyGraphics = (page.graphicsBounds ?? [])
+    .filter((g) => g.kind === 'image' || g.kind === 'path')
+    .map((g) =>
+      (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (value, axis) => value * (axis % 2 ? page.height : page.width)
+      )
     )
-    return (
-      r[0] >= start.x - em &&
-      r[2] <= start.right + em &&
-      r[2] - r[0] >= (start.right - start.x) * 0.75 &&
-      (r[2] - r[0]) * (r[3] - r[1]) > page.width * page.height * 0.04 &&
-      r[3] <= start.y + em * 0.1 &&
-      start.y - r[3] < em * 3
+    .filter(
+      (r) =>
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] > r[0] &&
+        r[3] > r[1] &&
+        r[3] <= start.y + em * 0.1 &&
+        start.y - r[3] < em * 7 &&
+        Math.min(r[2], start.right) - Math.max(r[0], start.x) >= (start.right - start.x) * 0.35
     )
-  })
+  const graphicBounds = nearbyGraphics.length
+    ? [
+        Math.min(...nearbyGraphics.map((r) => r[0])),
+        Math.min(...nearbyGraphics.map((r) => r[1])),
+        Math.max(...nearbyGraphics.map((r) => r[2])),
+        Math.max(...nearbyGraphics.map((r) => r[3]))
+      ]
+    : undefined
+  const singleGraphic =
+    graphicBounds &&
+    graphicBounds[0] >= start.x - em * 4 &&
+    graphicBounds[2] <= start.right + em * 4 &&
+    graphicBounds[2] - graphicBounds[0] >= (start.right - start.x) * 0.75 &&
+    (graphicBounds[2] - graphicBounds[0]) * (graphicBounds[3] - graphicBounds[1]) >
+      page.width * page.height * 0.04
+  const compactImages = (page.graphicsBounds ?? [])
+    .filter((g) => g.kind === 'image' && Array.isArray(g.normalizedRect))
+    .map((g) =>
+      g.normalizedRect.map((value, axis) => value * (axis % 2 ? page.height : page.width))
+    )
+    .filter(
+      (r) =>
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] > r[0] &&
+        r[3] > r[1] &&
+        r[3] <= start.y + em * 0.1 &&
+        start.y - r[3] < em * 7 &&
+        Math.min(r[2], start.right) - Math.max(r[0], start.x) >= width * 0.75
+    )
+  const compactSingleGraphic =
+    compactImages.length === 1 &&
+    Math.abs((compactImages[0][0] + compactImages[0][2] - start.x - start.right) / 2) <=
+      width * 0.08 &&
+    compactImages[0][2] - compactImages[0][0] >= width * 0.75 &&
+    (compactImages[0][2] - compactImages[0][0]) * (compactImages[0][3] - compactImages[0][1]) >
+      page.width * page.height * 0.03
   if (
     !singleGraphic &&
+    !compactSingleGraphic &&
     !provesFragmentedCaptionGraphic(
       start,
       runs,
@@ -4672,6 +4726,119 @@ export function nativePhotographCaption(page, candidate, rules = []) {
       )
   )
   return starts.length === 1 && isNativePhotographCaption(starts[0], runs, page, rules)
+}
+
+// An unpunctuated label remains a prose reference unless one complete raster
+// and a smaller, closed caption paragraph are isolated between body paragraphs.
+function findNativeUnpunctuatedRasterCaption(start, runs, page, rules) {
+  const em = start.fontSize
+  if (
+    captionKind(start.text) !== undefined ||
+    !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+\p{Lu}/u.test(start.text) ||
+    page.invalidGraphicsBounds !== 0 ||
+    page.graphicsBounds?.length !== 1 ||
+    ![page.width, page.height, em].every((v) => Number.isFinite(v) && v > 0)
+  )
+    return
+  const graphic = page.graphicsBounds[0]
+  if (
+    graphic.kind !== 'image' ||
+    !graphic.imageHash ||
+    graphic.normalizedRect?.length !== 4 ||
+    !graphic.normalizedRect.every(Number.isFinite)
+  )
+    return
+  const [left, top, right, bottom] = graphic.normalizedRect.map(
+    (v, n) => v * (n % 2 ? page.height : page.width)
+  )
+  if (
+    left < 0 ||
+    top < 0 ||
+    right > page.width ||
+    bottom > page.height ||
+    right - left < em * 8 ||
+    bottom - top < em * 4 ||
+    bottom > start.y ||
+    start.y - bottom > em * 1.5 ||
+    Math.abs(left - start.x) > em ||
+    Math.abs(right - start.right) > em
+  )
+    return
+  const overlaps = (line) => line.right > left && line.x < right
+  const before = runs.filter((l) => overlaps(l) && l.bottom <= top).at(-1)
+  if (
+    !before ||
+    before.fontSize < em * 1.1 ||
+    top - before.bottom > em * 3 ||
+    !/[.!?]$/.test(before.text)
+  )
+    return
+  const after = runs.filter((l) => overlaps(l) && l.y > start.y)
+  const body = after.find((l) => l.fontSize >= em * 1.1)
+  if (!body || Math.abs(body.fontSize - before.fontSize) > em * 0.05) return
+  const tail = after.filter((l) => l.y < body.y)
+  const rows = [start, ...tail]
+  if (
+    !tail.length ||
+    rows.some(
+      (l) =>
+        ![l.x, l.y, l.right, l.bottom, l.fontSize].every(Number.isFinite) ||
+        Math.abs(l.fontSize - em) > em * 0.03 ||
+        Math.abs(l.x - start.x) > em * 0.05 ||
+        l.right > start.right + em * 0.1 ||
+        l.bottom <= l.y
+    ) ||
+    tail.some((l) => captionKind(l.text)) ||
+    !/[.!?]$/.test(tail.at(-1).text) ||
+    tail.at(-1).right - start.x > (start.right - start.x) * 0.8 ||
+    body.y - tail.at(-1).bottom < em * 0.5 ||
+    body.y - tail.at(-1).bottom > em * 2
+  )
+    return
+  const leading = tail[0].y - start.y
+  if (
+    leading < em ||
+    leading > em * 2.6 ||
+    tail.some((l, i) => Math.abs(l.y - rows[i].y - leading) > em * 0.05 || l.y < rows[i].bottom)
+  )
+    return
+  // No native text, rule, or unknown source can occupy the raster or bridge
+  // either independently established body/caption boundary.
+  if (
+    runs.some((l) => overlaps(l) && l.y >= before.bottom && l.y < body.y && !rows.includes(l)) ||
+    rules.some(
+      (r) =>
+        r.length !== 4 ||
+        !r.every(Number.isFinite) ||
+        (Math.max(r[0], r[2]) > left &&
+          Math.min(r[0], r[2]) < right &&
+          Math.max(r[1], r[3]) > before.bottom &&
+          Math.min(r[1], r[3]) < body.y)
+    )
+  )
+    return
+  return tail
+}
+
+export function nativeUnpunctuatedRasterCaption(page, candidate, rules = []) {
+  if (candidate.page !== page.pageNumber || !candidate.lines?.length) return false
+  const runs = groupPageLines(page, rules)
+  const starts = runs.filter((l) => l.text === candidate.lines[0])
+  if (starts.length !== 1) return false
+  const tail = findNativeUnpunctuatedRasterCaption(starts[0], runs, page, rules)
+  if (!tail) return false
+  const rows = [starts[0], ...tail]
+  const rect = [
+    Math.min(...rows.map((l) => l.x)),
+    Math.min(...rows.map((l) => l.y)),
+    Math.max(...rows.map((l) => l.right)),
+    Math.max(...rows.map((l) => l.bottom))
+  ]
+  return (
+    rows.length === candidate.lines.length &&
+    rows.every((l, i) => l.text === candidate.lines[i]) &&
+    rect.every((v, i) => Math.abs(v - candidate.rect[i]) < starts[0].fontSize * 0.01)
+  )
 }
 
 function provesWrappedNativeColumn(start, cue, runs, page, rules) {
@@ -5706,6 +5873,55 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
     const runs = groupPageLines(page, separators.get(page.pageNumber) ?? [])
     const ownedRuns = new Set()
     const completedCaptionRuns = new Set()
+    const hasAdjacentImageAboveUnpunctuatedFigure = (line) => {
+      if (
+        /^Figure\s+\d+\s+The illustration of\b/i.test(line.text) ||
+        !/^(?:Fig\.?|Figure)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\s+\p{L}/iu.test(line.text)
+      )
+        return false
+      const width = line.right - line.x
+      return (page.graphicsBounds ?? []).some(({ kind, normalizedRect: rect }) => {
+        if (kind !== 'image' || rect?.length !== 4 || !rect.every(Number.isFinite)) return false
+        const [left, top, right, bottom] = rect.map(
+          (value, axis) => value * (axis % 2 ? page.height : page.width)
+        )
+        return (
+          right > left &&
+          bottom > top &&
+          bottom <= line.y &&
+          line.y - bottom <= line.fontSize * 4 &&
+          (right - left) * (bottom - top) > page.width * page.height * 0.02 &&
+          Math.min(right, line.right) - Math.max(left, line.x) >= width * 0.6
+        )
+      })
+    }
+    const bodyReferenceBeforePrintedCaption = (line) => {
+      const reference = line.text.match(/^(?:Fig\.?|Figure)\s+([A-Z]?\d+(?:\.\d+)*)\s+\p{L}/iu)
+      if (!reference) return false
+      return runs.some((later) => {
+        if (
+          later.y <= line.y ||
+          !new RegExp(`^(?:Fig\\.?|Figure)\\s+${reference[1]}[.:]\\s+`, 'iu').test(later.text) ||
+          !captionKind(later.text)
+        )
+          return false
+        return (page.graphicsBounds ?? []).some(({ kind, normalizedRect: rect }) => {
+          if (kind !== 'image' || rect?.length !== 4 || !rect.every(Number.isFinite)) return false
+          const [left, top, right, bottom] = rect.map(
+            (value, axis) => value * (axis % 2 ? page.height : page.width)
+          )
+          return (
+            top >= line.bottom &&
+            bottom <= later.y &&
+            right > left &&
+            bottom > top &&
+            (right - left) * (bottom - top) > page.width * page.height * 0.02 &&
+            Math.min(right, later.right) - Math.max(left, later.x) >=
+              Math.min(line.right - line.x, later.right - later.x) * 0.6
+          )
+        })
+      })
+    }
     // Bare figure labels are conservative in `captionKind` because they can
     // be inline references. Re-admit them only when a non-page-sized native
     // graphic starts in the same label band, which proves a real top figure.
@@ -5727,10 +5943,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         isNativeIsolatedColonCaption(line, runs, page) ||
         /^Table\s+\d+\.\s*$/i.test(line.text.trim()) ||
         hasNearbyBareFigureGraphic(line) ||
+        hasAdjacentImageAboveUnpunctuatedFigure(line) ||
         isNativePhotographCaption(line, runs, page, separators.get(page.pageNumber) ?? [])
     )) {
       if (
         ownedRuns.has(start) ||
+        bodyReferenceBeforePrintedCaption(start) ||
         [...completedCaptionRuns].some(
           (line) =>
             line.text === start.text &&
@@ -6246,6 +6464,13 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         rulesByPage.get(page.pageNumber) ?? []
       )
       let nativeParagraph =
+        findNativeUnpunctuatedRasterCaption(
+          start,
+          runs,
+          page,
+          rulesByPage.get(page.pageNumber) ?? []
+        ) ??
+        findNativeSmallerFigureCaption(start, runs, page) ??
         findNativeMixedLabelCaptionParagraph(start, runs, page) ??
         internalReferenceParagraph ??
         panelParagraph ??
@@ -6274,8 +6499,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           separators.get(page.pageNumber) ?? []
         ) ??
         findNativeMixedLegend(start, page) ??
-        findNativeTwoThirdFigureCaption(start, runs, page) ??
-        findNativeSmallerFigureCaption(start, runs, page)
+        findNativeTwoThirdFigureCaption(start, runs, page)
       // A wrapped numbered reference is an interior caption row only when
       // the complete single-spaced proof survives. Keep the ordinary generic
       // paragraph fallbacks from reattaching that row after a proof mutation.
@@ -6356,6 +6580,55 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         if (referenceRow && /\b(?:in|from)$/iu.test(start.text.trim())) continue
       }
       const lines = [boundedParagraph?.first ?? start, ...(nativeParagraph ?? [])]
+      // Some table titles wrap a hyphenated word onto a short hanging line.
+      // Keep it only when the native table header is separated by a painted
+      // top rule, so an unrelated following paragraph cannot complete it.
+      if (
+        captionKind(start.text) === 'table' &&
+        /\p{L}[-\u2010\u2011]$/u.test(start.text.trim()) &&
+        lines.length === 1
+      ) {
+        const tails = runs.filter(
+          (line) =>
+            line.y > start.y + 2 &&
+            line.y - start.y <= start.fontSize * 1.6 &&
+            line.x - start.x >= start.fontSize * 2 &&
+            line.x - start.x <= start.fontSize * 3 &&
+            line.right <= start.right + start.fontSize * 0.2 &&
+            /^[\p{Ll}][\p{L}\s-]{2,80}$/u.test(line.text.trim()) &&
+            Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
+            !captionKind(line.text)
+        )
+        if (tails.length === 1) {
+          const tail = tails[0]
+          const header = runs.find(
+            (line) =>
+              line.y > tail.bottom + start.fontSize &&
+              line.y - tail.bottom <= start.fontSize * 3 &&
+              /^\p{Lu}[\p{L}\s-]{5,}$/u.test(line.text.trim()) &&
+              Math.abs(line.fontSize - start.fontSize) <= 0.7
+          )
+          const topRule = (page.graphicsBounds ?? []).some(({ kind, normalizedRect: rect }) => {
+            if (kind !== 'path' || rect?.length !== 4 || !rect.every(Number.isFinite)) return false
+            const [left, top, right, bottom] = rect.map(
+              (value, axis) => value * (axis % 2 ? page.height : page.width)
+            )
+            return (
+              right - left >= start.fontSize * 8 &&
+              bottom - top <= start.fontSize * 0.75 &&
+              top >= tail.bottom &&
+              top < (header?.y ?? Infinity) &&
+              left <= start.right &&
+              right >= start.x &&
+              left <= tail.x &&
+              right >= tail.right &&
+              left <= header?.x &&
+              right >= (header?.right ?? -Infinity)
+            )
+          })
+          if (header && topRule) lines.push(tail)
+        }
+      }
       // IEEE-style tables often emit an all-caps Roman label as one run and
       // the centered all-caps title as one or more following runs. Keep the
       // title with the label so table ownership and unstructured text retain

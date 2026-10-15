@@ -5,7 +5,8 @@ import { verifiedHostOwnerSplits, verifiedHostSourceMoves } from './host-owner-s
 import {
   verifiedConsumerRetirements,
   verifiedExcludedPackageTests,
-  verifiedPdfTextOwnerSplit
+  verifiedPdfTextOwnerSplit,
+  verifiedPromiseIdentityOwnerSplit
 } from './consumer-retirement.mjs'
 import {
   moduleImpactRegistrationPath,
@@ -325,6 +326,7 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
     }),
     boundedOwnerSplits: new Set([
       ...verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...verifiedPromiseIdentityOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
       ...hostSplits.paths,
       ...hostMoves.paths
     ]),

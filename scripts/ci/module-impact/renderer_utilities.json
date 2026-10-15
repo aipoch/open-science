@@ -67,6 +67,13 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
+      "src/renderer/src/stores/session-store.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts",
+      "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
@@ -507,7 +514,8 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
       "src/renderer/src/stores/network-store.test.ts",
-      "src/renderer/src/stores/settings-store.test.ts"
+      "src/renderer/src/stores/settings-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

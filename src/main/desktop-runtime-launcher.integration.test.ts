@@ -35,14 +35,67 @@ const http=require('node:http'), fs=require('node:fs'), path=require('node:path'
 const root=process.env.OPEN_SCIENCE_CONFIG_ROOT, generation=crypto.randomUUID(), token='x'.repeat(43);
 fs.writeFileSync(path.join(root,'web-token'),token);
 fs.writeFileSync(path.join(root,'launched.json'),JSON.stringify({electron:process.versions.electron??null,asNode:process.env.ELECTRON_RUN_AS_NODE??null,argv:process.argv,configRoot:root,userData:process.env.OPEN_SCIENCE_USER_DATA??null}));
+const desktopGeneration=crypto.randomUUID();
+const startupOptions={configRoot:root,dataRoot:root,profilePath:root,port:0,host:'127.0.0.1',credentialStore:'os'};
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
- res.end(JSON.stringify({generation,pid:process.pid}));
+ res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions}));
 });
-server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:crypto.randomUUID(),secret:'a'.repeat(64),version:'test'}})));
+server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:desktopGeneration,secret:'a'.repeat(64),version:'test'}})));
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it('re-spawns after an ownership conflict exit once the lock is released', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    const marker = join(root, 'first-attempt')
+    await writeFile(
+      entry,
+      `{const f=require('node:fs');
+if(!f.existsSync(${JSON.stringify(marker)})){f.writeFileSync(${JSON.stringify(marker)},'1');process.exit(75)}}
+${fixtureSource}`
+    )
+    let locked = true
+    const launched = await startOrAttachDesktopBackend({
+      configRoot: root,
+      profilePath: join(root, 'original-profile'),
+      version: 'test',
+      command: process.execPath,
+      entry,
+      packaged: true,
+      timeoutMs: 10000,
+      ownershipWaitMs: 3000,
+      terminationDeps: {
+        lockHeld: () => {
+          const held = locked
+          locked = false
+          return held
+        }
+      }
+    })
+    expect(launched.startedProcess?.pid).toBeGreaterThan(0)
+    expect(children.length).toBe(2)
+  })
+  it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(entry, 'process.exit(75)')
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: join(root, 'original-profile'),
+        version: 'test',
+        command: process.execPath,
+        entry,
+        packaged: true,
+        timeoutMs: 10000,
+        ownershipWaitMs: 300,
+        terminationDeps: { lockHeld: () => true }
+      })
+    ).rejects.toThrow('still owned by another process')
+  })
   it('reports a backend that exits cleanly before publishing an endpoint instead of a startup timeout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-clean-exit-'))
     roots.push(root)

@@ -7,6 +7,7 @@ it can be merged. Detailed references:
 - [Development and packaging](docs/development-quick-reference.md)
 - [Testing and module registration](docs/testing.md)
 - [CI and maintainer reference](docs/ci.md)
+- [Release compatibility](docs/compatibility.md)
 
 ## Code of Conduct
 

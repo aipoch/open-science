@@ -1,4 +1,8 @@
-export { parseFrontmatter, parseSkillDocument } from './skill-frontmatter'
+export {
+  parseFrontmatter,
+  parseSkillDocument,
+  parseSkillDocumentWithStatus
+} from './skill-frontmatter'
 export { serializePersonalSkillDocument } from './personal-skill-document'
 export type { PersonalSkillDocumentInput } from './personal-skill-document'
 export { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from './skill-import-limits'

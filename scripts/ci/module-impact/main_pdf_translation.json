@@ -132,6 +132,7 @@
       "src/main/acp/restricted-inference-runner.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-agent.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx",

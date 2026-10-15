@@ -382,6 +382,7 @@ export const runReviewAssessment = async (
           providerSessionId: reviewerSession!.sessionId,
           cwd: built.cwd
         })
+        if (abortSignal?.aborted) throw new Error('reviewer session was aborted before stopping')
         const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
         void Promise.resolve(promptRequest).catch(() => undefined)
         const stopReason = await driveReviewerToStop(
@@ -491,10 +492,17 @@ export const runReviewAssessment = async (
   }
 
   if (reviewerSessionFailed) {
+    const details = (reviewerSessionError as { data?: { details?: unknown } } | null)?.data?.details
     const errorMessage =
-      reviewerSessionError instanceof Error
-        ? reviewerSessionError.message
-        : String(reviewerSessionError)
+      reviewerSessionError instanceof Error &&
+      reviewerSessionError.name === 'RequestError' &&
+      reviewerSessionError.message === 'Internal error' &&
+      typeof details === 'string' &&
+      details.trim()
+        ? details
+        : reviewerSessionError instanceof Error
+          ? reviewerSessionError.message
+          : String(reviewerSessionError)
     log.error(
       options.mode === 'tracked' ? 'scoped re-review session failed' : 'reviewer session failed',
       { reviewId: review.id, ...errorLogFields(reviewerSessionError) }

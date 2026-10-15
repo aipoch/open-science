@@ -64,6 +64,7 @@ const states: Record<string, readonly string[]> = {
   toolDisposition: ['declined', 'permission-closed'],
   agentFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
   frameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
+  previousFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
   reasoningEffort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   runtimeTranscriptOwner: ['main'],
   delegationPolicy: ['allow', 'deny'],
@@ -280,7 +281,12 @@ const diagnosticStringFields = [
   'delayKind',
   'operationDelayKind',
   'errorCategory',
-  'reason'
+  'reason',
+  'launch',
+  'control',
+  'generation',
+  'step',
+  'result'
 ] as const
 
 // Permission traces carry fixed product classifications and hashed correlation identities only.
@@ -404,7 +410,14 @@ export function projectDiagnosticLog(
     'repairedTailBytes',
     'projectDirectoryCount',
     'sessionFileCount',
-    'sessionBytes'
+    'sessionBytes',
+    'queuedBytes',
+    'queuedFrames',
+    'frameBytes',
+    'bufferedBytes',
+    'byteBudget',
+    'frameBudget',
+    'runtimePid'
   ])
     if (typeof data[key] === 'number' && Number.isFinite(data[key])) diagnostic[key] = data[key]
   if (typeof data.wasUnresponsive === 'boolean') diagnostic.wasUnresponsive = data.wasUnresponsive

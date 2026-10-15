@@ -20,6 +20,8 @@ describe('helper host inheritance', () => {
     vi.stubEnv('OPEN_SCIENCE_RESOURCES_PATH', '/fixture/resources')
     vi.stubEnv('OPEN_SCIENCE_APPLICATION_VERSION', '0.35.1')
     vi.stubEnv('OPEN_SCIENCE_HOST_PACKAGED', '0')
+    vi.stubEnv('OPEN_SCIENCE_INSTALLATION_OWNER', 'fixture-owner-capability')
+    vi.stubEnv('OPEN_SCIENCE_INSTALLATION_STATE_ROOT', '/fixture/installation-state')
     const values = nodeRuntimeEnvironment()
     expect(values).toEqual({
       ELECTRON_RUN_AS_NODE: electron ? '1' : undefined,
@@ -27,12 +29,20 @@ describe('helper host inheritance', () => {
       OPEN_SCIENCE_APPLICATION_PATH: '/fixture/app',
       OPEN_SCIENCE_RESOURCES_PATH: '/fixture/resources',
       OPEN_SCIENCE_APPLICATION_VERSION: '0.35.1',
-      OPEN_SCIENCE_HOST_PACKAGED: '0'
+      OPEN_SCIENCE_HOST_PACKAGED: '0',
+      OPEN_SCIENCE_INSTALLATION_OWNER: 'fixture-owner-capability',
+      OPEN_SCIENCE_INSTALLATION_STATE_ROOT: '/fixture/installation-state'
     })
     expect(nodeRuntimeEnvironmentEntries()).toContainEqual({
       name: 'OPEN_SCIENCE_HOST_PACKAGED',
       value: '0'
     })
+    expect(nodeRuntimeEnvironmentEntries()).toEqual(
+      expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_INSTALLATION_OWNER', value: 'fixture-owner-capability' },
+        { name: 'OPEN_SCIENCE_INSTALLATION_STATE_ROOT', value: '/fixture/installation-state' }
+      ])
+    )
     expect(
       nodeRuntimeEnvironmentEntries().some(({ name }) => name === 'ELECTRON_RUN_AS_NODE')
     ).toBe(Boolean(electron))

@@ -165,6 +165,7 @@ const setup = (
       | 'flushLogs'
       | 'logFlushTimeoutMs'
       | 'rendererFlushTimeoutMs'
+      | 'systemShutdownTimeoutMs'
       | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
@@ -232,6 +233,7 @@ const setup = (
       flushLogs: overrides.flushLogs,
       logFlushTimeoutMs: overrides.logFlushTimeoutMs,
       rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
+      systemShutdownTimeoutMs: overrides.systemShutdownTimeoutMs,
       shutdownTrigger: overrides.shutdownTrigger,
       isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
       quit,
@@ -1919,4 +1921,192 @@ it('awaits authoritative work before the confirmation and refuses a failed inspe
   await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
   h.app.emit('before-quit')
   await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledOnce())
+})
+
+const replayQuitSynchronously = (h: Harness): void => {
+  h.quit.mockImplementation(() => {
+    // Reproduce Electron's synchronous reentry, with a cap so a regression fails without hanging.
+    if (h.quit.mock.calls.length <= 4) h.app.emit('before-quit')
+  })
+}
+
+it.each(['timeout', 'failed', 'degraded', 'rejected', 'stop'] as const)(
+  'finishes system shutdown once after remote %s failure without a modal or retry',
+  async (failure) => {
+    const onQuitError = vi.fn()
+    const prepareForQuit = vi.fn(async (): Promise<ShutdownStepOutcome> => {
+      if (failure === 'rejected') throw new Error('unreachable runtime')
+      return failure === 'stop' ? 'completed' : failure
+    })
+    const shutdownBackends = vi.fn(async () => {
+      throw new Error('stop refused')
+    })
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      prepareForQuit,
+      shutdownBackends
+    })
+    replayQuitSynchronously(h)
+    h.onSystemShutdown()
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.quit).toHaveBeenCalledOnce()
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(onQuitError).not.toHaveBeenCalled()
+    expect(h.confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledTimes(failure === 'stop' ? 1 : 0)
+  }
+)
+
+it('replays an ordinary remote failure at most once after a system request', async () => {
+  let rejectPrepare!: (error: Error) => void
+  const prepareForQuit = vi
+    .fn<() => Promise<void>>()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectPrepare = reject
+        })
+    )
+    .mockRejectedValue(new Error('system prepare refused'))
+  const onQuitError = vi.fn()
+  const h = setup({ requireCleanBackendShutdown: true, prepareForQuit, onQuitError })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(prepareForQuit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  rejectPrepare(new Error('ordinary preparation refused'))
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+  expect(prepareForQuit).toHaveBeenCalledTimes(2)
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it('exits after unreachable quit inspection for system shutdown', async () => {
+  const refreshQuitState = vi.fn(async () => {
+    throw new Error('unreachable backend')
+  })
+  const onQuitError = vi.fn()
+  const h = setup({ refreshQuitState, onQuitError })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(refreshQuitState).toHaveBeenCalledOnce()
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it('finishes system shutdown while an ordinary inspection is unreachable', async () => {
+  let rejectRefresh!: (error: Error) => void
+  const refreshQuitState = vi.fn(
+    () =>
+      new Promise<boolean>((_resolve, reject) => {
+        rejectRefresh = reject
+      })
+  )
+  const onQuitError = vi.fn()
+  const h = setup({ refreshQuitState, onQuitError })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  h.onSystemShutdown()
+  rejectRefresh(new Error('unreachable backend'))
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  await flush()
+  expect(h.quit).toHaveBeenCalledTimes(2)
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it.each(['prepare', 'stop', 'rollback', 'handoff', 'renderer'] as const)(
+  'bounds a hung system shutdown %s boundary',
+  async (step) => {
+    const never = (): Promise<never> => new Promise(() => {})
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      rendererFlushTimeoutMs: 10,
+      systemShutdownTimeoutMs: 20,
+      ...(step === 'prepare' ? { prepareForQuit: never } : {}),
+      ...(step === 'stop' ? { shutdownBackends: never } : {}),
+      ...(step === 'rollback'
+        ? { prepareForQuit: async () => 'failed' as const, abortQuitPreparation: never }
+        : {}),
+      ...(step === 'handoff' ? { beforeExit: never } : {}),
+      ...(step === 'renderer' ? { flushSessionPersistence: never } : {})
+    })
+    replayQuitSynchronously(h)
+    h.onSystemShutdown()
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.quit).toHaveBeenCalledOnce()
+  }
+)
+
+it('keeps an ordinary refused quit alive and permits a later synchronous retry', async () => {
+  const onQuitError = vi.fn()
+  const prepareForQuit = vi
+    .fn<() => Promise<ShutdownStepOutcome>>()
+    .mockResolvedValueOnce('timeout')
+    .mockResolvedValueOnce('completed')
+  const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
+  expect(h.app.exit).not.toHaveBeenCalled()
+  expect(h.quit).toHaveBeenCalledOnce()
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds an ordinary preparation already in flight when system shutdown arrives', async () => {
+  const prepareForQuit = vi.fn(() => new Promise<never>(() => {}))
+  const h = setup({
+    requireCleanBackendShutdown: true,
+    prepareForQuit,
+    systemShutdownTimeoutMs: 20
+  })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(prepareForQuit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds an ordinary exit handoff already in flight when system shutdown arrives', async () => {
+  const beforeExit = vi.fn(() => new Promise<never>(() => {}))
+  const h = setup({ beforeExit, systemShutdownTimeoutMs: 20 })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(beforeExit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledOnce()
+})
+
+it('refreshes authoritative work before preparing system shutdown', async () => {
+  const refreshQuitState = vi.fn(async () => true)
+  const prepareForQuit = vi.fn(async () => {
+    expect(refreshQuitState).toHaveBeenCalledOnce()
+    return 'completed' as const
+  })
+  const h = setup({ refreshQuitState, prepareForQuit })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(prepareForQuit).toHaveBeenCalledOnce()
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds unreachable system quit inspection and exits without a modal', async () => {
+  const onQuitError = vi.fn()
+  const h = setup({
+    refreshQuitState: () => new Promise(() => {}),
+    onQuitError,
+    systemShutdownTimeoutMs: 20
+  })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.prepareForQuit).not.toHaveBeenCalled()
+  expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+  expect(onQuitError).not.toHaveBeenCalled()
+  expect(h.quit).toHaveBeenCalledOnce()
 })

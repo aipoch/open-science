@@ -35,6 +35,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/stage-default-envs.test.ts",
@@ -605,7 +606,8 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "consumerModules": [
