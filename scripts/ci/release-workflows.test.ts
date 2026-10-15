@@ -1073,6 +1073,10 @@ describe('build verification throughput', () => {
     expect(capture.run).toContain('exit "$code"')
     expect(capture.run).toContain('rm -f "$network_log"')
     expect(capture.run).toContain('(deny network-outbound (remote udp "*:443"))')
+    expect(capture.run!.indexOf('stapler_prefix=(')).toBeLessThan(
+      capture.run!.indexOf('if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]')
+    )
+    expect(capture.run).not.toContain('stapler_prefix=()')
     expect(capture.run?.match(/"\$\{stapler_prefix\[@\]\}" node/g)).toHaveLength(4)
     expect(capture.run).not.toContain(
       'stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs notarytool'

@@ -190,12 +190,12 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           nt="$RUNNER_TEMP/notarytool.json"
           shopt -s nullglob
-          stapler_prefix=()
+          # Avoid CloudKit's observed HTTP/3 connection loss without changing host networking or TLS.
+          # shortcut: sandbox-exec is deprecated; remove this workaround after Apple fixes the path.
+          stapler_prefix=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote udp "*:443"))')
+          echo 'Stapler transport: UDP/443 denied in command sandbox'
 
           if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]; then
-            # Diagnostic A/B: deny QUIC only in this child process; retain TLS and normal TCP.
-            stapler_prefix=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote udp "*:443"))')
-            echo 'Stapler transport experiment: child-process UDP/443 denied'
             sw_vers
             xcodebuild -version
             xcrun --find stapler
