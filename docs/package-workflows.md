@@ -85,3 +85,10 @@ host consumers remain blocking in merge queue. `test:affected -- --tier pr` expl
 selection; the default remains the complete affected queue selection. Full portable Ubuntu regression
 runs in Source Regression, with a focused manual `portable` mode. Run
 `node scripts/ci/audit-package-consumers.mjs HEAD` for per-package host dependency evidence.
+
+## Static impact diagnostic tool
+
+The private [test-impact package](../packages/test-impact/README.md) analyzes Git revisions without
+changing test selection. Run `npm run analyze:test-impact -- --revision HEAD` to generate evidence,
+and `npm run check:packages -- --packages=test-impact` to verify its build and installed API/CLI.
+Source Regression's manual `static-impact` mode runs the verifier on Linux, Windows and macOS.

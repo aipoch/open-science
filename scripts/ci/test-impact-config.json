@@ -1,0 +1,10 @@
+{
+  "packageRegistry": "scripts/ci/package-test-boundaries.json",
+  "sourcePaths": {
+    "@/*": ["src/renderer/src/*"],
+    "@renderer/*": ["src/renderer/src/*"],
+    "@aipoch/notebook-network-sandbox": ["packages/notebook-network-sandbox/src/index.ts"],
+    "@aipoch/process-tree-native": ["packages/process-tree-native/index.d.ts"],
+    "@aipoch/safe-file-publisher-native": ["packages/safe-file-publisher-native/index.d.ts"]
+  }
+}
