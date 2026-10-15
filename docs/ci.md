@@ -214,13 +214,22 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Derived consumer evidence
+
+The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
+selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
+Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
+missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+Older bases retain legacy rules; existing explicit contracts are not retired automatically.
+
 ## CI control-plane approval
 
-CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
-`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
-of editing individual usernames in the file. The team must be visible and have explicit repository
-write access. The main ruleset requires approval from one owner other than the PR author and
-dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
+CODEOWNERS itself have `@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership
+in GitHub instead of editing individual usernames in the file. The team must be visible and have
+explicit repository write access. The main ruleset requires approval from one owner other than the
+PR author and dismisses stale approvals after new commits. Ordinary package and host files have no
+CODEOWNERS entry.
 The `scripts/ci/module-impact.json` registration file and JSON records directly under
 `scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
 protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
@@ -383,3 +392,13 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
+
+### Runtime module evidence diagnostic
+
+Source Regression's manual `runtime-evidence` mode collects V8 coverage for five fixed test files.
+Locally, run `npm run pretest`, then `node scripts/ci/runtime-module-evidence.mjs`.
+Reports and logs go to `coverage/runtime-module-evidence/`; Actions retains them for seven days.
+
+Use a checkout-local dependency install: positive controls check actual source and built-package
+execution separately. Missing observations or failed controls fail the job. Zero hits do not justify
+removing a test; these diagnostics do not change test selection.

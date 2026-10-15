@@ -1,0 +1,19 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/stores/research-workspace-store.ts",
+    "src/renderer/src/pages/workspace/research-draft-identity.ts",
+    "src/renderer/src/pages/workspace/research-draft-identity.test.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/stores/research-workspace-store.ts",
+    "src/renderer/src/pages/workspace/research-draft-identity.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/renderer/src/pages/workspace/research-draft-identity.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "fallbackCapability": "renderer_view"
+}

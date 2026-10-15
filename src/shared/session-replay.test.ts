@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  sessionReplayCommandContracts,
-  saveSessionDiscussionSnapshotRequestSchema
-} from './session-replay'
+import { sessionReplayCommandContracts } from './session-replay-commands'
+import { saveSessionDiscussionSnapshotRequestSchema } from './session-replay'
 
 describe('local research workspace contracts', () => {
   it('validates explicit membership mutations and does not accept caller titles or negative revisions', () => {

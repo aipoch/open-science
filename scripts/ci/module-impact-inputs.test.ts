@@ -246,6 +246,8 @@ describe('trusted additive module registrations', () => {
         'package-test-boundaries.json',
         'module-impact-inputs.mjs',
         'module-test-impact.mjs',
+        'module-derived-consumers.mjs',
+        'module-derived-consumers.json',
         'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
         'windows-core-plan.mjs',
@@ -256,10 +258,24 @@ describe('trusted additive module registrations', () => {
         put(`scripts/ci/${file}`, readFileSync(`scripts/ci/${file}`, 'utf8'))
       put('scripts/ci/module-impact.json', '{"schemaVersion":1}')
       const manifest = sample()
+      manifest.modules.other = {
+        ...structuredClone(manifest.modules.sample),
+        ownerPaths: ['src/main/derived.test.ts'],
+        interfacePaths: ['src/main/derived.test.ts'],
+        testFiles: { owner: ['src/main/derived.test.ts'], contract: [], consumer: [] }
+      }
+      put('scripts/ci/module-impact/other.json', JSON.stringify(manifest.modules.other))
+      put(
+        'scripts/ci/module-derived-consumers.json',
+        JSON.stringify({
+          schemaVersion: 1,
+          modules: { sample: ['src/main/derived.test.ts'] }
+        })
+      )
       put(record, JSON.stringify(manifest.modules.sample))
       for (const path of paths(manifest)) put(path, '// must not execute candidate source')
       const base = commit()
-      const candidate = sample()
+      const candidate = structuredClone(manifest)
       candidate.modules.sample.ownerPaths.push('resources/sample/new.mjs', 'src/main/new.test.ts')
       candidate.modules.sample.testFiles.owner.push('src/main/new.test.ts')
       put(record, JSON.stringify(candidate.modules.sample))
@@ -272,6 +288,7 @@ describe('trusted additive module registrations', () => {
       put('src/main/newer-main.test.ts', '// newer trusted-main evidence')
       const trusted = commit()
       // The extractor must read Git blobs, not a potentially modified checkout.
+      put('scripts/ci/module-derived-consumers.json', '{"schemaVersion":1,"modules":{}}')
       put('scripts/ci/module-impact-inputs.mjs', 'throw new Error("untrusted checkout")')
       const workflow = load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as {
         jobs: { preflight: { steps: Array<{ id?: string; run?: string }> } }
@@ -302,12 +319,14 @@ describe('trusted additive module registrations', () => {
         run('module-impact-shadow.mjs', [...args, '--authoritative-plan', JSON.stringify(plan)])
       )
       expect(shadow.shadow.testFiles).toEqual([
+        'src/main/derived.test.ts',
         'src/main/new.test.ts',
         'src/main/newer-main.test.ts',
         'src/main/sample.test.ts'
       ])
       const explain = run('module-test-impact.mjs', ['affected', ...args, '--explain'])
       expect(explain).toContain('Mode: selective')
+      expect(explain).toContain('sample -> derived dependency evidence -> src/main/derived.test.ts')
       for (const path of shadow.shadow.testFiles) expect(explain).toContain(path)
     }
   )

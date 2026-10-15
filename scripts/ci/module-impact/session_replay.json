@@ -48,11 +48,8 @@
     "src/renderer/src/lib/replay/source-contract.ts",
     "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
     "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
-    "src/renderer/src/stores/research-workspace-store.ts",
     "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
     "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx",
-    "src/renderer/src/pages/workspace/research-draft-identity.ts",
-    "src/renderer/src/pages/workspace/research-draft-identity.test.ts",
     "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
   ],
   "interfacePaths": [
@@ -85,10 +82,8 @@
     "src/renderer/src/stores/session-replay-store.ts",
     "src/renderer/src/pages/workspace/discussion-send-context.ts",
     "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
-    "src/renderer/src/stores/research-workspace-store.ts",
     "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
-    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx",
-    "src/renderer/src/pages/workspace/research-draft-identity.ts"
+    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -110,7 +105,6 @@
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
-      "src/renderer/src/pages/workspace/research-draft-identity.test.ts",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ],
     "contract": [],

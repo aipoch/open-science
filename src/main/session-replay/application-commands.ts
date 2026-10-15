@@ -1,4 +1,4 @@
-import { sessionReplayCommandContracts } from '../../shared/session-replay'
+import { sessionReplayCommandContracts } from '../../shared/session-replay-commands'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
