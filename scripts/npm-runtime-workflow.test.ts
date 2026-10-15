@@ -49,6 +49,29 @@ describe('runtime distribution boundary', () => {
             stdio: 'pipe'
           })
         ).toThrow()
+      for (const override of [
+        { DESKTOP_RUN: '100' },
+        { DESKTOP_RUN: '' },
+        { DISTRIBUTION: 'npm' },
+        { GITHUB_EVENT_NAME: 'push' },
+        { VERIFY_DESKTOP_ONLY: 'true' }
+      ])
+        expect(() =>
+          execFileSync(process.execPath, ['-e', script], {
+            env: {
+              ...env,
+              NIGHTLY: 'true',
+              DESKTOP_RUN: '200',
+              VERIFY_DESKTOP_ONLY: 'false',
+              ...override
+            },
+            stdio: 'pipe'
+          })
+        ).toThrow()
+      execFileSync(process.execPath, ['-e', script], {
+        env: { ...env, NIGHTLY: 'true', DESKTOP_RUN: '200', VERIFY_DESKTOP_ONLY: 'false' },
+        stdio: 'pipe'
+      })
       // Ordinary Release calls must continue to accept their own run's artifacts.
       execFileSync(process.execPath, ['-e', script], {
         env: {
@@ -104,6 +127,38 @@ describe('runtime distribution boundary', () => {
       )
     ).toBe(true)
   })
+  it('reuses nightly desktop bytes, native CLI installation and complete-set verification', () => {
+    const nightly = workflow('nightly.yml')
+    const runtime = workflow('runtime-packages.yml')
+    const publish = workflow('nightly-publish.yml')
+    expect(runtime.on.workflow_call.inputs.nightly.default).toBe(false)
+    expect(runtime.jobs.verify.env.OPEN_SCIENCE_RUNTIME_NIGHTLY).toBe('${{ inputs.nightly }}')
+    expect(runtime.jobs['publication-check'].env.OPEN_SCIENCE_RUNTIME_NIGHTLY).toBe(
+      '${{ inputs.nightly }}'
+    )
+    expect(nightly.jobs['cli-artifacts']).toMatchObject({
+      needs: ['build', 'package-smoke'],
+      uses: './.github/workflows/runtime-packages.yml',
+      with: { nightly: true, desktop_run_id: "${{ format('{0}', github.run_id) }}" }
+    })
+    expect(nightly.jobs.prepare.needs).toContain('cli-artifacts')
+    expect(nightly.jobs.prepare.if).toContain("needs.cli-artifacts.result == 'success'")
+    const steps = nightly.jobs.prepare.steps
+    expect(steps.find((s: any) => s.name === 'Verify all five nightly CLI archives')).toMatchObject(
+      {
+        env: { OPEN_SCIENCE_RUNTIME_NIGHTLY: 'true' },
+        run: 'node scripts/runtime-archives.mjs verify artifacts'
+      }
+    )
+    expect(steps.find((s: any) => s.name === 'Generate checksums').run).toContain(
+      'open-science-cli-*.tar.gz'
+    )
+    const files = publish.jobs.publish.steps.find(
+      (s: any) => s.name === 'Publish nightly pre-release'
+    ).with.files
+    expect(files).toContain('artifacts/open-science-cli-*.tar.gz')
+    expect(files).toContain('artifacts/CLI-SHA256SUMS.txt')
+  })
   it('requires same-run signed inputs, all five archives and checksums before Release publication', () => {
     const flow = workflow('release.yml')
     expect(flow.jobs['cli-artifacts'].needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
@@ -121,7 +176,7 @@ describe('runtime distribution boundary', () => {
     for (const name of ['Attest build provenance', 'Publish GitHub Release']) {
       const entry = steps.find((s: any) => s.name === name)
       const patterns = entry.with['subject-path'] ?? entry.with.files
-      expect(patterns).toContain('artifacts/open-science-*.tar.gz')
+      expect(patterns).toContain('artifacts/open-science-cli-*.tar.gz')
       expect(patterns).toContain('artifacts/*.zip')
     }
     expect(JSON.stringify(flow)).not.toContain('NPM_TOKEN')

@@ -435,6 +435,9 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      onProviderPromptAccepted: (sessionId) => {
+        this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+      },
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
         prepareContinuationReplay: async (request) => {
@@ -505,8 +508,7 @@ class AcpRuntime {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
-      onPromptEnded: (sessionId, turnToken) =>
-        this.nativeFollowUp.releaseTurn(sessionId, turnToken),
+      releasePromptTurns: prompt.releasePromptTurns,
       clearPromptResources: () => this.nativeFollowUp.clear(),
       openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
@@ -915,7 +917,6 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
       const resumed = await this.providerSessionResumer.resume(request)
       if (resumed.contextReset) {
         const contextResetSessionIds =
@@ -927,7 +928,11 @@ class AcpRuntime {
         this.sessionEnvironment.projectId(request.sessionId),
         request.sessionId
       )
-      return resumed
+      // Attachment persistence can fail after adoption. Retrying that same attachment must still
+      // replay history until a prompt actually consumes the fresh provider context.
+      return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
+        ? { ...resumed, contextReset: true }
+        : resumed
     })
   }
 
@@ -1673,7 +1678,8 @@ class AcpRuntime {
           onAccepted,
           onTimeout: () => {
             this.pushEvent({
-              kind: 'error',
+              // This is a teardown diagnostic; disconnect owns the resumable turn terminal.
+              kind: 'system',
               level: 'error',
               sessionId: request.sessionId,
               title: 'Prompt cancellation timed out',
@@ -2057,7 +2063,7 @@ class AcpRuntime {
             id: `question_${questionIndex}`,
             label: question.header ?? `Question ${questionIndex + 1}`,
             description: question.question,
-            kind: 'single-select' as const,
+            kind: question.kind ?? 'single-select',
             options: question.options.map((option) => ({
               value: option.label,
               label: option.label,
@@ -2090,14 +2096,27 @@ class AcpRuntime {
         [
           `question_${questionIndex}`,
           {
-            type: 'string',
             ...(question.header ? { title: question.header } : {}),
             description: question.question,
-            oneOf: question.options.map((option) => ({
-              const: option.label,
-              title: option.label,
-              ...(option.description ? { description: option.description } : {})
-            }))
+            ...(question.kind === 'multi-select'
+              ? {
+                  type: 'array',
+                  items: {
+                    anyOf: question.options.map((option) => ({
+                      const: option.label,
+                      title: option.label,
+                      ...(option.description ? { description: option.description } : {})
+                    }))
+                  }
+                }
+              : {
+                  type: 'string',
+                  oneOf: question.options.map((option) => ({
+                    const: option.label,
+                    title: option.label,
+                    ...(option.description ? { description: option.description } : {})
+                  }))
+                })
           }
         ],
         [
@@ -2185,7 +2204,7 @@ class AcpRuntime {
             ? selectedAnswer.trim()
             : Array.isArray(selectedAnswer) &&
                 selectedAnswer.every((value): value is string => typeof value === 'string')
-              ? selectedAnswer.join(', ')
+              ? JSON.stringify(selectedAnswer)
               : undefined
       return answer
         ? [

@@ -208,6 +208,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/application-runtime.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -891,6 +892,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",

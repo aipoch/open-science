@@ -17,7 +17,7 @@ name: Notarize macOS
 # The submission id is captured before waiting, so on a timeout the log still shows it plus the
 # `notarytool info <id>` command to check the real status. A timeout is NOT a rejection — the Apple
 # submission keeps running; publish (which needs this job) is skipped, so nothing bad is published,
-# and re-running this workflow re-checks + staples with no rebuild.
+# and staple-only dry runs can recover existing tickets without another submission.
 on:
   workflow_call:
     inputs:
@@ -33,6 +33,18 @@ on:
         required: false
         type: boolean
         default: true
+      source_run:
+        description: 'Dry-run only: download existing release artifacts without modifying that run.'
+        type: string
+        default: ''
+      architecture:
+        description: 'Native architecture for focused dry runs; all for release.'
+        type: string
+        default: 'all'
+      operation:
+        description: 'notarize, staple (existing Apple tickets), or smoke (already stapled artifacts).'
+        type: string
+        default: 'notarize'
       certified_build:
         description: >-
           Preserve release-certification evidence from a verified build. False for the manual
@@ -49,6 +61,7 @@ on:
 # Notarization updates run artifacts, never published GitHub Release assets.
 permissions:
   contents: read
+  actions: read
 
 # Keyed by caller workflow + ref so the release and dry-run callers never queue behind each other.
 # Never cancel mid-run: an interrupted Apple submission still counts against the release wait.
@@ -68,19 +81,25 @@ jobs:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
       matrix:
-        include:
-          - arch: arm64
-            os: macos-15
-          - arch: x64
-            os: macos-15-intel
+        include: ${{ fromJSON(inputs.architecture == 'arm64' && '[{"arch":"arm64","os":"macos-15"}]' || inputs.architecture == 'x64' && '[{"arch":"x64","os":"macos-15-intel"}]' || '[{"arch":"arm64","os":"macos-15"},{"arch":"x64","os":"macos-15-intel"}]') }}
     steps:
       - name: Require unpublished build artifacts
         env:
           FROM_RUN: ${{ inputs.from_run }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          OPERATION: ${{ inputs.operation }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+          CERTIFIED_BUILD: ${{ inputs.certified_build }}
         run: |
           if [ "$FROM_RUN" != "true" ]; then
             echo "Published installers are immutable. Publish a new version through the release workflow." >&2
             exit 1
+          fi
+
+          case "$ARCHITECTURE" in all|arm64|x64) ;; *) exit 1 ;; esac
+          case "$OPERATION" in notarize|staple|smoke) ;; *) exit 1 ;; esac
+          if [ "$CERTIFIED_BUILD" = "true" ] && { [ -n "$SOURCE_RUN" ] || [ "$OPERATION" != "notarize" ] || [ "$ARCHITECTURE" != "all" ]; }; then
+            echo "Focused modes cannot produce release certification." >&2; exit 1
           fi
 
       # Notarization is optional: if the API key secret isn't configured, no-op so a tagged release
@@ -90,9 +109,13 @@ jobs:
         id: gate
         env:
           P8_B64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          OPERATION: ${{ inputs.operation }}
+          CERTIFIED_BUILD: ${{ inputs.certified_build }}
         run: |
-          if [ -n "${P8_B64:-}" ]; then
+          if [ "$OPERATION" != "notarize" ] || [ -n "${P8_B64:-}" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [ "$CERTIFIED_BUILD" != "true" ]; then
+            echo "Dry run requires Apple credentials for notarization." >&2; exit 1
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::APPLE_API_KEY_P8_BASE64 not set — skipping notarization; mac stays as built."
@@ -101,12 +124,21 @@ jobs:
       - name: Checkout certification tooling
         if: steps.gate.outputs.enabled == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         if: steps.gate.outputs.enabled == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
+
+      - name: Validate reused release source
+        if: steps.gate.outputs.enabled == 'true' && inputs.source_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+        run: node scripts/ci/validate-notarize-source.mjs
 
       # The notarize smoke test imports database-migration-ledger-smoke.mjs, which requires
       # @prisma/client at runtime. Install dependencies so the smoke script can resolve them.
@@ -121,6 +153,8 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: mac
+          run-id: ${{ inputs.source_run || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download macOS certification evidence (from this run)
         if: >-
@@ -134,7 +168,7 @@ jobs:
 
       # App Store Connect API key (.p8), stored base64-encoded so it survives as a single secret.
       - name: Write App Store Connect API key
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.enabled == 'true' && inputs.operation == 'notarize'
         env:
           P8_B64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
         run: |
@@ -146,6 +180,9 @@ jobs:
       - name: Notarize + staple
         if: steps.gate.outputs.enabled == 'true'
         env:
+          # Diagnose public ticket transport only; never log authenticated notary requests.
+          CFNETWORK_DIAGNOSTICS: ${{ !inputs.certified_build && inputs.source_run != '' && inputs.operation != 'notarize' && '3' || '0' }}
+          OPERATION: ${{ inputs.operation }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
@@ -153,8 +190,34 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           nt="$RUNNER_TEMP/notarytool.json"
           shopt -s nullglob
+          # Avoid CloudKit's observed HTTP/3 connection loss without changing host networking or TLS.
+          # shortcut: sandbox-exec is deprecated; remove this workaround after Apple fixes the path.
+          stapler_prefix=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote udp "*:443"))')
+          echo 'Stapler transport: UDP/443 denied in command sandbox'
 
-          if [ -z "${KEY_ID:-}" ] || [ -z "${ISSUER:-}" ]; then
+          if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]; then
+            sw_vers
+            xcodebuild -version
+            xcrun --find stapler
+            network_log="$RUNNER_TEMP/stapler-network.jsonl"
+            (umask 077; touch "$network_log")
+            sudo /usr/bin/log stream --style ndjson --level debug \
+              --predicate 'process == "stapler"' > "$network_log" 2>&1 &
+            network_pid=$!
+            finish_network_diagnostics() {
+              local code=$?
+              trap - EXIT
+              sudo kill -TERM "$network_pid" || true
+              wait "$network_pid" || true
+              node scripts/ci/apple-notarization-retry.mjs --summarize-network "$network_log" || \
+                echo '::warning::CFNetwork summaries unavailable'
+              rm -f "$network_log"
+              exit "$code"
+            }
+            trap finish_network_diagnostics EXIT
+          fi
+
+          if [ "$OPERATION" = "notarize" ] && { [ -z "${KEY_ID:-}" ] || [ -z "${ISSUER:-}" ]; }; then
             echo "::error::APPLE_API_KEY_ID / APPLE_API_ISSUER are not set — cannot notarize"; exit 1
           fi
 
@@ -162,61 +225,81 @@ jobs:
           # Splitting it out guarantees the submission id is known even if the wait times out, so
           # the log always shows how to check the real status independently (notarytool info).
           submit() {
-            local f="$1" id status
+            local f="$1" id status wait_code=0 submit_code=0
             echo "==> submit: $f"
             xcrun notarytool submit "$f" \
               --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" \
-              --no-wait --output-format json > "$nt"
+              --no-wait --output-format json > "$nt" || submit_code=$?
             cat "$nt"
-            id=$(grep -o '"id":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
+            if [ "$submit_code" != 0 ]; then
+              echo "Submission outcome is uncertain; do not blindly resubmit. Inspect the output and Apple history." >&2
+              exit "$submit_code"
+            fi
+            id=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).id || "")' "$nt")
             if [ -z "$id" ]; then echo "::error::could not read submission id for $f"; exit 1; fi
 
             echo "==> submission id: $id — waiting up to 15m"
-            xcrun notarytool wait "$id" \
+            node scripts/ci/apple-notarization-retry.mjs notarytool wait "$id" \
               --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" \
-              --timeout 15m --output-format json > "$nt" 2>/dev/null || true
-            status=$(grep -o '"status":"[^"]*"' "$nt" | head -1 | cut -d'"' -f4)
+              --timeout 15m --output-format json > "$nt" || wait_code=$?
+            status=$(node -e 'try { console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).status || "") } catch { console.log("Unknown") }' "$nt")
             cat "$nt"
 
             case "$status" in
-              Accepted) return 0 ;;
+              Accepted) [ "$wait_code" = 0 ] || exit "$wait_code"; return 0 ;;
               Invalid|Rejected)
                 # Real bad build — will never pass Gatekeeper. Show the per-issue reasons.
                 echo "::error::notarization REJECTED ($status) for $f — fix signing/entitlements:"
-                xcrun notarytool log "$id" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" || true
+                node scripts/ci/apple-notarization-retry.mjs notarytool log "$id" --key "$key" --key-id "$KEY_ID" --issuer "$ISSUER" || true
                 exit 1 ;;
               *)
-                # Timed out / still In Progress — Apple is slow, NOT a rejection. Nothing is published.
-                echo "::error::notarization did NOT finish within 15m for $f (Apple slow, not a rejection)."
+                # Timeout, transport or unknown failure: unresolved, not evidence of acceptance or rejection.
+                echo "::error::notarization status is unresolved for $f (exit $wait_code); see preserved diagnostics."
                 echo "::error::submission id: $id"
-                echo "Check the real status any time (independent of CI), then re-run this job once Accepted:"
+                echo "Check the real status any time (independent of CI), then use a staple-only dry run once Accepted:"
                 echo "  xcrun notarytool info $id --key <AuthKey.p8> --key-id $KEY_ID --issuer $ISSUER"
                 exit 1 ;;
             esac
           }
 
-          for dmg in mac/*-mac-*.dmg; do
-            submit "$dmg"
-            xcrun stapler staple "$dmg"
-            xcrun stapler validate "$dmg"
+          dmgs=(mac/*-mac-*.dmg)
+          zips=(mac/*-mac-*.zip)
+          if [ "${#dmgs[@]}" != 1 ] || [ "${#zips[@]}" != 1 ]; then
+            echo "Expected exactly one DMG and ZIP." >&2; exit 1
+          fi
+          for dmg in "${dmgs[@]}"; do
+            if [ "$OPERATION" = "notarize" ]; then submit "$dmg"; fi
+            if [ "$OPERATION" != "smoke" ]; then
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$dmg"
+            fi
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$dmg"
           done
 
-          for zip in mac/*-mac-*.zip; do
+          for zip in "${zips[@]}"; do
             work=$(mktemp -d)
             ditto -x -k "$zip" "$work"
             app=$(find "$work" -maxdepth 1 -name '*.app' -print -quit)
-            if [ -z "$app" ]; then echo "no .app inside $zip — skipping"; continue; fi
-            xcrun stapler staple "$app"      # ticket already issued via the dmg submission above
-            xcrun stapler validate "$app"
-            ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
+            if [ -z "$app" ]; then echo "no .app inside $zip" >&2; exit 1; fi
+            if [ "$OPERATION" != "smoke" ]; then
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$app"
+            fi
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$app"
+            if [ "$OPERATION" != "smoke" ]; then
+              ditto -c -k --keepParent "$app" "$zip"
+            fi
+            rm -rf "$work"
           done
 
-      # Stapling/repacking changes the shipped bytes. Mount/extract and launch both final artifacts,
+      # Stapling/repacking changes the shipped bytes. Install/extract and launch both final artifacts,
       # and require Gatekeeper assessment before their refreshed hashes can be certified.
       - name: Smoke test final macOS packages
         if: steps.gate.outputs.enabled == 'true'
         timeout-minutes: 10
         run: node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper
+
+      - name: Remove App Store Connect API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
       # Stapling repackaged the zip (new bytes), so the build-time feed — written over the PRE-staple
       # zip — now carries a stale sha512/size that would fail the updater's signature check. The build

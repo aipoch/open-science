@@ -233,7 +233,10 @@ describe('expression / Bgee API', () => {
           gene: { geneId: 'ENSG00000130208', name: 'APOC1', species: { id: 9606 } },
           calls: [
             {
-              condition: { anatEntity: { id: 'UBERON:0002107', name: 'liver' } },
+              condition: {
+                anatEntity: { id: 'UBERON:0002107', name: 'liver' },
+                cellType: { id: 'CL:0000182', name: 'hepatocyte' }
+              },
               expressionScore: { expressionScore: '99.98', expressionScoreConfidence: 'high' },
               expressionState: 'expressed',
               expressionQuality: 'gold',
@@ -254,11 +257,68 @@ describe('expression / Bgee API', () => {
         {
           anatomical_entity_id: 'UBERON:0002107',
           anatomical_entity_name: 'liver',
+          cell_type_id: 'CL:0000182',
+          cell_type_name: 'hepatocyte',
           expression_score: 99.98,
           expression_quality: 'gold'
         }
       ]
     })
+  })
+
+  it('preserves different cell types for expression calls in the same anatomical entity', async () => {
+    const descriptor = tool('bgee_expression_calls')
+    expect(descriptor.returns).toContain('"cell_type_id": str|null')
+    expect(descriptor.returns).toContain('"cell_type_name": str|null')
+    expect(descriptor.description).toContain('cell type context')
+    const { out } = await call(
+      'bgee_expression_calls',
+      { gene_id: 'ENSG00000130208', species_id: 9606 },
+      {
+        data: {
+          calls: [
+            { id: 'CL:0000182', name: 'hepatocyte' },
+            { id: 'CL:0000091', name: 'Kupffer cell' }
+          ].map((cellType) => ({
+            condition: { anatEntity: { id: 'UBERON:0002107', name: 'liver' }, cellType },
+            expressionState: 'expressed'
+          }))
+        }
+      }
+    )
+    expect(out).toMatchObject({
+      returned: 2,
+      truncated: false,
+      calls: [
+        {
+          anatomical_entity_id: 'UBERON:0002107',
+          cell_type_id: 'CL:0000182',
+          cell_type_name: 'hepatocyte'
+        },
+        {
+          anatomical_entity_id: 'UBERON:0002107',
+          cell_type_id: 'CL:0000091',
+          cell_type_name: 'Kupffer cell'
+        }
+      ]
+    })
+  })
+
+  it.each([
+    [undefined, null, null],
+    [null, null, null],
+    [{}, null, null],
+    [{ id: null, name: null }, null, null],
+    [{ id: '', name: '' }, null, null],
+    [{ id: 'CL:0000182' }, 'CL:0000182', null],
+    [{ name: 'hepatocyte' }, null, 'hepatocyte']
+  ])('normalizes unavailable cell type fields independently: %j', async (cellType, id, name) => {
+    const { out } = await call(
+      'bgee_expression_calls',
+      { gene_id: 'ENSG00000130208', species_id: 9606 },
+      { data: { calls: [{ condition: { cellType } }] } }
+    )
+    expect(out).toMatchObject({ calls: [{ cell_type_id: id, cell_type_name: name }] })
   })
 })
 

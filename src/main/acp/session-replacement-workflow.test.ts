@@ -157,11 +157,15 @@ describe('AcpSessionReplacementWorkflow', () => {
     })
   })
 
-  it.each(['attached', 'connection-detached'] as const)(
-    'replaces a %s Claude provider Session in its original Project',
-    async (state) => {
+  it.each([
+    ['claude-code', 'attached'],
+    ['claude-code', 'connection-detached'],
+    ['codex', 'connection-detached']
+  ] as const)(
+    'replaces a %s %s provider Session in its original Project',
+    async (frameworkId, state) => {
       const registry = new AcpSessionRegistry()
-      publishSession(registry, 'app-session', attachedSession('provider-session'))
+      publishSession(registry, 'app-session', attachedSession('provider-session'), frameworkId)
       if (state === 'connection-detached') {
         registry.detach(registry.lookup('app-session')!.attachment!, 'connection')
         expect(registry.entries(true)).toEqual([])
@@ -171,14 +175,14 @@ describe('AcpSessionReplacementWorkflow', () => {
       const adopt = vi.fn(async () => ({
         sessionId: 'app-session',
         cwd: '/old-workspace',
-        frameworkId: 'claude-code' as const,
+        frameworkId,
         contextReset: true as const
       }))
       const workflow = new AcpSessionReplacementWorkflow({
         defaultCwd: '/default-workspace',
         defaultProjectId: 'default-project',
         currentCwd: () => '/current-workspace',
-        currentFrameworkId: () => 'claude-code',
+        currentFrameworkId: () => frameworkId,
         assertSkillScopeRefreshSupported: vi.fn(),
         ensureConnected: vi.fn(async () => connection),
         assertCurrentConnection: vi.fn(),

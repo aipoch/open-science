@@ -1,3 +1,4 @@
+import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
 import type { SessionSummary } from '../shared/session-persistence'
@@ -165,6 +166,7 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
   prepareDesktopUpdate: import('./update/strategy').InstallGate
+  inspectDesktopUpdate: () => Promise<import('./update/strategy').InstallReadiness>
   abortDesktopUpdate: () => void
   hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
@@ -333,7 +335,9 @@ export const createApplicationModules = async (
     ...sessionPackages,
     ...managedFiles,
     ...sessionAuthority,
-    getNotebookService: () => notebookRuntime.notebookService
+    getNotebookService: () => notebookRuntime.notebookService,
+    clearSessionCredentials: (sessionId) =>
+      connectors.credentialRequestBroker.clearSession(sessionId)
   })
   const sessionProjection = composeSessionProjection({
     ...settingsBootstrap,
@@ -604,6 +608,7 @@ export const createApplicationModules = async (
   })
   const handoff = await composeHandoff({
     managedExecution,
+    loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -850,6 +855,7 @@ export const createApplicationModules = async (
     declareElectronAdapter
   })
   composition.phase('commands')
+  let quitPreparationGeneration = 0
 
   return {
     fetchPreview: createManagedPreviewProtocolHandler(managedFiles.previewResources),
@@ -928,6 +934,7 @@ export const createApplicationModules = async (
         })
       }),
     prepareDesktopUpdate: handoff.prepareDesktopUpdate,
+    inspectDesktopUpdate: handoff.inspectDesktopUpdate,
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
       sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
@@ -936,6 +943,7 @@ export const createApplicationModules = async (
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
     prepareForQuit: async () => {
+      quitPreparationGeneration += 1
       const outcome = await agentRuntime.runtime.prepareForQuit()
       if (outcome !== 'completed') return outcome
       return handoff.shutdownCoordinator.runForQuitPreparation()
@@ -944,7 +952,13 @@ export const createApplicationModules = async (
       try {
         agentRuntime.runtime.abortQuitPreparation()
       } finally {
-        sideChat.sideChatRuntime.resumeAfterHandoff()
+        const generation = quitPreparationGeneration
+        const resume = (): void => {
+          if (generation === quitPreparationGeneration)
+            sideChat.sideChatRuntime.resumeAfterHandoff()
+        }
+        if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(resume)
+        else resume()
       }
     },
     electronAdapters: {

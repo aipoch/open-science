@@ -8,6 +8,8 @@ import type {
 import type { UpdateStrategy } from './strategy'
 type UpdateCommandOwner = Readonly<{
   getAppInfo: () => AppInfo
+  recheck: () => Promise<UpdateStatus>
+  recover: () => Promise<UpdateStatus>
   getStatus: () => UpdateStatus
   check: () => Promise<UpdateStatus>
   download: (options?: UpdateDownloadOptions) => Promise<UpdateStatus>
@@ -21,6 +23,8 @@ const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner 
     version: strategy.getStatus().current,
     copyright: APP.copyright
   }),
+  recheck: () => strategy.recheck?.() ?? Promise.resolve(strategy.getStatus()),
+  recover: () => strategy.recover?.() ?? Promise.resolve(strategy.getStatus()),
   getStatus: () => strategy.getStatus(),
   check: () => strategy.check(),
   download: (options) => strategy.download(options),

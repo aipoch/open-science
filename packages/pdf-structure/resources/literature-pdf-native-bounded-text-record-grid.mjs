@@ -6,7 +6,7 @@ import {
   readSourceRow,
   groupSourceRowsWithScripts
 } from './literature-pdf-source-records.mjs'
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { nativeWhitespaceGaps } from './literature-pdf-symbol-text.mjs'
 import { collectTableRules } from './literature-pdf-graphics.mjs'
@@ -127,7 +127,8 @@ function ordinarySourcePrograms(fonts, context, p) {
       'constructPath',
       'setLineWidth',
       'setLineCap',
-      'setDash'
+      'setDash',
+      'setGState'
     ].map((n) => OPS[n])
   )
   const rawLiteral = []
@@ -135,11 +136,30 @@ function ordinarySourcePrograms(fonts, context, p) {
     stack = []
   let font,
     fill = '#000000',
-    stroke = '#000000'
+    stroke = '#000000',
+    transform = [1, 0, 0, 1, 0, 0]
+  const extent = [
+    Math.min(...fonts.map((f) => f.rect[0])),
+    Math.min(...fonts.map((f) => f.rect[1])),
+    Math.max(...fonts.map((f) => f.rect[2])),
+    Math.max(...fonts.map((f) => f.rect[3]))
+  ]
   for (let n = 0; n < ops.fnArray.length; n++) {
     const op = ops.fnArray[n],
       a = ops.argsArray[n]
     if (!allowed.has(op)) return
+    if (
+      op === OPS.setGState &&
+      (!Array.isArray(a?.[0]) ||
+        a[0].some(
+          (entry) =>
+            !Array.isArray(entry) ||
+            entry.length !== 2 ||
+            !['CA', 'ca'].includes(entry[0]) ||
+            entry[1] !== 1
+        ))
+    )
+      return
     if (op === OPS.showText) {
       if (
         !Array.isArray(a?.[0]) ||
@@ -155,11 +175,11 @@ function ordinarySourcePrograms(fonts, context, p) {
           .join('')
       )
     }
-    if (op === OPS.save) stack.push({ font, fill, stroke })
+    if (op === OPS.save) stack.push({ font, fill, stroke, transform: [...transform] })
     else if (op === OPS.restore) {
       const state = stack.pop()
       if (!state) return
-      ;({ font, fill, stroke } = state)
+      ;({ font, fill, stroke, transform } = state)
     } else if (op === OPS.dependency) {
       if (!Array.isArray(a) || a.some((v) => typeof v !== 'string')) return
       a.forEach((v) => dependencies.add(v))
@@ -184,8 +204,40 @@ function ordinarySourcePrograms(fonts, context, p) {
       if (op === OPS.setFillRGBColor) fill = a[0].toLowerCase()
       else stroke = a[0].toLowerCase()
     } else if (op === OPS.constructPath) {
-      // The new family has ordinary stroked rules; clipping, alpha and filled
-      // or image/form paint are outside this proof rather than ignored.
+      if (a?.[0] === OPS.endPath && a[1]?.length === 1 && a[1][0] === null && a[2] === null)
+        continue
+      // Unrelated filled illustrations may share the page. Their exact native
+      // bounds, under the active transform, must be disjoint from every font
+      // in the table/caption packet. Filled or clipped paint inside stays out.
+      if ([OPS.fill, OPS.eoFill].includes(a?.[0])) {
+        const bounds = Array.isArray(a[2]) || ArrayBuffer.isView(a[2]) ? Array.from(a[2]) : []
+        if (
+          bounds.length !== 4 ||
+          !bounds.every(Number.isFinite) ||
+          bounds[2] <= bounds[0] ||
+          bounds[3] <= bounds[1]
+        )
+          return
+        const matrix = Util.transform(viewport.transform, transform)
+        const corners = [
+          [bounds[0], bounds[1]],
+          [bounds[0], bounds[3]],
+          [bounds[2], bounds[1]],
+          [bounds[2], bounds[3]]
+        ]
+        corners.forEach((point) => Util.applyTransform(point, matrix))
+        const box = [
+          Math.min(...corners.map((p) => p[0])),
+          Math.min(...corners.map((p) => p[1])),
+          Math.max(...corners.map((p) => p[0])),
+          Math.max(...corners.map((p) => p[1]))
+        ]
+        if (box[0] < extent[2] && box[2] > extent[0] && box[1] < extent[3] && box[3] > extent[1])
+          return
+        continue
+      }
+      // The table itself has ordinary stroked rules. Clipping, nonopaque alpha
+      // and image/form paint remain outside this proof.
       if (
         a?.[0] !== OPS.stroke ||
         stroke === '#ffffff' ||
@@ -205,15 +257,19 @@ function ordinarySourcePrograms(fonts, context, p) {
     } else if (op === OPS.transform || op === OPS.setTextMatrix) {
       const value = op === OPS.setTextMatrix && a?.length === 1 ? a[0] : a
       const matrix = Array.isArray(value) || ArrayBuffer.isView(value) ? Array.from(value) : []
+      const quarterTurn =
+        op === OPS.transform &&
+        matrix[0] === 0 &&
+        matrix[3] === 0 &&
+        matrix[1] !== 0 &&
+        matrix[1] === -matrix[2]
       if (
         matrix.length !== 6 ||
         !matrix.every(Number.isFinite) ||
-        matrix[0] <= 0 ||
-        matrix[3] <= 0 ||
-        matrix[1] !== 0 ||
-        matrix[2] !== 0
+        (!quarterTurn && (matrix[0] <= 0 || matrix[3] <= 0 || matrix[1] !== 0 || matrix[2] !== 0))
       )
         return
+      if (op === OPS.transform) transform = Util.transform(transform, matrix)
     } else if (op === OPS.moveText) {
       if (!Array.isArray(a) || a.length !== 2 || !a.every(Number.isFinite)) return
     } else if (op === OPS.showText && programs.has(n)) {
@@ -346,7 +402,10 @@ function sourceOrderedProseRecords(table, items, captions, rules, context) {
         !finiteItem(i) ||
         Math.abs(i.height - em) > em * 0.04 ||
         i.rect[0] < opening[0] - em * 0.2 ||
-        i.rect[2] > opening[2] + em * 0.2 ||
+        // A whole header font may overhang the closing stroke slightly. The
+        // original font program and its complete painted bounds are checked
+        // below before extending the crop; body records keep the usual bound.
+        i.rect[2] > opening[2] + em * (i.rect[3] < divider[1] ? 0.5 : 0.2) ||
         i.rect[1] < opening[1] - em * 0.2 ||
         i.rect[3] > closing[1]
     )
@@ -437,7 +496,9 @@ function sourceOrderedProseRecords(table, items, captions, rules, context) {
       c.rect[0] < opening[2] &&
       c.rect[2] > opening[0] &&
       ((c.rect[3] < opening[1] && opening[1] - c.rect[3] < em * 4) ||
-        (paired && c.rect[1] > closing[1] && c.rect[1] - closing[1] < em * 4))
+        ((paired || projections.length === 2) &&
+          c.rect[1] > closing[1] &&
+          c.rect[1] - closing[1] < em * 4))
   )
   if (titles.length !== 1) return
   const caption = titles[0],

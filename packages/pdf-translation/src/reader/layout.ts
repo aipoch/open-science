@@ -1101,7 +1101,18 @@ function extractPage(page: PdfLayoutPage, runningHeaders: Set<string>): LayoutPa
         (b) =>
           sharesLine(b) ||
           adjacentBase(b) ||
-          Math.abs(b.baseline - item.baseline) < Math.max(b.font, item.font) * 0.45
+          (Math.abs(b.baseline - item.baseline) < Math.max(b.font, item.font) * 0.45 &&
+            // A larger row in another column can sit between two smaller rows.
+            // Its tolerance must not merge distinct, overlapping body rows here.
+            !b.items.some(
+              (other) =>
+                usableLines.has(item.nativeLine) &&
+                usableLines.has(other.nativeLine) &&
+                other.nativeLine !== item.nativeLine &&
+                other.x < item.right &&
+                other.right > item.x &&
+                Math.abs(other.baseline - item.baseline) >= Math.max(other.font, item.font) * 0.45
+            ))
       )
       .sort((a, b) => {
         return (

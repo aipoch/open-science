@@ -1,3 +1,4 @@
+import { resolveDesktopLogPaths } from '../session-diagnostics/desktop-log-paths'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata } from '../runtime-metadata'
 
@@ -135,6 +136,11 @@ export async function composeSessionFoundation({
           dataRoot: resolveDataRoot(),
           configRoot: resolveConfigRoot(),
           logPath: getLogFilePath(),
+          ...resolveDesktopLogPaths({
+            configRoot: resolveConfigRoot(),
+            packaged: runtimeMetadata().packaged,
+            homePath: runtimeMetadata().homePath
+          }),
           appVersion: runtimeMetadata().version,
           sensitiveContent: sensitiveContent?.failure,
           sensitiveContentSources: sensitiveContent?.sources

@@ -102,12 +102,46 @@ export function loadModuleImpactManifestAtRevision(revision, { cwd = process.cwd
       if (type !== 'blob' || !['100644', '100755'].includes(mode)) {
         throw new Error(`Module-impact registration must be a regular file: ${path}`)
       }
-      return { path, read: () => git('cat-file', 'blob', oid) }
+      return { path, oid }
     })
   const root = entries.find(({ path }) => path === moduleImpactRegistrationPath)
   if (!root) throw new Error(`Missing module-impact manifest at ${revision}`)
+  // A repository has hundreds of shards. Read immutable blobs in one Git process, as the
+  // source dependency reader does, instead of paying process startup for every module.
+  const ids = [...new Set(entries.map(({ oid }) => oid))]
+  const batch = execFileSync('git', ['cat-file', '--batch'], {
+    cwd,
+    input: ids.join('\n') + '\n',
+    maxBuffer: 16 * 1024 * 1024
+  })
+  const contents = new Map()
+  let offset = 0
+  for (const oid of ids) {
+    const newline = batch.indexOf(10, offset)
+    const [actual, type, sizeText] = batch.subarray(offset, newline).toString('utf8').split(' ')
+    const size = Number(sizeText)
+    if (
+      newline < offset ||
+      actual !== oid ||
+      type !== 'blob' ||
+      !Number.isSafeInteger(size) ||
+      size < 0
+    )
+      throw new Error('Incomplete module-impact Git batch')
+    offset = newline + 1
+    if (offset + size >= batch.length || batch[offset + size] !== 10)
+      throw new Error('Truncated module-impact Git batch')
+    contents.set(oid, batch.subarray(offset, offset + size).toString('utf8'))
+    offset += size + 1
+  }
+  if (offset !== batch.length) throw new Error('Unexpected module-impact Git batch data')
   return assembleManifest(
-    root.read(),
-    entries.filter(({ path }) => path !== moduleImpactRegistrationPath)
+    contents.get(root.oid),
+    entries
+      .filter(({ path }) => path !== moduleImpactRegistrationPath)
+      .map(({ path, oid }) => ({
+        path,
+        read: () => contents.get(oid)
+      }))
   )
 }

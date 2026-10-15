@@ -5,6 +5,7 @@ Node.js SDK and command-line client for an Open-Science daemon running on the lo
 ## Documentation
 
 - [CLI guide](./CLI.md) - installation, daemon lifecycle, task automation, artifacts, and exit codes
+- [Release compatibility](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md) - stable interfaces, versioning, and data upgrades
 
 ## SDK quick start
 

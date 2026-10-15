@@ -167,7 +167,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         })
         if (!controlMessage) throw new Error('Save as skill control message could not be created.')
         controlMessageId = controlMessage.messageId
-        await flushSessionPersistence()
+        await flushSessionPersistence(`session:${session.id}`)
         if (!isCurrent()) {
           await abandonPreparation(preparation)
           return

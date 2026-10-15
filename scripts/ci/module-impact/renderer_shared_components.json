@@ -452,6 +452,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationExport.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"
     ]
   },

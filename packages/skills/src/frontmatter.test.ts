@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseSkillDocumentWithStatus } from './skill-frontmatter'
 
 import {
   frontmatterFieldNames,
@@ -27,6 +28,39 @@ describe('parseSkillDocument', () => {
       metadata: { license: 'MIT', tags: 'research, writing' },
       body: '# Body',
       hasFrontmatter: true
+    })
+  })
+})
+
+describe('parseSkillDocumentWithStatus', () => {
+  it.each([
+    ['no header', '# Body', true],
+    ['missing identity', '---\nauthor: Ada\n---\n# Body', true],
+    ['empty map', '---\n{}\n---\n# Body', true],
+    ['scalar header', '---\nplain text\n---\n# Body', true],
+    ['array header', '---\n- name\n- description\n---\n# Body', true],
+    ['null values', '---\nname:\ndescription:\n---\n# Body', true],
+    ['invalid YAML', '---\nname: original\nauthor: "Ada\n---\n# Body', false],
+    ['recovered YAML', '---\nname: original\nauthor: "Ada"\n---\n# Body', true]
+  ] as const)(
+    'distinguishes %s without changing the legacy document view',
+    (_label, raw, valid) => {
+      const { frontmatterValid, ...document } = parseSkillDocumentWithStatus(raw)
+      expect(frontmatterValid).toBe(valid)
+      expect(document).toEqual(parseSkillDocument(raw))
+      expect(parseSkillDocument(raw)).not.toHaveProperty('frontmatterValid')
+      expect(parseFrontmatter(raw)).not.toHaveProperty('frontmatterValid')
+    }
+  )
+
+  it('reports invalid syntax independently of header presence and body extraction', () => {
+    expect(parseSkillDocumentWithStatus('---\nname: original\nauthor: "Ada\n---\n# Body')).toEqual({
+      name: undefined,
+      description: undefined,
+      metadata: {},
+      body: '# Body',
+      hasFrontmatter: true,
+      frontmatterValid: false
     })
   })
 })

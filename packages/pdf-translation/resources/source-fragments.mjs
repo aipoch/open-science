@@ -41,17 +41,9 @@ export function createSourceFragmentRecovery(data, pages) {
         )
           return
       }
-      const hasForeignRun = content.items.some(
-        (item, index) =>
-          index > items[0].index &&
-          index < items.at(-1).index &&
-          !owned.has(index) &&
-          item.str?.trim()
-      )
-      if (!hasForeignRun && items.length > 1) {
-        fragments.push(fragment)
-        continue
-      }
+      // Even contiguous items can have an oversized aggregate advance box.
+      // Retry their independently re-read boxes; native preflight must still
+      // prove every item's complete text and the aggregate source sequence.
       for (const item of items) {
         const raw = content.items[item.index]
         const [a, b, c, d, x, baseline] = raw.transform

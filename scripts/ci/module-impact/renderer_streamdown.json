@@ -439,7 +439,8 @@
       "src/renderer/src/pages/workspace/session-plan/SessionPlanSurfaces.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
-      "src/renderer/src/stores/locale-preference-recovery.render.test.tsx"
+      "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

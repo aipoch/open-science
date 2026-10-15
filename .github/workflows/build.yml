@@ -100,19 +100,18 @@ jobs:
         run: npm run check:cli-package
 
   verify_tests:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
     if: ${{ !inputs.skip_verify }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    # Full-suite shards peaked at ~24.5m on the v0.35.1 release and now exceed
-    # the old 25m budget; keep headroom for suite growth and runner load.
-    timeout-minutes: 45
+    # Three-shard runs reached ~36m; leave headroom for coverage and runner load.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -130,12 +129,13 @@ jobs:
         continue-on-error: true
         # The static lane owns i18n; the native lane retains the original macOS sandbox checks.
         # PR Gate separately verifies real Linux isolation with its required system dependencies.
+        # Repository-wide architecture scans exceeded 30s under full-suite coverage load.
         run: >-
           npx vitest run
           --coverage
           --coverage.reporter=text-summary
-          --testTimeout=30000
-          --shard=${{ matrix.shard }}/3
+          --testTimeout=60000
+          --shard=${{ matrix.shard }}/4
           --reporter=blob
           --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
@@ -191,7 +191,7 @@ jobs:
           SHARDS_RESULT: ${{ needs.verify_tests.result }}
         run: |
           test "$SHARDS_RESULT" = success
-          for shard in 1 2 3; do
+          for shard in 1 2 3 4; do
             test -s "vitest-reports/blob-$shard.json"
           done
       - name: Merge test reports and enforce coverage
@@ -344,8 +344,9 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
 
+      # Package dry-runs must retain this native gate even when portable verification is skipped.
       - name: Verify Windows receipt publication and submission recovery
-        if: ${{ matrix.platform == 'win' && !inputs.skip_verify }}
+        if: ${{ matrix.platform == 'win' }}
         run: >-
           npx vitest run
           src/main/notebook/file-evidence-publication.integration.test.ts

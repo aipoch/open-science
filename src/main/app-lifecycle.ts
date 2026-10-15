@@ -75,6 +75,8 @@ export type AppLifecycleDeps = {
   logFlushTimeoutMs?: number
   // Shared timeout budget for the preflight and post-drain renderer persistence attempts.
   rendererFlushTimeoutMs?: number
+  // Total OS-owned exit budget; normal Runtime teardown includes a 15-second stop confirmation.
+  systemShutdownTimeoutMs?: number
   // Classifies an orderly shutdown without changing its cleanup sequence.
   shutdownTrigger?: () => ApplicationShutdownTrigger
   // True while a data-root handoff is validating, preparing, or copying; its quit guard owns exits.
@@ -159,6 +161,36 @@ export const installAppLifecycle = (
   // attempt consumes it once; an intervening guard or confirmation cannot leak it to a later attempt.
   let forceQuitAfterPersistenceFailure = false
 
+  const systemWaits = new Set<() => void>()
+  let systemShutdownDeadline: number | undefined
+  // Bound every asynchronous boundary once the OS owns exit, including waits started by a
+  // preceding ordinary quit. Timing out leaves the backend operation and its ownership intact.
+  const awaitQuitStep = <T>(
+    operation: Promise<T> | T,
+    timeoutMs = deps.systemShutdownTimeoutMs ?? 30_000
+  ): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const bound = (): void => {
+        systemShutdownDeadline ??= Date.now() + (deps.systemShutdownTimeoutMs ?? 30_000)
+        timer ??= setTimeout(
+          () => {
+            systemWaits.delete(bound)
+            reject(new BackendShutdownOutcomeError('timeout'))
+          },
+          Math.max(0, Math.min(timeoutMs, systemShutdownDeadline - Date.now()))
+        )
+      }
+      systemWaits.add(bound)
+      if (systemShutdownRequested || shutdownTrigger() === 'system') bound()
+      Promise.resolve(operation)
+        .then(resolve, reject)
+        .finally(() => {
+          if (timer) clearTimeout(timer)
+          systemWaits.delete(bound)
+        })
+    })
+
   const normalizeStepOutcome = (outcome: ShutdownStepOutcome | void): ShutdownStepOutcome =>
     outcome ?? 'completed'
   const rendererStepOutcome = (
@@ -208,12 +240,15 @@ export const installAppLifecycle = (
     deps.quit()
   }
   const requestSystemShutdown = (): void => {
-    if (systemShutdownRequested || shutdownFinished) return
+    if (systemShutdownRequested) return
     systemShutdownRequested = true
+    for (const bound of systemWaits) bound()
     const rollbackTrigger = markApplicationShutdownTrigger('system')
     // An ordinary quit may already be inside its abortable Renderer preflight. Keep the stronger
     // system intent latched; its abort path will reissue quit through the same lifecycle owner.
-    if (shutdownStarted) return
+    // A committed ordinary exit can still be waiting on beforeExit. Escalate that wait too,
+    // without entering a second shutdown sequence.
+    if (shutdownStarted || shutdownFinished) return
     try {
       deps.quit()
     } catch (error) {
@@ -316,6 +351,18 @@ export const installAppLifecycle = (
   // migration guard (registered earlier) via defaultPrevented + isMigrationInProgress so a
   // migration-cancelled quit is respected. #177's will-quit guard remains a synchronous backstop for a
   // committed quit that never reaches this path.
+  const finishShutdown = async (): Promise<void> => {
+    if (shutdownFinished) return
+    shutdownFinished = true
+    trayBox.current?.destroy()
+    try {
+      await awaitQuitStep(deps.beforeExit?.())
+    } catch (error) {
+      deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
+    } finally {
+      deps.app.exit(0)
+    }
+  }
   let refreshedQuitBoundary = false
   let refreshingQuitBoundary = false
   deps.app.on('before-quit', (event) => {
@@ -325,13 +372,14 @@ export const installAppLifecycle = (
       event.preventDefault()
       return
     }
+    const trigger = shutdownTrigger()
     if (deps.refreshQuitState && !refreshedQuitBoundary && !event.defaultPrevented) {
       event.preventDefault()
       if (refreshingQuitBoundary) return
       refreshingQuitBoundary = true
-      void deps
-        .refreshQuitState()
+      void awaitQuitStep(deps.refreshQuitState())
         .then((changed) => {
+          if (shutdownStarted || shutdownFinished) return
           if (changed) {
             quitConfirmed = false
             confirmedSettingsInstallId = undefined
@@ -341,14 +389,26 @@ export const installAppLifecycle = (
           refreshingQuitBoundary = false
           deps.quit()
         })
-        .catch((error) => deps.onQuitError?.(error))
+        .catch(async (error) => {
+          if (shutdownStarted || shutdownFinished) return
+          if (systemShutdownRequested || trigger === 'system') {
+            shutdownStarted = true
+            try {
+              await awaitQuitStep(deps.abortQuitPreparation())
+            } catch {
+              // An unreachable Runtime retains its cleanup/ownership fence after Desktop detaches.
+            }
+            await finishShutdown()
+          } else {
+            deps.onQuitError?.(error)
+          }
+        })
         .finally(() => {
           refreshingQuitBoundary = false
         })
       return
     }
     refreshedQuitBoundary = false
-    const trigger = shutdownTrigger()
     const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
     forceQuitAfterPersistenceFailure = false
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
@@ -489,7 +549,8 @@ export const installAppLifecycle = (
       }> => {
         diagnostics?.phase(phase)
         try {
-          const outcome = (await deps.flushSessionPersistence(timeoutMs)) ?? 'completed'
+          const outcome =
+            (await awaitQuitStep(deps.flushSessionPersistence(timeoutMs), timeoutMs)) ?? 'completed'
           const result = rendererStepOutcome(outcome)
           diagnostics?.phase(phase, { result })
           return { outcome, result }
@@ -528,7 +589,7 @@ export const installAppLifecycle = (
 
         diagnostics?.phase('usage-drain')
         try {
-          usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
+          usageDrainResult = normalizeStepOutcome(await awaitQuitStep(deps.prepareForQuit()))
           diagnostics?.phase('usage-drain', { result: usageDrainResult })
           if (deps.requireCleanBackendShutdown && usageDrainResult !== 'completed') {
             throw new BackendShutdownOutcomeError(
@@ -577,8 +638,13 @@ export const installAppLifecycle = (
 
         diagnostics?.phase('backend-teardown')
         try {
-          backendTeardownResult = normalizeStepOutcome(await deps.shutdownBackends())
+          backendTeardownResult = normalizeStepOutcome(await awaitQuitStep(deps.shutdownBackends()))
           diagnostics?.phase('backend-teardown', { result: backendTeardownResult })
+          if (deps.requireCleanBackendShutdown && backendTeardownResult !== 'completed') {
+            throw new BackendShutdownOutcomeError(
+              backendTeardownResult === 'timeout' ? 'timeout' : 'degraded'
+            )
+          }
         } catch (error) {
           backendTeardownResult = 'failed'
           if (deps.requireCleanBackendShutdown) {
@@ -611,7 +677,7 @@ export const installAppLifecycle = (
       } finally {
         if (backendFailure || shutdownAbortReason || persistenceFailureNeedsConsent) {
           try {
-            await deps.abortQuitPreparation(shutdownAbortReason)
+            await awaitQuitStep(deps.abortQuitPreparation(shutdownAbortReason))
           } catch (error) {
             try {
               deps.log?.error('quit preparation rollback failed', diagnosticErrorFields(error))
@@ -623,7 +689,9 @@ export const installAppLifecycle = (
           shutdownStarted = false
           quitConfirmed = false
           confirmedSettingsInstallId = undefined
-          if (systemShutdownRequested) {
+          if (trigger === 'system') {
+            await finishShutdown()
+          } else if (systemShutdownRequested) {
             // A preventable OS shutdown arrived after this ordinary attempt began. Do not restore an
             // interactive app: replay it with the already-latched system trigger so persistence is
             // best-effort and cannot cancel the OS-owned exit.
@@ -659,15 +727,7 @@ export const installAppLifecycle = (
             }
           }
         } else {
-          trayBox.current?.destroy()
-          shutdownFinished = true
-          try {
-            await deps.beforeExit?.()
-          } catch (error) {
-            deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
-          } finally {
-            deps.app.exit(0)
-          }
+          await finishShutdown()
         }
       }
     })()

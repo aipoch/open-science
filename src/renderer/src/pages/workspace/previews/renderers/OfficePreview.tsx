@@ -253,7 +253,8 @@ const RemoteOfficePreviewContent = ({
       })
       .then((result) => {
         if (!active) {
-          if (result.kind === 'started') void window.api.officePreview.close(result.sessionId)
+          if (result.kind === 'started')
+            void window.api.officePreview.close(result.sessionId).catch(() => undefined)
           return
         }
         if (result.kind === 'cancelled') return
@@ -286,7 +287,9 @@ const RemoteOfficePreviewContent = ({
     return () => {
       active = false
       removeStateListener()
-      if (openedSessionId) void window.api.officePreview.close(openedSessionId)
+      // The caller lifecycle also reclaims sessions when shutdown removes the IPC handler.
+      if (openedSessionId)
+        void window.api.officePreview.close(openedSessionId).catch(() => undefined)
     }
   }, [
     attempt,
@@ -365,7 +368,7 @@ const RemoteOfficePreviewContent = ({
         if (!active) return
         console.error('Failed to attach isolated Office preview frame', error)
         // IPC failures bypass the supervisor's normal unavailable result, so release explicitly.
-        void window.api.officePreview.close(frame.sessionId)
+        void window.api.officePreview.close(frame.sessionId).catch(() => undefined)
         setFrame(undefined)
         setFrameLoadGeneration(0)
         setState({ kind: 'error', error: 'RENDER_FAILED' })

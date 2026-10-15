@@ -51,6 +51,8 @@ if (params.has('refused-restart')) {
     getAppInfo: async () => ({ name: 'Open-Science', version: '0.28.0', copyright: '' }),
     getStatus: async () => status,
     check: async () => status,
+    recheck: async () => status,
+    recover: async () => status,
     download: async () => status,
     onStatus: (listener) => {
       onStatus = listener

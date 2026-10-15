@@ -92,6 +92,111 @@ const items = [
   token('10', 205, 60)
 ]
 
+// Native dashed dividers enclose logical rows whose description wraps around
+// vertically centered labels/counts. Model rows instead follow physical lines.
+const dashedNarrative = (): {
+  table: typeof raw & { id: string }
+  source: Array<
+    ReturnType<typeof token> & { sourceItem: { pageNumber: number; index: number; text: string } }
+  >
+  rules: number[][]
+} => {
+  const cuts = [0, 90, 180, 360, 430, 500]
+  const table = {
+    id: 'wrapped-records',
+    cropRect: [0, 0, 500, 151],
+    structure: {
+      objects: [
+        ...cuts.slice(1).map((x, n) => ({ label: 'table column', rect: [cuts[n], 0, x, 150] })),
+        { label: 'table column header', rect: [0, 0, 500, 30] },
+        ...[0, 30, 50, 70, 90, 110, 130].map((y, n, all) => ({
+          label: 'table row',
+          rect: [0, y, 500, all[n + 1] ?? 150]
+        }))
+      ]
+    }
+  }
+  let index = 0
+  const item = (
+    text: string,
+    x: number,
+    y: number,
+    width = 35
+  ): ReturnType<typeof token> & {
+    sourceItem: { pageNumber: number; index: number; text: string }
+  } => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: index++, text }
+  })
+  const source = [
+    item('Kind', 20, 10),
+    item('Source', 110, 10),
+    item('Description', 240, 10, 70),
+    item('Train', 375, 3),
+    item('count', 375, 16),
+    item('Test', 445, 3),
+    item('count', 445, 16)
+  ]
+  for (let n = 0; n < 3; n++) {
+    const y = 30 + n * 40
+    source.push(
+      item(`Group ${String.fromCharCode(65 + n)}`, 10, y + 10, 65),
+      item(`Set ${n + 1}`, 105, y + 10, 45),
+      item(`Read part ${n + 1}`, 210, y + (n ? -1 : 3), 110),
+      item('then continue', 175, y + 20, 160),
+      item(`${n + 1}k`, 380, y + 10),
+      item(`${n + 4}k`, 450, y + 10)
+    )
+  }
+  const rules = [0, 30, 150].map((y) => [0, y, 500, y])
+  for (const y of [70, 110]) for (let x = 5; x < 500; x += 10) rules.push([x, y, x + 4, y])
+  return { table, source, rules }
+}
+
+it('keeps wrapped text within complete dashed record boundaries and preserves native owners', () => {
+  const f = dashedNarrative()
+  const before = structuredClone(f)
+  const result = refineTable(f.table, f.source, [], [], f.rules)
+  expect(result.grid).toEqual([
+    ['Kind', 'Source', 'Description', 'Train count', 'Test count'],
+    ['Group A', 'Set 1', 'Read part 1 then continue', '1k', '4k'],
+    ['Group B', 'Set 2', 'Read part 2 then continue', '2k', '5k'],
+    ['Group C', 'Set 3', 'Read part 3 then continue', '3k', '6k']
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toEqual([])
+  expect(result.repairs).toContain('dashed-narrative-records-recovered')
+  const owners = result.cells.flatMap((c: { sourceItems: { index: number }[] }) => c.sourceItems)
+  expect(
+    owners.map((i: { index: number }) => i.index).sort((a: number, b: number) => a - b)
+  ).toEqual(f.source.map((i) => i.sourceItem.index))
+  expect(f).toEqual(before)
+})
+
+it.each(['broken divider', 'crossing gutter', 'extra count line'])(
+  'rejects an ambiguous dashed record with %s',
+  (kind) => {
+    const f = dashedNarrative()
+    if (kind === 'broken divider') f.rules = f.rules.filter((r) => !(r[1] === 70 && r[0] === 255))
+    if (kind === 'crossing gutter') f.source.find((i) => i.text === 'then continue')!.rect[0] = 140
+    if (kind === 'extra count line') {
+      const original = f.source.find((i) => i.text === '2k')!
+      f.source.push({
+        ...original,
+        rect: [380, 92, 415, 102],
+        baseline: 102,
+        sourceItem: { ...original.sourceItem, index: 99 }
+      })
+    }
+    const result = refineTable(f.table, f.source, [], [], f.rules)
+    expect(result.repairs).not.toContain('dashed-narrative-records-recovered')
+  }
+)
+
 it('recovers a wrapped count heading above a two-column percentage table', () => {
   const raw = {
     id: 'count-header',
@@ -305,6 +410,143 @@ it('recovers a captioned table title enclosed by full-width rules as one spannin
     'ruled-table-title-recovered'
   )
 })
+
+it('recovers a ruled section title before an empty interstitial row', () => {
+  const raw = {
+    id: 'ruled-section-title',
+    cropRect: [0, 0, 300, 190],
+    structure: {
+      objects: [
+        ...[
+          [0, 20, 300, 40],
+          [0, 40, 300, 60],
+          [0, 60, 300, 80],
+          [0, 80, 300, 100],
+          [0, 100, 300, 120],
+          [0, 120, 300, 140],
+          [0, 140, 300, 145],
+          [0, 145, 300, 165],
+          [0, 165, 300, 185]
+        ].map((rect) => ({ label: 'table row', rect })),
+        ...[0, 100, 200].map((x) => ({
+          label: 'table column',
+          rect: [x, 0, x + 100, 190]
+        })),
+        { label: 'table column header', rect: [0, 20, 300, 40] },
+        // This broad prediction covers the title and the empty spacer row.
+        { label: 'table projected row header', rect: [0, 120, 300, 145] }
+      ]
+    }
+  }
+  const source = [
+    token('Model', 5, 25),
+    token('Score A', 105, 25),
+    token('Score B', 205, 25),
+    token('Alpha', 5, 65),
+    token('1', 105, 65),
+    token('2', 205, 65),
+    token('Qwen2-VL Models', 70, 125),
+    token('Qwen2-VL-7B', 5, 150),
+    token('30.1', 105, 150),
+    token('26.6', 205, 150),
+    token('R1-VL-7B', 5, 170),
+    token('36.8', 105, 170),
+    token('23.6', 205, 170)
+  ]
+  const result = refineTable(
+    raw,
+    source,
+    [],
+    [],
+    [
+      [0, 120, 300, 120],
+      [0, 140, 300, 140]
+    ]
+  )
+  expect(result.cells).toContainEqual(
+    expect.objectContaining({
+      text: 'Qwen2-VL Models',
+      row: 5,
+      column: 0,
+      colSpan: 3,
+      rowSpan: 1
+    })
+  )
+  expect(result.grid[6]).toEqual(['', '', ''])
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toEqual([])
+  expect(result.repairs).toContain('source-section-span-recovered')
+})
+
+it.each(['isolated', 'same-baseline-peer', 'different-baseline-peer'])(
+  'recovers only an isolated centered section title in the header band: %s',
+  (variant) => {
+    const raw = {
+      id: 'header-overlap-section-title',
+      cropRect: [0, 0, 300, 120],
+      structure: {
+        objects: [
+          { label: 'table row', rect: [0, 20, 300, 35] },
+          { label: 'table row', rect: [0, 55, 300, 75] },
+          { label: 'table row', rect: [0, 75, 300, 95] },
+          ...[0, 100, 200].map((x) => ({
+            label: 'table column',
+            rect: [x, 0, x + 100, 120]
+          })),
+          { label: 'table column header', rect: [0, 20, 300, 35] }
+        ]
+      }
+    }
+    const source = [
+      token('Model', 5, 22),
+      token('Score A', 105, 22),
+      token('Score B', 205, 22),
+      token('Qwen2.5-VL Models', 70, 38),
+      token('Qwen2.5-VL-7B', 5, 57),
+      token('42.2', 105, 57),
+      token('33.8', 205, 57),
+      token('+ GRPO', 5, 77),
+      token('47.1', 105, 77),
+      token('37.1', 205, 77)
+    ]
+    if (variant !== 'isolated') {
+      source.push(token('Peer', 205, variant === 'same-baseline-peer' ? 38 : 48))
+    }
+    const result = refineTable(
+      raw,
+      source.map((item, index) => ({
+        ...item,
+        sourceItem: { pageNumber: 1, index, text: item.text }
+      })),
+      [],
+      [],
+      [
+        [0, 35, 300, 35],
+        [0, 50, 300, 50]
+      ]
+    )
+    if (variant !== 'isolated') {
+      expect(result.repairs).not.toContain('unassigned-centered-section-title-recovered')
+      expect(result.cells).not.toContainEqual(
+        expect.objectContaining({ text: 'Qwen2.5-VL Models', colSpan: 3 })
+      )
+      return
+    }
+    expect(result.cells).toContainEqual(
+      expect.objectContaining({
+        text: 'Qwen2.5-VL Models',
+        row: 1,
+        column: 0,
+        colSpan: 3,
+        rowSpan: 1,
+        sourceItems: [{ pageNumber: 1, index: 3, text: 'Qwen2.5-VL Models' }]
+      })
+    )
+    expect(result.unassigned).toEqual([])
+    expect(result.issues).toEqual([])
+    expect(result.repairs).toContain('unassigned-centered-section-title-recovered')
+  }
+)
 
 it('recovers a ruled parent header and removes the duplicate empty band below its children', () => {
   const source = {
@@ -817,4 +1059,140 @@ it.each([0, 8])('recovers a ruled text header with %s pixels of crop padding', (
     ['2. Leg', 'Patella', 'Above ST32']
   ])
   expect(result.unassigned).toEqual([])
+})
+
+it('keeps centered numeric summaries owned by both continuation rows', () => {
+  const raw = {
+    cropRect: [0, 0, 1200, 180],
+    structure: {
+      objects: [
+        ...Array.from({ length: 12 }, (_, c) => ({
+          label: 'table column',
+          rect: [c * 100, 0, (c + 1) * 100, 180]
+        })),
+        { label: 'table column header', rect: [0, 0, 1200, 30] },
+        ...[0, 15, 30, 70, 110, 140].map((y, n, ys) => ({
+          label: 'table row',
+          rect: [0, y, 1200, ys[n + 1] ?? 180]
+        }))
+      ]
+    }
+  }
+  const field = (text: string, column: number, y: number): ReturnType<typeof token> =>
+    token(text, column * 100 + 20, y)
+  const taskValues = (y: number, offset: number): Array<ReturnType<typeof token>> =>
+    Array.from({ length: 8 }, (_, c) => field(`${offset + c + 1}.0`, c + 1, y))
+  const items = [
+    field('Method', 0, 3),
+    ...Array.from({ length: 11 }, (_, c) => field(`Heading ${c + 1}`, c + 1, 18)),
+    field('†', 0, 38),
+    ...taskValues(38, 0),
+    field('Example', 0, 48),
+    field('8.1', 9, 48),
+    field('9.1', 10, 48),
+    field('-1.0', 11, 48),
+    ...taskValues(58, 10),
+    ...taskValues(78, 20),
+    field('Another', 0, 88),
+    field('18.1', 9, 88),
+    field('19.1', 10, 88),
+    field('-2.0', 11, 88),
+    ...taskValues(98, 30),
+    field('Single', 0, 125),
+    ...Array.from({ length: 11 }, (_, c) => field(`${c + 1}.0`, c + 1, 125))
+  ]
+  const missingValue = items.filter((item) => !(item.text === '18.0' && item.rect[1] === 58))
+  expect(refineTable(raw, missingValue).repairs).not.toContain(
+    'native-centered-numeric-rows-recovered'
+  )
+  const sourcedItems = items.map((item, index) => ({
+    ...item,
+    sourceItem: { pageNumber: 1, index, text: item.text }
+  }))
+  const result = refineTable(raw, sourcedItems)
+  expect(result.grid.slice(-5)).toEqual([
+    ['† Example', '1.0', '2.0', '3.0', '4.0', '5.0', '6.0', '7.0', '8.0', '8.1', '9.1', '-1.0'],
+    ['', '11.0', '12.0', '13.0', '14.0', '15.0', '16.0', '17.0', '18.0', '', '', ''],
+    [
+      'Another',
+      '21.0',
+      '22.0',
+      '23.0',
+      '24.0',
+      '25.0',
+      '26.0',
+      '27.0',
+      '28.0',
+      '18.1',
+      '19.1',
+      '-2.0'
+    ],
+    ['', '31.0', '32.0', '33.0', '34.0', '35.0', '36.0', '37.0', '38.0', '', '', ''],
+    ['Single', '1.0', '2.0', '3.0', '4.0', '5.0', '6.0', '7.0', '8.0', '9.0', '10.0', '11.0']
+  ])
+  expect(
+    result.cells.find((cell: { text: string }) => cell.text.includes('Example'))
+  ).toMatchObject({
+    rowSpan: 2
+  })
+  expect(result.cells.find((cell: { text: string }) => cell.text === '8.1')).toMatchObject({
+    rowSpan: 2
+  })
+  expect(result.unassigned).toEqual([])
+  expect(
+    result.cells
+      .flatMap((cell: { sourceItems?: Array<{ index: number }> }) =>
+        (cell.sourceItems ?? []).map((item) => item.index)
+      )
+      .sort((a, b) => a - b)
+  ).toEqual(sourcedItems.map((_, index) => index))
+  const singleRowsOnly = sourcedItems.filter((item) => item.rect[1] < 30 || item.rect[1] === 125)
+  expect(refineTable(raw, singleRowsOnly).repairs).not.toContain(
+    'native-centered-numeric-rows-recovered'
+  )
+  const tallLabel = structuredClone(sourcedItems)
+  const label = tallLabel.find((item) => item.text === 'Example')!
+  label.rect[1] = 32
+  label.height = 26
+  expect(refineTable(raw, tallLabel).repairs).not.toContain(
+    'native-centered-numeric-rows-recovered'
+  )
+})
+
+it('leaves an unproven numeric continuation untouched when prose interrupts ownership', () => {
+  const raw = {
+    cropRect: [0, 0, 1200, 140],
+    structure: {
+      objects: [
+        ...Array.from({ length: 12 }, (_, c) => ({
+          label: 'table column',
+          rect: [c * 100, 0, (c + 1) * 100, 140]
+        })),
+        { label: 'table column header', rect: [0, 0, 1200, 30] },
+        ...[0, 15, 30, 70, 100].map((y, n, ys) => ({
+          label: 'table row',
+          rect: [0, y, 1200, ys[n + 1] ?? 140]
+        }))
+      ]
+    }
+  }
+  const field = (text: string, column: number, y: number): ReturnType<typeof token> =>
+    token(text, column * 100 + 20, y)
+  const taskValues = (y: number, offset: number): Array<ReturnType<typeof token>> =>
+    Array.from({ length: 8 }, (_, c) => field(`${offset + c + 1}.0`, c + 1, y))
+  const items = [
+    field('Method', 0, 3),
+    ...Array.from({ length: 11 }, (_, c) => field(`Heading ${c + 1}`, c + 1, 18)),
+    ...taskValues(38, 0),
+    field('Example', 0, 48),
+    field('8.1', 9, 48),
+    field('9.1', 10, 48),
+    field('-1.0', 11, 48),
+    ...taskValues(58, 10),
+    field('Unrelated note', 0, 112),
+    field('Single', 0, 83),
+    ...Array.from({ length: 11 }, (_, c) => field(`${c + 1}.0`, c + 1, 83))
+  ]
+  const result = refineTable(raw, items)
+  expect(result.repairs).not.toContain('native-centered-numeric-rows-recovered')
 })

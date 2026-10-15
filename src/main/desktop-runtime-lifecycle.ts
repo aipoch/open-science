@@ -1,3 +1,4 @@
+import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ActiveSessionInfo } from '../shared/storage'
@@ -15,6 +16,7 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('abort') }).strict(),
   z.object({ operation: z.literal('release') }).strict()
 ])
+const DISCONNECT_WAIT_MS = 10_000
 export type DesktopLifecycleRequest = z.infer<typeof desktopLifecycleRequestSchema>
 export type DesktopShutdownWork = {
   sessions: ActiveSessionInfo[]
@@ -25,21 +27,28 @@ export type DesktopShutdownWork = {
   fingerprint: string
 }
 
-export function createDesktopRuntimeLifecycle(deps: {
-  detectActiveSessions(): ActiveSessionInfo[]
-  hasActiveReviewerWork(): boolean
-  getActiveSettingsInstallId(): string | undefined
-  isMigrationInProgress(): boolean
-  cancelMigrationForQuit?(): Promise<void>
-  hasActivePackageTransfer(): boolean
-  holdSettingsInstallAdmission(): () => void
-  prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
-  abortQuitPreparation(): void
-}): { request(operation: DesktopLifecycleRequest): Promise<unknown>; disconnect(): void } {
+export function createDesktopRuntimeLifecycle(
+  deps: {
+    detectActiveSessions(): ActiveSessionInfo[]
+    hasActiveReviewerWork(): boolean
+    getActiveSettingsInstallId(): string | undefined
+    isMigrationInProgress(): boolean
+    cancelMigrationForQuit?(): Promise<void>
+    hasActivePackageTransfer(): boolean
+    holdSettingsInstallAdmission(): () => void
+    prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
+    abortQuitPreparation(): void
+  },
+  options: { disconnectWaitMs?: number } = {}
+): {
+  request(operation: DesktopLifecycleRequest): Promise<unknown>
+  disconnect(): Promise<void>
+} {
   let releaseAdmission: (() => void) | undefined
   let preparing = false
   let prepared = false
   let disconnected = false
+  let inFlight: Promise<unknown> | undefined
   const inspect = (): DesktopShutdownWork => {
     const state = {
       sessions: deps.detectActiveSessions(),
@@ -54,8 +63,13 @@ export function createDesktopRuntimeLifecycle(deps: {
     }
   }
   const release = (): void => {
-    releaseAdmission?.()
+    // A timeout only ends the Desktop's wait. Keep installations fenced until the underlying
+    // cleanup settles, and capture this hold so late release cannot reopen a newer quit's hold.
+    const releaseCurrent = releaseAdmission
     releaseAdmission = undefined
+    if (!releaseCurrent) return
+    if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(releaseCurrent)
+    else releaseCurrent()
   }
   const abort = (): void => {
     if (prepared || preparing) deps.abortQuitPreparation()
@@ -63,56 +77,81 @@ export function createDesktopRuntimeLifecycle(deps: {
     release()
   }
   return {
-    disconnect: () => {
+    disconnect: async () => {
       disconnected = true
+      // Cleanup is bounded: an operation that never settles must not keep the Desktop fenced out.
+      const wait = options.disconnectWaitMs ?? DISCONNECT_WAIT_MS
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight?.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, wait)
+          timer.unref?.()
+        })
+      ])
+      clearTimeout(timer)
+      await waitForLifecycleSettlement({ timeoutMs: wait })
       abort()
     },
-    request: async (operation) => {
-      const request = desktopLifecycleRequestSchema.parse(operation)
-      if (disconnected) throw new Error('Desktop lifecycle attachment is closed.')
-      switch (request.operation) {
-        case 'cancel-migration':
-          if (!deps.cancelMigrationForQuit)
-            throw new Error('Migration cancellation is unavailable.')
-          await deps.cancelMigrationForQuit()
-          return null
-        case 'inspect':
-          return inspect()
-        case 'hold':
-          releaseAdmission ??= deps.holdSettingsInstallAdmission()
-          return null
-        case 'release':
-          release()
-          return null
-        case 'abort':
-          abort()
-          return null
-        case 'prepare': {
-          if (preparing) throw new Error('Desktop quit preparation is already running.')
-          const work = inspect()
-          if (work.fingerprint !== request.fingerprint)
-            throw new Error(
-              'Running work changed after quit confirmation. Review the current work before trying again.'
-            )
-          if (work.migrationActive || work.packageTransferActive)
-            throw new Error(
-              'Wait for the data move or Session package transfer to finish before quitting.'
-            )
-          releaseAdmission ??= deps.holdSettingsInstallAdmission()
-          preparing = true
-          try {
-            const result = await deps.prepareForQuit()
-            if (disconnected) {
-              deps.abortQuitPreparation()
-              throw new Error('Desktop disconnected during quit preparation.')
-            }
+    request: (operation) => {
+      if (inFlight && operation.operation !== 'inspect')
+        return Promise.reject(new Error('Desktop lifecycle operation is still running.'))
+      const run = async (): Promise<unknown> => {
+        const request = desktopLifecycleRequestSchema.parse(operation)
+        if (disconnected) throw new Error('Desktop lifecycle attachment is closed.')
+        switch (request.operation) {
+          case 'cancel-migration':
+            if (!deps.cancelMigrationForQuit)
+              throw new Error('Migration cancellation is unavailable.')
+            await deps.cancelMigrationForQuit()
+            return null
+          case 'inspect':
+            return inspect()
+          case 'hold':
+            releaseAdmission ??= deps.holdSettingsInstallAdmission()
+            return null
+          case 'release':
+            release()
+            return null
+          case 'abort':
+            abort()
+            return null
+          case 'prepare': {
+            if (preparing) throw new Error('Desktop quit preparation is already running.')
+            const work = inspect()
+            if (work.fingerprint !== request.fingerprint)
+              throw new Error(
+                'Running work changed after quit confirmation. Review the current work before trying again.'
+              )
+            if (work.migrationActive || work.packageTransferActive)
+              throw new Error(
+                'Wait for the data move or Session package transfer to finish before quitting.'
+              )
+            releaseAdmission ??= deps.holdSettingsInstallAdmission()
+            preparing = true
+            // Preparation can close ACP admission and then reject. That attempt still needs an
+            // abort, just like a timeout or a completed preparation followed by a refused quit.
             prepared = true
-            return result
-          } finally {
-            preparing = false
+            try {
+              const result = await deps.prepareForQuit()
+              if (disconnected) throw new Error('Desktop disconnected during quit preparation.')
+              return result
+            } finally {
+              preparing = false
+            }
           }
         }
       }
+      const result = run()
+      if (operation.operation !== 'inspect') {
+        inFlight = result
+        void result
+          .finally(() => {
+            if (inFlight === result) inFlight = undefined
+          })
+          .catch(() => undefined)
+      }
+      return result
     }
   }
 }

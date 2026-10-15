@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { WebSocket } from 'ws'
+import { WebSocket } from 'ws'
 import { ApplicationEventHub } from './application-events'
 import { connectToDesktopEndpoint } from './desktop-connection'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
@@ -22,6 +22,28 @@ afterEach(async () => {
 async function setup(
   result: unknown
 ): Promise<{ socket: WebSocket; events: ApplicationEventHub; request(): void }> {
+  // Receiving the bootstrap on the peer does not settle the local write callback on Windows.
+  // Observe that real callback so the burst starts with an empty outgoing queue.
+  const bootstrapSent = Promise.withResolvers<void>()
+  const originalSend = WebSocket.prototype.send
+  const sendObserver = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+    this: WebSocket,
+    data,
+    optionsOrCallback,
+    callback
+  ) {
+    const onSent = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback
+    const options = typeof optionsOrCallback === 'object' ? optionsOrCallback : {}
+    const isBootstrap =
+      typeof data === 'string' && data.includes('"kind":"bootstrap"') && data.includes('"control":')
+    originalSend.call(this, data, options, (error) => {
+      onSent?.(error)
+      if (isBootstrap) {
+        if (error) bootstrapSent.reject(error)
+        else bootstrapSent.resolve()
+      }
+    })
+  })
   const events = new ApplicationEventHub()
   const server = await startDesktopRuntimeTransport({
     version: 'test',
@@ -31,8 +53,12 @@ async function setup(
   cleanups.push(server.close)
   const socket = await connectToDesktopEndpoint(server.endpoint)
   const bootstrap = once(socket, 'message')
-  socket.send(JSON.stringify({ kind: 'bootstrap' }))
+  socket.send(
+    JSON.stringify({ kind: 'bootstrap', desktopInstanceId: '77d62b13-8a19-491f-af43-af36c9824521' })
+  )
   await bootstrap
+  await bootstrapSent.promise
+  sendObserver.mockRestore()
   return {
     socket,
     events,

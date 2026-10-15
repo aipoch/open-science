@@ -24,8 +24,6 @@
     "src/shared/fuzzy-match.ts",
     "src/shared/handoff-lifecycle.ts",
     "src/shared/host-lineage.ts",
-    "src/shared/in-flight-promise.test.ts",
-    "src/shared/in-flight-promise.ts",
     "src/shared/lifecycle-events.ts",
     "src/shared/literature-deletion.test.ts",
     "src/shared/literature-deletion.ts",
@@ -171,6 +169,7 @@
     "src/shared/runtime-payload-client.test.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
+    "src/shared/runtime-startup.ts",
     "src/shared/managed-execution.ts"
   ],
   "interfacePaths": [
@@ -195,7 +194,6 @@
     "src/shared/handoff-lifecycle.ts",
     "src/shared/history-preamble.ts",
     "src/shared/host-lineage.ts",
-    "src/shared/in-flight-promise.ts",
     "src/shared/lifecycle-events.ts",
     "src/shared/literature-deletion.ts",
     "src/shared/literature-export.ts",
@@ -258,6 +256,7 @@
     "src/shared/runtime-payload-transfer.ts",
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
+    "src/shared/runtime-startup.ts",
     "src/shared/managed-execution.ts"
   ],
   "consumerModules": [

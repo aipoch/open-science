@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 研究包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **[AIPOCH Open-Science v0.37.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。AIPOCH Open-Science v0.37.1 恢复 PDF 结构提取的高保真度——图、带线表格与标题归属完整保留；Windows 体验全面加固——桌面 CLI 支持非 ASCII（如中文）安装路径，PDF 翻译兼容 Windows 盘符路径，Notebook 子进程不再弹出控制台窗口；安装包同时瘦身，移除了 v0.37.0 后端拆分后遗留的未使用运行时载荷。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **AIPOCH Open-Science v1.0.0** _（2026 年 10 月更新）_。这一里程碑汇集本地优先的科研工作区、科学智能体、Python/R Notebook 执行、文献工具和可移植的 `.science` 科研包。有关 v0.37.2 之后的改进及 CLI 升级变化，请查看 [1.0.0 发行说明](../../release-notes/1.0.0/zh-Hans.md)。下载仍以[最新已发布版本](https://github.com/aipoch/open-science/releases/latest)为准。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -172,13 +172,33 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 ## 基准测试表现
 
-### 🏆 BiomniBench-DA Public 50 第一名
+### 🏆 AstaBench LitQA2-FullText-Search：10/10全部命中
 
-AIPOCH Open-Science 在汇总的 BiomniBench-DA Public 50 对比中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 获得 **79.05** 分。该成绩是 Gemini 3.1 Pro 评审得分 **81.04** 与 DeepSeek v4-pro 评审得分 **77.06** 的等权平均值，使 AIPOCH Open-Science 在所收集的 Public 50 结果中位列 **第一**。查看 [BiomniBench-DA 数据集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
+AIPOCH Open-Science 使用 **DeepSeek v4-flash（max）**，结合文献检索专家与技能，在官方10题验证集上取得 **100% recall@30**：每道题所需的目标论文均出现在返回结果的前30篇中。该成绩高于报告所列的3条公开验证集成绩，较其中最高的 **80%高20个百分点**。本次报告记录了3次本地重复测试，展示了系统在这组科研问题中的文献定位能力。
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 对比，其中 AIPOCH Open-Science 以 79.05 分排名第一" width="1200" />
-</p>
+![AIPOCH Open-Science 在 AstaBench LitQA2-FullText-Search 验证集上取得100% recall@30、10/10目标论文命中；图中test与validation使用不同题目](../images/readme/astabench-litqa2.png)
+
+图中同时列出test与validation记录，排序仅为数值对照；100%指论文检索命中率，不是科学问答正确率。
+
+### 🏆 ASI-Bench B1–B4：四项测试成绩均居所列对照首位
+
+AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专家与技能，在 ASI-Bench B1、B2、B3、B4 四项测试中分别取得 **79.35、56.11、59.67和59.46分**，均为报告所列对照中的最高展示分数。四个档位依次考察**执行完整科研方案、组织研究流程、自主选择方法，以及在干扰信息下完成自主研究**，覆盖从方法实现到自主科研执行的不同任务条件。
+
+同模型、同名推理强度的本地 Codex 对照分别为74.78、56.09、58.12和55.45分，我方数值分别高 **4.57、0.02、1.55和4.01分**。B1、B2报告完成3次本地重复测试；B3、B4均为每轮60题、3次本地测试的均值。
+
+![AIPOCH Open-Science 的 ASI-Bench B1–B4 成绩分别为79.35、56.11、59.67和59.46分，图中区分本地结果与公开参照](../images/readme/asi-bench-b1-b4.jpg)
+
+本地测试采用seed31415；B1有效计分59项，1项因报告所述评分器异常排除。B3/B4采用v0.32.0及替代裁判。公开参照的任务实例、配置和裁判条件不同；B2的0.02分仅为数值差异。
+
+### 🏆 BiomniBench-DA Public 50：所列对照第1，79.05分
+
+AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在标记为 BiomniBench-DA Public 50 的50项生物医学数据分析任务内部评测中取得 **79.05分**，为所汇总对照中的最高展示分数。成绩由 Gemini 3.1 Pro 裁判的 **81.04分**与 DeepSeek v4-pro 裁判的 **77.06分**等权平均得到，反映该配置在生物医学数据分析过程中的综合表现。详见[评测报告](https://aipoch.com/blog/open-science-biomnibench-da)。
+
+![AIPOCH Open-Science 的 BiomniBench-DA Public 50 内部评测取得79.05双裁判均分，两位裁判分数分别为77.06与81.04](../images/readme/biomnibench-public50-leaderboard.png)
+
+该对照混合了不同裁判覆盖的记录，不能视为统一裁判条件下的正式排名。
+
+**评测说明：**以上为自行报告的本地或内部成绩，所列对照首位不代表官方榜单第一名，也不代表已通过统计检验确认提升。来源日期、模型与运行配置、评测范围和PaperFinding的66题验证集成绩见[详细评测报告](../benchmarks/zh-Hans.md)。
 
 ## 核心能力
 

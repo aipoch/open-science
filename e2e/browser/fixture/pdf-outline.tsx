@@ -2,6 +2,7 @@ import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { PDFDocument, PDFName, PDFString, degrees } from 'pdf-lib'
 import { initI18n } from '@/i18n'
+import { PdfAnnotationsProvider } from '@/pages/workspace/pdf-annotations/PdfAnnotationsProvider'
 import { PdfPreviewContent } from '@/pages/workspace/previews/renderers/PdfPreview'
 
 // Only the resource transport is stubbed. Destinations, page geometry, text and scrolling use PDF.js.
@@ -41,7 +42,50 @@ async function main(): Promise<void> {
   outline.set(PDFName.of('Last'), entries[entries.length - 1].ref)
   pdf.catalog.set(PDFName.of('Outlines'), outlineRef)
   const bytes = await pdf.save()
+  const notes = new URLSearchParams(location.search).has('notes')
+  const source = {
+    kind: 'upload-version' as const,
+    projectId: 'pdf-notes',
+    sessionId: 'pdf-notes',
+    sourceFileId: 'outline',
+    versionId: 'outline',
+    name: 'outline.pdf',
+    path: 'upload-version:outline',
+    checksum: 'a'.repeat(64)
+  }
+  const annotation = {
+    id: 'note-1',
+    projectId: source.projectId,
+    sessionId: source.sessionId,
+    version: 1,
+    origin: 'user' as const,
+    kind: 'highlight' as const,
+    color: 'yellow' as const,
+    tagIds: [],
+    note: 'A note on this heading',
+    createdAt: '2026-10-13T00:00:00.000Z',
+    updatedAt: '2026-10-13T00:00:00.000Z',
+    target: {
+      source,
+      selector: {
+        kind: 'text' as const,
+        pageNumber: 1,
+        exact: 'First heading',
+        position: { start: 0, end: 13 },
+        quads: [{ x: 40 / 600, y: 126 / 1600, width: 140 / 600, height: 28 / 1600 }],
+        extractorVersion: 'browser-fixture',
+        pageRotation: 0,
+        coordinateVersion: 1
+      }
+    }
+  }
   window.api = {
+    ...(notes
+      ? {
+          tags: { snapshot: async () => ({ revision: 1, tags: [], assignments: [] }) },
+          pdfAnnotations: { list: async () => ({ source, items: [annotation], total: 1 }) }
+        }
+      : {}),
     previewResources: {
       acquire: async () => ({
         id: 'outline',
@@ -62,7 +106,22 @@ async function main(): Promise<void> {
   initI18n('en')
   createRoot(document.getElementById('root')!).render(
     <main className="h-screen">
-      <PdfPreviewContent path="/outline.pdf" name="outline.pdf" />
+      {notes ? (
+        <PdfAnnotationsProvider projectId={source.projectId} sessionId={source.sessionId}>
+          <PdfPreviewContent
+            path="/outline.pdf"
+            name="outline.pdf"
+            source="upload"
+            projectId={source.projectId}
+            sessionId={source.sessionId}
+            managedFileId={source.sourceFileId}
+            selectedVersionId={source.versionId}
+            pdfBookmarkSource={source}
+          />
+        </PdfAnnotationsProvider>
+      ) : (
+        <PdfPreviewContent path="/outline.pdf" name="outline.pdf" />
+      )}
     </main>
   )
 }

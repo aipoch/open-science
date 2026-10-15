@@ -1038,6 +1038,21 @@ describe('RuntimeSessionOwner', () => {
     expect(receipt.artifacts).toContainEqual(expect.objectContaining({ versionId: 'version-1' }))
   })
 
+  it('rejects replacing a live execution even when a newer durable run exists', async () => {
+    const first = scope()
+    const { owner, sessions } = harness()
+    await owner.begin(first)
+    sessions.get(first.sessionId)!.activeRun = {
+      promptMessageId: first.promptMessageId,
+      startedAt: 10
+    }
+
+    await expect(owner.begin({ ...first, executionId: 'rival-execution' })).rejects.toThrow(
+      'Runtime Session turn is already owned by another execution.'
+    )
+    expect(sessions.get(first.sessionId)?.runtimeSessionAdmissions).toHaveLength(1)
+  })
+
   it('admits a resumed execution only after a newer durable run and fences stale output', async () => {
     const first = scope()
     const { owner, sessions } = harness()

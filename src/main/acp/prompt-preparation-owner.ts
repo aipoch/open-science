@@ -29,6 +29,7 @@ import type {
   SessionEstimateInput
 } from './context-usage-tracker'
 import type { ImageInputCompatibilityPort } from './image-input-compatibility-port'
+import type { AcpClassificationImageLoader } from './classification-image-loader'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
@@ -51,6 +52,7 @@ type NotebookTurnInputs = Readonly<{
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
+  classificationImages: Pick<AcpClassificationImageLoader, 'load'>
   imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
   presentation: Pick<
     AcpSessionPresentationPolicy,
@@ -290,6 +292,14 @@ class AcpPromptPreparationOwner {
                 text,
                 catalog,
                 signal: input.signal,
+                loadImages: async (signal) =>
+                  this.options.classificationImages.load({
+                    appSessionId: input.request.sessionId,
+                    projectId: input.projectId,
+                    currentImages: input.request.currentImages,
+                    currentUploads: input.request.attachments ?? [],
+                    signal
+                  }),
                 usageContext: { projectId: context.projectId, sessionId: context.sessionId },
                 observeUsage: (entry) => usage.push(entry)
               })
