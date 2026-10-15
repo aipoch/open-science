@@ -72,9 +72,9 @@ export function composeProjectLifecycle({
   getActiveDelegatedSessions,
   getActiveSideChatSessions,
   sessionPersistenceCoordinator,
+  clearSessionCredentials,
   getNotebookService,
-  stopManagedProject,
-  clearSessionCredentials
+  stopManagedProject
 }: {
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>

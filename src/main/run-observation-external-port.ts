@@ -16,7 +16,7 @@ import {
   type RecordedObservationTarget
 } from '../shared/run-observation-recorded'
 import type { CallerContext } from './caller-context'
-import { ManagedExecutionExternalError } from './managed-execution-external-port'
+import { ManagedExecutionExternalError } from './managed-execution-external-error'
 import type { ObservationViewers } from './run-observation/viewers'
 import type { RunObservationRecordingStatus } from '../shared/run-observation-recording-status'
 import {

@@ -5,10 +5,7 @@ import {
   SESSION_DETAILS_TITLE_MAX_LENGTH,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import {
-  createManagedSessionWorkspaceCapability,
-  type ManagedSessionWorkspaceCapability
-} from '../acp/managed-session-workspace'
+import type { ManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import { withDataRootWrite } from '../storage/migration-state'
 
 const identity = z
@@ -35,7 +32,7 @@ type LocalSessionPersistence = {
 type LocalSessionCreationDependencies = {
   sessions: LocalSessionPersistence
   withProjectAvailable<Result>(projectId: string, operation: () => Promise<Result>): Promise<Result>
-  workspaces?: ManagedSessionWorkspaceCapability
+  workspaces: ManagedSessionWorkspaceCapability
   withDataRootWrite?: <Result>(operation: () => Promise<Result>) => Promise<Result>
   createId?: () => string
   now?: () => number
@@ -48,7 +45,7 @@ const createLocalSessionWorkflow = (
 ): {
   create(request: CreateLocalSessionRequest): Promise<PersistedChatSession>
 } => {
-  const workspaces = dependencies.workspaces ?? createManagedSessionWorkspaceCapability()
+  const workspaces = dependencies.workspaces
   const write = dependencies.withDataRootWrite ?? withDataRootWrite
   const createId = dependencies.createId ?? randomUUID
   const now = dependencies.now ?? Date.now

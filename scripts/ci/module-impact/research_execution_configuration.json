@@ -1,0 +1,20 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/components/ResearchExecutionConfigurationDialog.tsx",
+    "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"
+  ],
+  "interfacePaths": ["src/renderer/src/components/ResearchExecutionConfigurationDialog.tsx"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/App.test.tsx",
+      "src/renderer/src/main.render.test.tsx",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

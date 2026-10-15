@@ -1,0 +1,20 @@
+{
+  "ownerPaths": [
+    "src/main/replay-viewer/desktop-frame-registry.ts",
+    "src/main/replay-viewer/desktop-frame-registry.test.ts"
+  ],
+  "interfacePaths": ["src/main/replay-viewer/desktop-frame-registry.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/replay-viewer/desktop-frame-registry.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/runtime-view/owner.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

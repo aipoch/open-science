@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import type { createAcpRuntime } from '../acp/runtime-composition'
 import type { ApplicationEventPublisher } from '../application-events'
 import type { ApplicationModuleBuilder } from '../application-runtime'
@@ -192,6 +193,7 @@ export async function composeManagedExecution({
     retryArtifactFinalization: (request) => sessions.retryArtifactFinalization(request)
   })
   const creator = createManagedSessionWorkflow({
+    workspaces: createManagedSessionWorkspaceCapability(),
     dataRoot,
     sessions,
     withProjectAvailable: (projectId, operation) =>

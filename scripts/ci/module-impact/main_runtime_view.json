@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "src/shared/runtime-view.ts",
     "src/main/managed-runtime-views.ts",
     "src/main/replay-viewer/assets.test.ts",
     "src/main/replay-viewer/assets.ts",
@@ -11,18 +10,14 @@
     "src/main/runtime-view/owned-service.ts",
     "src/main/runtime-view/owner.integration.test.ts",
     "src/main/runtime-view/owner.ts",
-    "src/main/replay-viewer/desktop-frame-registry.ts",
-    "src/main/replay-viewer/desktop-frame-registry.test.ts",
     "src/main/managed-runtime-views.integration.test.ts"
   ],
   "interfacePaths": [
-    "src/shared/runtime-view.ts",
     "src/main/managed-runtime-views.ts",
     "src/main/replay-viewer/assets.ts",
     "src/main/replay-viewer/http-host.ts",
     "src/main/runtime-view/owned-service.ts",
-    "src/main/runtime-view/owner.ts",
-    "src/main/replay-viewer/desktop-frame-registry.ts"
+    "src/main/runtime-view/owner.ts"
   ],
   "consumerModules": ["notebook_application"],
   "testFiles": {
@@ -32,7 +27,6 @@
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/runtime-view/launch-schema.test.ts",
       "src/main/runtime-view/owner.integration.test.ts",
-      "src/main/replay-viewer/desktop-frame-registry.test.ts",
       "src/main/managed-runtime-views.integration.test.ts"
     ],
     "contract": ["src/main/notebook/managed-execution-service.test.ts"],

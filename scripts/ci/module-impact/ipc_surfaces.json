@@ -38,7 +38,6 @@
     "src/main/source-preview-webview.test.ts",
     "src/main/source-preview-webview.ts",
     "src/main/window-ipc.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts",
     "src/shared/renderer-contracts/run-observation.ts"
   ],
   "interfacePaths": [
@@ -111,7 +110,6 @@
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
     "src/main/websocket-frame-sender.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts",
     "src/shared/renderer-contracts/run-observation.ts"
   ],
   "consumerModules": ["main_web_service"],
