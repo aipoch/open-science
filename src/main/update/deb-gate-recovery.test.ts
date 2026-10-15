@@ -11,6 +11,11 @@ import {
 } from './installation-protection'
 import { cancelDebSystemdGate } from './deb-systemd-gate'
 vi.mock('./deb-systemd-gate', () => ({ cancelDebSystemdGate: vi.fn() }))
+// Boot acquisition is covered separately; transaction fixtures need a stable boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
 const dirs: string[] = []
 afterEach(() => {
   dirs.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true }))

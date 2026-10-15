@@ -20,6 +20,12 @@ import {
   installationStateDirectory
 } from './installation-protection'
 
+// Boot acquisition is covered separately; transaction fixtures need a stable boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
+
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   inspectMac: vi.fn(),
