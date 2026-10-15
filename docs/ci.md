@@ -236,11 +236,17 @@ cannot establish that an old entry was not an intentional dynamic behavior contr
 
 ## CI control-plane approval
 
-CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
-`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
-of editing individual usernames in the file. The team must be visible and have explicit repository
-write access. The main ruleset requires approval from one owner other than the PR author and
-dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+Review ownership is split into package, host and CI sections in `.github/CODEOWNERS`, all currently
+assigned to `@aipoch/ci-maintainers`. The package section covers `packages/`; the host section covers
+`src/`, `cli/`, `e2e/`, `test/`, `prisma/` and `resources/`. The CI section covers workflows, local
+actions, CI scripts, Dependabot configuration, CODEOWNERS itself and the specific
+`packages/test-impact/` override. Keep that override after the general package rule so changing the
+package owner later does not transfer CI tooling approval. These review assignments do not change
+module ownership or test selection.
+
+Maintain membership in GitHub instead of editing individual usernames in the file. The team must
+be visible and have explicit repository write access. The main ruleset requires approval from one
+owner other than the PR author and dismisses stale approvals after new commits.
 The `scripts/ci/module-impact.json` registration file and JSON records directly under
 `scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
 protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
