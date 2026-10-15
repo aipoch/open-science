@@ -20,9 +20,9 @@ import {
 } from '../research-demos/inspection'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import type {
-  ManagedExecutionService,
-  ManagedExecutionServiceDependencies
-} from './managed-execution-service'
+  ManagedExecutionMaterialAccess,
+  ManagedExecutionPreparationPort
+} from './managed-execution-contract'
 
 const sha = (value: unknown): string =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -52,11 +52,9 @@ type PreparedOfflinePlan = {
   request: z.output<typeof executeManagedEnvironmentRequestSchema>
   options: Admission['options']
 }
-type Dependencies = Pick<
-  ManagedExecutionServiceDependencies,
-  'dataRoot' | 'materials' | 'withWritableSession'
-> & {
-  service: Pick<ManagedExecutionService, 'runtimes' | 'prepare'>
+type Dependencies = ManagedExecutionMaterialAccess & {
+  dataRoot: string
+  service: ManagedExecutionPreparationPort
 }
 
 /** Main derives a fixed executable request; callers can only select a published plan Version. */

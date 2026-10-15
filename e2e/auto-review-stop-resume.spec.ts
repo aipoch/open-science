@@ -84,8 +84,14 @@ for (const scenario of [
       }
       if (scenario === 'correction disabled stop') {
         await page.getByTestId('composer-controls-trigger').click()
-        await page.getByRole('menuitem', { name: 'Auto-review', exact: true }).click()
+        const toggle = page.getByRole('menuitem', { name: 'Auto-review', exact: true })
+        await expect(toggle).toHaveAttribute('aria-disabled', 'false')
+        await toggle.click()
         await page.keyboard.press('Escape')
+        await expect(page.getByTestId('composer-controls-trigger')).toHaveAttribute(
+          'aria-label',
+          /auto-review Off/
+        )
       }
       await page.getByRole('button', { name: 'Resume session', exact: true }).click()
       if (scenario === 'correction repeat stop') {

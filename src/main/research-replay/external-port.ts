@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { CallerContext } from '../caller-context'
-import { ManagedExecutionExternalError } from '../managed-execution-external-port'
+import { ManagedExecutionExternalError } from '../managed-execution-external-error'
 import {
   researchReplayTargetSchema,
   researchReplayPositionSchema,

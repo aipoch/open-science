@@ -63,7 +63,7 @@ it('joins main-process result conversion before deleting scratch after cancellat
   })
   // This waits for a real Node process; startup under suite load can exceed
   // waitFor's one-second default before result conversion even begins.
-  await vi.waitFor(() => expect(readWorkerResult).toHaveBeenCalledOnce(), { timeout: 5_000 })
+  await vi.waitFor(() => expect(readWorkerResult).toHaveBeenCalledOnce(), { timeout: 15_000 })
   controller.abort()
   let stopped = false
   const stopping = handle.stop().then(() => {
@@ -76,7 +76,7 @@ it('joins main-process result conversion before deleting scratch after cancellat
   await expect(handle.result).rejects.toThrow('conversion cancelled')
   await stopping
   await expect(stat(join(root, 'job/extractor'))).rejects.toMatchObject({ code: 'ENOENT' })
-}, 10_000)
+}, 30_000)
 
 it('retains the stop handle when the initial progress observer throws', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pdf-engine-observer-'))

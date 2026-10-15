@@ -420,8 +420,9 @@ describe('runtime state ownership architecture', () => {
     expect(composition.match(/new AcpContextCompactionWorkflow\(/g)).toHaveLength(1)
     expect(composition.match(/new AcpPromptTurnWorkflow\(/g)).toHaveLength(1)
     expect(composition).toContain(
-      'return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })'
+      'return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow, releasePromptTurns })'
     )
+    expect(runtime).toContain('releasePromptTurns: prompt.releasePromptTurns')
     expect(composition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
   })
 

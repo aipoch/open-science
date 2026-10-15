@@ -76,6 +76,11 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
+    'src/main/database/migration-service.test.ts',
+    'scripts/ci/package-boundaries.test.ts',
+    'src/main/desktop-startup-recovery.test.ts',
+    'src/main/update/installation-protection.test.ts',
+    'src/main/update/deb-systemd-gate.test.ts',
     'src/main/session-diagnostics/collector.test.ts',
     'src/main/literature/smart-collections.test.ts',
     'src/main/literature/pdf-structure/owner.test.ts',
@@ -83,6 +88,13 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   ])
     expect(step.run).toContain(path)
   expect(step.run).toContain('--testNamePattern')
+  for (const name of [
+    'fills derived literature text',
+    'persisted path spelling',
+    'queued automatic inference',
+    'startup Recover settles'
+  ])
+    expect(step.run).toContain(name)
   expect(step.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
   expect(step.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
 })
@@ -323,6 +335,7 @@ describe('independent source regression', () => {
           options: [
             'full',
             'portable',
+            'scheduled-fixes',
             'presentation',
             'workspace-images',
             'presentation-screening'
@@ -378,6 +391,7 @@ describe('independent source regression', () => {
 
   it('leaves setup and upload time beyond all serial suite budgets including accessibility', () => {
     const coreBudgets = scheduled.jobs.regression.steps
+      .filter((step) => step.if?.includes("inputs.mode == 'full'"))
       .flatMap(({ run }) => [...(run ?? '').matchAll(/--global-timeout=(\d+)/g)])
       .map((match) => Number(match[1]))
     const regressions = action.runs.steps.find(
@@ -716,3 +730,19 @@ it.skipIf(process.platform === 'win32')(
     }
   }
 )
+
+it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
+  const step = scheduled.jobs.regression.steps.find(
+    ({ name }) => name === 'Test scheduled regression fixes'
+  )!
+  expect(step.if).toContain("inputs.mode == 'scheduled-fixes'")
+  for (const file of [
+    'session-turn-outcome',
+    'auto-review-stop-resume',
+    'transcript-capacity',
+    'desktop-runtime-restart'
+  ])
+    expect(step.run).toContain(`e2e/${file}.spec.ts`)
+  expect(step.run).toContain('--retries=0 --fail-on-flaky-tests')
+  expect(step['continue-on-error']).toBeUndefined()
+})

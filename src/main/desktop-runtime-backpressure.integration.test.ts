@@ -169,7 +169,9 @@ it('flushes queued events and the shutdown reply in order before stopping the ba
     received.push(frame.kind === 'event' ? `event-${frame.payload![0]}` : frame.kind)
   })
   const bootstrap = once(socket, 'message')
-  socket.send(JSON.stringify({ kind: 'bootstrap' }))
+  socket.send(
+    JSON.stringify({ kind: 'bootstrap', desktopInstanceId: '77d62b13-8a19-491f-af43-af36c9824521' })
+  )
   await bootstrap
   const closed = once(socket, 'close')
   for (let index = 0; index < 4; index += 1)
@@ -200,7 +202,9 @@ it('replays the full retained event window in order and keeps subsequent command
     events.publish('connectors:approval-settled', String(index))
   const socket = await connectToDesktopEndpoint(server.endpoint)
   const bootstrap = once(socket, 'message')
-  socket.send(JSON.stringify({ kind: 'bootstrap' }))
+  socket.send(
+    JSON.stringify({ kind: 'bootstrap', desktopInstanceId: '77d62b13-8a19-491f-af43-af36c9824521' })
+  )
   const [bytes] = await bootstrap
   const frame = parseRpcJson(bytes.toString()) as { eventStream: { streamId: string } }
   const sequences: number[] = []

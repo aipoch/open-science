@@ -46,7 +46,7 @@ describe('desktop recovery notice', () => {
     const draft = screen.getByLabelText('draft')
     draft.focus()
     await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
-    const quit = screen.getByRole('button', { name: 'Quit app' })
+    const quit = screen.getByRole('button', { name: 'Quit' })
     const reconnectButton = screen.getByRole('button', { name: 'Reconnect' })
     expect(document.activeElement).toBe(quit)
     // jsdom does not perform browser Tab navigation. Exercise Radix's boundary handlers;
@@ -86,10 +86,19 @@ describe('desktop recovery notice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
     expect(reconnect).toHaveBeenCalledOnce()
     act(() => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
-    expect(screen.getByRole('button', { name: 'Reconnect' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
     act(() => publish({ phase: 'connected', epoch: 1, closing: false }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(screen.getByLabelText('draft')).toBe(draft)
     expect((draft as HTMLTextAreaElement).value).toBe('unsent work')
   })
+})
+
+it('offers quit as the primary action when reconnection is unavailable', async () => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'unavailable', epoch: 1, closing: false })
+  window.api = {} as typeof window.api
+  render(<DesktopRuntimeRecovery />)
+  expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Quit' }).getAttribute('data-variant')).toBe('default')
+  expect(screen.getByRole('status').textContent).toContain('may have completed')
 })

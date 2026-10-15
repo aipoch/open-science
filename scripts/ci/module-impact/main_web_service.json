@@ -52,6 +52,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/acp/runtime-coordinator.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/application-command-wiring.test.ts",
       "cli/config-root.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
@@ -82,6 +85,7 @@
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
       "src/main/composition/managed-execution.integration.test.ts",
       "src/main/composition/handoff.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",

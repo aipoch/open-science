@@ -1,3 +1,4 @@
+import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../runtime-startup'
 import {
   DESKTOP_RUNTIME_RECOVERY_CHANNELS,
   type DesktopRuntimeRecoveryState
@@ -40,6 +41,31 @@ export const cliGetStatusContracts = {
 } as const
 
 export const databaseStartupGetStateContracts = {
+  'runtimeStartup.getState': callable<() => Promise<RuntimeStartupState>>()(
+    'runtime-startup',
+    [RUNTIME_STARTUP_CHANNELS.getState, ELECTRON],
+    { optionalRoot: true }
+  ),
+  'runtimeStartup.stopAndContinue': callable<() => Promise<RuntimeStartupState>>()(
+    'runtime-startup',
+    [RUNTIME_STARTUP_CHANNELS.stopAndContinue, ELECTRON],
+    { optionalRoot: true }
+  ),
+  'runtimeStartup.recover': callable<() => Promise<RuntimeStartupState>>()(
+    'runtime-startup',
+    [RUNTIME_STARTUP_CHANNELS.recover, ELECTRON],
+    { optionalRoot: true }
+  ),
+  'runtimeStartup.quit': callable<() => Promise<void>>()(
+    'runtime-startup',
+    [RUNTIME_STARTUP_CHANNELS.quit, ELECTRON],
+    { optionalRoot: true }
+  ),
+  'runtimeStartup.onStateChanged': callable<
+    (listener: AcpListener<RuntimeStartupState>) => RemoveListener
+  >()('runtime-startup', [RUNTIME_STARTUP_CHANNELS.onStateChanged, ELECTRON_EVENT], {
+    optionalRoot: true
+  }),
   'desktopRuntime.getState': callable<() => Promise<DesktopRuntimeRecoveryState>>()(
     'desktop-runtime',
     [DESKTOP_RUNTIME_RECOVERY_CHANNELS.getState, ELECTRON],

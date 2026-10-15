@@ -37,11 +37,7 @@
     "src/main/navigation-policy.ts",
     "src/main/source-preview-webview.test.ts",
     "src/main/source-preview-webview.ts",
-    "src/main/window-ipc.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts",
-    "src/shared/renderer-contracts/run-observation.ts",
-    "src/shared/renderer-contracts/research-runs.ts",
-    "src/shared/renderer-contracts/research-demos.ts"
+    "src/main/window-ipc.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -112,11 +108,7 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts",
-    "src/shared/renderer-contracts/run-observation.ts",
-    "src/shared/renderer-contracts/research-runs.ts",
-    "src/shared/renderer-contracts/research-demos.ts"
+    "src/main/websocket-frame-sender.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -212,6 +204,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/application-runtime.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -895,6 +888,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -1081,7 +1075,10 @@
       "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/research-demos/owner.macos.integration.test.ts"
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

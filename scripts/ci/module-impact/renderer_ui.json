@@ -541,6 +541,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
       "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
@@ -585,7 +587,12 @@
       "src/renderer/src/pages/workspace/replay/RecordedMediaViewport.test.tsx",
       "src/renderer/src/pages/workspace/replay/RecordingTimelineFollow.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
-      "src/renderer/src/pages/workspace/replay/use-replay-executions.test.tsx"
+      "src/renderer/src/pages/workspace/replay/use-replay-executions.test.tsx",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/renderer/src/lib/replay/transcript.test.ts",
+      "src/renderer/src/pages/workspace/replay/ReplayResearchLayout.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-research-replay-layout.test.tsx"
     ]
   },
   "capabilityOverlays": [],

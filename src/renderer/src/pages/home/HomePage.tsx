@@ -693,7 +693,6 @@ const HomePage = ({
                   </div>
                 ) : null}
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-1">
               {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (

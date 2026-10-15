@@ -88,6 +88,16 @@ describe('module registration layouts', () => {
     }
   })
 
+  it('reads hundreds of shards with duplicate blobs and UTF-8 metadata losslessly', () => {
+    const manifest = sample()
+    manifest.modules.sample.fullTestReason = '验证所有历史数据 · prüfen · 検証'
+    for (let i = 0; i < 300; i++) manifest.modules[`module_${i}`] = manifest.modules.sample
+    split(manifest)
+    const revision = commit()
+    put('scripts/ci/module-impact/sample.json', null)
+    expect(loadModuleImpactManifestAtRevision(revision, { cwd: root })).toEqual(manifest)
+  })
+
   it('reads old Git history and admits an equivalent split without executing candidate code', () => {
     const base = commit()
     expect(loadModuleImpactManifestAtRevision(base, { cwd: root })).toEqual(sample())

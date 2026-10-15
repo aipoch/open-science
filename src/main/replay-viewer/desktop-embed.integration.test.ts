@@ -107,7 +107,7 @@ process.on('message',async encoded=>{
           contents: `
 import {app,BrowserWindow,protocol,webFrameMain,ipcMain} from 'electron'
 import {configureIpcHandlerRegistry} from './src/main/ipc-handler-registry'
-import {initLogger} from './src/main/logger'
+import {initLogger} from '@aipoch/diagnostics/node'
 import {fork} from 'node:child_process'
 import {parseRpcJson,stringifyRpcJson} from './src/main/rpc-json'
 import {installDesktopRuntimeElectronAdapter} from './src/main/desktop-runtime-electron-adapter'

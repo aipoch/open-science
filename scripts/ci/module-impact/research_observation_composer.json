@@ -1,0 +1,35 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/pages/workspace/replay/observation-question.ts",
+    "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx",
+    "src/renderer/src/pages/workspace/use-run-observation-question.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/pages/workspace/replay/observation-question.ts",
+    "src/renderer/src/pages/workspace/use-run-observation-question.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/renderer/src/pages/workspace/use-run-observation-question.test.tsx"],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/pages/workspace/RunObservationPreview.test.tsx",
+      "src/renderer/src/pages/workspace/browser-recording-question.test.tsx",
+      "src/renderer/src/App.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.customize-prefill.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.draft-preservation.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.edit-message.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.image-staging.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.notebook-hydration.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.pending-switch.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+      "src/renderer/src/main.render.test.tsx",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions"],
+  "fallbackCapability": "renderer_view"
+}

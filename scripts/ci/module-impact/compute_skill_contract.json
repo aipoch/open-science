@@ -18,6 +18,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
@@ -474,7 +476,12 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["workspace_page"],

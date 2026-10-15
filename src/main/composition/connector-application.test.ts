@@ -470,6 +470,54 @@ describe('Connector application composition', () => {
     await module.dispose?.()
   })
 
+  it('keeps dispatching after declining OpenAlex without prompting again in that session', async () => {
+    const { deps, settings } = createHarness()
+    const fetchImpl = vi.mocked(deps.fetchImpl)
+    fetchImpl.mockImplementation(
+      async () => new Response('{}', { status: 429, headers: { 'Retry-After': '3600' } })
+    )
+    const module = await createConnectorApplicationModule(deps)
+    vi.mocked(deps.broadcastCredentialRequest).mockImplementation((request) => {
+      module.capability.credentialRequests.respond(request.id, false)
+    })
+    const call = (sessionId: string): Promise<unknown> =>
+      module.capability.connectorService.call(
+        'literature',
+        'openalex_search_works',
+        { query: 'CRISPR', max_records: 1 },
+        { origin: 'agent', sessionId }
+      )
+    try {
+      await expect(call('session-1')).rejects.toMatchObject({ status: 429 })
+      await expect(call('session-1')).rejects.toMatchObject({ status: 429 })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(deps.broadcastCredentialRequest).toHaveBeenCalledOnce()
+      expect(deps.onCredentialRequestSettled).toHaveBeenCalledOnce()
+      expect(module.capability.credentialRequests.hasPendingForSession('session-1')).toBe(false)
+
+      await expect(call('session-2')).rejects.toMatchObject({ status: 429 })
+      expect(deps.broadcastCredentialRequest).toHaveBeenCalledTimes(2)
+
+      fetchImpl.mockImplementation(
+        async () => new Response(JSON.stringify({ meta: { count: 0 }, results: [] }))
+      )
+      await expect(call('session-1')).resolves.toMatchObject({ n_records_returned: 0 })
+      expect(new URL(String(fetchImpl.mock.lastCall?.[0])).searchParams.has('api_key')).toBe(false)
+
+      settings.getConnectors.mockResolvedValue({ openAlexApiKeyRef: 'saved-ref' })
+      vi.mocked(deps.resolveApiKey).mockImplementation((ref) =>
+        ref === 'saved-ref' ? 'manually-saved-key' : undefined
+      )
+      await expect(call('session-1')).resolves.toMatchObject({ n_records_returned: 0 })
+      expect(new URL(String(fetchImpl.mock.lastCall?.[0])).searchParams.get('api_key')).toBe(
+        'manually-saved-key'
+      )
+      expect(deps.broadcastCredentialRequest).toHaveBeenCalledTimes(2)
+    } finally {
+      await module.dispose?.()
+    }
+  })
+
   it('closes the MCP manager when construction fails before runtime ownership', async () => {
     const { settings, mcpClientManager, deps } = createHarness()
     const failure = new Error('settings projection registration failed')

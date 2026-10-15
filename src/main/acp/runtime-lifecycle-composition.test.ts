@@ -14,8 +14,12 @@ describe('ACP Runtime lifecycle composition', () => {
     const committed: AcpRuntimeEvent[] = []
     const observed: AcpRuntimeEvent[] = []
     const order: string[] = []
-    const onPromptEnded = vi.fn(() => order.push('released'))
-    const hostPromptEnded = vi.fn(() => order.push('host:released'))
+    const onPromptEnded = vi.fn<(sessionId: string, turnToken: string) => void>(() => {
+      order.push('released')
+    })
+    const hostPromptEnded = vi.fn<(sessionId: string, turnToken: string) => void>(() => {
+      order.push('host:released')
+    })
     const commitTerminal = vi.fn(
       async (event: AcpRuntimeEvent, publish: (event: AcpRuntimeEvent) => void) => {
         committed.push(event)
@@ -42,7 +46,10 @@ describe('ACP Runtime lifecycle composition', () => {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: async () => session.publication.getSnapshot(),
       disconnect: async () => session.publication.getSnapshot(),
-      onPromptEnded: hostPromptEnded,
+      releasePromptTurns: () => {
+        hostPromptEnded('s1', prompt.turnToken)
+        onPromptEnded('s1', prompt.turnToken)
+      },
       openAgentConnection: async () => {
         throw new Error('not needed')
       }

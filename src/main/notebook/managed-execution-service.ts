@@ -1,4 +1,9 @@
 import { OfflinePlanAdmission } from './offline-plan-admission'
+import type {
+  ManagedExecutionMaterialAccess,
+  ManagedPublicRuntime,
+  ManagedRuntimeInventory
+} from './managed-execution-contract'
 import {
   executeOfflinePlanRequestSchema,
   type OfflinePlanInspection
@@ -65,11 +70,7 @@ import {
   readDurableJsonFile,
   writeDurableJsonFile
 } from '@aipoch/durable-files'
-import {
-  inspectResearchMaterials,
-  type ResearchMaterialAuthority,
-  type ResearchMaterialVersion
-} from './research-materials'
+import { inspectResearchMaterials, type ResearchMaterialVersion } from './research-materials'
 import {
   ManagedEnvironmentCancelledError,
   type ManagedEnvironmentExecutionContext,
@@ -294,7 +295,7 @@ export type ManagedProjectRecordingRegistration = {
   signal: AbortSignal
 }
 
-export type ManagedExecutionServiceDependencies = {
+export type ManagedExecutionServiceDependencies = ManagedExecutionMaterialAccess & {
   dataRoot: string
   profiles?: Pick<ResearchExecutionProfileStore, 'list' | 'save' | 'remove' | 'lease'>
   environments: Pick<
@@ -335,24 +336,12 @@ export type ManagedExecutionServiceDependencies = {
     }>
     resolve(runtimeId: string): Promise<ManagedResearchRuntime>
   }
-  materials(request: {
-    projectId: string
-    sourceSessionId: string
-    targetSessionId: string
-    versionIds?: string[]
-    expectedSourceIdentity?: string
-    signal?: AbortSignal
-  }): Promise<ResearchMaterialAuthority>
   // Resolve exact immutable Versions and recheck receipt hashes. Return honest turn-attached input
   // identities; restoration does not pretend that the runtime directly read an original archive.
   resolvePreparedInputs(receipt: ManagedResearchEnvironment): Promise<NotebookRunInputFile[]>
   createSession(
     request: CreateManagedSessionRequest
   ): Promise<{ projectId: string; sessionId: string }>
-  withWritableSession<T>(
-    scope: { projectId: string; sessionId: string },
-    operation: () => Promise<T>
-  ): Promise<T>
 }
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -362,9 +351,7 @@ const observationTarget = (journal: Journal): RunObservationTarget => ({
   operationId: journal.operationId,
   executionInvocationId: 'managed-' + journal.key
 })
-const publicRuntime = (
-  runtime: ManagedResearchRuntime
-): Omit<ManagedResearchRuntime, 'executable' | 'readOnlyRoots'> => {
+const publicRuntime = (runtime: ManagedResearchRuntime): ManagedPublicRuntime => {
   const { executable, readOnlyRoots, ...publicValue } = runtime
   void executable
   void readOnlyRoots
@@ -617,11 +604,7 @@ export class ManagedExecutionService {
     }
   }
 
-  async runtimes(): Promise<{
-    available: boolean
-    runtimes: Array<ReturnType<typeof publicRuntime> & { runtimeId: string }>
-    diagnostics?: ManagedRuntimeDiagnostics
-  }> {
+  async runtimes(): Promise<ManagedRuntimeInventory> {
     const discovered = await this.dependencies.runtimes.discover()
     const available = discovered.runtimes.length > 0
     return {

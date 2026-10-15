@@ -4,6 +4,9 @@ export const nodeRuntimeEnvironment = (): NodeJS.ProcessEnv => ({
   ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined,
   ...Object.fromEntries(
     [
+      'OPEN_SCIENCE_INSTALLATION_OWNER',
+      'OPEN_SCIENCE_INSTALLATION_STATE_ROOT',
+      'OPEN_SCIENCE_E2E_STORAGE_ROOT',
       'OPEN_SCIENCE_HOST_HOME',
       'OPEN_SCIENCE_APPLICATION_PATH',
       'OPEN_SCIENCE_RESOURCES_PATH',

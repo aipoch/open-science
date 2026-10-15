@@ -1,5 +1,5 @@
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem } from './session-replay-preview-item'
 
 // Research navigation supplies a default, never replaces a reference explicitly chosen by the
 // user. Ownership is transient and is cleared by the workbench's ordinary tab activation path.

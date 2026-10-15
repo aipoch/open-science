@@ -13,7 +13,11 @@ import {
   type ManagedExecutionPort,
   type ManagedExecutionTurnContext
 } from './managed-execution-port'
-import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  type NotebookRuntimeBindingAdmission,
+  type NotebookRuntimeBindingDecisionRequest
+} from './runtime-binding-admission'
 
 import { computeProbeSnapshot, type ComputeHost, type ComputeHostDetails } from '@aipoch/compute'
 import { type AgentComputeHostSummary } from '../../shared/compute'
@@ -1178,10 +1182,7 @@ class NotebookLocalRpcServer {
   // Resolve the same host-owned lane used by authenticated RPC; a child runtime's local ACP
   // Session identity is never sufficient to select its parent Session or Notebook Frame.
   runtimeBindingAdmissionRequest(
-    request: import('../../shared/notebook').NotebookSessionRequest & {
-      language: import('../../shared/notebook').NotebookLanguage
-      runtimeId: string
-    },
+    request: NotebookRuntimeBindingDecisionRequest,
     connection?: NotebookRpcConnection
   ): (typeof request & { delegatedWorkAttemptId?: string }) | undefined {
     const capability = connection ? this.sessionRpcCapabilities.get(connection.token) : undefined
@@ -1212,13 +1213,7 @@ class NotebookLocalRpcServer {
 
   // Receipts only require a fresh host decision; they never authorize execution or a binding.
   authorizeRuntimeBindingAdmission(
-    admission: {
-      sessionId: string
-      toolCallId: string
-      promptMessageId: string
-      language: import('../../shared/notebook').NotebookLanguage
-      runtimeId: string
-    },
+    admission: NotebookRuntimeBindingAdmission,
     connection?: NotebookRpcConnection
   ): boolean {
     const request = this.runtimeBindingAdmissionRequest(

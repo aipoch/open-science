@@ -482,3 +482,58 @@ it.each(['load', 'page', 'text', 'cleanup'] as const)(
     }
   }
 )
+
+it('rechecks contiguous item bounds when a compound source box covers unrelated text', async () => {
+  const pdf = await PDFDocument.create(),
+    page = pdf.addPage([300, 200]),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  page.drawText('Label', { font, size: 8, x: 40, y: 150 })
+  page.drawText('***', { font, size: 5, x: 60, y: 153 })
+  page.drawText('Unrelated', { font, size: 8, x: 200, y: 150 })
+  const data = await pdf.save(),
+    loading = getDocument({ data: data.slice(), useSystemFonts: true }),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'contiguous-items' })
+  onTestFinished(() => loading.destroy())
+  onTestFinished(() => registry.dispose())
+  const original = await loading.promise,
+    content = await (await original.getPage(1)).getTextContent(),
+    items = content.items.flatMap((item, index) =>
+      'str' in item && ['Label', '***'].includes(item.str) ? [{ index, text: item.str }] : []
+    ),
+    unit = {
+      source: 'Label***',
+      translation: 'Label***',
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 39 / 300, y: 40 / 200, width: 220 / 300, height: 15 / 200 },
+          items
+        }
+      ]
+    },
+    writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+    request = {
+      id: 'contiguous-items',
+      data,
+      pages: [{ width: 300, height: 200 }],
+      preserveUnsupported: true,
+      units: [unit]
+    }
+  expect(items).toHaveLength(2)
+  const output = await writer.generateDetailed(request, caller.lease)
+  expect(output!.data).toEqual(data)
+  for (const bad of [
+    { ...unit, source: 'Label**', translation: 'Label**' },
+    {
+      ...unit,
+      fragments: [
+        { ...unit.fragments[0], items: items.map((item) => ({ ...item, text: 'forged' })) }
+      ]
+    },
+    { ...unit, fragments: [{ ...unit.fragments[0], rect: { ...unit.fragments[0].rect, x: 0.2 } }] }
+  ])
+    await expect(
+      writer.generateDetailed({ ...request, units: [bad] }, caller.lease)
+    ).rejects.toMatchObject({ failure: { code: 'source-mismatch' } })
+})

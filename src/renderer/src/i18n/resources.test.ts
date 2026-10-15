@@ -1732,8 +1732,8 @@ describe('mandatory product glossary', () => {
     const rootPackage = JSON.parse(
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
-    // The banner assertion tracks the repo version instead of a hardcoded bump target.
-    expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version} veröffentlicht`)
+    // Track the repo version without requiring an unreleased build to claim publication.
+    expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version}`)
   })
 
   const chosenGenericTerms = {

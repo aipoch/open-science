@@ -440,6 +440,7 @@
       "src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
       "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
       "src/renderer/replay-viewer/ViewerApp.test.tsx",
@@ -463,7 +464,9 @@
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/index-fatal-errors.test.ts",
-      "src/main/composition/handoff.test.ts"
+      "src/main/composition/handoff.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

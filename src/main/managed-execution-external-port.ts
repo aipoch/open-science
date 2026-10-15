@@ -12,6 +12,9 @@ import {
 } from './notebook/research-materials'
 import { withDataRootWrite } from './storage/migration-state'
 import type { CallerContext } from './caller-context'
+import { ManagedExecutionExternalError } from './managed-execution-external-error'
+
+export { ManagedExecutionExternalError } from './managed-execution-external-error'
 
 export const MANAGED_EXECUTION_EXTERNAL_METHODS = [
   'runtimes',
@@ -46,22 +49,6 @@ export type ManagedExecutionExternalPort = {
     payload: unknown,
     callerContext?: CallerContext
   ): Promise<unknown>
-}
-
-export class ManagedExecutionExternalError extends Error {
-  constructor(
-    readonly code:
-      | 'unauthorized'
-      | 'unsupported_location'
-      | 'unavailable'
-      | 'invalid_request'
-      | 'conflict'
-      | 'not_found',
-    message: string
-  ) {
-    super(message)
-    this.name = 'ManagedExecutionExternalError'
-  }
 }
 
 /** Shared authenticated local adapter for the application router and headless clients. */

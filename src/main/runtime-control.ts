@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from './desktop-runtime-info'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { readFile, rm } from 'node:fs/promises'
@@ -22,8 +24,13 @@ export async function startRuntimeControl(
   configRoot: string,
   host: RuntimeOwnerRecord['host'],
   ensureWeb: (port: number) => Promise<unknown>,
-  desktop?: DesktopEndpoint
+  desktop?: DesktopEndpoint,
+  startupOptions?: RuntimeStartupOptions,
+  isStopping?: () => boolean
 ): Promise<{ close(): Promise<void> }> {
+  const verifiedOptions = startupOptions
+    ? runtimeStartupOptionsSchema.parse(startupOptions)
+    : undefined
   const token = Buffer.from(await loadOrCreateWebToken(configRoot))
   const generation = randomUUID()
   const path = join(configRoot, RUNTIME_OWNER_FILE)
@@ -42,7 +49,19 @@ export async function startRuntimeControl(
     }
     if (request.method === 'GET' && url.pathname === '/owner') {
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ generation, pid: process.pid }))
+      response.end(
+        JSON.stringify({
+          generation,
+          pid: process.pid,
+          ...(isStopping?.() ? { stopping: true } : {}),
+          ...(verifiedOptions && desktop
+            ? {
+                startupOptions: verifiedOptions,
+                desktopGeneration: z.string().uuid().parse(desktop.generation)
+              }
+            : {})
+        })
+      )
       return
     }
     const port = Number(url.searchParams.get('port'))

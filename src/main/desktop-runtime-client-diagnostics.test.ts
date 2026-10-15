@@ -4,6 +4,9 @@ import { EventEmitter } from 'node:events'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { connectDesktopRuntime } from './desktop-runtime-client'
 
+vi.mock('./runtime-stop-confirmation', () => ({
+  waitForRuntimeStopped: vi.fn(async () => ({ release: vi.fn() }))
+}))
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), warn: vi.fn(), info: vi.fn() }))
 vi.mock('./desktop-connection', () => ({ connectToDesktopEndpoint: mocks.connect }))
 vi.mock('@aipoch/diagnostics/node', () => ({
@@ -21,6 +24,18 @@ class Socket extends EventEmitter {
         this.frame({
           kind: 'bootstrap',
           pid: 42,
+          launch: 'desktop',
+          control: 'granted',
+          generation: streamId,
+          entryPath: process.execPath,
+          startupOptions: {
+            configRoot: process.cwd(),
+            dataRoot: process.cwd(),
+            profilePath: process.cwd(),
+            port: 0,
+            host: '127.0.0.1',
+            credentialStore: 'os'
+          },
           rpcProtocolVersion: 1,
           rpcChannels: ['projects:list'],
           eventStream: {

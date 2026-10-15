@@ -426,7 +426,7 @@ roles remain explicit in the tables above.
 - Sidebar border: `border-border`.
 - Workspace sidebar uses the resizable panel owner in `workspace-panel-layout.tsx`, with a 16% default/minimum open size.
 - Workspace rail card: `m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card`.
-- Workspace brand title uses `text-text-000`; beta and section labels use `text-text-100`.
+- Workspace brand title uses `text-text-000`; section labels use `text-text-100`.
 - `Cmd+B` on macOS and `Ctrl+B` on Windows/Linux toggle the Workspace sidebar. At mobile widths, the same shortcut toggles the navigation drawer.
 - Sessions nav uses `aria-label="Sessions"` and a scroll body `min-h-0 flex-1 overflow-y-auto py-1`.
 - Holding `Cmd` on macOS or `Ctrl` on Windows/Linux reveals numbered shortcut pills beside the first nine Sessions in their current visual order. `Cmd+1`–`Cmd+9` or `Ctrl+1`–`Ctrl+9` opens the matching Session; modal dialogs and modified Alt/Shift chords retain priority.

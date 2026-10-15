@@ -3,6 +3,9 @@
 The `open-science` command controls the local Open-Science service and submits research tasks without
 requiring browser interaction.
 
+The [release compatibility policy](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md)
+defines the 1.x contract for commands, machine-readable output and exit codes.
+
 ## Installation
 
 ### Standalone Node package
@@ -134,7 +137,7 @@ unhealthy records are retained; failed authentication never authorizes signallin
 | `daemon-stopped`      | The authenticated Node daemon exited (desktop-started or CLI-started).       |
 | `web-service-stopped` | Legacy desktop-host protocol only: Web stopped; old desktop remains running. |
 
-Among lifecycle commands, `status`, `stop`, and `update` support `--json`. `start` and `url` reject
+Among lifecycle commands, `status` and `stop` support `--json`. `start` and `url` reject
 it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
 with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
 
@@ -243,45 +246,22 @@ open-science runtime list
 open-science runtime list --json
 ```
 
-## Application updates
+## Upgrading installations
 
-Check, download, and apply an Open-Science application update without opening the browser or desktop
-window:
-
-```bash
-open-science update
-open-science update --json
-```
-
-Against the Node runtime, `update` fails with a desktop-capability error and exits `1`; the
-status owner explains that backend updates use the package manager. Install a replacement standalone
-tarball with npm after deliberately stopping the backend. Use the desktop's native update UI for a
-desktop installation; it stops an owned Node service through the existing handoff gate. If desktop
-is borrowing a CLI-started service, stop that service explicitly before applying a desktop update.
-The CLI never starts an invisible Electron application to perform an update.
-
-The compatibility behavior below applies only when talking to an older Electron-host service:
-
-In-place installation never interrupts active root-agent, subagent, Notebook, or Reviewer work. Stop
-the reported work and run the command again. Platforms that require a visible installer download it
-without a save dialog to the application's writable data directory, then print the full path and
-required next step; the CLI does not open the installer.
-
-With `--json`, `outcome` is `up-to-date`, `install-started`, `manual-action-required`, or `blocked`.
-`install-started` means the platform updater accepted the handoff; because the running application
-exits during installation, the CLI cannot verify the final installed version in that invocation.
-Common fields are `current` and, when known, `latest`. Manual outcomes may add `installerPath` and
-`nextAction`; blocked outcomes add `blockedBy`.
-
-The CLI requires the running application to advertise the `update-cli-v1` RPC capability. If an older
-installation only advertises the legacy update commands, or does not advertise structured headless
-update behavior, it returns `manual-action-required` instead of guessing. Install the latest release from
-[the Open-Science download page](https://www.aipoch.com/open-science), then run the command again.
-Because the CLI is bundled with the installed application, installations predating this command need
-that one-time manual update before `open-science update` is available.
-
-The legacy `--no-sandbox` startup option is unavailable for Node. It does not bypass the Notebook
-or child-process sandbox.
+Stop the backend before upgrading an installation, then restart it with the same profile.
+Use the installation channel that owns the CLI: Homebrew for a Formula, the new downloaded
+package for deb/rpm or a local npm tarball, or a verified new Release archive in a new directory
+with PATH/the symlink updated. npm registry publication remains deferred.
+The desktop update UI discovers and downloads packages. Automatic replacement remains closed for
+macOS ZIP, Linux AppImage and Debian until each channel passes complete installed-package
+acceptance. Windows automatic installation remains disabled; artifact checks and same-version copy tests do not certify a cross-version upgrade.
+For an accepted channel, use the desktop application's native update UI. A Desktop
+that adopts an orphaned Desktop-launched Runtime can stop it through the normal update gate.
+For a CLI-launched service, explicitly confirm stopping the service and switching to Desktop;
+all connected clients will disconnect, and future Desktop Quit stops the replacement Runtime.
+Cancel keeps the service running. The switch preserves supported configuration and refuses
+unsupported credential/profile settings before stopping. It does not upgrade standalone files.
+Installation recovery may require the original installer when file integrity cannot be verified.
 
 ## Codex subscription sign-in
 
@@ -644,8 +624,6 @@ Exit codes form part of the automation contract:
 | `2`       | CLI usage was invalid.                                                        |
 | `3`       | The local daemon was unavailable.                                             |
 | `4`       | A requested project, run, session, artifact, or Specialist was not found.     |
-| `5`       | Active research safely blocked an application update.                         |
-| `6`       | The application update requires a manual installation step.                   |
 
 Codex login can propagate the native login process exit code (a signal without a code becomes `1`).
 A successfully cancelled Run is not itself a CLI failure; inspect its `cancelled` status.

@@ -8,7 +8,7 @@ import {
   browserRecordingInspectionSchema
 } from '../../shared/browser-recording'
 import type { CallerContext } from '../caller-context'
-import { ManagedExecutionExternalError } from '../managed-execution-external-port'
+import { ManagedExecutionExternalError } from '../managed-execution-external-error'
 import type { ReplayViewerHttpHost } from '../replay-viewer/http-host'
 import type { ObservationViewers } from '../run-observation/viewers'
 import type { RecordedObservationReader } from '../run-observation/recorded-reader'

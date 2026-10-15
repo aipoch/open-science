@@ -378,6 +378,19 @@ describe('post-merge Windows validation', () => {
     expect(scheduledFixes.run).toContain('src/main/settings/service.test.ts')
     expect(scheduledFixes.run).toContain('src/main/notebook/runtime-service.rpc-retirement.test.ts')
     expect(scheduledFixes.run).toContain('src/main/notebook/shell-npm-environment.test.ts')
+    for (const test of [
+      'scripts/windows-notebook-sandbox-uninstall.test.ts',
+      'scripts/windows-release-workflows.test.ts',
+      'src/main/notebook/kernel-executor.test.ts',
+      'src/main/system-boot-identity.test.ts',
+      'src/main/system-boot-identity.windows.test.ts',
+      'src/main/update/deb-gate-recovery.test.ts',
+      'src/main/update/installation-executor.test.ts',
+      'src/main/update/installation-preparation.test.ts',
+      'src/main/update/installation-reboot-recovery.test.ts'
+    ]) {
+      expect(scheduledFixes.run).toContain(test)
+    }
     expect(scheduledFixes.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
@@ -784,10 +797,8 @@ describe('post-merge Windows validation', () => {
     )
     expect(notarize['runs-on']).toBe('${{ matrix.os }}')
     expect(notarize.strategy?.matrix).toEqual({
-      include: [
-        { arch: 'arm64', os: 'macos-15' },
-        { arch: 'x64', os: 'macos-15-intel' }
-      ]
+      include:
+        '${{ fromJSON(inputs.architecture == \'arm64\' && \'[{"arch":"arm64","os":"macos-15"}]\' || inputs.architecture == \'x64\' && \'[{"arch":"x64","os":"macos-15-intel"}]\' || \'[{"arch":"arm64","os":"macos-15"},{"arch":"x64","os":"macos-15-intel"}]\') }}'
     })
     expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
     expect(refreshedMacosEvidence.run).toContain(

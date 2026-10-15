@@ -149,6 +149,9 @@ it.each([
   'case',
   'kerned',
   'ascii-mark',
+  'soft-hyphen-space',
+  'soft-hyphen-letter',
+  'unknown-control',
   'semantic-change',
   'missing-mark',
   'wrong-case',
@@ -163,7 +166,14 @@ it.each([
     page = pdf.addPage([300, 200]),
     registry = new TestCallerRegistry(),
     caller = registry.acquire({ leaseId: 'actual-text', surface: 'electron' }),
-    semantic = kind === 'semantic-change' ? 'method' : 'arch'
+    semantic =
+      kind === 'semantic-change'
+        ? 'method'
+        : kind.startsWith('soft-hyphen')
+          ? '\u00adarch'
+          : kind === 'unknown-control'
+            ? '\u200barch'
+            : 'arch'
   page.drawText('', { font, x: 40, y: 150, size: 10 })
   if (kind === 'clip') page.pushOperators(rectangle(44, 140, 80, 22), clip(), endPath())
   if (kind !== 'missing-mark')
@@ -190,13 +200,21 @@ it.each([
       PDFOperator.of(PDFOperatorNames.EndText)
     )
   } else
-    page.drawText(kind === 'changed-glyph' ? 'ARCK' : 'ARCH', { font, x: 40, y: 150, size: 10 })
+    page.drawText(
+      kind === 'changed-glyph' ? 'ARCK' : kind === 'soft-hyphen-space' ? ' ARCH' : 'ARCH',
+      { font, x: 40, y: 150, size: 10 }
+    )
   if (kind !== 'missing-mark') page.pushOperators(PDFOperator.of(PDFOperatorNames.EndMarkedContent))
   if (kind === 'extra-owned') page.drawText('OTHER', { font, x: 90, y: 150, size: 10 })
   page.drawText('Neighbor', { font, x: 40, y: 112, size: 10 })
   const data = await pdf.save(),
     original = data.slice(),
-    source = kind === 'wrong-case' || kind === 'missing-mark' ? 'Arch' : 'ARCH',
+    source =
+      kind === 'wrong-case' || kind === 'missing-mark'
+        ? 'Arch'
+        : kind === 'soft-hyphen-space'
+          ? ' ARCH'
+          : 'ARCH',
     writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
   let task: ReturnType<typeof getDocument> | undefined
   try {
@@ -221,7 +239,7 @@ it.each([
       },
       caller.lease
     )
-    if (!['case', 'kerned', 'ascii-mark'].includes(kind)) {
+    if (!['case', 'kerned', 'ascii-mark', 'soft-hyphen-space'].includes(kind)) {
       await expect(output).rejects.toMatchObject({ failure: { code: expect.any(String) } })
     } else {
       task = getDocument({ data: (await output)!, useSystemFonts: true })

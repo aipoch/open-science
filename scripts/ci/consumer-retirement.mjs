@@ -55,6 +55,31 @@ export function sourceSnapshot(revision, cwd) {
   return { files: new Set(entries.keys()), read }
 }
 
+// Empty imports/exports can execute side effects; only explicitly typed bindings erase.
+export function isTypeOnlyDependency(node) {
+  if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause
+    const bindings = clause?.namedBindings
+    return Boolean(
+      clause?.isTypeOnly ||
+      (clause &&
+        !clause.name &&
+        bindings &&
+        ts.isNamedImports(bindings) &&
+        bindings.elements.length > 0 &&
+        bindings.elements.every((element) => element.isTypeOnly))
+    )
+  }
+  return (
+    ts.isExportDeclaration(node) &&
+    (node.isTypeOnly ||
+      (node.exportClause &&
+        ts.isNamedExports(node.exportClause) &&
+        node.exportClause.elements.length > 0 &&
+        node.exportClause.elements.every((element) => element.isTypeOnly)))
+  )
+}
+
 export function createConsumerDependencyReader(
   source,
   runtimeEdges,
@@ -177,9 +202,9 @@ export function createConsumerDependencyReader(
       // Type references still belong to the default structural graph and typecheck scope.
       if (runtimeOnly) {
         if (ts.isImportTypeNode(node)) return
-        if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly)
+        if (ts.isImportDeclaration(node) && !isTypeOnlyDependency(node))
           specs.add(node.moduleSpecifier.text)
-        if (ts.isExportDeclaration(node) && node.moduleSpecifier && !node.isTypeOnly)
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier && !isTypeOnlyDependency(node))
           specs.add(node.moduleSpecifier.text)
         if (
           ts.isImportEqualsDeclaration(node) &&
@@ -431,21 +456,53 @@ export function provablyStaleConsumerTests(owner, inspect) {
   })
 }
 
-// A reviewed one-time boundary correction, not a general exemption for shared contracts.
+// Reviewed pure-helper boundaries, never a general exemption for shared contracts.
 // The original full owner and all of its evidence remain protected by the ordinary checker.
-export function verifiedPdfTextOwnerSplit(
+export function verifiedPdfTextOwnerSplit(base, head, baseManifest, headManifest, options = {}) {
+  return verifiedPureHelperSplit(
+    base,
+    head,
+    baseManifest,
+    headManifest,
+    'pdf_text',
+    'pdf-text',
+    options
+  )
+}
+
+export function verifiedPromiseIdentityOwnerSplit(
   base,
   head,
   baseManifest,
   headManifest,
+  options = {}
+) {
+  return verifiedPureHelperSplit(
+    base,
+    head,
+    baseManifest,
+    headManifest,
+    'shared_promise_identity',
+    'in-flight-promise',
+    options
+  )
+}
+
+function verifiedPureHelperSplit(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  targetId,
+  file,
   { cwd = process.cwd() } = {}
 ) {
   const originalId = 'shared_application_contracts'
-  const paths = ['src/shared/pdf-text.ts', 'src/shared/pdf-text.test.ts']
+  const paths = [`src/shared/${file}.ts`, `src/shared/${file}.test.ts`]
   const original = baseManifest.modules[originalId]
   const remaining = headManifest.modules[originalId]
-  const target = headManifest.modules.pdf_text
-  if (!original?.fullTestReason || !remaining || !target || baseManifest.modules.pdf_text)
+  const target = headManifest.modules[targetId]
+  if (!original?.fullTestReason || !remaining || !target || baseManifest.modules[targetId])
     return new Set()
   try {
     // This transition may only change registration data, never the code used as proof.
@@ -490,7 +547,7 @@ export function verifiedPdfTextOwnerSplit(
     const inspectors = [before, after].map((source) =>
       createConsumerDependencyReader(source, edges, { staticOnly: true })
     )
-    // PDF text is a pure utility. If its boundary acquires opaque inputs, retain full.
+    // These helpers must remain pure utilities. If its boundary acquires opaque inputs, retain full.
     if (inspectors.some((inspect) => !inspect(paths[0], new Set()).complete)) return new Set()
     const evidence = new Set(Object.values(target.testFiles).flat())
     const originalEvidence = Object.values(original.testFiles).flat()

@@ -100,7 +100,9 @@
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/index-fatal-errors.test.ts",
-      "src/main/composition/handoff.test.ts"
+      "src/main/composition/handoff.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

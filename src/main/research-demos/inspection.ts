@@ -9,7 +9,7 @@ import {
   type ResearchDemoSource
 } from '../../shared/research-demo'
 import type { ResearchReproductionDescription } from '../../shared/research-reproduction'
-import type { ManagedExecutionService } from '../notebook/managed-execution-service'
+import type { ManagedRuntimeInventory } from '../notebook/managed-execution-contract'
 import {
   inspectResearchMaterials,
   type ResearchMaterialAuthority
@@ -57,7 +57,7 @@ function entryPath(
 export async function inspectResearchDemos(
   source: ResearchDemoSource,
   authority: ResearchMaterialAuthority,
-  runtimes: Awaited<ReturnType<ManagedExecutionService['runtimes']>>,
+  runtimes: ManagedRuntimeInventory,
   signal?: AbortSignal
 ): Promise<{ inspection: ResearchDemoInspection; resolved: ResolvedResearchDemo[] }> {
   const resolved = await inspectOfflinePlanMaterials(authority, runtimes, signal)
@@ -73,7 +73,7 @@ export async function inspectResearchDemos(
 /** Shared package-plan discovery. Does not require an import or a Replay carrier Session. */
 export async function inspectOfflinePlanMaterials(
   authority: ResearchMaterialAuthority,
-  runtimes: Awaited<ReturnType<ManagedExecutionService['runtimes']>>,
+  runtimes: ManagedRuntimeInventory,
   signal?: AbortSignal
 ): Promise<ResolvedResearchDemo[]> {
   const candidates = authority.versions.filter(

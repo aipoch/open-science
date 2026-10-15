@@ -1,6 +1,6 @@
 import type { Annotation } from '../../../../shared/annotation-contract'
-import type { SessionDiscussionCapture } from './replay/replay-context'
-import { toSessionDiscussionSnapshot } from './replay/replay-context'
+import type { SessionDiscussionCapture } from './replay/session-discussion-snapshot'
+import { toSessionDiscussionSnapshot } from './replay/session-discussion-snapshot'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget

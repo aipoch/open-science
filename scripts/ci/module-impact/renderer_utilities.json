@@ -22,9 +22,7 @@
     "src/renderer/src/lib/startup-issue.test.ts",
     "src/renderer/src/lib/startup-issue.ts",
     "src/renderer/src/lib/streaming-metrics.ts",
-    "src/renderer/src/lib/storage-error.ts",
-    "src/renderer/src/lib/research-project-entry.ts",
-    "src/renderer/src/lib/research-project-entry.test.ts"
+    "src/renderer/src/lib/storage-error.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/interface-scale.ts",
@@ -50,8 +48,7 @@
     "src/renderer/src/lib/theme.ts",
     "src/renderer/src/lib/utils.ts",
     "src/renderer/src/lib/wsl-support-handoff.ts",
-    "src/renderer/src/lib/session-fork.ts",
-    "src/renderer/src/lib/research-project-entry.ts"
+    "src/renderer/src/lib/session-fork.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -66,11 +63,17 @@
       "src/renderer/src/lib/reviewer-submission-presentation.test.ts",
       "src/renderer/src/lib/session-package-import.test.ts",
       "src/renderer/src/lib/specialist-diagnostics.test.ts",
-      "src/renderer/src/lib/startup-issue.test.ts",
-      "src/renderer/src/lib/research-project-entry.test.ts"
+      "src/renderer/src/lib/startup-issue.test.ts"
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
+      "src/renderer/src/stores/session-store.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
+      "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts",
+      "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
@@ -512,6 +515,7 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
       "src/renderer/src/stores/network-store.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
@@ -566,7 +570,10 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayResearchLayout.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-replay-executions.test.tsx",
-      "src/renderer/src/pages/workspace/replay/use-research-replay-layout.test.tsx"
+      "src/renderer/src/pages/workspace/replay/use-research-replay-layout.test.tsx",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/renderer/src/lib/research-project-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

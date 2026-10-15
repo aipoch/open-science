@@ -79,7 +79,7 @@ import {
 import { getToolExecutionPhase } from './tool-execution-phase'
 import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
-import { showSessionReplay } from './workspace-session-actions'
+import { showSessionReplay } from './session-replay-preview-item'
 
 // Fixed tab order for the per-kernel switcher.
 const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']

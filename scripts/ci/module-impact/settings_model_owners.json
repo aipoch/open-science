@@ -31,6 +31,7 @@
       "src/shared/web-rpc-contract.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/agent-process.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -459,6 +460,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/codex-transport-fallback-log.test.ts",
       "src/main/settings/compute-grants.test.ts",
@@ -662,7 +664,12 @@
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/handoff.test.ts"
     ]
   },
   "consumerModules": ["workspace_runtime"],

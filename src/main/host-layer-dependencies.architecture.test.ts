@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error The repository's JavaScript evidence reader has no declaration file.
 import { createConsumerDependencyReader } from '../../scripts/ci/consumer-retirement.mjs'
+// @ts-expect-error The repository's JavaScript boundary checker has no declaration file.
+import { boundaryViolations, dependencyLayer } from '../../scripts/ci/module-relationships.mjs'
 import { loadModuleImpactManifest } from '../../scripts/ci/load-module-impact.mjs'
 
 type Graph = Map<string, Set<string>>
@@ -31,39 +32,12 @@ function cycles(graph: Graph): string[] {
   return [...found].sort()
 }
 
-// The evidence reader deliberately over-approximates imports. Inline type-only
-// bindings cannot create runtime edges, but must remain in the type graph.
-function withoutInlineTypeDeclarations(path: string, text: string): string {
-  const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
-  const erased: Array<[number, number]> = []
-  for (const node of ast.statements) {
-    if (ts.isImportDeclaration(node)) {
-      const clause = node.importClause
-      if (
-        clause &&
-        !clause.isTypeOnly &&
-        !clause.name &&
-        clause.namedBindings &&
-        ts.isNamedImports(clause.namedBindings) &&
-        clause.namedBindings.elements.length > 0 &&
-        clause.namedBindings.elements.every((element) => element.isTypeOnly)
-      )
-        erased.push([node.getStart(ast), node.end])
-    } else if (
-      ts.isExportDeclaration(node) &&
-      !node.isTypeOnly &&
-      node.exportClause &&
-      ts.isNamedExports(node.exportClause) &&
-      node.exportClause.elements.length > 0 &&
-      node.exportClause.elements.every((element) => element.isTypeOnly)
-    )
-      erased.push([node.getStart(ast), node.end])
-  }
-  for (const [start, end] of erased.reverse()) text = text.slice(0, start) + text.slice(end)
-  return text
-}
-
-function hostGraphs(): { structural: Graph; runtimeModules: Graph; consumerModules: Graph } {
+function hostGraphs(overrides: Record<string, string> = {}): {
+  structural: Graph
+  runtimeModules: Graph
+  consumerModules: Graph
+  violations: string[]
+} {
   const files = new Set<string>(
     execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
       cwd: projectRoot,
@@ -74,6 +48,7 @@ function hostGraphs(): { structural: Graph; runtimeModules: Graph; consumerModul
   )
   const contents = new Map<string, string>()
   const read = (path: string): string | undefined => {
+    if (Object.hasOwn(overrides, path)) return overrides[path]
     if (!files.has(path)) return undefined
     if (!contents.has(path)) contents.set(path, readFileSync(resolve(projectRoot, path), 'utf8'))
     return contents.get(path)
@@ -96,22 +71,14 @@ function hostGraphs(): { structural: Graph; runtimeModules: Graph; consumerModul
   )
   const runtimeEdges = Object.entries(JSON.parse(read('scripts/ci/module-runtime-consumers.json')!))
   const structuralReader = createConsumerDependencyReader({ files, read }, runtimeEdges)
-  const runtimeReader = createConsumerDependencyReader(
-    {
-      files,
-      read: (path: string) => {
-        const text = read(path)
-        return text !== undefined && production.has(path)
-          ? withoutInlineTypeDeclarations(path, text)
-          : text
-      }
-    },
-    runtimeEdges,
-    { runtimeOnly: true }
-  )
+  const runtimeReader = createConsumerDependencyReader({ files, read }, runtimeEdges, {
+    runtimeOnly: true
+  })
   const structural: Graph = new Map()
+  const boundaryEdges: Graph = new Map()
   const runtimeModules: Graph = new Map()
   for (const path of production) {
+    boundaryEdges.set(path, structuralReader.dependencies(path).paths)
     structural.set(
       path,
       new Set(
@@ -133,10 +100,40 @@ function hostGraphs(): { structural: Graph; runtimeModules: Graph; consumerModul
       new Set<string>(module.consumerModules)
     ])
   )
-  return { structural, runtimeModules, consumerModules }
+  return {
+    structural,
+    runtimeModules,
+    consumerModules,
+    violations: [
+      ...boundaryViolations(boundaryEdges, manifest.modules),
+      ...[...production]
+        .filter((path) => dependencyLayer(path) === 'foundation')
+        .flatMap((path) => {
+          const inspect = createConsumerDependencyReader({ files, read }, runtimeEdges, {
+            staticOnly: true
+          })
+          return inspect(path, new Set()).complete
+            ? []
+            : [`${path}: pure foundation has opaque dependencies`]
+        })
+    ]
+  }
 }
 
 describe('host dependency layers', () => {
+  it('checks resolved package and preload targets outside the host cycle graph', () => {
+    const graphs = hostGraphs({
+      'src/shared/in-flight-promise.ts': "import '@aipoch/diagnostics'",
+      'src/shared/bootstrap.ts': "import '../preload/index'"
+    })
+    expect(graphs.violations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('src/shared/in-flight-promise.ts -> packages/diagnostics/'),
+        expect.stringContaining('src/shared/bootstrap.ts -> src/preload/index.ts')
+      ])
+    )
+  }, 180_000)
+
   it('detects indirect cycles as well as reciprocal imports', () => {
     expect(
       cycles(
@@ -158,20 +155,18 @@ describe('host dependency layers', () => {
     ).toEqual([])
   })
 
-  it('erases only declarations whose named bindings are all type-only', () => {
-    const source = `import { type A } from './a';\nexport { type B } from './b';\nimport D, { type C } from './c';\nimport { type E, value } from './e';\nimport './effect';`
-    expect(withoutInlineTypeDeclarations('sample.ts', source)).toBe(
-      `\n\nimport D, { type C } from './c';\nimport { type E, value } from './e';\nimport './effect';`
-    )
-  })
-
+  // Whole-repository parsing needs headroom under coverage on shared CI runners.
   it('keeps type contracts, runtime module dependencies and test routing acyclic', () => {
     const graphs = hostGraphs()
+    expect(
+      graphs.violations,
+      'foundation, contract, composition and public-interface boundaries'
+    ).toEqual([])
     expect(
       cycles(graphs.structural),
       'production imports including types and registered dynamic edges'
     ).toEqual([])
     expect(cycles(graphs.runtimeModules), 'runtime dependencies between module owners').toEqual([])
     expect(cycles(graphs.consumerModules), 'consumer test routing').toEqual([])
-  }, 60_000)
+  }, 180_000)
 })

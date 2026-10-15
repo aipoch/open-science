@@ -1,3 +1,8 @@
+import { randomUUID } from 'node:crypto'
+import { desktopRuntimeInfoSchema, type DesktopRuntimeInfo } from './desktop-runtime-info'
+import { waitForRuntimeStopped } from './runtime-stop-confirmation'
+import type { RuntimeDirectoryLease } from './runtime-ownership'
+const desktopInstanceId = randomUUID()
 import { createSessionEventHydrator } from '../shared/session-event-hydrator'
 import { createRuntimePayloadClient } from '../shared/runtime-payload-client'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../shared/runtime-payload-transfer'
@@ -93,7 +98,8 @@ const bootstrapSchema = webRpcBootstrapSchema
     kind: z.literal('bootstrap'),
     startup: desktopDatabaseStartupSchema.optional(),
     pid: z.number().int().positive(),
-    rpcChannels: z.array(z.string())
+    rpcChannels: z.array(z.string()),
+    ...desktopRuntimeInfoSchema.shape
   })
   .strict()
 const eventSchema = z.discriminatedUnion('kind', [
@@ -109,6 +115,10 @@ export type DesktopRuntimeClient = Readonly<{
   retryStartup(): Promise<DatabaseStartupState>
   processId(): number
   ownsRuntime(): boolean
+  runtimeInfo(): DesktopRuntimeInfo
+  refreshControl(): Promise<DesktopRuntimeInfo>
+  waitForStopped(): Promise<RuntimeDirectoryLease>
+  stopRuntime(): Promise<RuntimeDirectoryLease>
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
   loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
   invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
@@ -117,7 +127,7 @@ export type DesktopRuntimeClient = Readonly<{
   notificationAction(token: string, action: 'clicked' | 'closed'): void
   notificationView(reason: 'view' | 'focus' | 'window-created', visibleSessionId?: string): void
   close(): void
-  quit(): Promise<void>
+  quit(): Promise<RuntimeDirectoryLease | undefined>
 }>
 
 // No business state lives here. In-flight mutations are never automatically retried after a
@@ -125,9 +135,11 @@ export type DesktopRuntimeClient = Readonly<{
 export async function connectDesktopRuntime(options: {
   endpoint: DesktopEndpoint
   signal?: AbortSignal
+  desktopInstanceId?: string
   // Only the launcher that actually spawned this child may supply its handle.
   startedProcess?: ChildProcess
   onNativeRequest?: DesktopNativeHandler
+  onNativeResponseSent?: (request: Parameters<DesktopNativeHandler>[0], result: unknown) => void
   onStartupState?: (state: DatabaseStartupState) => void
   onDocumentEvent?: (event: z.infer<typeof desktopDocumentEventSchema>) => void
   onUploadProgress?: (clientId: string, progress: UploadTransferProgress) => void
@@ -152,11 +164,25 @@ export async function connectDesktopRuntime(options: {
   let cursor: { streamId: string; latestSequence: number } | undefined
   let startupState: DatabaseStartupState = { phase: 'checking' }
   let runtimePid = 0
-  let ownedChild: ChildProcess | undefined
+  let runtimeInfo!: DesktopRuntimeInfo
+  let refreshing:
+    | {
+        promise: Promise<DesktopRuntimeInfo>
+        resolve(value: DesktopRuntimeInfo): void
+        reject(error: Error): void
+        timer: NodeJS.Timeout
+      }
+    | undefined
   let quitting = false
-  let quitPromise: Promise<void> | undefined
+  let quitPromise: Promise<RuntimeDirectoryLease | undefined> | undefined
   let closed = false
   let disconnectCause: Error | undefined
+  let disconnectDelivered = false
+  const notifyDisconnect = (): void => {
+    if (!initialized || !disconnectCause || disconnectDelivered) return
+    disconnectDelivered = true
+    options.onDisconnect(disconnectCause)
+  }
   let initialized = false
   let resolveReady!: () => void
   let rejectReady!: (error: Error) => void
@@ -196,6 +222,11 @@ export async function connectDesktopRuntime(options: {
       })
     clearTimeout(timer)
     rejectReady(error)
+    if (refreshing) {
+      clearTimeout(refreshing.timer)
+      refreshing.reject(error)
+      refreshing = undefined
+    }
     for (const request of pending.values())
       request.reject(
         new Error(
@@ -209,21 +240,24 @@ export async function connectDesktopRuntime(options: {
     for (const operation of native.values()) operation.abort()
     native.clear()
     socket.terminate()
-    if (initialized && !quitting) options.onDisconnect(error)
+    if (!quitting) notifyDisconnect()
   }
   const timer = setTimeout(
     () => fail(new Error('Desktop runtime bootstrap timed out.'), 'bootstrap-timeout'),
     5_000
   )
   timer.unref()
-  const send = (message: unknown): void => {
+  const send = (message: unknown, onSent?: () => void): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
       throw new Error('Desktop runtime is disconnected.', { cause: disconnectCause })
     const serialized = stringifyRpcJson(message)
     if (socket.bufferedAmount + Buffer.byteLength(serialized) > 16 * 1024 * 1024) {
       throw new Error('Desktop runtime request exceeds the transport byte budget.')
     }
-    socket.send(serialized)
+    socket.send(serialized, (error) => {
+      if (error) fail(error, 'send-failure')
+      else onSent?.()
+    })
   }
   const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
     if (pending.size >= 256) throw new Error('Too many pending desktop requests.')
@@ -289,6 +323,43 @@ export async function connectDesktopRuntime(options: {
     try {
       if (binary) throw new Error('Unexpected binary desktop frame.')
       const frame = parseRpcJson(bytes.toString())
+      if (
+        initialized &&
+        frame &&
+        typeof frame === 'object' &&
+        'kind' in frame &&
+        frame.kind === 'bootstrap'
+      ) {
+        if (!refreshing) throw new Error('Unrequested Desktop bootstrap.')
+        const bootstrap = bootstrapSchema.parse(frame)
+        if (
+          bootstrap.pid !== runtimePid ||
+          bootstrap.generation !== runtimeInfo.generation ||
+          bootstrap.eventStream.streamId !== cursor?.streamId
+        )
+          throw new Error('The original Runtime identity changed during control refresh.')
+        const next = desktopRuntimeInfoSchema.parse(
+          Object.fromEntries(
+            Object.keys(desktopRuntimeInfoSchema.shape).map((key) => [
+              key,
+              bootstrap[key as keyof typeof bootstrap]
+            ])
+          )
+        )
+        if (
+          JSON.stringify(next.startupOptions) !== JSON.stringify(runtimeInfo.startupOptions) ||
+          next.entryPath !== runtimeInfo.entryPath ||
+          next.launch !== runtimeInfo.launch
+        )
+          throw new Error('The original Runtime configuration changed during control refresh.')
+        runtimeInfo = next
+        // Keep the existing event cursor, documents, native request IDs and pending requests.
+        const completed = refreshing
+        refreshing = undefined
+        clearTimeout(completed.timer)
+        completed.resolve(runtimeInfo)
+        return
+      }
       if (!initialized) {
         failureReason = 'invalid-bootstrap'
         const bootstrap = bootstrapSchema.parse(frame)
@@ -297,9 +368,16 @@ export async function connectDesktopRuntime(options: {
         supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
-        const child = options.startedProcess
-        if (child?.pid === bootstrap.pid && child.exitCode === null && child.signalCode === null)
-          ownedChild = child
+        runtimeInfo = desktopRuntimeInfoSchema.parse(
+          Object.fromEntries(
+            Object.keys(desktopRuntimeInfoSchema.shape).map((key) => [
+              key,
+              bootstrap[key as keyof typeof bootstrap]
+            ])
+          )
+        )
+        if (runtimeInfo.generation !== options.endpoint.generation)
+          throw new Error('Desktop Runtime generation changed during bootstrap.')
         initialized = true
         clearTimeout(timer)
         resolveReady()
@@ -381,7 +459,9 @@ export async function connectDesktopRuntime(options: {
               throw new Error('Native desktop operations are unavailable.')
             const result = await options.onNativeRequest(request, controller.signal)
             if (!closed && !controller.signal.aborted)
-              send({ kind: 'native-response', id: request.id, outcome: { ok: true, result } })
+              send({ kind: 'native-response', id: request.id, outcome: { ok: true, result } }, () =>
+                options.onNativeResponseSent?.(request, result)
+              )
           } catch (error) {
             if (!closed && !controller.signal.aborted)
               send({
@@ -456,7 +536,7 @@ export async function connectDesktopRuntime(options: {
   )
   socket.once('error', (error) => fail(error, 'socket-error'))
   try {
-    send({ kind: 'bootstrap' })
+    send({ kind: 'bootstrap', desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId })
   } catch (error) {
     fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
   }
@@ -472,66 +552,104 @@ export async function connectDesktopRuntime(options: {
     initialized = false
     fail(new Error('Desktop runtime client closed.'), 'client-close')
   }
-  const quit = async (): Promise<void> => {
-    const child = ownedChild
-    if (!child || child.exitCode !== null || child.signalCode !== null) {
-      close()
-      return
-    }
-    quitting = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let onExit!: (code: number | null, signal: NodeJS.Signals | null) => void
-    const exited = new Promise<void>((resolve, reject) => {
-      onExit = (code, signal) =>
-        code === 0 && signal === null
-          ? resolve()
-          : reject(new Error('The owned runtime exited without completing a clean shutdown.'))
-      child.once('exit', onExit)
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              'The owned runtime did not stop within 15 seconds. No process signal was sent.'
-            )
-          ),
-        15_000
-      )
+  const waitForStopped = (signal?: AbortSignal): Promise<RuntimeDirectoryLease> =>
+    waitForRuntimeStopped({
+      configRoot: runtimeInfo.startupOptions.configRoot,
+      generation: runtimeInfo.generation,
+      pid: runtimePid,
+      signal,
+      socketClosed: () => socket.readyState === WebSocket.CLOSED
     })
-    let shutdownRequestId: number | undefined
+  const ownsRuntime = (): boolean =>
+    runtimeInfo.launch === 'desktop' && runtimeInfo.control === 'granted'
+  let stopPromise: Promise<RuntimeDirectoryLease> | undefined
+  const runStop = async (): Promise<RuntimeDirectoryLease> => {
+    if (runtimeInfo.control !== 'granted')
+      throw new Error('This Desktop does not control the Runtime.')
+    quitting = true
+    const confirmation = new AbortController()
+    let stopped: Promise<RuntimeDirectoryLease> | undefined
     try {
-      // The endpoint authenticates a fixed generation. Never rediscover or signal a PID here.
-      const shutdown = request({
-        kind: 'shutdown',
-        generation: options.endpoint.generation,
-        pid: child.pid
+      // Start the total stop budget before waiting for the command acknowledgement. A
+      // lost reply is ambiguous, so actual process/lock/exit-record evidence is authoritative.
+      stopped = waitForStopped(confirmation.signal)
+      const rejected = new Promise<never>((_resolve, reject) => {
+        if (!closed) {
+          void request({
+            kind: 'shutdown',
+            generation: runtimeInfo.generation,
+            pid: runtimePid
+          }).response.catch((error) => {
+            if (!closed) reject(error)
+          })
+        }
       })
-      shutdownRequestId = shutdown.id
-      await Promise.all([shutdown.response, exited])
+      const lease = await Promise.race([stopped, rejected])
       close()
+      return lease
     } catch (error) {
-      // A failed shutdown leaves Electron running; surface any loss suppressed during quit.
-      if (initialized && disconnectCause) options.onDisconnect(disconnectCause)
+      confirmation.abort()
+      await stopped?.then(
+        (lease) => lease.release(),
+        () => undefined
+      )
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'runtime-stop-timeout'
+      )
+        fail(new Error('Runtime stop confirmation timed out.'), 'client-close')
+      notifyDisconnect()
       throw error
     } finally {
-      clearTimeout(timer)
-      child.off('exit', onExit)
-      if (shutdownRequestId !== undefined) pending.delete(shutdownRequestId)
+      confirmation.abort()
       quitting = false
     }
   }
+
+  const stopRuntime = (): Promise<RuntimeDirectoryLease> =>
+    (stopPromise ??= runStop().catch((error) => {
+      stopPromise = undefined
+      throw error
+    }))
+
   return {
+    refreshControl: () => {
+      if (refreshing) return refreshing.promise
+      let resolve!: (value: DesktopRuntimeInfo) => void
+      let reject!: (error: Error) => void
+      const promise = new Promise<DesktopRuntimeInfo>((yes, no) => {
+        resolve = yes
+        reject = no
+      })
+      const timer = setTimeout(
+        () => fail(new Error('Desktop control refresh timed out.'), 'bootstrap-timeout'),
+        5000
+      )
+      refreshing = { promise, resolve, reject, timer }
+      try {
+        send({
+          kind: 'bootstrap',
+          desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId
+        })
+      } catch (error) {
+        clearTimeout(timer)
+        refreshing = undefined
+        reject(error as Error)
+      }
+      return promise
+    },
     commandNames: () => channels,
     startupState: () => startupState,
     retryStartup: async () =>
       desktopDatabaseStartupSchema.parse(await request({ kind: 'startup-retry' }).response),
     processId: () => runtimePid,
-    ownsRuntime: () =>
-      Boolean(ownedChild && ownedChild.exitCode === null && ownedChild.signalCode === null),
-    lifecycle: async (operation) => {
-      if (!ownedChild || ownedChild.exitCode !== null || ownedChild.signalCode !== null)
-        throw new Error('This desktop does not own the connected server lifecycle.')
-      return request({ kind: 'lifecycle', request: operation }).response
-    },
+    ownsRuntime,
+    runtimeInfo: () => runtimeInfo,
+    waitForStopped,
+    stopRuntime,
+    lifecycle: async (operation) => request({ kind: 'lifecycle', request: operation }).response,
     notificationView: (reason, visibleSessionId) => {
       if (!closed)
         send(
@@ -600,7 +718,9 @@ export async function connectDesktopRuntime(options: {
     close,
     // Called only after desktop confirmation and durability barriers; ordinary detach never stops.
     quit: () =>
-      (quitPromise ??= quit().catch((error) => {
+      (quitPromise ??= (
+        ownsRuntime() ? stopRuntime() : Promise.resolve(close()).then(() => undefined)
+      ).catch((error) => {
         quitPromise = undefined
         throw error
       }))

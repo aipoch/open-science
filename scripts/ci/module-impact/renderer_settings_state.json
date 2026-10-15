@@ -264,6 +264,7 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
@@ -284,7 +285,9 @@
       "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
       "src/renderer/replay-viewer/research-client.test.ts",
       "src/renderer/replay-viewer/research-viewer.test.tsx",
-      "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx"
+      "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

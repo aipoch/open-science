@@ -363,6 +363,7 @@
       "src/renderer/src/stores/settings-store.architecture.test.ts",
       "src/renderer/src/stores/settings-write-coordinator.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
@@ -404,7 +405,9 @@
       "src/main/research-demos/owner.macos.integration.test.ts",
       "src/renderer/replay-viewer/browser-recording.integration.test.ts",
       "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
-      "src/renderer/replay-viewer/research-browser.integration.test.ts"
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

@@ -17,6 +17,7 @@ import {
 } from '../research-runs/inspection'
 import { tmpdir } from 'node:os'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import type { createAcpRuntime } from '../acp/runtime-composition'
 import type { ApplicationEventPublisher } from '../application-events'
 import type { ApplicationModuleBuilder } from '../application-runtime'
@@ -246,6 +247,7 @@ export async function composeManagedExecution({
   const creator = createManagedSessionWorkflow({
     dataRoot,
     sessions,
+    workspaces: createManagedSessionWorkspaceCapability(),
     withProjectAvailable: (projectId, operation) =>
       archive.withProjectAvailable(projectId, operation)
   })

@@ -419,6 +419,8 @@ export const WEB_INVOKE_CHANNELS = {
   'update.download': 'update:download',
   'update.getAppInfo': 'update:get-app-info',
   'update.getStatus': 'update:get-status',
+  'update.recheck': 'update:recheck',
+  'update.recover': 'update:recover',
   'uploads.abortTransfer': 'uploads:abort-transfer',
   'uploads.appendTransfer': 'uploads:append-transfer',
   'uploads.beginTransfer': 'uploads:begin-transfer',

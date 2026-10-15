@@ -17,30 +17,12 @@ import {
 import {
   REPLAY_CAPTURE_RECORD_LIMIT,
   REPLAY_CAPTURE_TOTAL_LIMIT,
-  type ReplayCapturedRecord,
-  type SessionDiscussionSnapshot
+  type ReplayCapturedRecord
 } from '../../../../../shared/session-replay'
 
-export type SessionDiscussionCapture = {
-  scope?: 'step' | 'session'
-  notebookInspection?: { runId: string; timeMs: number }
-  stepInspection?: { timeMs: number; mode: 'visible' | 'saved-history' }
-  phase?: ReplayScene['phase']
-  stepTitle?: string
-  branchIndex?: number
-  stepNumber?: number
-  records?: ReplayCapturedRecord[]
-  projectId: string
-  sourceSessionId: string
-  sourceTitle: string
-  fingerprint: string
-  branchId: string
-  stepId: string
-  stepOffsetMs: number
-  recordedAt?: number
-  evidence: ReplayEvidenceReference[]
-  excerpt: string
-}
+import type { SessionDiscussionCapture } from './session-discussion-snapshot'
+export { toSessionDiscussionSnapshot } from './session-discussion-snapshot'
+export type { SessionDiscussionCapture } from './session-discussion-snapshot'
 
 export const captureDiscussionSession = (
   document: ReplayDocument
@@ -246,17 +228,6 @@ export const captureDiscussionNotebookRun = (
       ? {}
       : { recordedAt: recordedTimeOrigin + scene.positionMs })
   }
-}
-
-/** View-only inspection hints never change the persisted discussion/package schema. */
-export const toSessionDiscussionSnapshot = (
-  context: SessionDiscussionCapture,
-  id: string
-): SessionDiscussionSnapshot => {
-  const captured = structuredClone(context)
-  delete captured.notebookInspection
-  delete captured.stepInspection
-  return { ...captured, id }
 }
 
 export const REPLAY_SEEK_EVENT = 'open-science:replay-seek'

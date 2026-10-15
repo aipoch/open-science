@@ -210,7 +210,7 @@ it('defers distant host consumers in PR but retains contracts, package tests and
   const state = fixture()
   const pr = state.refine({ tier: 'pr' })
   expect(pr.testFiles).toEqual([contract, related])
-  expect(pr.deferredTestFiles).toEqual([unrelated, declared, downstream])
+  expect(pr.deferredTestFiles).toEqual([declared, downstream])
   expect(pr.deferredPackageRoots).toEqual(['packages/downstream'])
   expect(pr.modules).toEqual(state.plan.modules)
   expect(pr.capabilityOverlays).toEqual(state.plan.capabilityOverlays)

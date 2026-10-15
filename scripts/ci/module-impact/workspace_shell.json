@@ -487,7 +487,9 @@
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
-      "src/main/observation-desktop/bridge.test.ts"
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

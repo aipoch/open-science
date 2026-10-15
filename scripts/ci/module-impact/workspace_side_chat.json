@@ -126,7 +126,9 @@
       "src/renderer/src/pages/workspace/workspace-page.architecture.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "consumerModules": [],

@@ -531,6 +531,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/renderer/src/stores/settings-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
@@ -571,7 +572,9 @@
       "src/renderer/replay-viewer/research-client.test.ts",
       "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/src/lib/replay/transcript.test.ts",
-      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx"
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

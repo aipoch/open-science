@@ -4318,24 +4318,45 @@ describe('unreaped delegated execution lifecycle', () => {
     ).resolves.toMatchObject([{ status: 'completed', response: 'Published result' }])
   })
 
-  it.each([
-    'deleteSession',
-    'deleteProject',
-    'shutdown',
-    'stopAll',
-    'shutdownForQuit',
-    'shutdownForUpdateGate'
-  ] as const)(
-    'keeps the cleanup failure visible to %s after terminal history is written',
-    async (operation) => {
+  it.each(
+    (
+      [
+        'deleteSession',
+        'deleteProject',
+        'shutdown',
+        'stopAll',
+        'shutdownForQuit',
+        'shutdownForUpdateGate'
+      ] as const
+    ).flatMap((operation) => [0, 1200].map((startupDelayMs) => ({ operation, startupDelayMs })))
+  )(
+    'keeps the cleanup failure visible to $operation after terminal history is written (startup delay: $startupDelayMs ms)',
+    async ({ operation, startupDelayMs }) => {
       root = await mkdtemp(join(tmpdir(), 'delegated-unreaped-lifecycle-'))
       const harness = await createCompositionHarness(root, 'codex')
+      if (startupDelayMs > 0) {
+        // Exercise startup beyond expect.poll's default 1 s budget, as on a busy Windows runner.
+        const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+        vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementation(async (...args) => {
+          await new Promise((resolve) => setTimeout(resolve, startupDelayMs))
+          return startAttemptRuntime(...args)
+        })
+      }
+      const executionStarted = Promise.withResolvers<void>()
+      const startExecution = harness.execution.run.bind(harness.execution)
+      vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+        const handle = startExecution(...args)
+        executionStarted.resolve()
+        return handle
+      })
       const receipt = await harness.composition.host.delegate(
         harness.caller,
         { task: 'Retain process-owned evidence', name: 'Retain evidence' },
         { wait: false }
       )
-      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      // Readiness is bounded by the test timeout, not expect.poll's shorter default budget.
+      await executionStarted.promise
+      expect(harness.execution.controls()).toHaveLength(1)
       const control = harness.execution.controls()[0]
       control.accept()
       control.fail(new DelegateExecutionCleanupError('process cleanup could not be confirmed'))

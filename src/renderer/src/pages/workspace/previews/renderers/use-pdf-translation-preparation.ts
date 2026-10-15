@@ -29,6 +29,7 @@ export function usePdfTranslationPreparation(
   state: PdfPreparationState
   start: () => void
   cancel: () => void
+  reset: () => void
 } {
   const run = useRef<AbortController | undefined>(undefined)
   const [stored, setStored] = useState<{
@@ -147,5 +148,10 @@ export function usePdfTranslationPreparation(
       value: { status: 'cancelled' }
     })
   }, [attachmentVersionId, document, resourceRequestKey, sourceIdentity, checkpoint?.key])
-  return { state, start, cancel }
+  const reset = useCallback((): void => {
+    run.current?.abort()
+    run.current = undefined
+    setStored(undefined)
+  }, [])
+  return { state, start, cancel, reset }
 }

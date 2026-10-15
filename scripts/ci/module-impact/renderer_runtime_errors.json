@@ -1,8 +1,11 @@
 {
-  "ownerPaths": ["src/renderer/src/lib/acp/workspace-operation-error.ts"],
+  "ownerPaths": [
+    "src/renderer/src/lib/acp/workspace-operation-error.ts",
+    "src/renderer/src/lib/acp/workspace-operation-error.test.ts"
+  ],
   "interfacePaths": ["src/renderer/src/lib/acp/workspace-operation-error.ts"],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/renderer/src/lib/acp/workspace-operation-error.test.ts"],
     "contract": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
@@ -132,7 +135,10 @@
       "src/renderer/src/stores/session-store.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/replay/ResearchDemoPanel.test.tsx",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "consumerModules": ["workspace_page"],

@@ -95,7 +95,7 @@ export type DelegatedWorkRecord = Readonly<{
   attempts: readonly DelegatedWorkAttemptRecord[]
 }>
 
-export type DelegatedQuestionAnswer = Readonly<{ questionIndex: number; value: string }>
+export type DelegatedQuestionAnswer = Readonly<{ questionIndex: number; value: string | string[] }>
 
 export type DelegatedQuestionRequest = Readonly<{
   requestId: string

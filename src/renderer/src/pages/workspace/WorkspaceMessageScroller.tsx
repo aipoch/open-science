@@ -1726,7 +1726,7 @@ const WorkspaceMessageScrollerImpl = ({
                 if (
                   presentationBarrierIndex >= 0 &&
                   itemIndex > presentationBarrierIndex &&
-                  hidesBehindPresentationBarrier(item.type)
+                  hidesBehindPresentationBarrier(item)
                 ) {
                   return null
                 }
