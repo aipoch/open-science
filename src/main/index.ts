@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { inspectOwnedMacCrashpadProcesses } from './update/installation-occupancy'
 import type { ChildProcess } from 'node:child_process'
 import {
   assertInstallationChannelCertified,
@@ -206,12 +208,22 @@ async function startDesktop(): Promise<void> {
     resourcesPath: process.resourcesPath,
     packaged: app.isPackaged
   })
+  const crashReporterInstance = randomUUID()
+  const allowedInstallationProcessIds = (): number[] => [
+    process.pid,
+    ...app.getAppMetrics().map((metric) => metric.pid),
+    ...inspectOwnedMacCrashpadProcesses({
+      installationRoot: installationRootForEntry(initialBackendPaths.entry),
+      crashDumpsPath: app.getPath('crashDumps'),
+      instanceId: crashReporterInstance
+    })
+  ]
   let initialRecoveryError: DesktopRuntimeStartupError | undefined
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
     installationStartup = await resolveDesktopInstallationStartup({
       installationRoot: installationRootForEntry(initialBackendPaths.entry),
-      allowedProcessIds: () => [process.pid, ...app.getAppMetrics().map((metric) => metric.pid)],
+      allowedProcessIds: allowedInstallationProcessIds,
       version: app.getVersion()
     })
   } catch (error) {
@@ -367,7 +379,11 @@ async function startDesktop(): Promise<void> {
     productName: APP_NAME,
     companyName: 'aipoch',
     appVersion: app.getVersion(),
-    start: (options) => crashReporter.start(options)
+    start: (options) =>
+      crashReporter.start({
+        ...options,
+        globalExtra: { openScienceInstance: crashReporterInstance }
+      })
   })
   const [
     { electronApp },
@@ -1232,7 +1248,7 @@ async function startDesktop(): Promise<void> {
     location: { installationRoot: installationRootForEntry(backendPaths.entry) },
     client: () => client!,
     currentVersion: app.getVersion(),
-    allowedProcessIds: () => app.getAppMetrics().map((metric) => metric.pid),
+    allowedProcessIds: allowedInstallationProcessIds,
     preparedDebGate: () => preparedMacInstallation?.debGate,
     verifyInstallerReady: async () => {
       const gate = preparedMacInstallation?.debGate

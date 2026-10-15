@@ -1,10 +1,13 @@
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  inspectOwnedMacCrashpadProcesses,
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync
 } from './installation-occupancy'
 
-const mocks = vi.hoisted(() => ({ spawnSync: vi.fn(), run: vi.fn() }))
+const mocks = vi.hoisted(() => ({ spawnSync: vi.fn(), run: vi.fn(), realpath: vi.fn() }))
+vi.mock('node:fs', () => ({ realpathSync: mocks.realpath }))
 vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }))
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
 beforeEach(() => vi.resetAllMocks())
@@ -81,5 +84,93 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     output('not JSON')
     await expect(inspect('C:\\Apps\\Science')).rejects.toThrow()
+  })
+})
+
+describe('current macOS Crashpad ownership', () => {
+  const root = join('/Applications', 'Open Science.app')
+  const executable = join(
+    root,
+    'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+  )
+  const database = '/profiles/current profile/Crashpad'
+  const options = { installationRoot: root, crashDumpsPath: database, instanceId: 'current-launch' }
+  const command = (db = database, instance = options.instanceId): string =>
+    `${executable} --no-rate-limit --database=${db} --annotation=openScienceInstance=${instance} --handshake-fd=43`
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    mocks.realpath.mockImplementation((path: string) =>
+      path.startsWith(join('/var/')) ? join('/private', path) : path
+    )
+  })
+  const snapshot = (comm: string, args: string): void => {
+    mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: comm })
+    mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: args })
+  }
+
+  it('recognizes its reparented handler without trusting its PPID or process name', () => {
+    snapshot(`101 ${executable}\n102 /usr/bin/node`, `101 ${command()}\n102 ${command()}`)
+    expect(inspectOwnedMacCrashpadProcesses(options)).toEqual([101])
+  })
+
+  it.each([
+    ['another profile', command('/profiles/other/Crashpad')],
+    ['previous or other instance', command(database, 'other-launch')],
+    ['missing instance', `${executable} --database=${database}`],
+    ['prefix instance', command(database, 'current-launch-extra')],
+    ['prefix database', command(`${database}-other`)],
+    ['duplicate database', `${command()} --database=${database}`],
+    ['duplicate instance', `${command()} --annotation=openScienceInstance=current-launch`],
+    [
+      'another executable',
+      `/usr/bin/node --database=${database} --annotation=openScienceInstance=current-launch`
+    ]
+  ])('does not allow %s', (_name, args) => {
+    snapshot(`101 ${executable}`, `101 ${args}`)
+    expect(inspectOwnedMacCrashpadProcesses(options)).toEqual([])
+  })
+
+  it('requires the actual executable independently of matching arguments', () => {
+    snapshot(`101 ${executable}-other`, `101 ${command()}`)
+    expect(inspectOwnedMacCrashpadProcesses(options)).toEqual([])
+  })
+
+  it('canonicalizes macOS path aliases including database paths with spaces', () => {
+    const aliasRoot = join('/var/test', 'Open Science.app')
+    const aliasExecutable = executable.replace(root, aliasRoot)
+    snapshot(
+      `101 ${aliasExecutable}`,
+      `101 ${command(join('/var/test', 'profile space/Crashpad')).replace(executable, aliasExecutable)}`
+    )
+    expect(
+      inspectOwnedMacCrashpadProcesses({
+        ...options,
+        installationRoot: join('/private/var/test', 'Open Science.app'),
+        crashDumpsPath: join('/private/var/test', 'profile space/Crashpad')
+      })
+    ).toEqual([101])
+  })
+
+  it('keeps disappeared or unreadable candidates out of the allow list', () => {
+    snapshot('101 /gone', `101 ${command()}`)
+    mocks.realpath.mockImplementation((path: string) => {
+      if (path === '/gone') throw new Error('ENOENT')
+      return path
+    })
+    expect(inspectOwnedMacCrashpadProcesses(options)).toEqual([])
+  })
+
+  it.each([0, 1])('fails closed if process snapshot %s fails', (step) => {
+    if (step) mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: `101 ${executable}` })
+    mocks.spawnSync.mockReturnValueOnce({ status: null, stdout: '', error: new Error('timeout') })
+    expect(() => inspectOwnedMacCrashpadProcesses(options)).toThrow(
+      'ownership could not be inspected'
+    )
+  })
+
+  it.each(['linux', 'win32'] as const)('does not exempt handlers on %s', (platform) => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+    expect(inspectOwnedMacCrashpadProcesses(options)).toEqual([])
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
   })
 })
