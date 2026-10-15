@@ -71,7 +71,7 @@ diagnosis. Classification and gate validation continue to use trusted base code.
 
 ### Scheduled regression and publication
 
-[Process Lifecycle](process-lifecycle.md) runs its fixed source process collection daily on
+Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
 default-branch SHA is unchanged. Its manual `core` and `detector` modes are focused no-publish
 dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
