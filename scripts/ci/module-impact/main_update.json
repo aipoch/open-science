@@ -135,7 +135,8 @@
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
-      "src/main/desktop-runtime-launcher.test.ts"
+      "src/main/desktop-runtime-launcher.test.ts",
+      "scripts/ci/process-lifecycle.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
