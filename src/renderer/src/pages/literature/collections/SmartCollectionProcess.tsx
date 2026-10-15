@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import {
@@ -383,6 +384,8 @@ function RunProcess({
   collectionId: string
   view: SmartCollectionView & { run: NonNullable<SmartCollectionView['run']> }
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [snapshot, setSnapshot] = useState<SmartRunProgress>()
   const surface = useRef<HTMLElement>(null)
@@ -421,7 +424,7 @@ function RunProcess({
   useEffect(() => {
     if (!visible || !connected) return
     let current = true
-    void window.api.literature
+    void hostApi.literature
       .transact({ kind: 'read-smart-run-progress', collectionId, runId: view.run.id })
       .then(
         (receipt) => {
@@ -488,7 +491,7 @@ function RunProcess({
     return () => {
       current = false
     }
-  }, [collectionId, view, visible, connected, revision, wide, reducedMotion])
+  }, [collectionId, view, visible, connected, revision, wide, reducedMotion, hostApi.literature])
 
   const animate = !reducedMotion && wide && visible && connected && !error
   const active = snapshot?.state === 'running' || snapshot?.state === 'queued'

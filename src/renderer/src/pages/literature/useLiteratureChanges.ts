@@ -1,3 +1,4 @@
+import { useLiteratureHost } from './renderer-host'
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { useCallback, useLayoutEffect, useRef } from 'react'
 
@@ -9,6 +10,8 @@ export const isCollectionOnlyChange = (event?: LiteratureChangedEvent): boolean 
 export const useLiteratureChanges = (
   invalidate: (event?: LiteratureChangedEvent) => void
 ): ((collectionId: string) => void) => {
+  const { api: hostApi } = useLiteratureHost()
+
   const consume = useRef<(collectionId: string) => void>(() => {})
   const consumePendingCollection = useCallback(
     (collectionId: string) => consume.current(collectionId),
@@ -64,9 +67,9 @@ export const useLiteratureChanges = (
     const visible = (): void => {
       if (document.visibilityState === 'visible') refresh()
     }
-    const remove = window.api?.literature?.onChanged?.(changed)
-    const removeProjectDeleted = window.api?.projects?.onDeleted?.(refresh)
-    const removeProjectCleanup = window.api?.projects?.onDeletionCleanupChanged?.(refresh)
+    const remove = hostApi?.literature?.onChanged?.(changed)
+    const removeProjectDeleted = hostApi?.projects?.onDeleted?.(refresh)
+    const removeProjectCleanup = hostApi?.projects?.onDeletionCleanupChanged?.(refresh)
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', visible)
     window.addEventListener('open-science:web-events-open', refresh)
@@ -81,6 +84,6 @@ export const useLiteratureChanges = (
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('open-science:web-events-open', refresh)
     }
-  }, [])
+  }, [hostApi?.literature, hostApi?.projects])
   return consumePendingCollection
 }

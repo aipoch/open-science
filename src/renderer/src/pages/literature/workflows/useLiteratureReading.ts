@@ -1,15 +1,16 @@
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import { useNavigationStore, type PdfReadingDocument } from '@/stores/navigation-store'
+import { useLiteratureHost } from '../renderer-host'
+
+import { type PdfReadingDocument } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { useProjectStore } from '@/stores/project-store'
+import { type useProjectStore } from '@/stores/project-store'
 import type {
   LiteratureCatalogSearchRequest,
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { resolvePdfContextTarget } from '../../workspace/use-pdf-context-action'
-import { readLiteratureSelectionPage } from '../literature-read-pages'
+
+import { useLiteratureClient } from '../literature-read-pages'
 type PendingLiteratureReading = readonly PdfReadingDocument[]
 const isItem = (entry: unknown): entry is LiteratureItemView =>
   typeof entry === 'object' && entry !== null && 'item' in entry && 'metadataRevision' in entry
@@ -58,6 +59,12 @@ export function useLiteratureReading({
   readingProjectFormDialog: ReturnType<typeof useProjectFormDialog>
   requestReadSelection: () => Promise<void>
 } {
+  const { readLiteratureSelectionPage } = useLiteratureClient()
+
+  const { useNavigationStore, resolvePdfContextTarget, useProjectFormDialog } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const startPdfReadingConversation = useNavigationStore(
     (state) => state.startPdfReadingConversation
@@ -88,7 +95,7 @@ export function useLiteratureReading({
       setStartingReadingProjectId(targetProjectId)
       setReadingProjectError(undefined)
       try {
-        const result = await window.api.sessions.filterPdfContextCandidates({
+        const result = await hostApi.sessions.filterPdfContextCandidates({
           projectId: targetProjectId,
           sources: reading.map(({ source }) => source)
         })
@@ -126,6 +133,7 @@ export function useLiteratureReading({
     [
       pendingLiteratureReading,
       startingReadingProjectId,
+      hostApi.sessions,
       startPdfReadingConversation,
       startPdfReadingConversations,
       t
@@ -147,7 +155,7 @@ export function useLiteratureReading({
       setReadingProjectQuery('')
       setPendingLiteratureReading(reading)
     },
-    [selectedReadingProjectId, startReadingInProject, setPreviewItem]
+    [resolvePdfContextTarget, setPreviewItem, selectedReadingProjectId, startReadingInProject]
   )
   const readingProjectFormDialog = useProjectFormDialog({
     onCreated: (project) => void startReadingInProject(project.id)

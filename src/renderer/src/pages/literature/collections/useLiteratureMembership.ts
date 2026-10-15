@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
@@ -60,6 +61,8 @@ export function useLiteratureMembership({
   createCollectionForSelection: (name: string) => Promise<boolean>
   addSelectedItemsToProject: (projectId: string) => Promise<void>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [linkFailure, setLinkFailure] = useState<LinkFailure>()
   const clearSelection = (): void => selectionStore.clear()
@@ -99,7 +102,7 @@ export function useLiteratureMembership({
       }
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
         const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
-        await window.api.literature.transact({ ...command, itemIds: [...batch] })
+        await hostApi.literature.transact({ ...command, itemIds: [...batch] })
         completed += batch.length
       }
       if (linkScopeRef.current === scopeKey) {
@@ -165,7 +168,7 @@ export function useLiteratureMembership({
       // Resolve before creating so every continuation has a fixed reference set.
       const itemIds = await resolveSelectedItemIds()
       if (linkScopeRef.current !== scopeKey) return false
-      const receipt = await window.api.literature.transact({ kind: 'create-collection', name })
+      const receipt = await hostApi.literature.transact({ kind: 'create-collection', name })
       void loadCollections().catch(() => undefined)
       await runLinkBatch(
         {

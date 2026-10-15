@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
@@ -132,11 +133,13 @@ export function LiteratureSidebarState({
 }: Readonly<{
   children: (collapsed: boolean, toggle: () => void) => React.JSX.Element
 }>): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     const toggleFromShortcut = (event: KeyboardEvent): void => {
-      const isMac = window.api?.platform === 'darwin'
+      const isMac = hostApi?.platform === 'darwin'
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -156,7 +159,7 @@ export function LiteratureSidebarState({
 
     window.addEventListener('keydown', toggleFromShortcut)
     return () => window.removeEventListener('keydown', toggleFromShortcut)
-  }, [])
+  }, [hostApi?.platform])
 
   return (
     <TooltipProvider>

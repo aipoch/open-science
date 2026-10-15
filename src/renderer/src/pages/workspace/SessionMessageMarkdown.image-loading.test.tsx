@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, type ElementType } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SessionMessageMarkdown } from './SessionMessageMarkdown'

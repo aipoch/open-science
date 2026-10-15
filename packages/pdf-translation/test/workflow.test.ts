@@ -51,6 +51,44 @@ const setup = (checkpoints?: TranslationCheckpointStore) => {
   }
 }
 
+describe('optional translation backends', () => {
+  it('rejects unavailable routes before recording usage and shuts down without an Agent', async () => {
+    const h = setup()
+    const owner = new PdfTranslationOwner({ usage: h.usage })
+    try {
+      for (const targetId of ['agent', 'api', 'local'] as const)
+        await expect(owner.begin({ ...input, targetId }, h.caller.lease)).rejects.toMatchObject({
+          code: 'unsupported-model'
+        })
+      await expect(owner.begin(input, h.caller.lease)).rejects.toMatchObject({
+        code: 'unsupported-model'
+      })
+      expect(h.usage.start).not.toHaveBeenCalled()
+      await owner.sweepStaleProfiles()
+      expect(h.usage.recover).toHaveBeenCalledOnce()
+    } finally {
+      await owner.shutdown()
+    }
+    expect(h.usage.flush).toHaveBeenCalledOnce()
+  })
+
+  it('requires both Agent capabilities before admitting an operation', async () => {
+    const h = setup()
+    for (const options of [{ runner: h.runner }, { captureTarget: h.captureTarget }]) {
+      const owner = new PdfTranslationOwner({ usage: h.usage, ...options })
+      try {
+        await expect(owner.begin(input, h.caller.lease)).rejects.toMatchObject({
+          code: 'unsupported-model'
+        })
+        expect(h.captureTarget).not.toHaveBeenCalled()
+        expect(h.usage.start).not.toHaveBeenCalled()
+      } finally {
+        await owner.shutdown()
+      }
+    }
+  })
+})
+
 describe('skipping a paragraph', () => {
   const setupSkip = (translatedSourceIndices: number[] = []) => {
     let checkpoint = {
@@ -1463,8 +1501,6 @@ describe('bounded short-unit translation prefetch', () => {
     const run = vi.fn(async () => ({ ...reply([1, 0]), stopReason: 'end_turn' as const }))
     const owner = new PdfTranslationOwner({
       usage: h.usage,
-      runner: h.runner,
-      captureTarget: h.captureTarget,
       captureApiTarget,
       apiRunner: { supportsTarget: () => true, run }
     })
@@ -1584,8 +1620,6 @@ describe('application-owned local translation', () => {
       shutdown: vi.fn(async () => {})
     }
     const owner = new PdfTranslationOwner({
-      captureTarget: h.captureTarget,
-      runner: h.runner,
       usage: h.usage,
       localRunner
     })

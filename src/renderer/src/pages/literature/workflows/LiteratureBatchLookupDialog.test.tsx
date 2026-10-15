@@ -6,7 +6,14 @@ import type {
 } from '@aipoch/literature-discovery/jobs'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within
+} from '../../../../../../test/renderer/literature'
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LiteratureBatchLookupDialog } from './LiteratureBatchLookupDialog'

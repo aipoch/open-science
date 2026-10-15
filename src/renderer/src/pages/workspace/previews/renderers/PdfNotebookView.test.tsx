@@ -4,7 +4,7 @@ import * as annotationContext from '../../pdf-annotations/pdf-annotations-contex
 import * as annotationReveal from '../../annotations/annotation-reveal'
 import { fireEvent, getByRole, waitFor } from '@testing-library/react'
 import { act, createElement } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PdfAnnotation } from '../../../../../../shared/pdf-annotations'

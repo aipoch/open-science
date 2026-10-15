@@ -1,3 +1,5 @@
+import { createLiteraturePackageSource } from '../literature/package-source'
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -46,6 +48,7 @@ const setup = async (): Promise<
   // Session path codecs must use fixture data, not the desktop configuration under test.
   vi.spyOn(storageRoots, 'resolveDataRoot').mockReturnValue(fixture.storageRoot)
   const service = new SessionPackageService({
+    literatureSource: createLiteraturePackageSource(async () => fixture.client),
     storageRoot: fixture.storageRoot,
     getClient: async () => fixture.client
   })
@@ -127,6 +130,38 @@ const seed = async (source: Awaited<ReturnType<typeof setup>>): Promise<void> =>
   await new SessionRepository(storageRoot).saveSession(session())
 }
 
+it.each(['deleted', 'unavailable', 'checksum', 'size', 'content-type'] as const)(
+  'rejects a live Literature source with invalid %s identity',
+  async (invalid) => {
+    const fixture = await setup()
+    await seed(fixture)
+    if (invalid === 'deleted')
+      await fixture.client.literatureItem.update({
+        where: { id: 'item-1' },
+        data: { deletedAt: new Date() }
+      })
+    else if (invalid === 'content-type')
+      await fixture.client.literatureAttachmentVersion.update({
+        where: { id: 'version-1' },
+        data: { contentType: 'text/plain' }
+      })
+    else
+      await fixture.client.contentBlob.update({
+        where: { id: 'blob-1' },
+        data:
+          invalid === 'unavailable'
+            ? { state: 'quarantined' }
+            : invalid === 'checksum'
+              ? { checksum: '0'.repeat(64) }
+              : { sizeBytes: 1n }
+      })
+    const source = createLiteraturePackageSource(async () => fixture.client)
+    await expect(source.readVersions(['version-1'])).rejects.toThrow(
+      'Literature PDF content identity is invalid'
+    )
+  }
+)
+
 it.each([false, true])(
   'round-trips Reading PDF metadata with excluded=%s and keeps it out of the Library',
   async (excluded) => {
@@ -176,6 +211,7 @@ it.each([false, true])(
     const authority = new LiteratureAttachmentAuthority({
       getClient: async () => target.client,
       content: new ContentRepository({
+        references: persistentContentReferences,
         storageRoot: target.storageRoot,
         getClient: async () => target.client
       }),
@@ -648,6 +684,7 @@ it('forks a PDF referenced only by a private bookmark and keeps its metadata and
   const authority = new LiteratureAttachmentAuthority({
     getClient: async () => fixture.client,
     content: new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: fixture.storageRoot,
       getClient: async () => fixture.client
     }),

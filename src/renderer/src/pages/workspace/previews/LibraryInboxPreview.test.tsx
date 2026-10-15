@@ -4,7 +4,14 @@ import {
   type LiteratureCatalogSearchRequest,
   type LiteratureInboxCandidateView
 } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LibraryInboxPreview } from './LibraryInboxPreview'
 import LibraryPreview from './LibraryPreview'

@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SmartCollectionProcess } from './SmartCollectionProcess'
 import { createSmartCollectionState } from './smart-collection-state'

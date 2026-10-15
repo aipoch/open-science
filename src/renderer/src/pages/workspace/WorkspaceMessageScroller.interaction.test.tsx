@@ -19,7 +19,7 @@ import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { fireEvent, waitFor } from '@testing-library/react'
 import type { PropsWithChildren } from 'react'
 import { act, forwardRef, useCallback, useEffect } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
 import type { JobSummary } from '../../../../shared/compute'
@@ -404,6 +404,9 @@ const createHandoffEvent = (
     artifactIds: ['artifact-1']
   }
 })
+
+// Load the integration host after this suite's preview-store mock values are initialized.
+const { createRoot } = await import('../../../../../test/renderer/literature')
 
 describe('WorkspaceMessageScroller artifact click behavior', () => {
   let container: HTMLDivElement

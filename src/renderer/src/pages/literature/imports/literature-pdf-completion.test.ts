@@ -20,12 +20,12 @@ it('replaces the filename title and shares in-flight and cached DOI lookups', as
   const lookup = vi.fn().mockResolvedValue(resolved)
   install(lookup)
   const [first, second] = await Promise.all([
-    completeLiteraturePdfDraft(draft),
-    completeLiteraturePdfDraft(draft)
+    completeLiteraturePdfDraft(window.api, draft),
+    completeLiteraturePdfDraft(window.api, draft)
   ])
   expect(first.title).toBe(resolved.title)
   expect(second).toEqual(first)
-  await completeLiteraturePdfDraft(draft)
+  await completeLiteraturePdfDraft(window.api, draft)
   expect(lookup).toHaveBeenCalledExactlyOnceWith(draft.identifiers[0].value)
   expect(draft.title).toBe('s11914-026-00956-3')
 })
@@ -34,10 +34,10 @@ it('retains local fields on failure, retries failed lookups, and expires success
   vi.useFakeTimers()
   const lookup = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(resolved)
   install(lookup)
-  expect(await completeLiteraturePdfDraft(draft)).toBe(draft)
-  expect((await completeLiteraturePdfDraft(draft)).title).toBe(resolved.title)
+  expect(await completeLiteraturePdfDraft(window.api, draft)).toBe(draft)
+  expect((await completeLiteraturePdfDraft(window.api, draft)).title).toBe(resolved.title)
   vi.advanceTimersByTime(5 * 60_000 + 1)
-  await completeLiteraturePdfDraft(draft)
+  await completeLiteraturePdfDraft(window.api, draft)
   expect(lookup).toHaveBeenCalledTimes(3)
 })
 
@@ -45,7 +45,7 @@ it('does not query without a DOI or erase local authors absent from Crossref', a
   const lookup = vi.fn().mockResolvedValue(resolved)
   install(lookup)
   const noDoi = { ...draft, identifiers: [] }
-  expect(await completeLiteraturePdfDraft(noDoi)).toBe(noDoi)
+  expect(await completeLiteraturePdfDraft(window.api, noDoi)).toBe(noDoi)
   expect(lookup).not.toHaveBeenCalled()
   const creators = [
     {
@@ -55,19 +55,21 @@ it('does not query without a DOI or erase local authors absent from Crossref', a
       creatorType: 'author'
     }
   ]
-  expect((await completeLiteraturePdfDraft({ ...draft, creators })).creators).toEqual(creators)
+  expect((await completeLiteraturePdfDraft(window.api, { ...draft, creators })).creators).toEqual(
+    creators
+  )
 })
 
 it('keeps a frequently used DOI under cache pressure instead of evicting by insertion order', async () => {
   const lookup = vi.fn().mockResolvedValue(resolved)
   install(lookup)
-  await completeLiteraturePdfDraft(draft)
+  await completeLiteraturePdfDraft(window.api, draft)
   for (let i = 0; i < 40; i++) {
-    await completeLiteraturePdfDraft({
+    await completeLiteraturePdfDraft(window.api, {
       ...draft,
       identifiers: [{ scheme: 'doi', value: `10.1000/paper-${i}`, isPrimary: true }]
     })
-    await completeLiteraturePdfDraft(draft)
+    await completeLiteraturePdfDraft(window.api, draft)
   }
   expect(lookup.mock.calls.filter(([doi]) => doi === draft.identifiers[0].value)).toHaveLength(1)
   expect(lookup).toHaveBeenCalledTimes(41)
@@ -86,16 +88,16 @@ it('starts TTL at successful completion and shares a slow request past the TTL w
     )
     .mockResolvedValue(resolved)
   install(lookup)
-  const first = completeLiteraturePdfDraft(draft)
+  const first = completeLiteraturePdfDraft(window.api, draft)
   vi.advanceTimersByTime(5 * 60_000 + 1)
-  const second = completeLiteraturePdfDraft(draft)
+  const second = completeLiteraturePdfDraft(window.api, draft)
   expect(lookup).toHaveBeenCalledTimes(1)
   finish(resolved)
   await Promise.all([first, second])
-  await completeLiteraturePdfDraft(draft)
+  await completeLiteraturePdfDraft(window.api, draft)
   expect(lookup).toHaveBeenCalledTimes(1)
   vi.advanceTimersByTime(5 * 60_000 + 1)
-  await completeLiteraturePdfDraft(draft)
+  await completeLiteraturePdfDraft(window.api, draft)
   expect(lookup).toHaveBeenCalledTimes(2)
 })
 
@@ -125,7 +127,7 @@ it('tries PMID after a successful DOI result lacks an abstract, preserving earli
     })
   install(lookup)
   const notice = vi.fn()
-  const completed = await completeLiteraturePdfDraft(dualIdentifierDraft, notice)
+  const completed = await completeLiteraturePdfDraft(window.api, dualIdentifierDraft, notice)
   expect(lookup.mock.calls).toEqual([[draft.identifiers[0].value], ['pmid:12345678']])
   expect(completed).toMatchObject({
     title: resolved.title,
@@ -160,12 +162,14 @@ it.each(['offline', 'conflicting', 'empty'])(
       })
     install(lookup)
     const notice = vi.fn()
-    expect(await completeLiteraturePdfDraft(dualIdentifierDraft, notice)).toMatchObject({
-      title: resolved.title,
-      containerTitle: 'Verified journal',
-      abstract: '',
-      identifiers: dualIdentifierDraft.identifiers
-    })
+    expect(await completeLiteraturePdfDraft(window.api, dualIdentifierDraft, notice)).toMatchObject(
+      {
+        title: resolved.title,
+        containerTitle: 'Verified journal',
+        abstract: '',
+        identifiers: dualIdentifierDraft.identifiers
+      }
+    )
     expect(lookup).toHaveBeenCalledTimes(2)
     expect(notice).toHaveBeenCalledExactlyOnceWith({ lookupFailed: true })
   }
@@ -175,7 +179,7 @@ it('stops after a verified result already includes an abstract', async () => {
   const lookup = vi.fn().mockResolvedValue({ ...resolved, abstract: 'Available abstract.' })
   install(lookup)
   const notice = vi.fn()
-  expect((await completeLiteraturePdfDraft(dualIdentifierDraft, notice)).abstract).toBe(
+  expect((await completeLiteraturePdfDraft(window.api, dualIdentifierDraft, notice)).abstract).toBe(
     'Available abstract.'
   )
   expect(lookup).toHaveBeenCalledExactlyOnceWith(draft.identifiers[0].value)
@@ -192,7 +196,7 @@ it('does not report a lookup failure when local metadata has no lookup identifie
     abstract: 'Locally extracted abstract',
     identifiers: []
   }
-  expect(await completeLiteraturePdfDraft(local, notice)).toBe(local)
+  expect(await completeLiteraturePdfDraft(window.api, local, notice)).toBe(local)
   expect(lookup).not.toHaveBeenCalled()
   expect(notice).not.toHaveBeenCalled()
 })

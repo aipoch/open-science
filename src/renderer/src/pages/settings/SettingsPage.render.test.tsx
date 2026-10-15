@@ -2,7 +2,7 @@ import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 // @vitest-environment jsdom
 import { act, createRef, Profiler, StrictMode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { fireEvent, waitFor } from '@testing-library/react'
 import * as Dialog from '@/components/ui/dialog'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'

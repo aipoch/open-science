@@ -4,7 +4,7 @@ import {
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import { LiteratureRecordImportDialog } from './LiteratureRecordImportDialog'

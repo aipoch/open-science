@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../test/renderer/literature'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { read } from 'styled-exceljs'
 import { JournalManager } from './JournalManager'

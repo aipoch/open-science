@@ -2,7 +2,7 @@ import { waitFor } from '@testing-library/react'
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { useArtifactEnvironmentLockStore } from './artifact-environment-lock-store'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {

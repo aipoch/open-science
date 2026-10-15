@@ -1,8 +1,8 @@
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import { useProjectStore } from '@/stores/project-store'
+import { type useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { type useProjectStore } from '@/stores/project-store'
 import type {
   LiteratureCollectionView,
   LiteratureItemView

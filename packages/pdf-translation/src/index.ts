@@ -207,8 +207,8 @@ export type PdfTranslationOptions<
   isApiTargetAllowed?: (target: ApiTarget) => boolean
   usage: TranslationUsageRecorder
   checkpoints?: TranslationCheckpointStore
-  captureTarget: (model?: PdfTranslationBeginRequest['agentModel']) => Promise<AgentTarget>
-  runner: TranslationAgentRunner<AgentTarget>
+  captureTarget?: (model?: PdfTranslationBeginRequest['agentModel']) => Promise<AgentTarget>
+  runner?: TranslationAgentRunner<AgentTarget>
   captureApiTarget?: (model?: PdfTranslationBeginRequest['apiModel']) => Promise<ApiTarget>
   apiRunner?: TranslationApiRunner<ApiTarget>
   localRunner?: PdfTranslationLocalRuntime
@@ -535,6 +535,9 @@ export class PdfTranslationOwner<
     const operationId = randomUUID()
     const controller = new AbortController()
     const mode = input.targetId ?? 'agent'
+    if (mode === 'agent' && (!this.options.captureTarget || !this.options.runner)) {
+      throw new PdfTranslationError('unsupported-model', 'Agent translation is unavailable.')
+    }
     if (mode === 'api' && (!this.options.captureApiTarget || !this.options.apiRunner)) {
       throw new PdfTranslationError('unsupported-model', 'Direct translation API is unavailable.')
     }
@@ -663,7 +666,7 @@ export class PdfTranslationOwner<
           mode: 'api'
         }
       } else {
-        operation.target = this.options.captureTarget(input.agentModel)
+        operation.target = this.options.captureTarget!(input.agentModel)
         const target = await operation.target!
         controller.signal.throwIfAborted()
         if (
@@ -678,7 +681,7 @@ export class PdfTranslationOwner<
             'model-changed',
             'The selected translation model is no longer available.'
           )
-        if (!this.options.runner.supportsTarget(target))
+        if (!this.options.runner!.supportsTarget(target))
           throw new PdfTranslationError(
             'unsupported-model',
             'The selected model cannot run tool-less translation.'
@@ -1075,7 +1078,7 @@ export class PdfTranslationOwner<
               outputLimitBytes: 256 * 1024
             })
           : operation.mode === 'agent'
-            ? await this.options.runner.run({
+            ? await this.options.runner!.run({
                 target: agentTarget!,
                 systemPrompt,
                 prompt,
@@ -1616,13 +1619,13 @@ export class PdfTranslationOwner<
 
   async sweepStaleProfiles(): Promise<void> {
     await this.writes.recover(() => this.options.usage.recover())
-    await this.options.runner.sweepStaleProfiles()
+    await this.options.runner?.sweepStaleProfiles()
   }
   async shutdown(): Promise<void> {
     this.stopping = true
     this.shutdownController.abort()
     for (const [id, operation] of this.operations) this.close(id, operation.caller)
-    await this.options.runner.shutdown()
+    await this.options.runner?.shutdown()
     await this.options.localRunner?.shutdown()
     await Promise.all(this.pendingRuns)
     await this.options.usage.flush()

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../test/renderer/literature'
 import { i18next } from './i18n'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -353,7 +353,7 @@ vi.mock('@/pages/home/HomePage', () => ({
     )
   }
 }))
-vi.mock('@/pages/literature/LiteratureLibraryPage', () => ({
+vi.mock('@/pages/literature/public/page', () => ({
   LiteratureLibraryPage: (): React.JSX.Element => {
     mocks.literaturePage.renderCount += 1
     return <div data-testid="literature-library-page" />

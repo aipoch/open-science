@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'

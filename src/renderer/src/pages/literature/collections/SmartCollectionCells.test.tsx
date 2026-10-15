@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { SmartCollectionCells, type SmartCollectionCellActions } from './SmartCollectionDecision'
 import type { SmartCollectionRow } from '@aipoch/literature-screening/contracts'
 

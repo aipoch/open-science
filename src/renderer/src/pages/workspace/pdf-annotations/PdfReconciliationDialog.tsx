@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { LiteratureImportDialogFrame } from '../../literature/imports/LiteratureImportDialogFrame'
+import { WorkflowDialogFrame } from '@/components/ui/workflow-dialog-frame'
 import {
   Select,
   SelectContent,
@@ -62,7 +62,7 @@ export function PdfReconciliationDialog({
         {t('Resolve historical note conflicts')}
       </Button>
       {open ? (
-        <LiteratureImportDialogFrame
+        <WorkflowDialogFrame
           title={t('Resolve historical note conflicts')}
           description={t('These notes have conflicting edits or deletions. Choose what to keep.')}
           busy={busy}
@@ -159,7 +159,7 @@ export function PdfReconciliationDialog({
               </p>
             ) : null}
           </div>
-        </LiteratureImportDialogFrame>
+        </WorkflowDialogFrame>
       ) : null}
     </>
   )

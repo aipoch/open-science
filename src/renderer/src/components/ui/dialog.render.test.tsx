@@ -1,7 +1,14 @@
 import * as AlertDialog from './alert-dialog'
 import { OverlayLayerProvider } from './overlay-layer'
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as Dialog from '@/components/ui/dialog'
 import { LiteratureDuplicatePolicyField } from '@/pages/literature/imports/LiteratureDuplicatePolicyField'

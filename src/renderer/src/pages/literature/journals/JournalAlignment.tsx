@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScanSearch, Search, Unlink, X } from 'lucide-react'
@@ -15,7 +16,7 @@ import { CollectionOptionHelp } from '../collections/CollectionOptionHelp'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { LiteraturePagination } from '../list/LiteraturePagination'
 import { LiteratureTextTooltip } from '../LiteratureTable'
-import { refreshJournalAttributes } from './journal-attribute-store'
+import { useJournalStore } from './journal-attribute-store'
 import type {
   JournalAlignment as Alignment,
   JournalIdentity,
@@ -34,6 +35,10 @@ export function JournalAlignment({
   onOpenItem: (id: string, initiator?: HTMLElement) => void | Promise<void>
   expanded?: boolean
 }): React.JSX.Element {
+  const { refreshJournalAttributes } = useJournalStore()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [open, setOpen] = useState(expanded)
   const [report, setReport] = useState<Alignment>()
@@ -62,7 +67,7 @@ export function JournalAlignment({
   useEffect(() => {
     if (target !== undefined) confirmationPanel.current?.scrollIntoView?.({ block: 'nearest' })
   }, [target])
-  const api = window.api.literature.journals
+  const api = hostApi.literature.journals
   const cancelScan = useCallback((): void => {
     checkGeneration.current++
     generation.current++
@@ -96,7 +101,7 @@ export function JournalAlignment({
       setSelected(undefined)
       setTarget(undefined)
     }
-    const remove = window.api.literature.onChanged?.(invalidate)
+    const remove = hostApi.literature.onChanged?.(invalidate)
     window.addEventListener('open-science:web-events-open', invalidate)
     return () => {
       cancelScan()
@@ -104,7 +109,7 @@ export function JournalAlignment({
       remove?.()
       window.removeEventListener('open-science:web-events-open', invalidate)
     }
-  }, [open, cancelScan])
+  }, [open, cancelScan, hostApi.literature])
 
   const run = async (request: JournalRequest): Promise<JournalResult | undefined> => {
     const current = (generation.current += 1)

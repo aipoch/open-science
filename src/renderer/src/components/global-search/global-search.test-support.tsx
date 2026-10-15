@@ -15,7 +15,7 @@ import {
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { fireEvent } from '@testing-library/react'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { vi } from 'vitest'
 import { GlobalSearchDialog } from './GlobalSearchDialog'
 

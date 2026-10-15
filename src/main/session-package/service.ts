@@ -1,3 +1,4 @@
+import type { PackageLiteratureSource } from './literature-source'
 import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
   createLogger,
@@ -166,6 +167,7 @@ const PACKAGE_README =
   '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
 
 type PackageOptions = {
+  literatureSource?: PackageLiteratureSource
   storageRoot: string
   configRoot?: string
   getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
@@ -814,7 +816,7 @@ export class SessionPackageService {
       request.sessionId
     )
     const literatureSources = await capturePackageLiterature(
-      client,
+      this.options.literatureSource,
       session,
       records,
       bookmarkLiteratureIds
@@ -1145,7 +1147,7 @@ export class SessionPackageService {
             retainedOrigin.identities
           ) as NonNullable<PackageRecords['literature']>
         const currentLiteratureSources = await capturePackageLiterature(
-          client,
+          this.options.literatureSource,
           session,
           currentRecords,
           bookmarkLiteratureIds

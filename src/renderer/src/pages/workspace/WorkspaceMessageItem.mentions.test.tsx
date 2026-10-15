@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, StrictMode } from 'react'
 import { fireEvent } from '@testing-library/react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

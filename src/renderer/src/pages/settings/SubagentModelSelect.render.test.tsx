@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'

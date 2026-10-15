@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, useState } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'

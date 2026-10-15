@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { createLiteratureCreation } from '@aipoch/literature-library/client'
 import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '@aipoch/literature-library/contracts'
@@ -118,6 +119,8 @@ export function useLiteratureImport({
   beginManualImport: (resetDraft?: boolean) => void
   closeRecordImport: () => void
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
@@ -138,7 +141,7 @@ export function useLiteratureImport({
   }, [detailController, detailReader])
   const [creation] = useState(() =>
     createLiteratureCreation<File | PdfAnnotationSource>({
-      transact: (command) => window.api.literature.transact(command),
+      transact: (command) => hostApi.literature.transact(command),
       read: detailReader.read,
       onCreated: setCreatedItemId
     })
@@ -206,14 +209,14 @@ export function useLiteratureImport({
         async (file, itemId) => {
           if ('kind' in file)
             return (
-              await window.api.literature.addPdf({ source: file, itemId, operationId: transferId })
+              await hostApi.literature.addPdf({ source: file, itemId, operationId: transferId })
             ).item
           staged = await pdfStaging.stagePdf(file, transferId)
-          await window.api.uploads.claimLocalFile?.({ transferId })
+          await hostApi.uploads.claimLocalFile?.({ transferId })
           pdfStaging.finishPdfStaging()
           const operationId = crypto.randomUUID()
           pdfStaging.trackNativeImport(operationId)
-          const result = await window.api.literature.importPdf({
+          const result = await hostApi.literature.importPdf({
             itemId,
             attachment: staged,
             operationId
@@ -257,8 +260,7 @@ export function useLiteratureImport({
         )
       }
     } finally {
-      if (staged)
-        await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
+      if (staged) await hostApi.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
       void loadEntries(true)
       pdfStaging.clear()
       creatingItemRef.current = false
@@ -287,9 +289,9 @@ export function useLiteratureImport({
             if (importMetadataGenerationRef.current === generation)
               setPendingImportMetadataNotice(pdfMetadataNoticeLabel(value, t))
           }
-          const local = await extractLiteraturePdfDraft(file, fallback, notice)
+          const local = await extractLiteraturePdfDraft(hostApi, file, fallback, notice)
           if (importMetadataGenerationRef.current !== generation) return local
-          return completeLiteraturePdfDraft(local, notice)
+          return completeLiteraturePdfDraft(hostApi, local, notice)
         }
       )
       .then((draft) => {
@@ -350,7 +352,7 @@ export function useLiteratureImport({
       const content = await file.text()
       if (request !== recordImportRequest.current) return
       setRecordImport({ fileName: file.name, content, destination })
-      const preview = await window.api.literature.importRecords({ mode: 'preview', content })
+      const preview = await hostApi.literature.importRecords({ mode: 'preview', content })
       if (request !== recordImportRequest.current) return
       setRecordImport({ fileName: file.name, content, preview, destination })
     } catch {
@@ -378,7 +380,7 @@ export function useLiteratureImport({
       current ? { ...current, error: undefined, failedCount: undefined } : current
     )
     try {
-      const imported = await window.api.literature.importRecords({
+      const imported = await hostApi.literature.importRecords({
         mode: 'commit',
         content: recordImport.content,
         ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy }),
@@ -391,7 +393,7 @@ export function useLiteratureImport({
           offset < imported.imported.itemIds.length;
           offset += LITERATURE_BATCH_COMMAND_SIZE
         ) {
-          await window.api.literature.transact({
+          await hostApi.literature.transact({
             kind: 'set-project-items',
             projectId,
             itemIds: imported.imported.itemIds.slice(
@@ -410,7 +412,7 @@ export function useLiteratureImport({
       ])
     } catch (error) {
       if (error instanceof Error && error.message.includes(LITERATURE_IMPORT_IDENTITY_CONFLICT)) {
-        const preview = await window.api.literature
+        const preview = await hostApi.literature
           .importRecords({ mode: 'preview', content: recordImport.content })
           .catch(() => undefined)
         setRecordImport((current) =>

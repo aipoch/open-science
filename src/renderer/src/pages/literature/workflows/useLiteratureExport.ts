@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureCitationStyle } from '@aipoch/literature-citations/contracts'
 import { useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -22,11 +23,13 @@ export function useLiteratureExport({
   exportSelectedItems: (format: 'bibtex' | 'ris') => Promise<boolean>
   exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [exportReferences] = useState(() =>
     createReferenceExporter({
-      format: (request) => window.api.literature.formatReferences(request),
-      save: (file) => window.api.saveBlobFile(file)
+      format: (request) => hostApi.literature.formatReferences(request),
+      save: (file) => hostApi.saveBlobFile(file)
     })
   )
 
@@ -56,7 +59,7 @@ export function useLiteratureExport({
   const exportCurrentScope = async (format: 'bibtex' | 'ris'): Promise<boolean> => {
     if (!selectedProject && !selectedCollection) return false
     try {
-      const page = await window.api.literature.search({
+      const page = await hostApi.literature.search({
         scope: 'library',
         ...(selectedProject ? { projectId: selectedProject.id } : {}),
         ...(selectedCollection ? { collectionId: selectedCollection.id } : {}),
