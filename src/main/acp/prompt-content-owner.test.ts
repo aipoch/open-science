@@ -85,6 +85,38 @@ describe('PDF preparation routing', () => {
   })
 })
 
+describe('classification image uploads', () => {
+  it('reads an unpublished current upload through the scoped upload capability', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const openLatest = vi.fn(async () => {
+      throw new Error('Unpublished uploads have no managed-file head.')
+    })
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      managedFileVersions: { openLatest } as never,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+    const [attachment] = await stageUploadFixtures(uploads, {
+      files: [
+        { name: 'current-image.png', mimeType: 'image/png', content: imageBytes.toString('base64') }
+      ]
+    })
+
+    const images = await owner.loadClassificationImages({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      currentUploads: [attachment!],
+      signal: new AbortController().signal
+    })
+
+    expect(images).toHaveLength(1)
+    expect(images[0]).toMatchObject({ mimeType: 'image/png' })
+    expect(Buffer.from(images[0]!.data, 'base64').byteLength).toBe(images[0]!.byteLength)
+    expect(openLatest).not.toHaveBeenCalled()
+  })
+})
+
 const createRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'acp-prompt-content-owner-'))
   roots.push(root)

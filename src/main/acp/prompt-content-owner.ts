@@ -241,15 +241,16 @@ class AcpPromptContentOwner {
       if (images.length >= MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE)
         throw new Error('Classification image count exceeds the request budget.')
       let bytes: Buffer
-      if (this.options.managedFileVersions) {
+      if (attachment.versionId && this.options.managedFileVersions) {
         const identity = {
           source: 'upload' as const,
           projectId: input.projectId,
           fileId: attachment.id
         }
-        const lease = attachment.versionId
-          ? await this.options.managedFileVersions.openVersion(identity, attachment.versionId)
-          : await this.options.managedFileVersions.openLatest(identity)
+        const lease = await this.options.managedFileVersions.openVersion(
+          identity,
+          attachment.versionId
+        )
         try {
           if (lease.size > MAX_AUTO_PROCESS_IMAGE_BYTES)
             throw new Error('Classification image exceeds the processing limit.')
