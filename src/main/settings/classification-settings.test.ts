@@ -182,6 +182,15 @@ it('sends current images through the Jev System One endpoint on OpenCode Zen', a
     JSON.parse(String(init?.body)).state.images[0]
   )
 })
+it('keeps the empty-input fast path when the image loader finds no images', async () => {
+  await configure()
+  fetchMock.mockClear()
+
+  await expect(
+    owner.selectSkills({ ...request(), text: '', loadImages: async () => [] })
+  ).resolves.toEqual([])
+  expect(fetchMock).not.toHaveBeenCalled()
+})
 it('rejects a new invalid key without creating settings and redacts validation details', async () => {
   fetchMock.mockResolvedValueOnce(
     new Response(JSON.stringify({ error: { message: 'Invalid synthetic-bad-key' } }), {

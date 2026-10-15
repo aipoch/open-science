@@ -51,6 +51,7 @@ class ClassificationRequestError extends Error {
     super('Classification request failed.')
   }
 }
+class EmptyClassificationInputError extends Error {}
 const CLASSIFICATION_ENDPOINTS = {
   typesafe: 'https://api.typesafe.ai/v1/systemone',
   openrouter: 'https://openrouter.ai/api/alpha/decisions',
@@ -741,6 +742,10 @@ export class ClassificationSettingsOwner {
         .slice(0, 3)
         .map(({ candidate }) => ({ name: candidate.name, path: candidate.path }))
     } catch (error) {
+      if (error instanceof EmptyClassificationInputError) {
+        log.info('classification selection skipped', { reason: 'empty-input' })
+        return []
+      }
       log.warn('classification selection failed', {
         reason: signal.aborted ? 'cancelled' : 'unavailable-decision',
         ...diagnosticErrorFields(error)
@@ -816,7 +821,7 @@ export class ClassificationSettingsOwner {
       controller.signal.throwIfAborted()
       const hasImages = assets !== undefined && Object.keys(assets).length > 0
       if (loadImages && !state.trim() && !hasImages)
-        throw new Error('Classification input is empty.')
+        throw new EmptyClassificationInputError('Classification input is empty.')
       const body = JSON.stringify({
         model: modelId,
         state: hasImages ? { text: state, images: Object.keys(assets) } : state,
