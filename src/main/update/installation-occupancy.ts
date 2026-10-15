@@ -1,7 +1,32 @@
 import { spawnSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { readlinkSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
+
+// Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
+function isLinuxInstallationExecutable(pid: number, installationRoot: string): boolean {
+  try {
+    const executable = readlinkSync(`/proc/${pid}/exe`)
+    return (
+      executable === installationRoot ||
+      executable === `${installationRoot} (deleted)` ||
+      executable.startsWith(`${installationRoot}/`)
+    )
+  } catch (cause) {
+    // Exited processes/kernel threads have no executable. Other users' executable links may be
+    // protected; their command lines and live installation registrations are still checked.
+    if (
+      ['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes((cause as NodeJS.ErrnoException).code ?? '')
+    )
+      return false
+    throw new UpdateLifecycleError(
+      'installation-busy',
+      'Installation executable occupancy could not be inspected.',
+      undefined,
+      { cause }
+    )
+  }
+}
 
 // Detect pre-registration runtimes as well as current protocol participants. Process-list failure is
 // unknown occupancy, never an empty list. The caller excludes only its own Desktop and exact Runtime.
@@ -52,7 +77,13 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
   const pids = new Set<number>()
   for (const line of result.stdout.split('\n')) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (match && match[2].includes(installationRoot)) pids.add(Number(match[1]))
+    if (
+      match &&
+      (match[2].includes(installationRoot) ||
+        (process.platform === 'linux' &&
+          isLinuxInstallationExecutable(Number(match[1]), installationRoot)))
+    )
+      pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
     // Text mappings cover a bundled Node launched through a symlink or a rewritten argv[0].
@@ -104,8 +135,15 @@ export async function inspectInstallationProcessesAsync(
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()
   for (const line of stdout.split('\n')) {
+    signal?.throwIfAborted()
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (match && match[2].includes(installationRoot)) pids.add(Number(match[1]))
+    if (
+      match &&
+      (match[2].includes(installationRoot) ||
+        (process.platform === 'linux' &&
+          isLinuxInstallationExecutable(Number(match[1]), installationRoot)))
+    )
+      pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
     const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpn', '-d', 'txt'])

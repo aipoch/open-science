@@ -6,11 +6,21 @@ import {
   inspectInstallationProcessesAsync
 } from './installation-occupancy'
 
-const mocks = vi.hoisted(() => ({ spawnSync: vi.fn(), run: vi.fn(), realpath: vi.fn() }))
-vi.mock('node:fs', () => ({ realpathSync: mocks.realpath }))
+const mocks = vi.hoisted(() => ({
+  spawnSync: vi.fn(),
+  run: vi.fn(),
+  realpath: vi.fn(),
+  readlink: vi.fn()
+}))
+vi.mock('node:fs', () => ({ realpathSync: mocks.realpath, readlinkSync: mocks.readlink }))
 vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }))
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
-beforeEach(() => vi.resetAllMocks())
+beforeEach(() => {
+  vi.resetAllMocks()
+  mocks.readlink.mockImplementation(() => {
+    throw Object.assign(new Error('Process exited'), { code: 'ENOENT' })
+  })
+})
 afterEach(() => vi.restoreAllMocks())
 
 // Both APIs must find the same occupants from the platform's native process-list format.
@@ -36,6 +46,47 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
         signal,
         timeoutMs: 15_000
       })
+  })
+
+  it('finds Linux executables after argv is rewritten without matching sibling installations', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 old-node\n20 old-node\n30 old-node\n40 old-node\n')
+    const executables: Record<string, string> = {
+      '/proc/10/exe': '/opt/Open Science/node-runtime/node',
+      '/proc/20/exe': '/opt/Open Science-old/node-runtime/node',
+      '/proc/30/exe': '/opt/Open Science/node-runtime/node (deleted)',
+      '/proc/40/exe': '/usr/bin/node'
+    }
+    mocks.readlink.mockImplementation((path: string) => executables[path])
+    expect(await inspect('/opt/Open Science')).toEqual([10, 30])
+  })
+
+  it.each(['', ' (deleted)'])('finds the exact Linux image executable%s', async (suffix) => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 renamed-image\n')
+    mocks.readlink.mockReturnValue(`/opt/Science.AppImage${suffix}`)
+    expect(await inspect('/opt/Science.AppImage')).toEqual([10])
+  })
+
+  it.each(['ENOENT', 'ESRCH', 'EACCES', 'EPERM'])(
+    'retains Linux command-line detection when an executable link is unavailable (%s)',
+    async (code) => {
+      vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+      output('10 /opt/Science/node\n20 unrelated\n')
+      mocks.readlink.mockImplementation(() => {
+        throw Object.assign(new Error('Unavailable'), { code })
+      })
+      expect(await inspect('/opt/Science')).toEqual([10])
+    }
+  )
+
+  it('fails closed on unexpected Linux executable inspection errors', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 renamed-node\n')
+    mocks.readlink.mockImplementation(() => {
+      throw Object.assign(new Error('I/O error'), { code: 'EIO' })
+    })
+    await expect(inspect('/opt/Science')).rejects.toThrow('executable occupancy')
   })
 
   it('includes macOS text mappings without accepting similarly prefixed bundles', async () => {
