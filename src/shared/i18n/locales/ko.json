@@ -7717,6 +7717,18 @@
     "Send to start a discussion. The original record stays unchanged.": "전송하면 토론이 시작됩니다. 원본 기록은 변경되지 않습니다.",
     "Loading recording…": "녹화 불러오는 중…",
     "Loading recorded footage…": "녹화 영상 불러오는 중…",
-    "Search incomplete. Some pages could not be read.": "검색 결과가 불완전합니다. 일부 페이지를 읽을 수 없었습니다."
+    "Search incomplete. Some pages could not be read.": "검색 결과가 불완전합니다. 일부 페이지를 읽을 수 없었습니다.",
+    "Set two-column body": "본문을 두 단으로 설정",
+    "Applies to your next message. Select body text only; exclude tables.": "다음 메시지에 적용됩니다. 본문만 선택하고 표는 제외하세요.",
+    "Redrawing replaces the body area on that page.": "다시 그리면 해당 페이지의 본문 영역이 바뀝니다.",
+    "Body areas: {{count}}_other": "본문 영역 {{count}}개",
+    "Clear this page": "이 페이지 지우기",
+    "Drag across both columns, then confirm the divider.": "두 단을 모두 드래그한 다음 구분선을 확인하세요.",
+    "Two-column body": "두 단 본문",
+    "Column divider": "단 구분선",
+    "Save body area": "본문 영역 저장",
+    "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
+    "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
+    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다."
   }
 }

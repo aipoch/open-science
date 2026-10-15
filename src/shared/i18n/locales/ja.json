@@ -7719,6 +7719,18 @@
     "Send to start a discussion. The original record stays unchanged.": "送信するとディスカッションが始まります。元の記録は変更されません。",
     "Loading recording…": "録画を読み込み中…",
     "Loading recorded footage…": "録画映像を読み込み中…",
-    "Search incomplete. Some pages could not be read.": "検索は不完全です。一部のページを読み取れませんでした。"
+    "Search incomplete. Some pages could not be read.": "検索は不完全です。一部のページを読み取れませんでした。",
+    "Set two-column body": "本文を2段組に設定",
+    "Applies to your next message. Select body text only; exclude tables.": "次のメッセージに適用されます。本文のみを選択し、表は含めないでください。",
+    "Redrawing replaces the body area on that page.": "描画し直すと、そのページの本文領域が置き換わります。",
+    "Body areas: {{count}}_other": "本文領域 {{count}} 個",
+    "Clear this page": "このページをクリア",
+    "Drag across both columns, then confirm the divider.": "両方の段をドラッグして選択し、境界線を確定してください。",
+    "Two-column body": "2段組の本文",
+    "Column divider": "段の境界線",
+    "Save body area": "本文領域を保存",
+    "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
+    "You can configure up to 32 pages.": "最大32ページまで設定できます。",
+    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
   }
 }

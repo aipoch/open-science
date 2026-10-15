@@ -7719,6 +7719,18 @@
     "Send to start a discussion. The original record stays unchanged.": "傳送後開始討論，原始記錄保持不變。",
     "Loading recording…": "正在載入錄製內容…",
     "Loading recorded footage…": "正在載入錄製畫面…",
-    "Search incomplete. Some pages could not be read.": "搜尋結果不完整。部分頁面無法讀取。"
+    "Search incomplete. Some pages could not be read.": "搜尋結果不完整。部分頁面無法讀取。",
+    "Set two-column body": "設定雙欄正文",
+    "Applies to your next message. Select body text only; exclude tables.": "此設定適用於你的下一則訊息。僅選取正文，排除表格。",
+    "Redrawing replaces the body area on that page.": "重新繪製會取代該頁的正文區域。",
+    "Body areas: {{count}}_other": "{{count}} 個正文區域",
+    "Clear this page": "清除本頁",
+    "Drag across both columns, then confirm the divider.": "拖曳選取兩欄，然後確認分隔線。",
+    "Two-column body": "雙欄正文",
+    "Column divider": "欄間分隔線",
+    "Save body area": "儲存正文區域",
+    "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
+    "You can configure up to 32 pages.": "最多可設定 32 頁。",
+    "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。"
   }
 }

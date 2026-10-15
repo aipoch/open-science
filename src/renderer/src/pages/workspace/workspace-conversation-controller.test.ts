@@ -12,6 +12,10 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import type { ComposerDoc } from './composer/composer-doc'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
@@ -148,6 +152,7 @@ const options = (
           attachments: []
         })),
         preserveAdmissionContext: vi.fn(),
+        consumePdfProseReading: vi.fn(),
         bindAdmissionContext: vi.fn(),
         captureRevision: vi.fn((revisionDoc, annotations) => ({
           draftKey: 'session-a',
@@ -228,13 +233,252 @@ const renderController = (initial: WorkspaceConversationControllerOptions): Hook
 
 const mounted: Hook[] = []
 
+const renderWithComposer = (
+  input: WorkspaceConversationControllerOptions
+): Hook & { composer: { current: ReturnType<typeof useWorkspaceComposerController> } } => {
+  let current = input
+  const root = createRoot(document.createElement('div'))
+  const composer = {
+    current: undefined as unknown as ReturnType<typeof useWorkspaceComposerController>
+  }
+  const result = { current: undefined as unknown as WorkspaceConversationController }
+  const Harness = (): null => {
+    composer.current = useWorkspaceComposerController({
+      currentDraftKey: current.currentDraftKey,
+      newConversationDraftKey: 'new:project-a',
+      activeProjectId: current.projectId,
+      activeSession: current.activeSession,
+      pendingCustomizePrefill: undefined,
+      onCustomizePrefillApplied: vi.fn(),
+      historyEntries: [],
+      historyPolicy: {
+        catalogSkillIds: new Set(),
+        allowedSkillIds: undefined,
+        skillCatalogReady: true,
+        refreshSkillCatalog: false,
+        specialistCatalogReady: true,
+        specialistId: undefined,
+        loadSkills: vi.fn(),
+        loadSpecialists: vi.fn()
+      },
+      canStageAttachments: true,
+      supportsImageInput: true,
+      uploads: {
+        stageLocalFile: vi.fn(),
+        beginTransfer: vi.fn(),
+        appendTransfer: vi.fn(),
+        getTransferStatus: vi.fn(),
+        finishTransfer: vi.fn(),
+        abortTransfer: vi.fn().mockResolvedValue(undefined),
+        deleteUpload: vi.fn(),
+        onTransferProgress: vi.fn(() => () => undefined)
+      }
+    })
+    result.current = useWorkspaceConversationController({ ...current, composer: composer.current })
+    return null
+  }
+  const render = (): void =>
+    act(() =>
+      root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+    )
+  render()
+  return {
+    result,
+    composer,
+    rerender: (next): void => {
+      current = next
+      render()
+    },
+    unmount: (): void => act(() => root.unmount())
+  }
+}
+
 afterEach(() => {
   useSessionReplayStore.setState({ pendingDiscussion: undefined, discussionDestination: undefined })
   for (const hook of mounted.splice(0)) hook.unmount()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
 describe('workspace conversation controller', () => {
+  it.each(['direct', 'queued'] as const)(
+    'consumes an existing Session body selection after %s admission and keeps the next message native',
+    async (path) => {
+      const binding = {
+        version: 1 as const,
+        bindingId: 'reading-binding',
+        sourceKind: 'artifact-version' as const,
+        sourceFileId: 'paper',
+        sourceVersionId: 'paper-version',
+        sourceSessionId: 'source',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        linkedAt: 1
+      }
+      const activeSession = {
+        ...(path === 'queued' ? runningSession() : session()),
+        runtimeContext: {
+          version: 1 as const,
+          revision: 1,
+          pdfContext: { version: 1 as const, bindings: [binding] }
+        }
+      }
+      const input = options({
+        activeSession,
+        getSession: () => activeSession,
+        promptInFlightSessionIds: path === 'queued' ? [activeSession.id] : []
+      })
+      const hook = renderWithComposer(input)
+      mounted.push(hook)
+      const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
+      act(() => {
+        hook.composer.current.actions.changeDoc(textDoc('First question'))
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+      })
+      const first = hook.composer.current.lifecycle.captureSend()
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(
+        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+      ).toBeUndefined()
+      act(() => hook.composer.current.actions.changeDoc(textDoc('Next question')))
+      expect(
+        hook.composer.current.lifecycle.captureSend().pdfProseReadingSelections
+      ).toBeUndefined()
+      expect(first.pdfProseReadingSelections?.[0].proseRegions).toEqual([region])
+      if (path === 'queued') {
+        expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+        expect(hook.result.current.queue.items).toHaveLength(1)
+        // This identical redraw belongs to a later message; draining must not consume it again.
+        act(() =>
+          usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+        )
+        const settled = { ...activeSession, status: 'idle' as const }
+        hook.rerender({
+          ...input,
+          activeSession: settled,
+          promptInFlightSessionIds: [],
+          getSession: () => settled
+        })
+        await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+        expect(
+          usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+        ).toEqual([region])
+      } else {
+        expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pdfProseReadingSelections: first.pdfProseReadingSelections
+          })
+        )
+      }
+    }
+  )
+
+  it.each(['before-result', 'after-result'] as const)(
+    'restores the admitted body selection when preparation fails %s',
+    async (timing) => {
+      const binding = {
+        version: 1 as const,
+        bindingId: 'reading-binding',
+        sourceKind: 'artifact-version' as const,
+        sourceFileId: 'paper',
+        sourceVersionId: 'paper-version',
+        sourceSessionId: 'source',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        linkedAt: 1
+      }
+      const activeSession = session({
+        runtimeContext: { version: 1, revision: 1, pdfContext: { version: 1, bindings: [binding] } }
+      })
+      const input = options({ activeSession, getSession: () => activeSession })
+      let rejected: (() => void) | undefined
+      input.runtime.sendMessage = vi.fn(async (request) => {
+        request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+        rejected = () => request.onPreparationRejected?.('Preparation failed', 'session-a')
+        if (timing === 'before-result') rejected()
+        return { sessionId: 'session-a', messageId: 'message-a' }
+      })
+      const hook = renderWithComposer(input)
+      mounted.push(hook)
+      const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
+      act(() => {
+        hook.composer.current.actions.changeDoc(textDoc('First question'))
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+      })
+      const snapshot = hook.composer.current.lifecycle.captureSend()
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      if (timing === 'after-result') {
+        expect(
+          usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+        ).toBeUndefined()
+        act(() => rejected?.())
+      }
+      expect(hook.composer.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual(
+        snapshot.pdfProseReadingSelections
+      )
+      expect(hook.composer.current.view.doc).toEqual(textDoc('First question'))
+    }
+  )
+
+  it.each(['callback-first', 'result-first'] as const)(
+    'consumes direct admission only once when the %s completes',
+    async (order) => {
+      const input = options()
+      let appended: (() => void) | undefined
+      let finish!: (value: { sessionId: string; messageId: string }) => void
+      input.runtime.sendMessage = vi.fn((request) => {
+        appended = () =>
+          request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+        if (order === 'callback-first') appended()
+        return new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          finish = resolve
+        })
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      if (order === 'callback-first')
+        expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledOnce()
+      else expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+      await act(async () => finish({ sessionId: 'session-a', messageId: 'message-a' }))
+      act(() => appended?.())
+      expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledExactlyOnceWith(
+        vi.mocked(input.composer.lifecycle.captureSend).mock.results[0].value
+      )
+    }
+  )
+
+  it('keeps the captured policy when direct admission returns no message', async () => {
+    const input = options()
+    vi.mocked(input.runtime.sendMessage).mockResolvedValue(undefined)
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the captured policy when the queue rejects a missing branch identity', () => {
+    const running = session({ status: 'running' })
+    const input = options({
+      activeSession: running,
+      promptInFlightSessionIds: [running.id],
+      getSession: () => running
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.composer.lifecycle.captureSend).toHaveBeenCalledOnce()
+    expect(hook.result.current.queue.items).toEqual([])
+    expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['claude-code', 'claude-code', 'claude-code:anthropic'],
     ['opencode', 'opencode', 'opencode:provider-1'],
@@ -921,6 +1165,12 @@ describe('workspace conversation controller', () => {
     snapshot.pendingPdfContextVersions = [
       { sourceKind: 'artifact-version', sourceFileId: 'paper', sourceVersionId: 'paper-version' }
     ]
+    snapshot.pdfProseReadingSelections = [
+      {
+        source: { attachmentId: 'original-upload' },
+        proseRegions: [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
+      }
+    ]
     vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
     let rejected: ((message: string) => void) | undefined
     input.runtime.sendMessage = vi.fn(async (request) => {
@@ -931,6 +1181,11 @@ describe('workspace conversation controller', () => {
     const hook = renderController(input)
     mounted.push(hook)
     await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pdfProseReadingSelections: snapshot.pdfProseReadingSelections
+      })
+    )
     expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
     act(() => rejected?.('Provider admission failed'))
     expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledExactlyOnceWith(
@@ -1381,6 +1636,9 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.queue.items).toEqual([
       expect.objectContaining({ text: 'hello', phase: 'queued' })
     ])
+    expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledExactlyOnceWith(
+      vi.mocked(input.composer.lifecycle.captureSend).mock.results[0].value
+    )
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 

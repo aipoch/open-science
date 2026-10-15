@@ -8186,6 +8186,21 @@
     "Send to start a discussion. The original record stays unchanged.": "Отправьте вопрос, чтобы начать обсуждение. Исходная запись останется без изменений.",
     "Loading recording…": "Загрузка записи…",
     "Loading recorded footage…": "Загрузка записанного видео…",
-    "Search incomplete. Some pages could not be read.": "Поиск выполнен не полностью. Некоторые страницы не удалось прочитать."
+    "Search incomplete. Some pages could not be read.": "Поиск выполнен не полностью. Некоторые страницы не удалось прочитать.",
+    "Set two-column body": "Задать две колонки основного текста",
+    "Applies to your next message. Select body text only; exclude tables.": "Применяется к следующему сообщению. Выделите только основной текст, исключив таблицы.",
+    "Redrawing replaces the body area on that page.": "Повторное выделение заменит область основного текста на этой странице.",
+    "Body areas: {{count}}_one": "{{count}} область основного текста",
+    "Body areas: {{count}}_few": "{{count}} области основного текста",
+    "Body areas: {{count}}_many": "{{count}} областей основного текста",
+    "Body areas: {{count}}_other": "{{count}} области основного текста",
+    "Clear this page": "Очистить эту страницу",
+    "Drag across both columns, then confirm the divider.": "Выделите обе колонки перетаскиванием, затем подтвердите разделитель.",
+    "Two-column body": "Основной текст в две колонки",
+    "Column divider": "Разделитель колонок",
+    "Save body area": "Сохранить область основного текста",
+    "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
+    "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
+    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
   }
 }

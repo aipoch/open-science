@@ -8047,6 +8047,20 @@
     "Send to start a discussion. The original record stays unchanged.": "Envoyez une question pour commencer une discussion. Le dossier original reste inchangé.",
     "Loading recording…": "Chargement de l’enregistrement…",
     "Loading recorded footage…": "Chargement des images enregistrées…",
-    "Search incomplete. Some pages could not be read.": "La recherche est incomplète. Certaines pages n’ont pas pu être lues."
+    "Search incomplete. Some pages could not be read.": "La recherche est incomplète. Certaines pages n’ont pas pu être lues.",
+    "Set two-column body": "Définir le corps sur deux colonnes",
+    "Applies to your next message. Select body text only; exclude tables.": "S’applique à votre prochain message. Sélectionnez uniquement le texte du corps et excluez les tableaux.",
+    "Redrawing replaces the body area on that page.": "Redessiner remplacera la zone de texte principal sur cette page.",
+    "Body areas: {{count}}_one": "{{count}} zone de texte principal",
+    "Body areas: {{count}}_many": "{{count}} zones de texte principal",
+    "Body areas: {{count}}_other": "{{count}} zones de texte principal",
+    "Clear this page": "Effacer cette page",
+    "Drag across both columns, then confirm the divider.": "Faites glisser sur les deux colonnes, puis confirmez la séparation.",
+    "Two-column body": "Corps sur deux colonnes",
+    "Column divider": "Séparation des colonnes",
+    "Save body area": "Enregistrer la zone de texte principal",
+    "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
+    "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
+    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
   }
 }
