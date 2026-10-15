@@ -45,7 +45,6 @@ the long-lived prerelease, verify that Zenodo did not archive it, and then re-en
 The workflow intentionally fails closed in either case instead of attempting an unsafe automatic
 bootstrap.
 
-
 ## Recovering a stale nightly
 
 A manual full **Nightly** run produces desktop and five-platform CLI artifacts but does not publish.
