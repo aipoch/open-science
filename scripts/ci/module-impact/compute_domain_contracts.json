@@ -20,7 +20,9 @@
     "shared_workspace_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/compute/src/host-connection-profile.test.ts"],
+    "owner": [
+      "packages/compute/src/host-connection-profile.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -1102,6 +1104,10 @@
       "src/main/research-runs/ipc.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

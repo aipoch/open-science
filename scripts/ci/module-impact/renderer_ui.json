@@ -592,7 +592,8 @@
       "src/main/node-entry.test.ts",
       "src/renderer/src/lib/replay/transcript.test.ts",
       "src/renderer/src/pages/workspace/replay/ReplayResearchLayout.test.tsx",
-      "src/renderer/src/pages/workspace/replay/use-research-replay-layout.test.tsx"
+      "src/renderer/src/pages/workspace/replay/use-research-replay-layout.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "capabilityOverlays": [],

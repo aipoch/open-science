@@ -1,6 +1,10 @@
 {
-  "ownerPaths": ["src/renderer/src/stores/package-operation-store.ts"],
-  "interfacePaths": ["src/renderer/src/stores/package-operation-store.ts"],
+  "ownerPaths": [
+    "src/renderer/src/stores/package-operation-store.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/stores/package-operation-store.ts"
+  ],
   "testFiles": {
     "owner": [],
     "contract": [],

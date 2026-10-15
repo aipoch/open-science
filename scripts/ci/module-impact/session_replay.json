@@ -498,6 +498,9 @@
       "src/renderer/src/pages/workspace/replay/replay-material-action.test.tsx"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "renderer_view"
 }

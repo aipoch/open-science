@@ -192,7 +192,9 @@
       "src/main/composition/handoff.test.ts",
       "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
       "src/renderer/replay-viewer/research-client.test.ts",
-      "src/renderer/replay-viewer/research-viewer.test.tsx"
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "consumerModules": [],

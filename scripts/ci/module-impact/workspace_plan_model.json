@@ -3,9 +3,13 @@
     "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts"
   ],
-  "interfacePaths": ["src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts"],
+  "interfacePaths": [
+    "src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts"
+  ],
   "testFiles": {
-    "owner": ["src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts"],
+    "owner": [
+      "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/renderer/src/App.test.tsx",
