@@ -325,7 +325,8 @@ describe('independent source regression', () => {
             'portable',
             'presentation',
             'workspace-images',
-            'presentation-screening'
+            'presentation-screening',
+            'runtime-evidence'
           ]
         }
       }
@@ -338,6 +339,7 @@ describe('independent source regression', () => {
       'cancel-in-progress': true
     })
     expect(Object.keys(scheduled.jobs)).toEqual([
+      'runtime_evidence',
       'regression',
       'portable',
       'portable_report',
@@ -403,7 +405,7 @@ describe('independent source regression', () => {
   it('runs both scheduled rounds even when main has not changed', () => {
     expect(scheduled.jobs).not.toHaveProperty('plan')
     expect(scheduled.jobs.regression.if).toBe(
-      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' }}"
+      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' }}"
     )
     expect(scheduled.jobs.regression.steps.some(({ run }) => run?.includes('previous'))).toBe(false)
   })

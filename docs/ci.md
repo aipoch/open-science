@@ -344,3 +344,20 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
+
+### Runtime module evidence diagnostic
+
+The **Source Regression** workflow accepts the manual `runtime-evidence` mode. It runs only
+three fixed tests (node-entry startup failure and the two notebook-syntax owner test files),
+collecting independent V8 observations for four listed source files. Existing Vitest projects
+and setup remain in use; full-suite coverage thresholds do not apply to this partial report.
+The job summary shows source ownership, explicit test registration, and statement/function hits.
+The `runtime-module-evidence` artifact retains JSON, Markdown and individual run logs for seven days.
+Missing or failed collection is reported as unavailable and fails the diagnostic job, not as zero hits.
+
+Run the same diagnostic locally after `npm run pretest` with
+`node scripts/ci/runtime-module-evidence.mjs`; results are written under
+`coverage/runtime-module-evidence/`. The fixed include list is deliberately bounded: these are
+observations of particular files, not complete module coverage or proof that a consumer can be
+removed. Runtime data does not replace static/type, IPC, resource, platform or explicit contract
+relationships. The report is not consumed by test selection or registration validation.
