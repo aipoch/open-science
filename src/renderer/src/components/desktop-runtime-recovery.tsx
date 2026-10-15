@@ -1,6 +1,6 @@
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useEffect, useRef } from 'react'
-import { Unplug } from 'lucide-react'
+import { Unplug, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { ErrorNotice } from '@/components/error-notice'
@@ -105,33 +105,48 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
             )}
           </AlertDialog.Description>
           <ErrorNotice
-            icon={Unplug}
+            inline
+            icon={busy ? LoaderCircle : Unplug}
+            iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
             tone="amber"
             role="status"
             title={busy ? t('Restoring desktop connection…') : t('Desktop connection lost')}
             description={
               state.phase === 'unavailable'
                 ? t(
-                    'The original backend is no longer available. Quit and reopen the app to continue.'
+                    'The connection cannot be restored. Quit and reopen the app, then check your tasks. Submitted operations may have completed and will not be retried automatically.'
                   )
                 : t(
                     'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
                   )
             }
-            secondaryButton={{
-              label: t('Quit app'),
-              onClick: () => {
-                void window.api.desktopRuntime?.quit()
-              }
-            }}
-            primaryButton={{
-              label: t('Reconnect'),
-              loading: busy,
-              disabled: state.closing || state.phase === 'unavailable',
-              onClick: () => {
-                void window.api.desktopRuntime?.reconnect()
-              }
-            }}
+            secondaryButton={
+              state.phase !== 'unavailable' && !busy
+                ? {
+                    label: t('Quit', { context: 'verb', ns: 'common' }),
+                    disabled: state.closing,
+                    onClick: () => {
+                      void window.api.desktopRuntime?.quit()
+                    }
+                  }
+                : undefined
+            }
+            primaryButton={
+              !busy
+                ? {
+                    label:
+                      state.phase === 'unavailable'
+                        ? t('Quit', { context: 'verb', ns: 'common' })
+                        : t('Reconnect'),
+                    variant: 'default',
+                    disabled: state.closing,
+                    onClick: () => {
+                      if (state.phase === 'unavailable') void window.api.desktopRuntime?.quit()
+                      else void window.api.desktopRuntime?.reconnect()
+                    }
+                  }
+                : undefined
+            }
           />
         </AlertDialog.Content>
       </AlertDialog.Portal>

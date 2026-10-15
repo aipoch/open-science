@@ -1,5 +1,7 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import { Agent, buildConnector, fetch as nodeFetch } from 'undici'
 import { connect as connectTls } from 'node:tls'
+import type { Socket } from 'node:net'
 import { resolveParentProxyUrl, tunnelThroughProxy } from '@aipoch/notebook-network-sandbox'
 import type { RuntimeNetwork } from './runtime-network'
 
@@ -25,19 +27,83 @@ export function createNodeRuntimeNetwork(
   }
   const direct = buildConnector({ timeout: 30_000 })
   const agents = new Set<Agent>()
+  const lifetime = new AbortController()
+  const connectingSockets = new Map<Socket, Promise<void>>()
+  const proxyConnections = new Set<AbortController>()
+  const connectionCompletions = new Set<Promise<void>>()
+  let closing: Promise<void> | undefined
+  const trackSocket = (socket: Socket): void => {
+    if (socket.closed || connectingSockets.has(socket)) return
+    const closed = new Promise<void>((resolve) => socket.once('close', resolve))
+    connectingSockets.set(socket, closed)
+    void closed.then(() => connectingSockets.delete(socket))
+    if (lifetime.signal.aborted) socket.destroy(lifetime.signal.reason)
+  }
   let settings = inherited
   const createAgent = (proxySettings: ProxyEnvironment): Agent => {
     const agent = new Agent({
       connect(options, callback) {
+        if (lifetime.signal.aborted) {
+          callback(new Error('Runtime network is closed.'), null)
+          return
+        }
         const target = new URL(`${options.protocol}//${options.host || options.hostname}`)
         if (options.port) target.port = options.port
         const proxy = resolveParentProxyUrl(proxySettings, target)
         if (!proxy) {
-          direct(options, callback)
+          let complete!: () => void
+          const completion = new Promise<void>((resolve) => {
+            complete = resolve
+          })
+          connectionCompletions.add(completion)
+          let settled = false
+          let delivered = false
+          const finish: typeof callback = (error, socket) => {
+            if (socket) trackSocket(socket)
+            if (settled) {
+              socket?.destroy()
+              return
+            }
+            settled = true
+            connectionCompletions.delete(completion)
+            complete()
+            if (lifetime.signal.aborted) {
+              socket?.destroy()
+              callback(error ?? new Error('Runtime network is closed.'), null)
+            } else if (error) callback(error, null)
+            else {
+              delivered = true
+              if (socket) connectingSockets.delete(socket)
+              callback(null, socket!)
+            }
+          }
+          try {
+            // Undici's built-in connector returns the in-progress socket, although its
+            // public connector type permits void for third-party implementations.
+            const socket = direct(options, finish) as unknown as Socket | undefined
+            if (socket) {
+              if (!delivered) trackSocket(socket)
+              const closed = (): void => {
+                if (!settled)
+                  finish(new Error('Connection closed before it was established.'), null)
+              }
+              if (socket.closed) closed()
+              else socket.once('close', closed)
+            }
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error(String(error)), null)
+          }
           return
         }
         const controller = new AbortController()
+        proxyConnections.add(controller)
         const signal = controller.signal
+        const pendingSockets = new Set<Socket>()
+        let complete!: () => void
+        const completion = new Promise<void>((resolve) => {
+          complete = resolve
+        })
+        connectionCompletions.add(completion)
         const timer = setTimeout(
           () => controller.abort(new Error('Proxy connection timed out.')),
           30_000
@@ -47,6 +113,10 @@ export function createNodeRuntimeNetwork(
           if (settled) return
           settled = true
           clearTimeout(timer)
+          proxyConnections.delete(controller)
+          connectionCompletions.delete(completion)
+          complete()
+          if (!args[0]) for (const socket of pendingSockets) connectingSockets.delete(socket)
           callback(...args)
         }
         void tunnelThroughProxy(
@@ -54,9 +124,18 @@ export function createNodeRuntimeNetwork(
           options.hostname,
           Number(options.port || (options.protocol === 'https:' ? 443 : 80)),
           undefined,
-          signal
+          signal,
+          (socket) => {
+            pendingSockets.add(socket)
+            trackSocket(socket)
+          }
         ).then(
           (socket) => {
+            if (signal.aborted || lifetime.signal.aborted) {
+              socket.destroy()
+              finish(new Error('Runtime network is closed.'), null)
+              return
+            }
             if (options.protocol !== 'https:') {
               finish(null, socket)
               return
@@ -97,6 +176,7 @@ export function createNodeRuntimeNetwork(
   const fetch: typeof globalThis.fetch = async (input, init) => {
     // Keep redirects, header stripping, streaming, request cancellation and TLS verification in
     // Undici. Normalize native Request objects rather than relying on cross-package instanceof.
+    lifetime.signal.throwIfAborted()
     const request = new Request(input, init)
     return (await nodeFetch(request.url, {
       method: request.method,
@@ -104,7 +184,7 @@ export function createNodeRuntimeNetwork(
       body: request.body as never,
       duplex: 'half',
       redirect: request.redirect,
-      signal: request.signal,
+      signal: AbortSignal.any([request.signal, lifetime.signal]),
       dispatcher: agent
     })) as unknown as Response
   }
@@ -128,6 +208,7 @@ export function createNodeRuntimeNetwork(
       return `${kind} ${proxy.host}`
     },
     setProxy: async (config) => {
+      lifetime.signal.throwIfAborted()
       if (!['system', 'direct', 'fixed_servers'].includes(config.mode ?? ''))
         throw new Error(
           'Node backend supports environment, direct and fixed proxy settings; PAC requires the desktop app.'
@@ -152,9 +233,29 @@ export function createNodeRuntimeNetwork(
         .finally(() => agents.delete(previous))
         .catch(() => undefined)
     },
-    close: async () => {
-      await Promise.all([...agents].map((value) => value.destroy()))
-      agents.clear()
-    }
+    close: () =>
+      (closing ??= (async () => {
+        lifetime.abort(new Error('Runtime network is closed.'))
+        // Undici can complete destroy() before a custom connector has returned its socket.
+        // Those sockets and their timeout timers still belong to this network owner.
+        for (const controller of proxyConnections) controller.abort(lifetime.signal.reason)
+        for (const socket of connectingSockets.keys()) socket.destroy(lifetime.signal.reason)
+        createLogger('network').info('shutdown destroy agents', {
+          agents: agents.size,
+          sockets: connectingSockets.size,
+          connections: connectionCompletions.size
+        })
+        await Promise.all([...agents].map((value) => value.destroy()))
+        createLogger('network').info('shutdown agents destroyed', {
+          sockets: connectingSockets.size,
+          connections: connectionCompletions.size
+        })
+        await Promise.all([...connectingSockets.values()])
+        createLogger('network').info('shutdown sockets closed', {
+          connections: connectionCompletions.size
+        })
+        await Promise.all([...connectionCompletions])
+        agents.clear()
+      })())
   }
 }

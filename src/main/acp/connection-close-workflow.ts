@@ -28,7 +28,10 @@ type CloseState = Readonly<{
   disposeSessionProjection: () => void
   clearHttpRoutes: () => void
   selectSession: () => void
-  publishInterruptedPromptFailures: (prompts: readonly unknown[]) => void
+  publishInterruptedPromptFailures: (
+    prompts: readonly unknown[],
+    cause?: 'app-restart' | 'connection-lost'
+  ) => void
   cancelPendingStatePublication: () => void
   setStatus: (status: CloseStatus) => void
   transitionStatus: (status: CloseStatus) => void
@@ -113,7 +116,17 @@ class AcpConnectionCloseWorkflow {
     this.options.state.clearPendingAppContinuations()
     runCleanup('reviewer-state', this.options.state.clearReviewerState)
     runCleanup('plan-interactions', this.options.state.clearPlanInteractions)
+    // Superseding an interaction prevents its finalizer from publishing a failure. Commit the
+    // interrupted turn here so a later resume can acquire the same durable prompt identity.
+    // Already observed provider terminals remain owned by their original finalizers.
+    const interruptedPrompts = this.options.state.settleActivePrompts()
     this.options.state.supersedeInteractions()
+    runCleanup('interrupted-prompts', () =>
+      this.options.state.publishInterruptedPromptFailures(
+        interruptedPrompts,
+        emitClosedStatus ? 'connection-lost' : 'app-restart'
+      )
+    )
     this.options.state.clearContextUsage()
     this.options.state.clearAppliedSessionModels()
     const activeSessionIds = this.options.state.activeSessionIds()

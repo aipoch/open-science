@@ -87,7 +87,9 @@ extraResources:
     to: packages/open-science
     filter:
       - '*.mjs'
+      - '*.cjs'
       - '*.d.ts'
+      - '*.d.cts'
       - 'LICENSE'
       - 'package.json'
 # Windows: stable releases use Azure Artifact Signing; nightly and other builds remain unsigned.

@@ -457,16 +457,37 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     ...options
   })
   let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
-  // Keep preflight dependency-free; refine only the installed test runner's package-only plan.
+  // Documentation and trusted additive records do not turn a source boundary into a
+  // mixed product change. Keep their plan evidence and capability selection intact.
+  const sourceChanges = changes.filter((change) => {
+    const pathPlan = classifyChanges([change], undefined, {
+      moduleManifest: manifest,
+      registrationModules
+    })
+    return (
+      !pathPlan.roots.includes('module_registration') &&
+      !(pathPlan.lanes.includes('docs') && !pathPlan.bundles.includes('unit'))
+    )
+  })
   if (
     plan.mode === 'selective' &&
-    changes.length &&
-    changes.every(({ path }) => path.startsWith('packages/')) &&
+    sourceChanges.some(({ path }) => path.startsWith('src/')) &&
+    sourceChanges.some(({ path }) => path.startsWith('packages/'))
+  )
+    plan.reasonChains.push(
+      'mixed host/package product boundaries -> retain complete declared selection'
+    )
+  // Keep preflight dependency-free; refinement runs only in the installed test runner.
+  if (
+    plan.mode === 'selective' &&
+    sourceChanges.length &&
+    sourceChanges.every(({ path }) => path.startsWith('packages/')) &&
     !packageTestSelectedRoots(options.environment ?? process.env).includes('packages')
   ) {
     try {
       const { refinePackageHostTests } = await import('./package-host-test-impact.mjs')
-      plan = refinePackageHostTests(plan, changes, manifest, {
+      plan = refinePackageHostTests(plan, sourceChanges, manifest, {
+        registrationModules,
         base,
         head,
         graphTests: graph.testFiles,
@@ -481,13 +502,13 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   }
   if (
     plan.mode === 'selective' &&
-    tier === 'pr' &&
-    changes.length &&
-    changes.every(({ path }) => path.startsWith('src/'))
+    sourceChanges.length &&
+    sourceChanges.every(({ path }) => path.startsWith('src/'))
   ) {
     try {
       const { refineHostTests } = await import('./package-host-test-impact.mjs')
-      plan = refineHostTests(plan, changes, manifest, {
+      plan = refineHostTests(plan, sourceChanges, manifest, {
+        registrationModules,
         base,
         head,
         graphTests: graph.testFiles,

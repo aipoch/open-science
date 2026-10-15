@@ -680,7 +680,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     connector: 'expression',
     credentialKeys: [],
     description:
-      'Retrieve Bgee present/absent expression calls and normalized expression scores for one gene in one species. Results are healthy wild-type baseline calls and can be capped with max_calls.',
+      'Retrieve Bgee present/absent expression calls and normalized expression scores for one gene in one species, preserving anatomical entity and cell type context. Results are healthy wild-type baseline calls and can be capped with max_calls. Missing or unspecified cell types are returned as null.',
     input: {
       type: 'object',
       properties: {
@@ -697,7 +697,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     required: ['gene_id', 'species_id'],
     returns:
-      '`{ "gene": { "id": str, "name": str, "species": object }, "returned": int, "truncated": bool, "calls": [ { "anatomical_entity_id": str, "anatomical_entity_name": str, "expression_state": str, "expression_score": float, "expression_score_confidence": str, "expression_quality": str, "fdr": str, "data_types": [str] } ] }`.',
+      '`{ "gene": { "id": str, "name": str, "species": object }, "returned": int, "truncated": bool, "calls": [ { "anatomical_entity_id": str, "anatomical_entity_name": str, "cell_type_id": str|null, "cell_type_name": str|null, "expression_state": str, "expression_score": float, "expression_score_confidence": str, "expression_quality": str, "fdr": str, "data_types": [str] } ] }` — cell type fields preserve condition.cellType; absent, null or empty fields are null.',
     exampleArgs: { gene_id: 'ENSG00000130208', species_id: 9606, max_calls: 50 },
     totalTimeoutMs: 30_000,
     maxResponseBytes: 4 * 1024 * 1024,
@@ -722,10 +722,13 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
         const c = call as Record<string, unknown>
         const condition = (c.condition ?? {}) as Record<string, unknown>
         const anat = (condition.anatEntity ?? {}) as Record<string, unknown>
+        const cellType = (condition.cellType ?? {}) as Record<string, unknown>
         const score = (c.expressionScore ?? {}) as Record<string, unknown>
         return {
           anatomical_entity_id: anat.id,
           anatomical_entity_name: anat.name,
+          cell_type_id: cellType.id || null,
+          cell_type_name: cellType.name || null,
           expression_state: c.expressionState,
           expression_score:
             score.expressionScore == null ? undefined : Number(score.expressionScore),

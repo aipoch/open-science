@@ -1,3 +1,4 @@
+import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -15,8 +16,8 @@ for (const borrowed of [false, true])
     const largeConversations = !borrowed && retainBackend
     // The sizes are field metadata only. All session IDs, text and profiles are synthetic.
     // eslint-disable-next-line no-empty-pattern
-    test(`disconnected ${borrowed ? 'borrowed' : 'owned'} desktop relaunch restores ${largeConversations ? 'large conversations' : 'persisted sessions'} with ${retainBackend ? 'retained borrowed' : 'recreated owned'} backend`, async ({}, testInfo) => {
-      const root = await mkdtemp(join(tmpdir(), 'open-science-restart-'))
+    test(`disconnected ${borrowed ? 'borrowed' : 'owned'} desktop relaunch restores ${largeConversations ? 'large conversations' : 'persisted sessions'} with ${retainBackend ? 'retained original' : 'recreated owned'} backend`, async ({}, testInfo) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-restart-with spaces-'))
       const roots = {
         storageRoot: join(root, 'storage'),
         userDataRoot: join(root, 'profile'),
@@ -56,13 +57,6 @@ for (const borrowed of [false, true])
           .toMatchObject({ phase: 'ready' })
         return page
       }
-      const exitDesktop = async (): Promise<void> => {
-        const running = app!
-        const process = running.process()
-        await running.evaluate(({ app }) => app.exit(0))
-        await expect.poll(() => process.exitCode).toBe(0)
-        app = undefined
-      }
       const disconnect = (): Promise<void> =>
         app!.evaluate(() => {
           const pipes = (
@@ -88,7 +82,7 @@ for (const borrowed of [false, true])
         if (borrowed) {
           server = spawn(
             process.execPath,
-            [resolve('out/backend/index.cjs'), '--development', '--serve'],
+            [resolve('out/backend/index.cjs'), '--development', '--serve=0'],
             { env, stdio: 'ignore' }
           )
           await expect
@@ -194,20 +188,24 @@ for (const borrowed of [false, true])
         await expect(page.getByText('Persisted restart fixture-172', { exact: true })).toBeVisible()
         if (largeConversations) {
           await page.getByRole('button', { name: 'Open notebook', exact: true }).click()
-          await expect(page.getByTestId('notebook-state-load-error')).toBeVisible()
-          // A mounted locally oversized Notebook must not veto the whole recovery barrier.
+          await expect
+            .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+            .toMatchObject({ phase: 'connected' })
+          // A mounted large Notebook must not veto the whole recovery barrier.
           await disconnect()
           await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
           await expect
             .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
             .toMatchObject({ phase: 'connected' })
-          await expect(page.getByTestId('notebook-state-load-error')).toBeVisible()
+          await expect
+            .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+            .toMatchObject({ phase: 'connected' })
         }
         await page.evaluate(() => window.api.settings.getSettings())
         const before = JSON.parse(
           await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
-        ) as { pid: number; generation: string }
-        const firstPid = app!.process().pid
+        ) as { pid: number; generation: string; desktop: { generation: string } }
+        const firstPid = await app!.evaluate(() => process.pid)
         const backendParent = Number(
           (process.platform === 'win32'
             ? await promisify(execFile)(
@@ -243,13 +241,33 @@ for (const borrowed of [false, true])
             setup.projectId
           )
         ).toEqual(['rejected', 'rejected'])
-        await exitDesktop()
+        // Terminate only the Desktop process created by this fixture. Its detached Runtime
+        // must survive and the next genuine Desktop must claim controller authority.
+        const crashedDesktop = app!.process()
+        // Playwright wraps Electron in cmd.exe on Windows. Signal the PID obtained from
+        // this application's main process, not the launcher or its detached Runtime tree.
+        process.kill(firstPid, 'SIGKILL')
+        await expect
+          .poll(() => {
+            try {
+              process.kill(firstPid, 0)
+              return false
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+              throw error
+            }
+          })
+          .toBe(true)
+        await expect
+          .poll(() => crashedDesktop.exitCode !== null || crashedDesktop.signalCode !== null)
+          .toBe(true)
+        app = undefined
         if (!retainBackend) await stopBackend()
         page = await launch()
-        expect(app!.process().pid).not.toBe(firstPid)
+        expect(await app!.evaluate(() => process.pid)).not.toBe(firstPid)
         const after = JSON.parse(
           await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
-        ) as { pid: number; generation: string }
+        ) as { pid: number; generation: string; desktop: { generation: string } }
         if (retainBackend) expect(after).toEqual(before)
         else {
           expect(after.pid).not.toBe(before.pid)
@@ -302,7 +320,7 @@ for (const borrowed of [false, true])
           before: { pid: before.pid, generation: before.generation },
           after: { pid: after.pid, generation: after.generation },
           firstPid,
-          secondPid: app!.process().pid,
+          secondPid: await app!.evaluate(() => process.pid),
           results
         }
         console.log('Generated restart metadata', JSON.stringify(metadata))
@@ -336,11 +354,53 @@ for (const borrowed of [false, true])
           .getByRole('button', { name: /^fixture-172/ })
           .click()
         await expect(page.getByText('Persisted restart fixture-172', { exact: true })).toBeVisible()
-        await exitDesktop()
+        const desktop = app!.process()
+        void app!.close().catch(() => undefined)
+        await expect.poll(() => desktop.exitCode, { timeout: 25000 }).toBe(0)
+        app = undefined
+        if (!borrowed || !retainBackend) {
+          const record = JSON.parse(
+            await readFile(join(roots.storageRoot, 'runtime-exit.json'), 'utf8')
+          )
+          expect(record).toMatchObject({
+            pid: after.pid,
+            generation: after.desktop.generation,
+            outcome: 'clean'
+          })
+          await expect
+            .poll(() => {
+              try {
+                process.kill(after.pid, 0)
+                return false
+              } catch (error) {
+                return (error as NodeJS.ErrnoException).code === 'ESRCH'
+              }
+            })
+            .toBe(true)
+        }
         await stopBackend()
+        acquireRuntimeDirectorySync(roots.storageRoot).release()
+      } catch (error) {
+        for (const [name, path] of [
+          ['desktop-log', join(roots.userDataRoot, 'desktop-logs/main.log')],
+          ['runtime-log', join(roots.storageRoot, 'logs/main.log')]
+        ]) {
+          await testInfo.attach(name, {
+            body: await readFile(path).catch(() => Buffer.from('unavailable')),
+            contentType: 'text/plain'
+          })
+        }
+        throw error
       } finally {
         const desktop = app?.process()
-        await app?.evaluate(({ app }) => app.exit(0)).catch(() => desktop?.kill('SIGKILL'))
+        if (app && desktop) {
+          const cleanupTimer = setTimeout(() => desktop.kill('SIGKILL'), 5000)
+          try {
+            await app.evaluate(({ app }) => app.exit(0)).catch(() => desktop.kill('SIGKILL'))
+          } finally {
+            clearTimeout(cleanupTimer)
+          }
+        }
         if (desktop)
           await expect
             .poll(() => desktop.exitCode !== null || desktop.signalCode !== null, {

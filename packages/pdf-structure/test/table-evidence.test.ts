@@ -155,6 +155,43 @@ it('rejects a short captionless bibliography tail with dense citation keys', () 
   expect(hasTableEvidence(bibliography, { text: 'Table 1. Reference dataset' })).toBe(true)
 })
 
+it('rejects a prose continuation captured by a table and figure cross-reference', () => {
+  const table = {
+    grid: [['', 'or from its consistent co-occurrence with another class']],
+    unassigned: [
+      'explains the detailed setup of this experiment.',
+      'Result Observations and interpretation.',
+      'This suggests that the model benefits from clearer visual features.'
+    ],
+    issues: []
+  }
+  expect(
+    hasTableEvidence(table, {
+      text: 'Table 7 and Figure 11, the model consistently shows a strong result.'
+    })
+  ).toBe(false)
+  expect(
+    hasTableEvidence({ ...table, unassigned: [] }, { text: 'Table 7. Ablation results.' })
+  ).toBe(true)
+  expect(
+    hasTableEvidence(
+      {
+        grid: [
+          ['Method', 'Score'],
+          ['Baseline', '0.42']
+        ],
+        unassigned: [
+          'The accompanying figure shows the same trend.',
+          'Results are reported as mean values.',
+          'Higher scores indicate better agreement.'
+        ],
+        issues: []
+      },
+      { text: 'Table 8 and Figure 12. Compact measured comparison.' }
+    )
+  ).toBe(true)
+})
+
 it('rejects parallel abbreviation lists and fragmented affiliation directories', () => {
   const glossary = {
     issues: [],

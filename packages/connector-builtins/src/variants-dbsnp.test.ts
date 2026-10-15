@@ -16,6 +16,39 @@ const errRes = (status: number): Response =>
 const getRsids = VARIANTS_DBSNP_TOOLS.find((t) => t.id === 'dbsnp_get_rsids')!
 const searchRegion = VARIANTS_DBSNP_TOOLS.find((t) => t.id === 'dbsnp_search_by_region')!
 
+// Trimmed from https://api.ncbi.nlm.nih.gov/variation/v0/refsnp/199474657:
+// one mitochondrial sequence placement belongs to both GRCh37 and GRCh38.
+const rs199474657Placement = {
+  seq_id: 'NC_012920.1',
+  is_ptlp: true,
+  placement_annot: {
+    seq_type: 'refseq_chromosome',
+    mol_type: 'mitochondrion',
+    seq_id_traits_by_assembly: [
+      {
+        assembly_name: 'GRCh37.p13',
+        assembly_accession: 'GCF_000001405.25',
+        is_chromosome: true
+      },
+      {
+        assembly_name: 'GRCh38.p14',
+        assembly_accession: 'GCF_000001405.40',
+        is_chromosome: true
+      }
+    ]
+  },
+  alleles: ['A', 'G', 'T'].map((inserted_sequence) => ({
+    allele: {
+      spdi: {
+        seq_id: 'NC_012920.1',
+        position: 3242,
+        deleted_sequence: 'A',
+        inserted_sequence
+      }
+    }
+  }))
+}
+
 // A trimmed but structurally faithful RefSNP payload for rs7412: merged nothing, one primary
 // placement on GRCh38 + one on GRCh37, one alt allele with a frequency study, a ClinVar xref and gene.
 const rs7412Payload = {
@@ -142,6 +175,120 @@ const rs7412Payload = {
 }
 
 describe('dbsnp_get_rsids', () => {
+  it.each(['original', 'reversed'])(
+    'retains both assembly associations of a shared mitochondrial placement (%s trait order)',
+    async (order) => {
+      const traits = rs199474657Placement.placement_annot.seq_id_traits_by_assembly
+      const payload = {
+        refsnp_id: '199474657',
+        primary_snapshot_data: {
+          placements_with_allele: [
+            {
+              ...rs199474657Placement,
+              placement_annot: {
+                ...rs199474657Placement.placement_annot,
+                seq_id_traits_by_assembly: order === 'original' ? traits : [...traits].reverse()
+              }
+            }
+          ]
+        }
+      }
+      const out = (await new ParserEngine({
+        fetchImpl: vi.fn().mockResolvedValueOnce(jsonRes(payload))
+      }).call(getRsids, { rsids: ['rs199474657'] }, { ncbiEmail: 'x@y.org' })) as {
+        records: Array<{ placements: unknown[]; alleles: Array<{ allele: string; spdi: string }> }>
+      }
+      const shared = {
+        seq_id: 'NC_012920.1',
+        chrom: 'MT',
+        position: 3243,
+        ref: 'A',
+        alts: ['G', 'T'],
+        is_primary: true
+      }
+      expect(out.records[0].placements).toEqual([
+        { ...shared, assembly: 'GRCh38', assembly_full: 'GRCh38.p14' },
+        { ...shared, assembly: 'GRCh37', assembly_full: 'GRCh37.p13' }
+      ])
+      // Expanding assembly summaries must not duplicate the sequence-level alternate alleles.
+      expect(out.records[0].alleles).toHaveLength(2)
+      expect(out.records[0].alleles).toMatchObject([
+        { allele: 'G', spdi: 'NC_012920.1:3242:A:G' },
+        { allele: 'T', spdi: 'NC_012920.1:3242:A:T' }
+      ])
+    }
+  )
+
+  it('retains a chromosome association after a non-chromosome trait', async () => {
+    const [grch37, grch38] = rs199474657Placement.placement_annot.seq_id_traits_by_assembly
+    const payload = {
+      refsnp_id: '199474657',
+      primary_snapshot_data: {
+        placements_with_allele: [
+          {
+            ...rs199474657Placement,
+            placement_annot: {
+              seq_id_traits_by_assembly: [{ ...grch37, is_chromosome: false }, grch38]
+            }
+          }
+        ]
+      }
+    }
+    const out = (await new ParserEngine({
+      fetchImpl: vi.fn().mockResolvedValueOnce(jsonRes(payload))
+    }).call(getRsids, { rsids: ['rs199474657'] }, { ncbiEmail: 'x@y.org' })) as {
+      records: Array<{ placements: Array<{ assembly_full: string }> }>
+    }
+    expect(out.records[0].placements).toHaveLength(1)
+    expect(out.records[0].placements[0]).toMatchObject({
+      assembly_full: 'GRCh38.p14',
+      chrom: 'MT',
+      position: 3243,
+      ref: 'A',
+      alts: ['G', 'T']
+    })
+  })
+
+  it('deduplicates repeated assembly traits without merging distinct patch versions', async () => {
+    const [grch37, grch38] = rs199474657Placement.placement_annot.seq_id_traits_by_assembly
+    const payload = {
+      refsnp_id: '199474657',
+      primary_snapshot_data: {
+        placements_with_allele: [
+          {
+            ...rs199474657Placement,
+            placement_annot: {
+              // Synthetic patch association isolates full assembly identity from build identity.
+              seq_id_traits_by_assembly: [
+                grch37,
+                grch38,
+                { ...grch38 },
+                {
+                  assembly_name: 'GRCh38.p13',
+                  assembly_accession: 'GCF_000001405.39',
+                  is_chromosome: true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    const out = (await new ParserEngine({
+      fetchImpl: vi.fn().mockResolvedValueOnce(jsonRes(payload))
+    }).call(getRsids, { rsids: ['rs199474657'] }, { ncbiEmail: 'x@y.org' })) as {
+      records: Array<{ placements: Array<{ assembly: string; assembly_full: string }> }>
+    }
+    const placements = out.records[0].placements
+    expect(placements).toHaveLength(3)
+    expect(placements.map((p) => p.assembly_full).sort()).toEqual([
+      'GRCh37.p13',
+      'GRCh38.p13',
+      'GRCh38.p14'
+    ])
+    expect(placements.map((p) => p.assembly)).toEqual(['GRCh38', 'GRCh38', 'GRCh37'])
+  })
+
   it.each([
     { rsid: '121913421', ref: 'GGAATTAAGAGAAGC', positions: [55174771, 55242464] },
     { rsid: '121913426', ref: 'GAATTAAGAGAAGCAACA', positions: [55174772, 55242465] }

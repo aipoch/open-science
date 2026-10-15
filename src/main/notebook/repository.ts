@@ -20,6 +20,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
+  recoverDurableJsonDirectory,
   writeDurableJsonFile
 } from '@aipoch/durable-files'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
@@ -1442,6 +1443,9 @@ class NotebookRunRepository {
     const outboxRoot = join(
       getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane),
       RUN_TERMINAL_OUTBOX_DIR
+    )
+    await recoverDurableJsonDirectory(outboxRoot, (_targetPath, contents) =>
+      parseNotebookRunTerminalFact(contents)
     )
     let facts: Dirent[]
     try {

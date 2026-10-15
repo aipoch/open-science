@@ -1,3 +1,4 @@
+import { projectSessionEventPayload } from '../session-event-payload'
 import { randomUUID } from 'node:crypto'
 
 import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
@@ -63,7 +64,7 @@ class InternalWebEventStream {
       streamId: this.#streamId,
       sequence,
       channel: event.channel,
-      payload: event.payload ?? null
+      payload: projectSessionEventPayload(event) ?? null
     })
     const bytes = Buffer.byteLength(serialized)
 

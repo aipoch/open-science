@@ -39,6 +39,37 @@ Module's curated owner, contract, and representative consumer tests; it is not c
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
 
+### Dependency boundaries and explainable convergence
+
+`test:affected` refines a declared selection against immutable merge-base, head and actual checkout
+sources. Documentation and validated additive registrations retain their own evidence without
+turning an otherwise homogeneous source change into a mixed boundary. Policy changes, deletions,
+unknown ownership, dirty checkouts and unavailable evidence keep the conservative selection.
+
+Both PR and queue tiers may exclude a host test reached only through module expansion when a
+complete dependency traversal proves it cannot reach the actual changed files in **all three**
+snapshots. Selecting a consumer module never makes its other sources new change seeds: two owners
+wired into one composition do not automatically affect each other's independent tests. Changed
+owners' direct declarations, contracts, changed tests, graph evidence and new registration evidence
+are protected. Runtime-only traversal excludes erased type imports; typechecks and structural
+architecture checks still cover those relationships. Mixed imports, schemas, side effects, mocks
+and registered dynamic contracts remain runtime dependencies.
+
+PR additionally keeps the existing direct-consumer/one-adapter boundary and defers farther consumers
+to blocking merge queue. That distance rule is **not** proof of independence. Queue retains real
+multi-hop consumers. Opaque IPC, event, filesystem, native or unresolved imports cannot establish
+independence and retain tests. `test:affected:explain -- --base <base> --head <head> --tier pr` shows
+exclusions, retained boundary reasons, deferrals, capabilities and fallback reasons.
+
+`node scripts/ci/module-relationships.mjs <revision>` exports all registered modules with file-role
+layers, public interfaces, test counts, unresolved runtime files and file evidence for each edge.
+Runtime imports, type imports and explicit dynamic contracts point **consumer → dependency**;
+`test-routing` points **changed owner → consumer evidence**. These graphs must not be conflated.
+Layers describe file roles; a mixed legacy module can occupy several roles. The architecture guard
+prevents foundation dependencies, shared-to-host/presentation imports, owner-to-composition imports
+and private imports across the PDF/isolated-helper public boundaries. It does not claim complete
+encapsulation of every existing domain.
+
 ### Full fallback
 
 Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:
@@ -92,6 +123,38 @@ requested viewport width to take effect. Keep keyboard submission, conditional n
 reply/failure waits and scenario-specific assertions in the caller. The explicitly named
 `activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
 state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
+
+## Fast impact-registration gate
+
+After dependencies are installed, run this fixed registration suite from the repository root:
+
+```bash
+npx vitest run --config scripts/ci/vitest.registration.config.ts
+```
+
+It checks module schema and path references, exact source/test ownership, test consumer evidence
+(including declared runtime-loading edges), package dependency registration, classifier invariants
+and platform/core-check selection. This includes the Windows source-signal check that otherwise
+could be missed by selective test execution. The explicit inventory is independent of
+`change-impact.json` and module registration data; it does not run application behavior tests.
+
+PR Gate runs it in the independent **Impact registration** job on every PR and merge group,
+including documentation-only and full-fallback plans. The job installs the locked parsing/test
+toolchain with lifecycle scripts disabled, as CI Integrity does; this is not an application
+installation. The dedicated Vitest config needs no app setup, Prisma generation, package build,
+Electron or browser launch. The final PR Gate requires success even if affected tests would not
+select these suites. Failure, cancellation, skipping or a missing result blocks admission.
+
+The gate catches violations of the existing registration rules. It cannot infer arbitrary IPC,
+events or filesystem relationships; those still require the explicit contracts described below.
+Behavior tests and trusted-base Integrity preservation checks remain separate requirements.
+
+The workflow, fixed inventory and assertions execute from the candidate checkout. They are
+protected CI policy under `/scripts/ci/` and `/.github/workflows/`, requiring CI-owner approval;
+new commits dismiss stale approvals under the main-branch ruleset. Independence here means that
+registration data cannot select or skip its own checks. Changes to the checking policy itself use
+the existing [CI control-plane approval](ci.md#ci-control-plane-approval) process, while trusted-base
+Integrity continues to validate registration data and preservation rules.
 
 ## Module-impact registration
 

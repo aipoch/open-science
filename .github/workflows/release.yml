@@ -267,7 +267,7 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.rpm
-            artifacts/open-science-*.tar.gz
+            artifacts/open-science-cli-*.tar.gz
 
       # Set the final body before GitHub emits the release event consumed by Zenodo. Updating the
       # GitHub Release afterwards is too late because Zenodo archives the event payload it received.
@@ -300,7 +300,7 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.rpm
-            artifacts/open-science-*.tar.gz
+            artifacts/open-science-cli-*.tar.gz
             artifacts/CLI-PACKAGE-SHA256SUMS.txt
             artifacts/CLI-PACKAGE-PROVENANCE.json
             artifacts/SHA256SUMS.txt

@@ -61,6 +61,8 @@ export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
   dataRoot: string
   configRoot: string
   logPath?: string
+  desktopLogPath?: string
+  legacyDesktopLogPath?: string
   appVersion: string
   selectedItems?: string[]
   includeExecutionCode?: boolean

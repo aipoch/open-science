@@ -101,6 +101,7 @@ export type AgentUserChoicePrompt = {
   question: string
   header?: string
   options: AgentUserChoiceOption[]
+  kind?: Extract<ElicitationField['kind'], 'single-select' | 'multi-select'>
 }
 
 export type AgentUserChoiceRequest = {
@@ -136,7 +137,7 @@ export const MAX_ELICITATION_OPTIONS_PER_FIELD = 64
 export const MAX_ELICITATION_ANSWERS = 16
 export const MAX_ELICITATION_MULTI_SELECT_VALUES = 64
 export const MIN_AGENT_USER_CHOICE_OPTIONS = 2
-export const MAX_AGENT_USER_CHOICE_OPTIONS = 4
+export const MAX_AGENT_USER_CHOICE_OPTIONS = 16
 export const MAX_AGENT_USER_CHOICE_QUESTIONS = 3
 export const MAX_AGENT_TURN_PROVENANCE_ANCESTRY = 256
 
@@ -199,7 +200,8 @@ export const isValidElicitationValue = (
   }
   if (field.kind === 'boolean') return typeof value === 'boolean'
   if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return false
-  if (value.length > MAX_ELICITATION_MULTI_SELECT_VALUES) return false
+  if (value.length > MAX_ELICITATION_MULTI_SELECT_VALUES || new Set(value).size !== value.length)
+    return false
   if (field.minItems !== undefined && value.length < field.minItems) return false
   if (field.maxItems !== undefined && value.length > field.maxItems) return false
   const allowed = new Set(field.options?.map((option) => option.value) ?? [])
@@ -301,6 +303,12 @@ export const sanitizeAgentUserChoiceRequest = (
         : boundedString(candidate.header, MAX_ELICITATION_LABEL_CHARS)
     if (!question || (candidate.header !== undefined && !header)) return []
     if (
+      candidate.kind !== undefined &&
+      candidate.kind !== 'single-select' &&
+      candidate.kind !== 'multi-select'
+    )
+      return []
+    if (
       !Array.isArray(candidate.options) ||
       candidate.options.length < MIN_AGENT_USER_CHOICE_OPTIONS ||
       candidate.options.length > MAX_AGENT_USER_CHOICE_OPTIONS
@@ -325,10 +333,40 @@ export const sanitizeAgentUserChoiceRequest = (
       return []
     }
 
-    return [{ question, ...(header ? { header } : {}), options }]
+    return [
+      {
+        question,
+        ...(header ? { header } : {}),
+        options,
+        ...(candidate.kind !== undefined ? { kind: candidate.kind } : {})
+      }
+    ]
   })
 
   return questions.length === candidates.length ? { sessionId, questions } : undefined
+}
+
+// Delegated questions store custom text and selected options in the same answer slot.
+export const sanitizeAgentUserChoiceAnswer = (
+  question: AgentUserChoicePrompt,
+  value: unknown
+): string | string[] | undefined => {
+  if (typeof value === 'string') return boundedString(value, MAX_ELICITATION_MESSAGE_CHARS)
+  if (
+    question.kind !== 'multi-select' ||
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > question.options.length ||
+    new Set(value).size !== value.length ||
+    !value.every(
+      (item) => typeof item === 'string' && question.options.some((option) => option.label === item)
+    )
+  ) {
+    return undefined
+  }
+  return question.options
+    .filter((option) => value.includes(option.label))
+    .map((option) => option.label)
 }
 
 const sanitizeOption = (value: unknown): ElicitationOption | undefined => {

@@ -33,6 +33,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/backend-dependencies.test.ts",
       "scripts/build-backend.integration.test.ts",
       "scripts/build-dev-packages.integration.test.ts",
@@ -686,6 +687,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -866,7 +868,10 @@
       "test/config/electron.vite.config.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

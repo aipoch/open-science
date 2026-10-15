@@ -72,6 +72,7 @@ export function composeProjectLifecycle({
   getActiveDelegatedSessions,
   getActiveSideChatSessions,
   sessionPersistenceCoordinator,
+  clearSessionCredentials,
   getNotebookService
 }: {
   applicationEvents: ApplicationEvents
@@ -128,6 +129,7 @@ export function composeProjectLifecycle({
     | 'updateArchive'
   >
   getNotebookService: () => NotebookRuntimeService
+  clearSessionCredentials: (sessionId: string) => void
 }): {
   sideChatRelay: SideChatRelayOwner
   mainPromptSideChatRelay: ReturnType<typeof createMainPromptSideChatRelay>
@@ -307,6 +309,7 @@ export function composeProjectLifecycle({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
+      for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       await Promise.all([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),

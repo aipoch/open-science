@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 
+vi.mock('./runtime-stop-confirmation', () => ({ isRuntimeProcessAlive: vi.fn(() => true) }))
+import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 const client = (pid = 7, owned = false): DesktopRuntimeClient =>
   ({
     processId: () => pid,
     ownsRuntime: () => owned,
+    runtimeInfo: () => ({ generation: 'test-generation' }),
     close: vi.fn()
   }) as unknown as DesktopRuntimeClient
 const deferred = <T>(): { promise: Promise<T>; resolve(value: T): void } => {
@@ -15,7 +18,10 @@ const deferred = <T>(): { promise: Promise<T>; resolve(value: T): void } => {
   })
   return { promise, resolve }
 }
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.mocked(isRuntimeProcessAlive).mockReturnValue(true)
+})
 describe('same-backend desktop recovery', () => {
   it('deduplicates concurrent attempts, waits for reconciliation, ignores old disconnects', async () => {
     const old = client()
@@ -60,13 +66,14 @@ describe('same-backend desktop recovery', () => {
     recovery.disconnect(old)
     await recovery.reconnect()
     expect(recovery.state().phase).toBe('connected')
-    Object.defineProperty(child, 'exitCode', { value: 0 })
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
     recovery.disconnect(next)
     expect(recovery.state().phase).toBe('unavailable')
   })
-  it('never promotes a borrowed attachment to an owner', async () => {
+  it('rejects a replacement generation even when the PID is reused', async () => {
     const old = client()
     const next = client(7, true)
+    Object.assign(next, { runtimeInfo: () => ({ generation: 'replacement' }) })
     const activate = vi.fn()
     const recovery = createDesktopRuntimeRecovery({
       client: old,
@@ -116,6 +123,36 @@ describe('same-backend desktop recovery', () => {
     await Promise.resolve()
     expect(next.close).toHaveBeenCalledOnce()
   })
+  it('cancels an unanswered control refresh and ignores its late reply', async () => {
+    const old = client()
+    const next = client()
+    const refresh = deferred<ReturnType<DesktopRuntimeClient['runtimeInfo']>>()
+    const refreshControl = vi.fn(() => refresh.promise)
+    Object.assign(next, {
+      runtimeInfo: () => ({ generation: 'test-generation', controlReason: 'operation-pending' }),
+      refreshControl
+    })
+    const activate = vi.fn()
+    const recovery = createDesktopRuntimeRecovery({
+      client: old,
+      connect: async () => next,
+      activate,
+      onState: vi.fn()
+    })
+    recovery.disconnect(old)
+    const result = recovery.reconnect()
+    await vi.waitFor(() => expect(refreshControl).toHaveBeenCalledOnce())
+    recovery.setClosing(true)
+    await result
+    expect(next.close).toHaveBeenCalledOnce()
+    expect(recovery.state()).toMatchObject({ phase: 'disconnected', closing: true })
+    Object.assign(next, {
+      runtimeInfo: () => ({ generation: 'test-generation', control: 'granted' })
+    })
+    refresh.resolve(next.runtimeInfo())
+    await Promise.resolve()
+    expect(activate).not.toHaveBeenCalled()
+  })
   it('cancels hung activation on quit and allows another attempt after canceled quit', async () => {
     const old = client()
     const next = client()
@@ -157,5 +194,70 @@ describe('same-backend desktop recovery', () => {
     hydration.resolve()
     await result
     expect(recovery.state().phase).toBe('disconnected')
+  })
+})
+
+describe('reconciliation event buffer', () => {
+  it('drops an in-flight Session snapshot when its deletion arrives before replay finishes', async () => {
+    const { createDesktopRecoveryEventBuffer } = await import('./desktop-recovery-event-buffer')
+    const buffer = createDesktopRecoveryEventBuffer()
+    const snapshot = deferred<unknown>()
+    const deliver = vi.fn()
+    buffer.push({
+      channel: 'session:updated',
+      payload: {
+        kind: 'session-invalidation',
+        projectId: 'p',
+        sessionId: 's',
+        revision: 1,
+        originClientId: 'other'
+      }
+    })
+    const replay = buffer.drain({
+      load: () => snapshot.promise,
+      deliver,
+      signal: new AbortController().signal
+    })
+    buffer.push({ channel: 'session:deleted', payload: { projectId: 'p', sessionId: 's' } })
+    snapshot.resolve({ id: 's', projectId: 'p', revision: 1 })
+    await replay
+    expect(deliver).toHaveBeenCalledExactlyOnceWith({
+      channel: 'session:deleted',
+      payload: { projectId: 'p', sessionId: 's' }
+    })
+  })
+
+  it('cancels replay without installing a late snapshot and can begin a new recovery', async () => {
+    const { createDesktopRecoveryEventBuffer } = await import('./desktop-recovery-event-buffer')
+    const buffer = createDesktopRecoveryEventBuffer()
+    const snapshot = deferred<unknown>()
+    const deliver = vi.fn()
+    const controller = new AbortController()
+    buffer.push({
+      channel: 'session:updated',
+      payload: {
+        kind: 'session-invalidation',
+        projectId: 'p',
+        sessionId: 's',
+        revision: 1,
+        originClientId: 'other'
+      }
+    })
+    const replay = buffer.drain({
+      load: () => snapshot.promise,
+      deliver,
+      signal: controller.signal
+    })
+    const outcome = expect(replay).rejects.toThrow('canceled')
+    controller.abort()
+    await outcome
+    snapshot.resolve({ id: 's', projectId: 'p', revision: 1 })
+    buffer.clear()
+    buffer.push({ channel: 'project:created', payload: { id: 'p' } })
+    await buffer.drain({ load: vi.fn(), deliver, signal: new AbortController().signal })
+    expect(deliver).toHaveBeenCalledExactlyOnceWith({
+      channel: 'project:created',
+      payload: { id: 'p' }
+    })
   })
 })

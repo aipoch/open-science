@@ -146,6 +146,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/notebook/environment-bundle-resources.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-process.contract.test.ts",
@@ -690,7 +692,10 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/runtime-network-node.integration.test.ts"
+      "src/main/runtime-network-node.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

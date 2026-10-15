@@ -24,6 +24,34 @@ async function runtime(host: 'node' | 'electron', desktop?: DesktopEndpoint) {
   return { root, ensureWeb, control, record, token }
 }
 describe('runtime ownership discovery', () => {
+  it('reports stopping in the owner proof so a new Desktop never adopts the runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'runtime-control-stopping-'))
+    cleanup.push(() => rm(root, { recursive: true, force: true }))
+    let stopping = false
+    const control = await startRuntimeControl(
+      root,
+      'node',
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      undefined,
+      () => stopping
+    )
+    cleanup.push(() => control.close())
+    const record = JSON.parse(
+      await readFile(join(root, RUNTIME_OWNER_FILE), 'utf8')
+    ) as RuntimeOwnerRecord
+    const token = (await readFile(join(root, 'web-token'), 'utf8')).trim()
+    const owner = async (): Promise<Record<string, unknown>> =>
+      (await fetch(`http://127.0.0.1:${record.port}/owner`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-open-science-runtime-generation': record.generation
+        }
+      }).then((response) => response.json())) as Record<string, unknown>
+    expect(await owner()).not.toHaveProperty('stopping')
+    stopping = true
+    expect(await owner()).toMatchObject({ stopping: true })
+  })
   it('keeps desktop credentials in the private owner file and out of Web-authenticated discovery', async () => {
     const desktop = {
       path: 'private-test-endpoint',

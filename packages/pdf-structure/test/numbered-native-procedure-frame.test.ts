@@ -174,6 +174,120 @@ const insetDotProcedure = (): ProcedureInput['page'] => ({
   }))
 })
 
+const straightLineProcedure = (): ProcedureInput['page'] => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  lines: [
+    ['Algorithm 1 Native sequence', 40, 100, 150],
+    ['input records and tolerance', 40, 118, 180],
+    ['A ← select records', 50, 130, 120],
+    ['B ← transform(A)', 50, 142, 120],
+    ['C ← search(B)', 50, 154, 110],
+    ['where D ← evaluate(C)', 75, 166, 150],
+    ['return C', 50, 178, 50]
+  ].map(([text, x, y, width]) => ({
+    text: String(text),
+    x: Number(x),
+    y: Number(y),
+    width: Number(width),
+    height: 10,
+    fontSize: 10
+  })),
+  graphicsBounds: [98, 114, 194].map((y) => ({
+    kind: 'path',
+    normalizedRect: [40 / 600, y / 800, 540 / 600, (y + 0.5) / 800]
+  }))
+})
+
+it('recovers a framed straight-line native algorithm with a colonless input', () => {
+  expect(findAlgorithmCandidates(straightLineProcedure())).toEqual([
+    {
+      caption: {
+        page: 1,
+        lines: ['Algorithm 1 Native sequence'],
+        rect: [40, 100, 190, 110]
+      },
+      rect: [38, 96, 542, 196.5]
+    }
+  ])
+})
+
+it('recovers a wrapped assignment continuation and rejects assignments after return', () => {
+  const page = straightLineProcedure()
+  page.lines[3].text = 'V ← GEOM(f ([τ'
+  page.lines[3].width = 70
+  page.lines.splice(4, 0, {
+    text: '← B-SEARCH(max{v ∈ V})',
+    x: 62,
+    y: 154,
+    width: 150,
+    height: 10,
+    fontSize: 10
+  })
+  expect(findAlgorithmCandidates(page)).toHaveLength(1)
+
+  const afterReturn = straightLineProcedure()
+  afterReturn.lines.splice(7, 0, {
+    text: 'where D ← evaluate(C)',
+    x: 75,
+    y: 190,
+    width: 150,
+    height: 10,
+    fontSize: 10
+  })
+  expect(findAlgorithmCandidates(afterReturn)).toEqual([])
+})
+
+it('keeps same-size mathematical fragments owned by an assignment', () => {
+  const page = straightLineProcedure()
+  page.lines.splice(
+    3,
+    0,
+    { text: 'P', x: 160, y: 134, width: 8, height: 10, fontSize: 10 },
+    { text: 'f (A), 1 − ε)', x: 210, y: 142, width: 70, height: 10, fontSize: 10 }
+  )
+  expect(findAlgorithmCandidates(page)).toHaveLength(1)
+})
+
+it.each([
+  'missing input',
+  'missing return',
+  'one assignment',
+  'prose body',
+  'missing opening rule',
+  'missing divider rule',
+  'missing closing rule',
+  'mismatched frame',
+  'unnumbered title',
+  'foreign source at left edge',
+  'foreign source below frame'
+])('rejects a straight-line algorithm without the complete %s proof', (missing) => {
+  const page = straightLineProcedure()
+  if (missing === 'missing input') page.lines.splice(1, 1)
+  if (missing === 'missing return') page.lines.pop()
+  if (missing === 'one assignment') page.lines.splice(3, 2)
+  if (missing === 'prose body')
+    page.lines.slice(2).forEach((line) => {
+      line.text = 'This paragraph describes native records.'
+    })
+  if (missing.startsWith('missing ')) {
+    const index = {
+      'missing opening rule': 0,
+      'missing divider rule': 1,
+      'missing closing rule': 2
+    }[missing]
+    if (index !== undefined) page.graphicsBounds.splice(index, 1)
+  }
+  if (missing === 'mismatched frame') page.graphicsBounds[2].normalizedRect[2] = 520 / 600
+  if (missing === 'unnumbered title') page.lines[0].text = 'Native sequence'
+  if (missing === 'foreign source at left edge')
+    page.lines.push({ text: 'Foreign text', x: 35, y: 150, width: 30, height: 10, fontSize: 10 })
+  if (missing === 'foreign source below frame')
+    page.lines.push({ text: 'Foreign text', x: 60, y: 190, width: 70, height: 10, fontSize: 10 })
+  expect(findAlgorithmCandidates(page)).toEqual([])
+})
+
 const exactRuleProcedure = (): { page: ProcedureInput['page']; rules: number[][] } => {
   const page = insetDotProcedure()
   page.graphicsBounds[2].normalizedRect[3] = 302 / page.height

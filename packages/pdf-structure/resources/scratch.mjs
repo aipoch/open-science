@@ -6,7 +6,8 @@ const names = {
   '': /^(structure(?:\.pending)?\.json)$/,
   geometry: /^(probe\.json|page-\d+(?:-candidates)?\.png)$/,
   inference: /^(onnx-probe\.json|page-\d+-detected\.png|page-\d+-table-\d+\.(?:png|tsv))$/,
-  thumbnails: /^(?:p\d+-(?:figure|algorithm|graphical-table)-\d+|page-\d+-table-\d+)\.png$/
+  thumbnails:
+    /^(?:p\d+-(?:figure|algorithm|graphical-table|open-rule-table)-\d+|page-\d+-table-\d+)\.png$/
 }
 
 // Keep optional cell origins only when they fit the existing manifest byte limit.

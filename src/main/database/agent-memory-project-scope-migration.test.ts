@@ -303,6 +303,7 @@ describe('agent memory project scope migration', () => {
     })
   })
 
+  // Replaying the historical suffix rebuilds tables twice; use the migration suite's 120s budget.
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
     await client.$disconnect()
     const legacyRoot = join(storageRoot, 'legacy')
@@ -360,7 +361,7 @@ describe('agent memory project scope migration', () => {
       to: CURRENT_MIGRATION_ID
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
-  })
+  }, 120_000)
 
   it('rejects unexpected triggers in the current runtime schema', async () => {
     await client.$executeRawUnsafe(`CREATE TRIGGER "MemoryEntry_unexpected_copy"

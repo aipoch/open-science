@@ -34,6 +34,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "packages/open-science/cli.test.ts",
       "packages/open-science/client.test.ts",
       "scripts/electron-app-fixture.test.ts",
@@ -532,6 +534,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -844,7 +847,15 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/internal-web-event-stream.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -589,24 +589,28 @@ describe('application database migrations', () => {
     )
   })
 
-  it('fills derived literature text when adopting an already current schema', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client)
-    await client.literatureItem.create({
-      data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
-    })
-    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
-    await migrateApplicationDatabase(client)
-    expect(
-      (
-        await new LiteratureCatalog(async () => client!).search({
-          scope: 'library',
-          query: 'étude'
-        })
-      ).totalCount
-    ).toBe(1)
-  })
+  it(
+    'fills derived literature text when adopting an already current schema',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtReleasedManifest(client)
+      await client.literatureItem.create({
+        data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
+      })
+      await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
+      await migrateApplicationDatabase(client)
+      expect(
+        (
+          await new LiteratureCatalog(async () => client!).search({
+            scope: 'library',
+            query: 'étude'
+          })
+        ).totalCount
+      ).toBe(1)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rolls back a failed literature text backfill and retries the upgrade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-rollback-'))
@@ -887,87 +891,97 @@ describe('application database migrations', () => {
     ])
   })
 
-  it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client)
-    await removeLiteratureFoundationSchema(client)
-    await client.$executeRawUnsafe('DROP TABLE "SessionModelCallUsage"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedReadTokens"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedWriteTokens"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "modelCallCount"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "frameworkId"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "providerId"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "model"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
-    )
-    await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
-    )
-    await removeComputeAnalysisSchema(client, true)
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
-    await client.$executeRawUnsafe(`INSERT INTO "Session" (
+  it(
+    'keeps historical aggregate-only turn usage when adding exact model-call storage',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtReleasedManifest(client)
+      await removeLiteratureFoundationSchema(client)
+      await client.$executeRawUnsafe('DROP TABLE "SessionModelCallUsage"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedReadTokens"'
+      )
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedWriteTokens"'
+      )
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "modelCallCount"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "frameworkId"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "providerId"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "model"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
+      )
+      await client.$executeRawUnsafe(
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
+      )
+      await removeComputeAnalysisSchema(client, true)
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'
+      )
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+      await client.$executeRawUnsafe(`INSERT INTO "Session" (
       "id", "number", "projectId", "title", "status", "presentedStatus", "createdAtMs", "updatedAtMs"
     ) VALUES ('session-1', 1, 'project-1', 'Session', 'idle', 'idle', 1, 2)`)
-    await client.$executeRawUnsafe(`INSERT INTO "SessionTurnUsage" (
+      await client.$executeRawUnsafe(`INSERT INTO "SessionTurnUsage" (
       "sessionId", "messageId", "completedAtMs", "inputTokens", "cacheTokens", "outputTokens", "isRootFrame"
     ) VALUES ('session-1', 'message-1', 2, 10, 4, 3, true)`)
 
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: [
-        '0015_session_model_call_usage',
-        '0016_compute_job_sensitive_data_encryption',
-        '0017_agent_memory_project_scope',
-        '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state',
-        '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique',
-        '0023_compute_job_operation',
-        '0024_compute_job_file_evidence',
-        '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup',
-        '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints',
-        '0029_compute_host_execution_mode',
-        '0030_literature_foundation',
-        '0031_project_archive_revision',
-        '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery',
-        '0035_literature_pdf_provenance',
-        '0036_content_verification_observation',
-        '0037_literature_inbox_integrity',
-        '0038_literature_search_text',
-        '0039_literature_metadata_commit_receipt',
-        '0040_literature_collection_revision',
-        '0041_bookmarks',
-        '0042_classification_usage',
-        '0043_pdf_annotations',
-        '0044_literature_smart_collections',
-        '0045_literature_smart_pause_run',
-        '0046_journal_attributes',
-        '0047_session_replay',
-        '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names',
-        '0050_literature_translation'
-      ]
-    })
-    await expect(
-      client.sessionTurnUsage.findUnique({
-        where: { sessionId_messageId: { sessionId: 'session-1', messageId: 'message-1' } }
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+        applied: [
+          '0015_session_model_call_usage',
+          '0016_compute_job_sensitive_data_encryption',
+          '0017_agent_memory_project_scope',
+          '0018_session_auxiliary_turn_usage',
+          '0019_session_usage_attribution',
+          '0020_compute_job_analysis_state',
+          '0021_compute_job_analysis_constraints',
+          '0022_memory_global_content_unique',
+          '0023_compute_job_operation',
+          '0024_compute_job_file_evidence',
+          '0025_managed_file_version_foundation',
+          '0026_compute_job_remote_cleanup',
+          '0027_project_session_defaults',
+          '0028_database_numeric_and_null_constraints',
+          '0029_compute_host_execution_mode',
+          '0030_literature_foundation',
+          '0031_project_archive_revision',
+          '0032_permission_approval_summary',
+          '0033_compute_job_harvest_retry',
+          '0034_background_result_delivery',
+          '0035_literature_pdf_provenance',
+          '0036_content_verification_observation',
+          '0037_literature_inbox_integrity',
+          '0038_literature_search_text',
+          '0039_literature_metadata_commit_receipt',
+          '0040_literature_collection_revision',
+          '0041_bookmarks',
+          '0042_classification_usage',
+          '0043_pdf_annotations',
+          '0044_literature_smart_collections',
+          '0045_literature_smart_pause_run',
+          '0046_journal_attributes',
+          '0047_session_replay',
+          '0048_pdf_annotation_sharing',
+          '0049_pascalcase_table_names',
+          '0050_literature_translation'
+        ]
       })
-    ).resolves.toMatchObject({
-      cachedReadTokens: null,
-      cachedWriteTokens: null,
-      modelCallCount: null
-    })
-    await expect(client.sessionModelCallUsage.count()).resolves.toBe(0)
-  })
+      await expect(
+        client.sessionTurnUsage.findUnique({
+          where: { sessionId_messageId: { sessionId: 'session-1', messageId: 'message-1' } }
+        })
+      ).resolves.toMatchObject({
+        cachedReadTokens: null,
+        cachedWriteTokens: null,
+        modelCallCount: null
+      })
+      await expect(client.sessionModelCallUsage.count()).resolves.toBe(0)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-current-'))

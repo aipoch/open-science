@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { RequestError } from '@agentclientprotocol/sdk'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -744,6 +745,82 @@ describe('review assessment owner', () => {
     expect(result.review.lifecycle).toBe('error')
     expect(result.review.errorMessage).toBe('model persistence failed')
     expect(harness.events).toContain('acp:dispose')
+  })
+
+  it('does not prompt after cancellation while required MCP startup is pending', async () => {
+    harness.submission = undefined
+    const controller = new AbortController()
+    const acpRuntime = runtime()
+    const build = acpRuntime.buildReviewerSession.bind(acpRuntime)
+    const startup = Promise.withResolvers<void>()
+    acpRuntime.buildReviewerSession = vi.fn(async (request) => {
+      await startup.promise
+      return build(request)
+    })
+    const assessment = runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      acpRuntime,
+      mode: 'initial',
+      abortSignal: controller.signal
+    })
+    await vi.waitFor(() => expect(acpRuntime.buildReviewerSession).toHaveBeenCalledOnce())
+    controller.abort()
+    startup.resolve()
+    const result = await assessment
+    expect(result.review.errorMessage).toBe('reviewer session was aborted before stopping')
+    expect(harness.events).not.toContain('acp:prompt')
+    expect(harness.events).toContain('acp:dispose')
+    expect(harness.events).toContain('mcp:stop')
+  })
+
+  it('preserves required Reviewer MCP startup diagnostics in the review error', async () => {
+    harness.submission = undefined
+    const details =
+      'error creating thread: Fatal error: Failed to initialize session: required MCP servers failed to initialize: open-science-reviewer: Mcp error: -32603: reviewer tools/list failed'
+    const acpRuntime = runtime()
+    acpRuntime.buildReviewerSession = vi
+      .fn()
+      .mockRejectedValue(RequestError.internalError({ details }))
+
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      acpRuntime,
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(result.review.errorMessage).toContain('open-science-reviewer')
+    expect(result.review.errorMessage).toContain('reviewer tools/list failed')
+    expect(harness.events).not.toContain('acp:prompt')
+    expect(harness.events).toContain('mcp:stop')
+  })
+
+  it.each([
+    [RequestError.internalError({ details: '' }), 'Internal error'],
+    [RequestError.internalError({ details: '   ' }), 'Internal error'],
+    [RequestError.internalError({ details: { message: 'nested' } }), 'Internal error'],
+    [
+      RequestError.internalError({ details: 'secondary' }, 'specific failure'),
+      'Internal error: specific failure'
+    ],
+    [
+      Object.assign(new Error('ordinary failure'), { data: { details: 'secondary' } }),
+      'ordinary failure'
+    ],
+    ['connection closed', 'connection closed'],
+    [null, 'null']
+  ])('retains the existing error fallback for %s', async (error, expected) => {
+    harness.submission = undefined
+    const acpRuntime = runtime()
+    acpRuntime.buildReviewerSession = vi.fn().mockRejectedValue(error)
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      acpRuntime,
+      mode: 'initial'
+    })
+    expect(result.review.errorMessage).toBe(expected)
+    expect(harness.events).not.toContain('acp:prompt')
+    expect(harness.events).toContain('mcp:stop')
   })
 
   it('stops MCP independently and preserves session then bridge error precedence', async () => {

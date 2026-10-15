@@ -19,7 +19,8 @@
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.test.ts",
     "src/main/web-service/task-api.ts",
-    "src/main/web-service/external-access-contract.ts"
+    "src/main/web-service/external-access-contract.ts",
+    "src/main/web-service/session-payload.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/web-service/application-event-projections.ts",
@@ -42,7 +43,8 @@
       "src/main/web-service/internal-web-event-stream.test.ts",
       "src/main/web-service/public-task-event-stream.test.ts",
       "src/main/web-service/state-file.test.ts",
-      "src/main/web-service/task-api.test.ts"
+      "src/main/web-service/task-api.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -50,6 +52,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/acp/runtime-coordinator.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/application-command-wiring.test.ts",
       "cli/config-root.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
@@ -77,7 +82,10 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/ipc-surfaces/settings.test.ts"
+      "src/main/ipc-surfaces/settings.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

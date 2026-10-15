@@ -25,6 +25,7 @@
     "src/main/settings/codex-detect.test.ts",
     "src/main/settings/codex-detect.ts",
     "src/main/settings/codex-error.test-utils.ts",
+    "src/main/settings/codex-reviewer-readiness.integration.test.ts",
     "src/main/settings/codex-skill-loading.integration.test.ts",
     "src/main/settings/connector-credential-recovery.integration.test.ts",
     "src/main/settings/connector-settings.test.ts",
@@ -150,6 +151,7 @@
       "src/main/settings/claude-runtime-provisioner.test.ts",
       "src/main/settings/codebuddy-detect.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
       "src/main/settings/connector-settings.test.ts",
@@ -189,6 +191,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -715,7 +719,10 @@
       "src/main/settings/managed-opencode.test.ts",
       "src/main/settings/shell-path.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/runtime-network-node.integration.test.ts"
+      "src/main/runtime-network-node.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

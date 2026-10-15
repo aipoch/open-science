@@ -3649,6 +3649,24 @@ function nativeClosedTableReferenceItems(table, items, rules) {
 export function hasTableEvidence(table, caption, pageItems = [], sourceRules, sourceGraphics = []) {
   const populatedRows = table.grid.map((row) => row.filter((text) => text.trim()).length)
   if (!populatedRows.some((count) => count > 0)) return false
+  // A detector can attach a nearby prose continuation to a caption-like
+  // cross-reference (for example, "Table 7 and Figure 11").  A one-row crop
+  // with at most two populated cells and several unresolved narrative lines is
+  // not a table; retain the source text in the surrounding body instead.
+  const captionText = [caption?.text, ...(caption?.lines ?? [])].filter(Boolean).join(' ')
+  const unresolved = (table.unassigned ?? []).map((item) =>
+    typeof item === 'string' ? item : String(item?.text ?? '')
+  )
+  if (
+    table.grid.length <= 2 &&
+    populatedRows.reduce((sum, count) => sum + count, 0) <= 2 &&
+    unresolved.length >= 3 &&
+    /\b(?:table|tab\.)\s*\d+\b[^.]{0,80}\b(?:and|with)\b\s*(?:figure|fig\.)\s*\d+\b/iu.test(
+      captionText
+    ) &&
+    unresolved.filter((text) => /\p{L}{3,}/u.test(text) && /\s/u.test(text.trim())).length >= 3
+  )
+    return false
   if (isNativeTitledProcedure(table, caption, pageItems, sourceRules)) return false
   if (isNativeProseFootnoteOverlap(table, caption, pageItems, sourceRules ?? [])) return false
   const nativeCaption = caption?.rect

@@ -176,7 +176,11 @@ import {
   PdfTranslationSidebar
 } from './PdfTranslationView'
 import { usePdfTranslationAgent } from './use-pdf-translation-agent'
-import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
+import {
+  usePdfTranslationJob,
+  type PdfTranslationExecutor,
+  type PdfTranslationOptions
+} from './use-pdf-translation-job'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
@@ -1672,7 +1676,7 @@ const PdfEvidenceLayer = ({
             </button>
           )
         })}
-        {matchingBookmarks.flatMap((bookmark) => {
+        {matchingBookmarks.map((bookmark) => {
           const selector = bookmark.selector
           if (selector.kind !== 'text' && selector.kind !== 'region') return []
           const boxes = selector.kind === 'text' ? selector.quads : [selector.rect]
@@ -1680,73 +1684,68 @@ const PdfEvidenceLayer = ({
           const colorValue = pdfMarkColorValue(color)
           const isRevealed = reveal?.id === bookmark.id
           const isSelected = selectedBookmarkId === bookmark.id
-          return boxes.map((rect, index) => (
-            <button
-              key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
-              type="button"
-              data-pdf-bookmark-highlight={bookmark.id}
-              data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
-              aria-label={t('Select annotation')}
-              aria-pressed={isSelected}
-              className={cn(
-                'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                markKind === 'area' && 'ring-1 ring-inset',
-                isRevealed && 'pdf-evidence-reveal',
-                isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
-              )}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                onSelectBookmark?.(bookmark.id)
-              }}
-              style={{
-                left: `${rect.x * 100}%`,
-                top: `${rect.y * 100}%`,
-                width: `${rect.width * 100}%`,
-                height: `${rect.height * 100}%`,
-                backgroundColor:
-                  markKind === 'highlight' || markKind === 'area'
-                    ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
-                    : 'transparent',
-                borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
-                ...(markKind === 'strikethrough'
-                  ? {
-                      backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
-                    }
-                  : markKind === 'squiggly'
-                    ? {
-                        backgroundColor: colorValue,
-                        maskImage: PDF_SQUIGGLY_MASK,
-                        maskRepeat: 'repeat-x',
-                        maskPosition: 'left bottom',
-                        maskSize: '8px 4px'
-                      }
-                    : markKind === 'underline'
-                      ? { borderBottom: `0.12rem solid ${colorValue}` }
-                      : {})
-              }}
-            />
-          ))
-        })}
-        {pageAnnotations.flatMap((annotation) => {
-          const selector = annotation.target.selector
-          if (!pdfBookmarkSelectorMatchesPage(selector, pageNumber, pageRotation)) return []
-          const rect =
-            selector.kind === 'text'
-              ? selector.quads.at(-1)
-              : selector.kind === 'region'
-                ? selector.rect
-                : undefined
-          if (!rect) return []
-          return [
-            <PdfAnnotationMarker
-              key={annotation.id}
-              id={annotation.id}
-              note={annotation.note}
-              left={`${Math.min(0.97, rect.x + rect.width) * 100}%`}
-              top={`${rect.y * 100}%`}
-            />
-          ]
+          const annotation = pageAnnotations.find((item) => item.id === bookmark.id)
+          const anchor = boxes.at(-1)
+          return (
+            <div key={bookmark.id} className="group/pdf-annotation">
+              {boxes.map((rect, index) => (
+                <button
+                  key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
+                  type="button"
+                  data-pdf-bookmark-highlight={bookmark.id}
+                  data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
+                  aria-label={t('Select annotation')}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    markKind === 'area' && 'ring-1 ring-inset',
+                    isRevealed && 'pdf-evidence-reveal',
+                    isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
+                  )}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onSelectBookmark?.(bookmark.id)
+                  }}
+                  style={{
+                    left: `${rect.x * 100}%`,
+                    top: `${rect.y * 100}%`,
+                    width: `${rect.width * 100}%`,
+                    height: `${rect.height * 100}%`,
+                    backgroundColor:
+                      markKind === 'highlight' || markKind === 'area'
+                        ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
+                        : 'transparent',
+                    borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
+                    ...(markKind === 'strikethrough'
+                      ? {
+                          backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
+                        }
+                      : markKind === 'squiggly'
+                        ? {
+                            backgroundColor: colorValue,
+                            maskImage: PDF_SQUIGGLY_MASK,
+                            maskRepeat: 'repeat-x',
+                            maskPosition: 'left bottom',
+                            maskSize: '8px 4px'
+                          }
+                        : markKind === 'underline'
+                          ? { borderBottom: `0.12rem solid ${colorValue}` }
+                          : {})
+                  }}
+                />
+              ))}
+              {annotation && anchor ? (
+                <PdfAnnotationMarker
+                  id={annotation.id}
+                  note={annotation.note}
+                  selected={isSelected}
+                  left={`${Math.min(0.97, anchor.x + anchor.width) * 100}%`}
+                  top={`${anchor.y * 100}%`}
+                />
+              ) : null}
+            </div>
+          )
         })}
         {draft ? (
           <span
@@ -2452,6 +2451,14 @@ export const PdfPreviewContent = ({
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
   const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
+  const pendingNewTranslation = useRef<
+    | {
+        key: string
+        document: PdfDocument
+        options: PdfTranslationOptions
+      }
+    | undefined
+  >(undefined)
   const translationToggleRef = useRef<HTMLButtonElement>(null)
   const translationCloseRef = useRef<HTMLButtonElement>(null)
   const translationPanelId = useId()
@@ -2726,7 +2733,10 @@ export const PdfPreviewContent = ({
           try {
             await window.api.previewResources.release({ resourceId })
           } catch (error) {
-            console.error('Failed to release PDF preview resource', error)
+            // A disconnected backend has already revoked its preview resources.
+            if (desktopRuntimeWritable()) {
+              console.error('Failed to release PDF preview resource', error)
+            }
           }
         }
       })()
@@ -2850,7 +2860,7 @@ export const PdfPreviewContent = ({
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recovery.checkpoint
+    recoveryCheckpoint
   )
   const jobSource =
     document && presentation !== 'search'
@@ -2872,6 +2882,25 @@ export const PdfPreviewContent = ({
     effectiveTranslationExecutor,
     recoveryCheckpoint
   )
+  useEffect(() => {
+    const pending = pendingNewTranslation.current
+    if (!pending) return
+    if (
+      pending.key !== resourceRequestKey ||
+      pending.document !== document ||
+      preparation.state.status === 'error' ||
+      preparation.state.status === 'cancelled'
+    ) {
+      pendingNewTranslation.current = undefined
+      return
+    }
+    if (preparation.state.status === 'idle') prepareFullText()
+    else if (preparation.state.status === 'ready') {
+      // Start only after React has installed the freshly extracted source in the job owner.
+      pendingNewTranslation.current = undefined
+      translationJob.restart(pending.options)
+    }
+  }, [resourceRequestKey, document, preparation.state.status, prepareFullText, translationJob])
   const {
     status: translationStatus,
     done: translatedCount,
@@ -3719,12 +3748,25 @@ export const PdfPreviewContent = ({
       onCancel={translationJob.cancel}
       onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
       onNewTranslation={(options) => {
+        if (!document) return
         setSuppressedRecoveryKey(resourceRequestKey)
-        translationJob.restart({
+        const requestedOptions = {
           ...options,
           ...(attachmentVersionId ? { attachmentVersionId } : {}),
           ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
-        })
+        }
+        pendingNewTranslation.current = undefined
+        if (preparationAvailable) {
+          translationJob.reset()
+          preparation.reset()
+          pendingNewTranslation.current = {
+            key: resourceRequestKey,
+            document,
+            options: requestedOptions
+          }
+        } else {
+          translationJob.restart(requestedOptions)
+        }
         setTranslationQuery('')
         setSelectedTranslation(undefined)
         setShowParagraphMarkers(false)

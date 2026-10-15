@@ -6,12 +6,14 @@ computer. We appreciate coordinated reports that help us protect those trust bou
 
 ## Supported versions
 
-Open-Science is pre-1.0 and changes quickly. Security fixes are provided for the latest
-tagged `0.x` release and the `main` branch only.
+Security fixes are provided for the latest stable release and the `main` branch only.
+Older releases do not receive security backports. Please upgrade to the latest stable
+release to receive security fixes.
 
 | Version               | Supported |
 | --------------------- | --------- |
-| latest `0.x` / `main` | ✅        |
+| latest stable release | ✅        |
+| `main` (development)  | ✅        |
 | older releases        | ❌        |
 
 Nightly builds contain newer, less-reviewed code and do not have the same release

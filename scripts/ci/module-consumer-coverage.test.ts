@@ -9,6 +9,7 @@ import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 // This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
 // claim that imports can discover event dispatch, filesystem protocols or dynamic strings.
+// V8 coverage also instruments TypeScript's whole-tree scan; shared CI runners exceed 60s.
 it('retains every statically reachable consumer test and declared runtime-loading edge', () => {
   const source = workingConsumerSource()
   const manifest = loadModuleImpactManifest()
@@ -58,4 +59,4 @@ it('retains every statically reachable consumer test and declared runtime-loadin
       if (isTest(path) && !declared.has(path)) missing.push(`${id} -> ${path}`)
   }
   expect(missing, 'Regenerate derived consumers or add explicit behavioral contracts').toEqual([])
-}, 60_000)
+}, 120_000)

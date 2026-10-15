@@ -2136,14 +2136,14 @@ export function collectGraphicsBounds(renderTask, boxes) {
       boxes.maxX(index),
       boxes.maxY(index)
     ]
-    if (
-      !normalizedRect.every(Number.isFinite) ||
-      normalizedRect[2] <= normalizedRect[0] ||
-      normalizedRect[3] <= normalizedRect[1]
-    ) {
+    if (!normalizedRect.every(Number.isFinite)) {
       invalidGraphicsBounds++
       continue
     }
+    // PDF.js can record a finite empty intersection when paint lies outside
+    // its active clip. It contributes no visible ink; unlike unknown bounds,
+    // it cannot invalidate the other recorded figure geometry on the page.
+    if (normalizedRect[2] <= normalizedRect[0] || normalizedRect[3] <= normalizedRect[1]) continue
     // Compare decoded pixels, not per-page object IDs or bounding boxes. Hash
     // decoded images within a bounded budget, including manuscript watermarks.
     let imageHash, paintedNormalizedRect, imageEnvelopeNormalizedRect

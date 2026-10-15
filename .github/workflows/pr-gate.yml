@@ -458,6 +458,26 @@ jobs:
             node "$TRUSTED_DIR/windows-e2e-mainline.mjs"
           fi
 
+  registration:
+    name: Impact registration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install registration toolchain
+        # Static source/manifest checks only; no application install or native/package builds.
+        run: npm ci --ignore-scripts --no-audit
+      - name: Check impact registration
+        run: npx vitest run --config scripts/ci/vitest.registration.config.ts
+
   policy:
     name: PR policy
     needs: preflight
@@ -987,7 +1007,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install application dependencies
+        env:
+          # Notebook isolation uses bundled CPU binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Install Linux sandbox dependency
         shell: bash
         env:
@@ -1110,6 +1135,11 @@ jobs:
         # Exercise the reported failures on a real Windows runner without expanding to its full suite.
         run: >-
           npm test --
+          src/main/database/migration-service.test.ts
+          scripts/ci/package-boundaries.test.ts
+          src/main/desktop-startup-recovery.test.ts
+          src/main/update/installation-protection.test.ts
+          src/main/update/deb-systemd-gate.test.ts
           src/main/session-diagnostics/collector.test.ts
           src/main/literature/smart-collections.test.ts
           src/main/literature/pdf-structure/owner.test.ts
@@ -1118,7 +1148,7 @@ jobs:
           src/main/notebook/code-risk-admission.test.ts
           src/main/local-models/owner.test.ts
           --testNamePattern
-          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane|Python visible dictionary unions|Python fixed text concatenation|Python subprocess literal shell flags|Python visible sequence concatenation|checks forwarded ordinary special signatures|does not reuse a shell verdict|native symlink-parent|reviews escaped process executable|resets uncertain cwd|runs real nested process forwarding|batch preserves one-shot admission|isolates flat translation"
+          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane|Python visible dictionary unions|Python fixed text concatenation|Python subprocess literal shell flags|Python visible sequence concatenation|checks forwarded ordinary special signatures|does not reuse a shell verdict|native symlink-parent|reviews escaped process executable|resets uncertain cwd|runs real nested process forwarding|batch preserves one-shot admission|isolates flat translation|retains installation protection|offers startup Recover|startup Recover settles|installation state root|persisted path spelling|parses actual systemctl|waiting gate process|written installed state|selects durable file consumers|routes download package changes|queued automatic inference|fills derived literature text"
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
       - name: Test Windows wheel evidence recovery
         id: windows_wheel_evidence
@@ -1628,6 +1658,7 @@ jobs:
     if: ${{ always() }}
     needs:
       - preflight
+      - registration
       - policy
       - static
       - runtime_checks
@@ -1668,11 +1699,16 @@ jobs:
           RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
           PACKAGE_RESULT: ${{ needs.package_verification.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
-          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          REGISTRATION_RESULT: ${{ needs.registration.result }}
+          PR_GATE_NEEDS: '{"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then
             echo "Preflight did not succeed" >&2
+            exit 1
+          fi
+          if [[ "$REGISTRATION_RESULT" != "success" ]]; then
+            echo "Impact registration ended with $REGISTRATION_RESULT" >&2
             exit 1
           fi
           if [[ "$RUNTIME_REQUIRED" == "true" && "$RUNTIME_RESULT" != "success" ]]; then

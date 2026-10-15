@@ -900,6 +900,7 @@ describe('PR Gate workflow', () => {
         env: {
           ...process.env,
           PREFLIGHT_RESULT: 'success',
+          REGISTRATION_RESULT: 'success',
           RUNTIME_REQUIRED: 'false',
           RUNTIME_RESULT: 'skipped',
           PACKAGE_RESULT: 'skipped',
@@ -1490,9 +1491,12 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it('avoids optional GPU downloads while retaining native loading in CPU runtime checks', () => {
-    const steps = workflow.jobs.runtime_checks.steps
-    expect(steps?.find(({ name }) => name === 'Install dependencies')).toMatchObject({
+  it.each([
+    ['runtime_checks', 'Install dependencies'],
+    ['linux_runtime', 'Install application dependencies']
+  ])('avoids optional GPU downloads while retaining native loading in %s', (job, installStep) => {
+    const steps = workflow.jobs[job].steps
+    expect(steps?.find(({ name }) => name === installStep)).toMatchObject({
       env: { ONNXRUNTIME_NODE_INSTALL: 'skip' },
       run: 'node scripts/ci/npm-ci.mjs'
     })
@@ -2319,6 +2323,7 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
         env: {
           ...process.env,
           PREFLIGHT_RESULT: 'success',
+          REGISTRATION_RESULT: 'success',
           EVENT_NAME: 'merge_group',
           RUNTIME_REQUIRED: 'true',
           RUNTIME_RESULT: 'success',

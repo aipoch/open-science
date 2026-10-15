@@ -331,7 +331,8 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
         useSessionStore.setState({ sessions: [current] })
       })
       expect(h.continuation).not.toHaveBeenCalled()
-      expect(h.flush).not.toHaveBeenCalled()
+      // Only the pre-attachment preference barrier ran; the changed branch cannot dispatch.
+      expect(h.flush.mock.calls).toEqual([['session:session-1']])
       expect(useSessionStore.getState().sessions[0].resumeRecovery?.promptMessageId).toBe(
         changed === 'prompt' ? 'another-prompt' : 'prompt-1'
       )
@@ -385,7 +386,8 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     const second = h.resume()
     expect(second).toBe(first)
     await vi.waitFor(() => expect(h.providerDispatch).toHaveBeenCalledOnce())
-    expect(h.flush).toHaveBeenCalledOnce()
+    // One preference barrier and one prepared-continuation barrier, shared by both clicks.
+    expect(h.flush.mock.calls).toEqual([['session:session-1'], ['session:session-1']])
     release()
     await Promise.all([first, second])
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()

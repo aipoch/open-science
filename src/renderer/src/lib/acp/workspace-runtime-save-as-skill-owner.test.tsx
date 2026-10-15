@@ -10,10 +10,11 @@ import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import type { AcpRuntimeEvent } from '../../../../shared/acp'
 import {
   materializeSessionConversationGraph,
+  SessionRevisionConflictError,
   type PersistedChatSession,
   type SaveSessionOptions
 } from '../../../../shared/session-persistence'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import {
   flushSessionPersistence,
@@ -145,6 +146,145 @@ describe('workspace Save as skill owner', () => {
     if (root) act(() => root?.unmount())
     root = undefined
     vi.restoreAllMocks()
+  })
+
+  it.each(['I/O', 'revision conflict'] as const)(
+    'dispatches despite an unrelated Session %s failure while retaining the global barrier',
+    async (failureKind) => {
+      const persistence = await vi.importActual<
+        typeof import('../session-persistence/session-persistence')
+      >('../session-persistence/session-persistence')
+      vi.mocked(flushSessionPersistence).mockImplementation(persistence.flushSessionPersistence)
+      const unrelated = toPersistedSession({
+        ...structuredClone(session),
+        id: `unrelated-${failureKind === 'I/O' ? 'io' : 'conflict'}`
+      })
+      const failure =
+        failureKind === 'I/O'
+          ? new Error('EPERM: unrelated Session rename failed')
+          : new SessionRevisionConflictError(1, 2)
+      let failUnrelated = true
+      const saveCurrentSession = sessionApi.saveSession
+      sessionApi.saveSession = vi.fn(
+        async (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+          if (candidate.id !== unrelated.id) return saveCurrentSession(candidate, options)
+          if (failUnrelated) throw failure
+          return { ...candidate, revision: 2 }
+        }
+      )
+      useSessionStore.setState({ sessions: [structuredClone(session)] })
+      const saveAsSkill = vi.fn(async () => undefined)
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { sessions: sessionApi, acp: { saveAsSkill } }
+      })
+      let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+      const Harness = (): null => {
+        owner = useWorkspaceRuntimeSaveAsSkillOwner({
+          runtime: { state: { sessionIds: [session.id] }, resumeSession: vi.fn() } as never,
+          resolveSessionRuntimeSelection: sessionRuntimeSelection
+        })
+        return null
+      }
+      root = createRoot(document.createElement('div'))
+      act(() => root?.render(createElement(Harness)))
+      try {
+        await expect(persistence.saveSessionInOrder(unrelated)).rejects.toBe(failure)
+        // Exercise the unresolved-conflict guard independently of the queue's failed-write map.
+        if (failureKind === 'revision conflict')
+          persistence.resetSessionPersistenceWriteFailuresForTests()
+        const expectGlobalFailure = async (): Promise<void> => {
+          if (failureKind === 'I/O')
+            await expect(persistence.flushSessionPersistence()).rejects.toBe(failure)
+          else
+            await expect(persistence.flushSessionPersistence()).rejects.toMatchObject({
+              code: 'session-revision-conflict'
+            })
+        }
+        await expectGlobalFailure()
+        const frame = session.conversationGraph!.frames[0]
+        await act(() =>
+          owner.saveAsSkill({
+            projectId: session.projectId,
+            sessionId: session.id,
+            agentFrameId: frame.id,
+            messageBranchId: frame.activeBranchId
+          })
+        )
+        expect(saveAsSkill).toHaveBeenCalledOnce()
+        expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBeUndefined()
+        await expectGlobalFailure()
+      } finally {
+        // A successful B receipt clears both singleton failure mechanisms before the next case.
+        failUnrelated = false
+        await persistence.saveSessionInOrder(unrelated)
+        persistence.resetSessionPersistenceWriteFailuresForTests()
+      }
+    }
+  )
+
+  it('blocks dispatch when the current Session control-message save fails', async () => {
+    const persistence = await vi.importActual<
+      typeof import('../session-persistence/session-persistence')
+    >('../session-persistence/session-persistence')
+    vi.mocked(flushSessionPersistence).mockImplementation(persistence.flushSessionPersistence)
+    useSessionStore.setState({ sessions: [structuredClone(session)] })
+    const failure = new Error('EPERM: current Session control-message save failed')
+    const saveCurrentSession = sessionApi.saveSession
+    sessionApi.saveSession = vi.fn(
+      async (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+        if (
+          candidate.activeRun?.promptMessageId.startsWith('skill-control-') &&
+          !options?.conversationCommands?.some(({ kind }) => kind === 'rollback-prompt')
+        )
+          throw failure
+        return saveCurrentSession(candidate, options)
+      }
+    )
+    const saveAsSkill = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { sessions: sessionApi, acp: { saveAsSkill } }
+    })
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime: { state: { sessionIds: [session.id] }, resumeSession: vi.fn() } as never,
+        resolveSessionRuntimeSelection: sessionRuntimeSelection
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    let controlSave: Promise<unknown> | undefined
+    const unsubscribe = useSessionStore.subscribe(({ sessions }) => {
+      const current = sessions.find(({ id }) => id === session.id)
+      if (!controlSave && current?.activeRun?.promptMessageId.startsWith('skill-control-'))
+        controlSave = persistence.saveSessionInOrder(toPersistedSession(current)).catch(() => {})
+    })
+    try {
+      const frame = session.conversationGraph!.frames[0]
+      await expect(
+        act(() =>
+          owner.saveAsSkill({
+            projectId: session.projectId,
+            sessionId: session.id,
+            agentFrameId: frame.id,
+            messageBranchId: frame.activeBranchId
+          })
+        )
+      ).rejects.toBe(failure)
+      expect(controlSave).toBeDefined()
+      expect(saveAsSkill).not.toHaveBeenCalled()
+      expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBe(failure.message)
+      const current = useSessionStore.getState().sessions[0]
+      expect(current.activeRun).toBeUndefined()
+      expect(current.messages.some(({ turnIntent }) => turnIntent === 'save-as-skill')).toBe(false)
+    } finally {
+      unsubscribe()
+      await controlSave
+      persistence.resetSessionPersistenceWriteFailuresForTests()
+    }
   })
 
   it('deduplicates one Session and keeps its target instead of the active Settings default', async () => {

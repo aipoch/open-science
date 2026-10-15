@@ -213,16 +213,22 @@ const waitForTcpConnection = (socket: Socket): Promise<Socket> =>
 const connectProxySocket = (
   url: URL,
   ca: readonly string[] | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSocket?: (socket: Socket) => void
 ): Promise<Socket> => {
   const options = { host: url.hostname, port: defaultPort(url), signal }
-  if (url.protocol !== 'https:') return waitForTcpConnection(connectTcp(options))
+  if (url.protocol !== 'https:') {
+    const socket = connectTcp(options)
+    onSocket?.(socket)
+    return waitForTcpConnection(socket)
+  }
   return new Promise((resolve, reject) => {
     const socket = connectTls({
       ...options,
       ca: ca ? [...ca] : undefined,
       rejectUnauthorized: true
     })
+    onSocket?.(socket)
     const ready = (): void => {
       socket.removeListener('error', failed)
       resolve(socket)
@@ -251,9 +257,10 @@ const tunnelThroughSocks5 = async (
   proxyUrl: URL,
   address: string,
   port: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSocket?: (socket: Socket) => void
 ): Promise<Socket> => {
-  const socket = await connectProxySocket(proxyUrl, undefined, signal)
+  const socket = await connectProxySocket(proxyUrl, undefined, signal, onSocket)
   const reader = socketReader(socket, Buffer.alloc(0))
   try {
     socket.write(Buffer.from([5, 1, 0]))
@@ -286,12 +293,13 @@ const tunnelThroughSocks4 = async (
   proxyUrl: URL,
   address: string,
   port: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSocket?: (socket: Socket) => void
 ): Promise<Socket> => {
   if (isIP(address) !== 4) {
     throw new Error('Parent SOCKS4 proxy cannot route a non-IPv4 policy address.')
   }
-  const socket = await connectProxySocket(proxyUrl, undefined, signal)
+  const socket = await connectProxySocket(proxyUrl, undefined, signal, onSocket)
   const reader = socketReader(socket, Buffer.alloc(0))
   try {
     const portBytes = Buffer.alloc(2)
@@ -391,15 +399,17 @@ const tunnelThroughProxy = async (
   address: string,
   port: number,
   ca: readonly string[] | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSocket?: (socket: Socket) => void
 ): Promise<Socket> => {
-  if (proxyUrl.protocol === 'socks4:') return tunnelThroughSocks4(proxyUrl, address, port, signal)
+  if (proxyUrl.protocol === 'socks4:')
+    return tunnelThroughSocks4(proxyUrl, address, port, signal, onSocket)
   if (proxyUrl.protocol === 'socks:' || proxyUrl.protocol === 'socks5:') {
-    return tunnelThroughSocks5(proxyUrl, address, port, signal)
+    return tunnelThroughSocks5(proxyUrl, address, port, signal, onSocket)
   }
   if (!['http:', 'https:'].includes(proxyUrl.protocol))
     throw new Error('Unsupported proxy protocol.')
-  const socket = await connectProxySocket(proxyUrl, ca, signal)
+  const socket = await connectProxySocket(proxyUrl, ca, signal, onSocket)
   const authority = `${urlHost(address)}:${port}`
   const authorization = proxyCredentials(proxyUrl)
   socket.write(

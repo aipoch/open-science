@@ -1698,9 +1698,18 @@ describe('startWebHttpServer', () => {
     const staleSocketUrl = new URL(eventSocketUrl(0))
     staleSocketUrl.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION - 1))
     const staleSocket = new WebSocket(staleSocketUrl)
+    const upgradeFrames: unknown[] = []
+    staleSocket.on('message', (data) => upgradeFrames.push(JSON.parse(data.toString())))
     await expect(
       new Promise<number>((resolve) => staleSocket.once('close', (code) => resolve(code)))
     ).resolves.toBe(1002)
+    expect(upgradeFrames).toEqual([
+      {
+        kind: 'resync-required',
+        ...bootstrap.eventStream,
+        reason: 'stream-changed'
+      }
+    ])
 
     const firstSocket = new WebSocket(eventSocketUrl(0))
     const firstMessage = new Promise<unknown>((resolve) =>
