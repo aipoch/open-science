@@ -290,7 +290,7 @@ jobs:
             rm -rf "$work"
           done
 
-      # Stapling/repacking changes the shipped bytes. Mount/extract and launch both final artifacts,
+      # Stapling/repacking changes the shipped bytes. Install/extract and launch both final artifacts,
       # and require Gatekeeper assessment before their refreshed hashes can be certified.
       - name: Smoke test final macOS packages
         if: steps.gate.outputs.enabled == 'true'

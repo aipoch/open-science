@@ -166,8 +166,16 @@ Inspect its captured output/Apple history before submitting again. A full job re
 use the staple dry run to investigate an already Accepted package without doing that.
 
 Dry runs emit no release certification and replace artifacts only in their own run. A green diagnostic
-run does not authorize publication. Package startup/shutdown failures are not retried: macOS reports
-the package/profile/launch and its backend log tail, and Linux records the CLI daemon PID state before
+run does not authorize publication. The macOS smoke copies the complete app off the mounted DMG
+with `ditto`, detaches the image, then verifies and launches the installed copy in an isolated test
+directory. This follows [Apple's installation test guidance](https://developer.apple.com/library/archive/technotes/tn2206/)
+and avoids treating compressed-image execution as installed-app startup. The notarized path assesses
+both the DMG and the installed app with Gatekeeper. ZIP, legacy-profile, fresh-install and reopen
+checks remain separate, and the 60-second startup deadline is unchanged.
+
+Package startup/shutdown failures are not retried: macOS reports launch/ready/exit timings,
+the package/profile/launch, backend log tail and owned-process stack samples on failure;
+Linux records the CLI daemon PID state before
 cleanup. Tokens are redacted from these additional diagnostics; missing evidence remains explicit.
 
 ## Independent package tests
