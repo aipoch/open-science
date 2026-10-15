@@ -1,6 +1,13 @@
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
-import { checkBrowserImportAvailability, prepareBrowserImport } from './browser-import.mjs'
+import {
+  BrowserImportError,
+  launchOpenScience,
+  checkBrowserImportAvailability,
+  prepareBrowserImport
+} from './browser-import.mjs'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -130,7 +137,7 @@ it('keeps bytes and the secret private if the listener is replaced after a valid
     }
     return new Response(JSON.stringify({ offset: 16, proof: 'forged' }))
   })
-  await expect(transfer.send()).rejects.toThrow(/offset/)
+  await expect(transfer.send()).rejects.toMatchObject({ code: 'transfer-failed' })
   expect(requests).toHaveLength(2)
   expect(new Headers(requests[1].headers).get('Authorization')).not.toContain(secret)
   expect(
@@ -259,4 +266,160 @@ it('rejects malformed readiness immediately instead of treating it as a network 
     code: 'incompatible'
   })
   expect(requests).toBe(1)
+})
+
+it('requests a pure launch synchronously without accessing Blob or the network', () => {
+  const assign = vi.fn()
+  const fetch = vi.fn()
+  vi.stubGlobal('location', { assign })
+  vi.stubGlobal('Blob', undefined)
+  vi.stubGlobal('fetch', fetch)
+  expect(launchOpenScience()).toBeUndefined()
+  expect(assign).toHaveBeenCalledExactlyOnceWith('open-science://open')
+  expect(fetch).not.toHaveBeenCalled()
+})
+
+it('reports only observable launch errors, without claiming installation status', () => {
+  vi.stubGlobal('location', undefined)
+  expect(launchOpenScience).toThrowError(expect.objectContaining({ code: 'unsupported-browser' }))
+  vi.stubGlobal('location', {
+    assign: () => {
+      throw new Error('Navigation denied')
+    }
+  })
+  expect(launchOpenScience).toThrowError(expect.objectContaining({ code: 'launch-failed' }))
+  try {
+    launchOpenScience()
+  } catch (error) {
+    expect(error).toBeInstanceOf(BrowserImportError)
+  }
+})
+
+it('never announces transfer before the receiver proves its identity', async () => {
+  vi.stubGlobal('fetch', async () =>
+    Response.json({ accepted: false, offset: 0, chunkBytes: 4194304, proof: 'forged' })
+  )
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  const phases: string[] = []
+  await expect(
+    transfer.send({ onPhase: (phase: string) => phases.push(phase) })
+  ).rejects.toMatchObject({ code: 'incompatible' })
+  expect(phases).toEqual(['waiting-for-receiver'])
+})
+
+it('uses at most fourteen seconds for five stalled default readiness attempts', async () => {
+  vi.useFakeTimers()
+  const starts: number[] = []
+  vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+    starts.push(Date.now())
+    return new Promise((_resolve, reject) =>
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+    )
+  })
+  try {
+    const start = Date.now()
+    const transfer = prepareBrowserImport(new Blob(['hello']), {
+      filename: 'study.science',
+      origin: 'https://research.example'
+    })
+    const result = expect(transfer.send()).rejects.toMatchObject({ code: 'readiness-exhausted' })
+    await vi.advanceTimersByTimeAsync(13999)
+    expect(starts.map((time) => time - start)).toEqual([0, 3000, 6000, 9000, 12000])
+    await vi.advanceTimersByTimeAsync(1)
+    await result
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('preserves the caller abort reason after verified readiness and attempts authenticated cleanup', async () => {
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  const secret = new URL(transfer.url).searchParams.get('secret')!
+  const controller = new AbortController()
+  const reason = new Error('User cancelled this transfer')
+  const methods: string[] = []
+  vi.stubGlobal('fetch', async (input: string, init: RequestInit) => {
+    methods.push(init.method ?? 'GET')
+    if (init.method === 'DELETE') {
+      expect(new Headers(init.headers).get('Authorization')).toMatch(/^HMAC /)
+      return new Response(null, { status: 204 })
+    }
+    const challenge = new URL(input).searchParams.get('challenge')
+    const proof = createHmac('sha256', Buffer.from(secret, 'hex'))
+      .update(`open-science-import-v1:${challenge}:0:0`)
+      .digest('hex')
+    return Response.json({ proof, offset: 0, accepted: false, chunkBytes: 4194304 })
+  })
+  await expect(
+    transfer.send({
+      signal: controller.signal,
+      onPhase: (phase: string) => {
+        if (phase === 'transferring') controller.abort(reason)
+      }
+    })
+  ).rejects.toBe(reason)
+  expect(methods).toEqual(['GET', 'DELETE'])
+})
+
+it('keeps the documented retry transfer when a separate availability check is cancelled', async () => {
+  const markdown = readFileSync(new URL('./BROWSER_IMPORT.md', import.meta.url), 'utf8')
+  const example = markdown
+    .match(/```js\n([\s\S]*?)```/)![1]
+    .replace(/import \{[\s\S]*?\} from '@aipoch\/open-science\/browser-import'/, '')
+  const button = (): { disabled: boolean; onclick: () => void } => ({
+    disabled: false,
+    onclick: () => undefined
+  })
+  const elements = {
+    continueButton: button(),
+    openButton: button(),
+    probeButton: button(),
+    retryButton: button(),
+    restartButton: button(),
+    cancelButton: button(),
+    status: { textContent: '' }
+  }
+  const send = vi
+    .fn()
+    .mockRejectedValueOnce(new BrowserImportError('transfer-failed', 'Lost acknowledgment'))
+    .mockResolvedValue({ received: true })
+  const prepare = vi.fn(() => ({ url: 'open-science://import?test', send }))
+  const discovery = vi
+    .fn()
+    .mockResolvedValueOnce({ status: 'available' })
+    .mockImplementationOnce(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((resolve) => {
+          signal.addEventListener('abort', () => resolve({ status: 'aborted' }), { once: true })
+        })
+    )
+  const assign = vi.fn()
+  runInNewContext(example, {
+    ...elements,
+    AbortController,
+    BrowserImportError,
+    checkBrowserImportAvailability: discovery,
+    prepareBrowserImport: prepare,
+    launchOpenScience: vi.fn(),
+    window: { location: { assign } },
+    fetch: async () => ({ ok: true, blob: async () => new Blob(['package']) })
+  })
+  elements.continueButton.onclick()
+  await vi.waitFor(() => expect(elements.status.textContent).toContain('Transfer failed'))
+  elements.probeButton.onclick()
+  elements.cancelButton.onclick()
+  await vi.waitFor(() => expect(elements.cancelButton.disabled).toBe(true))
+  elements.retryButton.onclick()
+  await vi.waitFor(() => expect(elements.status.textContent).toContain('Received by Open-Science'))
+  expect(prepare).toHaveBeenCalledTimes(1)
+  expect(send).toHaveBeenCalledTimes(2)
+  expect(assign).toHaveBeenCalledTimes(2)
+  expect(send.mock.calls[0][0].signal).not.toBe(send.mock.calls[1][0].signal)
 })

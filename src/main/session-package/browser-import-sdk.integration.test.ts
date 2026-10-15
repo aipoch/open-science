@@ -43,11 +43,28 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
     })
     await bridge.begin(transfer.url)
     const progress: number[] = []
+    const events: string[] = []
     expect(
-      await transfer.send({ onProgress: ({ sentBytes }) => progress.push(sentBytes) })
+      await transfer.send({
+        onPhase: (phase) => events.push(phase),
+        onProgress: ({ sentBytes }) => {
+          events.push('progress')
+          progress.push(sentBytes)
+        }
+      })
     ).toEqual({ received: true })
     expect((await readFile(received!)).equals(Buffer.from(bytes))).toBe(true)
     expect(progress.at(-1)).toBe(bytes.length)
+    expect(events).toEqual(['waiting-for-receiver', 'transferring', 'progress', 'progress'])
+    const count = destinations.length
+    await expect(
+      transfer.send({
+        onPhase: () => {
+          throw new Error('Cached receipt must not announce a new transfer')
+        }
+      })
+    ).resolves.toEqual({ received: true })
+    expect(destinations).toHaveLength(count)
     expect(
       destinations.every(
         (url) =>
@@ -55,6 +72,55 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
           url.startsWith(`http://127.0.0.1:${discoveryPort}/`)
       )
     ).toBe(true)
+  } finally {
+    await bridge.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('resumes a lost chunk acknowledgment with the same transfer and receives exactly once', async () => {
+  const port = await findBrowserImportPort()
+  const origin = 'https://research.example'
+  const root = await mkdtemp(join(tmpdir(), 'browser-sdk-resume-'))
+  const received: string[] = []
+  const bridge = new BrowserPackageImport({
+    root,
+    receive: (path) => {
+      received.push(path)
+    }
+  })
+  const realFetch = globalThis.fetch
+  let loseResponse = true
+  const offsets: string[] = []
+  vi.stubGlobal('fetch', async (input: string, init: RequestInit) => {
+    const response = await realFetch(input, {
+      ...init,
+      headers: { ...init.headers, Origin: origin }
+    })
+    if (init.method === 'PUT') {
+      offsets.push(new URL(input).searchParams.get('offset')!)
+      if (loseResponse) {
+        loseResponse = false
+        await response.arrayBuffer()
+        throw new TypeError('Connection lost after the receiver saved this chunk')
+      }
+    }
+    return response
+  })
+  try {
+    const bytes = new Uint8Array(4 * 1024 ** 2 + 17).fill(42)
+    const transfer: BrowserImportTransfer = prepareBrowserImport(new Blob([bytes]), {
+      filename: 'study.science',
+      origin,
+      port
+    })
+    await bridge.begin(transfer.url)
+    await expect(transfer.send()).rejects.toMatchObject({ code: 'transfer-failed' })
+    expect(received).toEqual([])
+    await expect(transfer.send()).resolves.toEqual({ received: true })
+    expect(offsets).toEqual(['0', '4194304'])
+    expect(received).toHaveLength(1)
+    expect(await readFile(received[0])).toEqual(Buffer.from(bytes))
   } finally {
     await bridge.close()
     await rm(root, { recursive: true, force: true })

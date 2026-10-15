@@ -73,15 +73,33 @@ export function parseBrowserImportUrl(input: unknown): BrowserImportRequest | nu
 export class BrowserImportLaunchRelay {
   private readonly pending = new Map<string, string>()
   private handler?: (url: string) => void
+  private pendingOpen = false
+  private openHandler?: () => void
+  receiveArgv(argv: readonly string[]): void {
+    for (const value of argv.slice(1)) this.receive(value)
+  }
+  receiveOpenUrl(event: { preventDefault(): void }, url: string): void {
+    if (this.receive(url)) event.preventDefault()
+  }
   receive(value: unknown): boolean {
+    if (value === 'open-science://open' || value === 'open-science://open/') {
+      if (this.openHandler) this.openHandler()
+      else this.pendingOpen = true
+      return true
+    }
     const request = parseBrowserImportUrl(value)
     if (!request) return false
     if (this.handler) this.handler(value as string)
     else if (this.pending.size < 16) this.pending.set(request.secret, value as string)
     return true
   }
-  bind(handler: (url: string) => void): void {
+  bind(handler: (url: string) => void, onOpen?: () => void): void {
     this.handler = handler
+    this.openHandler = onOpen
+    if (this.pendingOpen && onOpen) {
+      this.pendingOpen = false
+      onOpen()
+    }
     for (const value of this.pending.values()) handler(value)
     this.pending.clear()
   }

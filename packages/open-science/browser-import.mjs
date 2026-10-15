@@ -28,6 +28,20 @@ export class BrowserImportError extends Error {
   }
 }
 
+/** Request app launch synchronously from a user click; return does not prove OS delivery. */
+export function launchOpenScience() {
+  if (typeof globalThis.location?.assign !== 'function')
+    throw new BrowserImportError(
+      'unsupported-browser',
+      'This environment cannot open Open-Science.'
+    )
+  try {
+    globalThis.location.assign('open-science://open')
+  } catch {
+    throw new BrowserImportError('launch-failed', 'Could not request opening Open-Science.')
+  }
+}
+
 const supported = () =>
   typeof Blob === 'function' &&
   typeof fetch === 'function' &&
@@ -169,6 +183,7 @@ export function prepareBrowserImport(file, options = {}) {
     async send({
       signal,
       onProgress,
+      onPhase,
       readyTimeoutMs = 120_000,
       readinessAttempts = 5,
       attemptTimeoutMs = 2000
@@ -202,6 +217,7 @@ export function prepareBrowserImport(file, options = {}) {
           )
         })
       try {
+        onPhase?.('waiting-for-receiver')
         const deadline = Date.now() + Math.min(readyTimeoutMs, 300_000)
         const ready = await bounded(
           signal,
@@ -271,6 +287,7 @@ export function prepareBrowserImport(file, options = {}) {
         )
           throw new Error('Invalid local transfer response.')
         if (!ready.accepted) {
+          onPhase?.('transferring')
           for (let offset = ready.offset; offset < file.size;) {
             signal?.throwIfAborted()
             const bytes = await file.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
@@ -329,6 +346,12 @@ export function prepareBrowserImport(file, options = {}) {
             targetAddressSpace: 'loopback'
           }).catch(() => undefined)
         }
+        signal?.throwIfAborted()
+        if (verified)
+          throw new BrowserImportError(
+            'transfer-failed',
+            'The local package transfer failed. Retry while the receiver is available.'
+          )
         throw error
       } finally {
         sending = false

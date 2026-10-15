@@ -99,7 +99,7 @@ const webServiceLog = createLogger('web-service')
 // macOS can deliver a launch URL before ready or any asynchronous backend initialization.
 const browserImports = new BrowserImportLaunchRelay()
 app.on('open-url', (event, url) => {
-  if (browserImports.receive(url)) event.preventDefault()
+  browserImports.receiveOpenUrl(event, url)
 })
 let startupDiagnostics: DiagnosticOperation | undefined
 let cleanupStartupClient: (() => Promise<void>) | undefined
@@ -291,13 +291,13 @@ async function startDesktop(): Promise<void> {
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
   app.on('second-instance', (_event, argv, cwd) => {
-    for (const value of argv.slice(1)) browserImports.receive(value)
+    browserImports.receiveArgv(argv)
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
     if (showMainWindow) showMainWindow()
     else secondInstancePending = true
   })
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
-  for (const value of process.argv.slice(1)) browserImports.receive(value)
+  browserImports.receiveArgv(process.argv)
   let client: DesktopRuntimeClient | undefined = undefined
   const reportError = (error: unknown): void => {
     bootstrapLog.error('desktop operation failed', {
@@ -626,10 +626,13 @@ async function startDesktop(): Promise<void> {
               Number(process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT ?? 49151)
             ])
             .catch(() => webServiceLog.warn('Browser import discovery is unavailable.'))
-          browserImports.bind((url) => {
-            showMainWindow?.()
-            void client!.invokeHost('desktop:browser-import', [url]).catch(reportError)
-          })
+          browserImports.bind(
+            (url) => {
+              showMainWindow?.()
+              void client!.invokeHost('desktop:browser-import', [url]).catch(reportError)
+            },
+            () => showMainWindow?.()
+          )
         }
         state = next
         broadcast(DATABASE_STARTUP_CHANNELS.stateChanged, state)
