@@ -1,11 +1,20 @@
+import { useAttachmentOperationsStore } from '../workflows/literature-attachment-operations'
 // @vitest-environment jsdom
 import { createLiteratureDetailController } from '@aipoch/literature-library/client'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literatureDeletionError } from '../../../../../shared/literature-deletion'
-import { useAttachmentOperations } from '../workflows/literature-attachment-operations'
+import { testAttachmentOperations as useAttachmentOperations } from '../../../../../../test/renderer/literature'
 import { LiteratureAttachments } from './LiteratureAttachments'
 
 const version = (
@@ -49,7 +58,6 @@ const makeItem = (count: number, missing = false): LiteratureItemView => ({
 
 const transact = vi.fn()
 beforeEach(() => {
-  useAttachmentOperations.setState({ operations: [] })
   transact.mockReset().mockResolvedValue({ state: 'unlinked' })
   Object.defineProperty(window, 'api', {
     configurable: true,
@@ -72,7 +80,8 @@ describe('Attachment safety and version access', () => {
       .mockResolvedValueOnce(available)
     transact.mockRejectedValueOnce(new Error('EACCES')).mockResolvedValueOnce({ state: 'present' })
     const View = (): React.JSX.Element => {
-      const item = useAttachmentOperations(
+      const store = useAttachmentOperationsStore()
+      const item = store(
         (state) => state.operations.find((operation) => operation.itemId === available.id)?.item
       )
       return (

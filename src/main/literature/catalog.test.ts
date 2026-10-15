@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1205,6 +1206,7 @@ describe('LiteratureCatalog', () => {
     async (operation) => {
       await setup()
       const content = new ContentRepository({
+        references: persistentContentReferences,
         storageRoot: storageRoot!,
         getClient: async () => client!
       })
@@ -1379,6 +1381,7 @@ describe('LiteratureCatalog', () => {
   it('publishes one tag refresh after mixed cleanup of two versions of the same attachment', async () => {
     await setup()
     const content = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: storageRoot!,
       getClient: async () => client!
     })

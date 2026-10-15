@@ -11,10 +11,10 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { type useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { cn } from '@/lib/utils'
 import type { PdfReadingDocument } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
+import { type useProjectStore } from '@/stores/project-store'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { FolderPlus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'

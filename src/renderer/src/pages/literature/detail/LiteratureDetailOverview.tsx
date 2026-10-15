@@ -13,7 +13,7 @@ import { Download, FilePlus2, LoaderCircle, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { ResourceTagSummary } from '../../settings/ResourceTagControls'
-import { LITERATURE_PREVIEW_SESSION_ID } from '../../workspace/preview-file-item'
+import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../../shared/literature-attachment-reference'
 import {
   SmartCollectionAssessment,
   SmartCollectionDecisionActions

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { unified } from 'unified'
 import { SessionMessageMarkdown } from '@/pages/workspace/SessionMessageMarkdown'

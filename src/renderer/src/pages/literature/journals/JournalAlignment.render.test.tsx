@@ -2,7 +2,14 @@
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from '../JournalAttributes'
 import { JournalAlignment } from './JournalAlignment'

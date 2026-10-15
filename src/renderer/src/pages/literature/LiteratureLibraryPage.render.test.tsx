@@ -4,7 +4,15 @@ import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -31,7 +39,6 @@ import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
 import { LiteratureSearchInput } from './list/LiteratureSearchInput'
-import { useAttachmentOperations } from './workflows/literature-attachment-operations'
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -260,7 +267,6 @@ describe('LiteratureLibraryPage', () => {
   const saveBlobFile = vi.fn()
 
   beforeEach(() => {
-    useAttachmentOperations.setState({ operations: [] })
     useSessionStore.setState(createInitialSessionState())
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
@@ -376,9 +382,11 @@ describe('LiteratureLibraryPage', () => {
           : {})
       })
     )
-    completeLiteraturePdfDraft.mockImplementation(async (draft: LiteratureItemInput) => draft)
-    extractLiteraturePdfDraft.mockImplementation((_file: File, fallback: LiteratureItemInput) =>
-      Promise.resolve(fallback)
+    completeLiteraturePdfDraft.mockImplementation(
+      async (_api: unknown, draft: LiteratureItemInput) => draft
+    )
+    extractLiteraturePdfDraft.mockImplementation(
+      (_api: unknown, _file: File, fallback: LiteratureItemInput) => Promise.resolve(fallback)
     )
     completeMetadata.mockImplementation((request: { mode: 'commit' | 'preview' }) => {
       const completedItem = {
@@ -593,6 +601,7 @@ describe('LiteratureLibraryPage', () => {
     const title = await screen.findByLabelText('Title')
     expect((title as HTMLInputElement).value).toBe('workspace paper')
     expect(extractLiteraturePdfDraft).toHaveBeenCalledWith(
+      window.api,
       source,
       expect.anything(),
       expect.any(Function)
@@ -4417,6 +4426,7 @@ describe('LiteratureLibraryPage', () => {
     (action) => {
       const startPendingAction = async (): Promise<{
         detail: HTMLElement
+        remount: () => void
         finish: (error?: Error) => Promise<void>
       }> => {
         const entry = createLibraryItemWithPdf()
@@ -4435,7 +4445,7 @@ describe('LiteratureLibraryPage', () => {
           reject = fail
         })
         transact.mockImplementation(() => pending)
-        render(<LiteratureLibraryPage />)
+        const view = render(<LiteratureLibraryPage />)
         fireEvent.click(screen.getByRole('button', { name: 'All references' }))
         const detail = await openReferenceDetail(
           await within(await screen.findByRole('table')).findByText(entry.item.title)
@@ -4450,6 +4460,10 @@ describe('LiteratureLibraryPage', () => {
         await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
         return {
           detail,
+          remount: () => {
+            view.rerender(<></>)
+            view.rerender(<LiteratureLibraryPage />)
+          },
           finish: async (error) => {
             await act(async () => {
               if (error) reject(error)
@@ -4524,10 +4538,9 @@ describe('LiteratureLibraryPage', () => {
       })
 
       it('retains admission when the entire library page remounts', async () => {
-        const { finish } = await startPendingAction()
+        const { finish, remount } = await startPendingAction()
         try {
-          cleanup()
-          render(<LiteratureLibraryPage />)
+          remount()
           fireEvent.click(screen.getByRole('button', { name: 'All references' }))
           fireEvent.click(
             await within(await screen.findByRole('table')).findByText(libraryItem.item.title)

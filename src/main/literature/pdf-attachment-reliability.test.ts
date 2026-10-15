@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { PrismaClient } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import {
@@ -114,7 +115,11 @@ describe('Literature PDF attachment reliability', () => {
     initDataRoot(root)
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
-    const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot: root,
+      getClient: async () => client!
+    })
     const sessions = new SessionRepository(join(root, 'sessions'))
     const coordinator = new SessionPersistenceCoordinator(sessions, {
       syncSession: async () => []
@@ -291,7 +296,11 @@ describe('Literature PDF attachment reliability', () => {
         state: 'deleted-permanently',
         cleanupPending: true
       })
-      const restarted = new ContentRepository({ storageRoot: root, getClient: async () => client! })
+      const restarted = new ContentRepository({
+        references: persistentContentReferences,
+        storageRoot: root,
+        getClient: async () => client!
+      })
       expect(
         await restarted.sweep({ createdBefore: new Date(Date.now() + 1), contentIds: [contentId] })
       ).toMatchObject({ removedIds: [contentId], failedIds: [] })

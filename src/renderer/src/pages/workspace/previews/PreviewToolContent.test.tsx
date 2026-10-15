@@ -2,7 +2,7 @@
 
 import { act } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createRoot } from 'react-dom/client'
+import { createRoot } from '../../../../../../test/renderer/literature'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'

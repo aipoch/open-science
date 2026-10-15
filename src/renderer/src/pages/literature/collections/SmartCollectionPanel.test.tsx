@@ -1,6 +1,13 @@
 import { formatSmartRule } from './smart-rule-fields'
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SmartCollectionPanel as Panel } from './SmartCollectionPanel'
 import { useState, type ComponentProps } from 'react'

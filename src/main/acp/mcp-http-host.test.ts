@@ -489,6 +489,95 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
   })
 
+  it('uninstalls only its own Literature route and permits reinstall with the same handler', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const handler = { readDocument: vi.fn(async () => ({ content: 'page', nextCursor: null })) }
+    const stale = host.registerLiterature('feature', handler)
+    const current = host.registerLiterature('feature', handler)
+    const removeLibrary = host.registerLiteratureLibrary('feature', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn()
+    })
+    const status = async (kind: 'library' | 'literature'): Promise<number> =>
+      (
+        await fetch(host!.urlFor(kind, 'feature'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream'
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+        })
+      ).status
+    stale()
+    expect(await status('literature')).toBe(200)
+    current()
+    current()
+    expect(await status('literature')).toBe(404)
+    expect(await status('library')).toBe(200)
+    const reinstalled = host.registerLiterature('feature', handler)
+    current()
+    expect(await status('literature')).toBe(200)
+    reinstalled()
+    removeLibrary()
+    expect(await status('library')).toBe(404)
+  })
+
+  it('aborts a removed Library route before pending lookup can commit', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    let release!: () => void
+    let started!: () => void
+    let signal: AbortSignal | undefined
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    const uninstall = host.registerLiteratureLibrary('feature', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox,
+      resolveSaveReferences: async (_refs, currentSignal) => {
+        signal = currentSignal
+        started()
+        await waiting
+        return [
+          {
+            item: literatureItemInputSchema.parse({ title: 'Paper', itemType: 'journalArticle' }),
+            source: { provider: 'test', rawMetadata: {} }
+          }
+        ]
+      }
+    })
+    const client = new Client({ name: 'uninstall-library-test', version: '1' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(host.urlFor('library', 'feature')), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+    const pending = client
+      .callTool({ name: 'save_to_inbox', arguments: { refs: ['doi:10.1234/paper'] } })
+      .catch((error: unknown) => error)
+    try {
+      await entered
+      uninstall()
+      await pending
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true))
+    } finally {
+      release()
+      await client.close()
+    }
+    expect(saveToInbox).not.toHaveBeenCalled()
+  })
+
   it('serves the user Literature Library over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()

@@ -1,5 +1,5 @@
-import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import { readLiteratureSelectionPage } from '../../lib/literature-queries'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 import type {
   LiteratureCollectionView,
   LiteratureItemView

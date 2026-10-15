@@ -41,12 +41,12 @@ type Workflow = Owner<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
 >
-type Options = Pick<
-  PackageOptions,
-  'usage' | 'runner' | 'captureApiTarget' | 'apiRunner' | 'localRunner'
-> & {
+type Options = Pick<PackageOptions, 'usage' | 'captureApiTarget' | 'apiRunner' | 'localRunner'> & {
+  runner: NonNullable<PackageOptions['runner']>
   checkpoints?: HostCheckpointStore
-  captureTarget: (model?: PdfTranslationAgentModel) => ReturnType<PackageOptions['captureTarget']>
+  captureTarget: (
+    model?: PdfTranslationAgentModel
+  ) => ReturnType<NonNullable<PackageOptions['captureTarget']>>
 }
 export class PdfTranslationOwner {
   private readonly workflow: Workflow

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createTwoFilesPatch } from 'diff'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillMarketplace, type SkillMarketplaceView } from './SkillMarketplace'
 import { filterSkillMarketplace, type SkillMarketplaceEntry } from './skill-marketplace-model'

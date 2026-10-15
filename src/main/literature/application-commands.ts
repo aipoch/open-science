@@ -198,43 +198,65 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.transact
 ] as const)
 
+export type LiteratureCommandInstallation = ApplicationCommandInstallation & {
+  whenIdle(): Promise<void>
+}
+
 const registerLiteratureApplicationCommands = (
   registrar: ApplicationCommandRegistrar,
   owner: LiteratureCommandOwner
-): ApplicationCommandInstallation => {
+): LiteratureCommandInstallation => {
   const scope = registrar.createScope()
+  const lifetime = new AbortController()
+  const pending = new Set<Promise<unknown>>()
+  const run = <Result>(
+    operation: () => Promise<Result> | Result,
+    write = true
+  ): Promise<Result> => {
+    const task = Promise.resolve().then(() => {
+      lifetime.signal.throwIfAborted()
+      return write ? withDataRootWrite(async () => operation()) : operation()
+    })
+    pending.add(task)
+    void task.then(
+      () => pending.delete(task),
+      () => pending.delete(task)
+    )
+    return task
+  }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
-      'literature:get-candidate-states': ({ args }) =>
-        withDataRootWrite(() => owner.getCandidateStates(args[0])),
-      'literature:journals': ({ args }) => withDataRootWrite(() => owner.journals(args[0])),
-      'literature:export-record': ({ args }) =>
-        withDataRootWrite(() => owner.exportRecord(args[0])),
-      'literature:jobs': ({ args }) => withDataRootWrite(() => owner.jobs(args[0])),
-      'literature:full-text': ({ args }) => withDataRootWrite(() => owner.fullText(args[0])),
-      'literature:lookup-metadata': ({ args }) =>
-        withDataRootWrite(() => owner.lookupMetadata(args[0])),
-      'literature:complete-metadata': ({ args }) =>
-        withDataRootWrite(() => owner.completeMetadata(args[0])),
-      'literature:citation-styles': ({ args }) =>
-        withDataRootWrite(() => owner.citationStyles(args[0])),
-      'literature:format-references': ({ args }) =>
-        withDataRootWrite(() => owner.formatReferences(args[0])),
-      'literature:format-document': ({ args }) =>
-        withDataRootWrite(() => owner.formatDocument(args[0])),
-      'literature:sources': ({ args }) => withDataRootWrite(() => owner.sources(args[0])),
-      'literature:get': ({ args }) => withDataRootWrite(() => owner.get(args[0])),
+      'literature:get-candidate-states': ({ args }) => run(() => owner.getCandidateStates(args[0])),
+      'literature:journals': ({ args }) => run(() => owner.journals(args[0])),
+      'literature:export-record': ({ args }) => run(() => owner.exportRecord(args[0])),
+      'literature:jobs': ({ args }) => run(() => owner.jobs(args[0])),
+      'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
+      'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),
+      'literature:citation-styles': ({ args }) => run(() => owner.citationStyles(args[0])),
+      'literature:format-references': ({ args }) => run(() => owner.formatReferences(args[0])),
+      'literature:format-document': ({ args }) => run(() => owner.formatDocument(args[0])),
+      'literature:sources': ({ args }) => run(() => owner.sources(args[0])),
+      'literature:get': ({ args }) => run(() => owner.get(args[0])),
       'literature:import-pdf': ({ args, callerLease }) =>
-        withDataRootWrite(() => owner.importPdf(args[0], callerLease.signal)),
+        run(() => owner.importPdf(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
       'literature:add-pdf': ({ args, callerLease }) =>
-        withDataRootWrite(() => owner.addPdf(args[0], callerLease.signal)),
-      'literature:cancel-pdf-import': ({ args }) => owner.cancelPdfImport(args[0]),
-      'literature:import-records': ({ args }) =>
-        withDataRootWrite(() => owner.importRecords(args[0])),
-      'literature:search': ({ args }) => withDataRootWrite(() => owner.search(args[0])),
-      'literature:transact': ({ args }) => withDataRootWrite(() => owner.transact(args[0]))
+        run(() => owner.addPdf(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
+      'literature:cancel-pdf-import': ({ args }) =>
+        run(() => owner.cancelPdfImport(args[0]), false),
+      'literature:import-records': ({ args }) => run(() => owner.importRecords(args[0])),
+      'literature:search': ({ args }) => run(() => owner.search(args[0])),
+      'literature:transact': ({ args }) => run(() => owner.transact(args[0]))
     })
-    return scope.complete()
+    const installation = scope.complete(() =>
+      lifetime.abort(new Error('Literature commands are uninstalled.'))
+    )
+    return {
+      ...installation,
+      async whenIdle() {
+        while (pending.size) await Promise.allSettled([...pending])
+      }
+    }
   } catch (error) {
     scope.rollback()
     throw error

@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, type RenderHookResult } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  renderHook,
+  type RenderHookResult
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LiteratureCatalogSearchRequest } from '@aipoch/literature-library/contracts'

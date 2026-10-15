@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { memo, useEffect, useRef, useState } from 'react'
 
 // Count updates must not rerender the library table or its PDF preview.
@@ -8,6 +9,8 @@ export const LiteratureLibraryCount = memo(function LiteratureLibraryCount({
   revision: number
   hidden: boolean
 }): React.JSX.Element | null {
+  const { api: hostApi } = useLiteratureHost()
+
   const [count, setCount] = useState<number>()
   const pending = useRef<{ revision: number; result: Promise<number | undefined> } | undefined>(
     undefined
@@ -17,7 +20,7 @@ export const LiteratureLibraryCount = memo(function LiteratureLibraryCount({
     if (pending.current?.revision !== revision) {
       pending.current = {
         revision,
-        result: window.api.literature
+        result: hostApi.literature
           .search({ scope: 'library', lifecycle: 'active', countOnly: true })
           .then((page) => page.totalCount)
       }
@@ -30,7 +33,7 @@ export const LiteratureLibraryCount = memo(function LiteratureLibraryCount({
     return () => {
       cancelled = true
     }
-  }, [revision])
+  }, [hostApi.literature, revision])
   return hidden || count === undefined ? null : (
     <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
   )

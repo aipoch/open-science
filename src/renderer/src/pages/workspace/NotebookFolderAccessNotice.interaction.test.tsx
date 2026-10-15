@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, type PropsWithChildren } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../../../shared/notebook'

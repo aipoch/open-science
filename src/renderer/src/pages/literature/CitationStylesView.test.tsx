@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../test/renderer/literature'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -11,6 +19,8 @@ afterEach(cleanup)
 
 it('animates only cold hover openings while preserving the shared warm window', async () => {
   vi.useFakeTimers()
+  const previousApi = window.api
+  window.api = { literature: { citationStyles: vi.fn() } } as unknown as Window['api']
   try {
     render(
       <CitationStylesView
@@ -59,6 +69,7 @@ it('animates only cold hover openings while preserving the shared warm window', 
     expect(skipsEntry()).toBe('false')
   } finally {
     cleanup()
+    window.api = previousApi
     vi.useRealTimers()
   }
 })

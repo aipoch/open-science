@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import type { useNavigationStore } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
+import { type useProjectStore } from '@/stores/project-store'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'

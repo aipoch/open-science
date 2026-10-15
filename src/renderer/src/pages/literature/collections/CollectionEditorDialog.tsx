@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import * as Dialog from '@/components/ui/dialog'
 import {
   Select,
@@ -72,6 +73,8 @@ export const CollectionEditorDialog = forwardRef<
   CollectionEditorDialogHandle,
   CollectionEditorDialogProps
 >(({ onSaved, scopes = [] }, ref) => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const generation = useRef(0)
   const latestRead = useRef(0)
@@ -173,7 +176,7 @@ export const CollectionEditorDialog = forwardRef<
     try {
       let offset = 0
       for (;;) {
-        const page = await window.api.literature.search({
+        const page = await hostApi.literature.search({
           scope: 'collections',
           offset,
           limit: 100
@@ -217,7 +220,7 @@ export const CollectionEditorDialog = forwardRef<
       const trimmedDescription = ruleText.trim()
       let createdId: string | undefined
       if (mode === 'create') {
-        const receipt = await window.api.literature.transact(
+        const receipt = await hostApi.literature.transact(
           smart
             ? {
                 kind: 'create-smart-collection',
@@ -231,7 +234,7 @@ export const CollectionEditorDialog = forwardRef<
         )
         createdId = receipt.id
       } else if (editingCollection) {
-        await window.api.literature.transact({
+        await hostApi.literature.transact({
           kind: 'update-collection',
           ...(smart
             ? { smartScope: scope, smartEvidenceMode: evidenceMode, smartAutoUpdate: autoUpdate }

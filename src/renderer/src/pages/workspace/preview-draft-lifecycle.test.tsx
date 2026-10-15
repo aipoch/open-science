@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { completeQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {

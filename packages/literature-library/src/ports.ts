@@ -129,3 +129,16 @@ export interface LibraryStore {
   /** Transfer existing relationships, preserving source evidence and annotation identity atomically. */
   moveMergedRelations(survivorId: string, duplicateIds: readonly string[]): Promise<boolean>
 }
+
+/** Storage needed for import, preview, duplicate reuse and metadata supplementation only. */
+export type LibraryImportStore = Pick<
+  LibraryStore,
+  | 'importIdentityRecords'
+  | 'collection'
+  | 'lastCollectionOrder'
+  | 'linkCollection'
+  | 'createItem'
+  | 'restoreItem'
+  | 'item'
+  | 'replaceMetadata'
+>

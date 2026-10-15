@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../../test/renderer/literature'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureDuplicatesView } from './LiteratureDuplicatesView'

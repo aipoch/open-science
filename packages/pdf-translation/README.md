@@ -18,6 +18,56 @@ layout, output generation, checkpoints, usage recording and generated-PDF cachin
 Import only these capability entries. Internal file paths are not API. Each entry has generated
 TypeScript declarations. Required interface changes migrate in-repository consumers together.
 
+## Standalone backends
+
+Supply only the backend you use: `captureTarget` + `runner` for Agent translation,
+`captureApiTarget` + `apiRunner` for direct API translation, or `localRunner` for a local model.
+No Agent runner, profile cleanup or application settings are required for API-only or local-only use.
+`begin` rejects an unavailable route with `PdfTranslationError.code === 'unsupported-model'`
+before admitting work. An omitted `targetId` still selects Agent translation for compatibility.
+Shutdown drains work and closes the configured runners; usage recovery/flush applies to every route.
+
+```ts
+import { PdfTranslationOwner } from '@aipoch/pdf-translation'
+
+const owner = new PdfTranslationOwner({
+  usage, // Transactional usage sink owned by this consumer.
+  captureApiTarget: async () => ({ providerId: 'my-provider', model: 'my-model' }),
+  apiRunner: {
+    supportsTarget: () => true,
+    run: ({ prompt, systemPrompt, signal }) => translate({ prompt, systemPrompt, signal })
+  }
+})
+try {
+  const operation = await owner.begin(
+    {
+      targetId: 'api',
+      resourceRequestKey: 'document:1',
+      fingerprint: sourceFingerprint,
+      language: '中文',
+      glossary: [],
+      sources: ['Cell growth is measured.']
+    },
+    callerLease
+  )
+  const translated = await owner.translate(
+    {
+      operationId: operation.operationId,
+      sourceIndex: 0,
+      source: 'Cell growth is measured.'
+    },
+    callerLease
+  )
+} finally {
+  await owner.shutdown()
+}
+```
+
+`translate` above is the consumer's inference implementation; it returns `{ text, stopReason, usage? }`.
+The consumer supplies a stable source fingerprint and a caller lease whose signal is aborted on
+cancellation. The packed consumer test is a complete executable example using deterministic
+inference, and exercises both single-backend configurations through the public package name.
+
 ## Ownership and integration
 
 Create one translation owner per service. It owns job state, cancellation, checkpoint progression

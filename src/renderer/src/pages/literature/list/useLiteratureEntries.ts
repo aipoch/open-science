@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import {
   createLiteratureEntries,
   type LiteratureEntries,
@@ -12,7 +13,7 @@ import {
   useSyncExternalStore
 } from 'react'
 import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
-import { literatureClient } from '../literature-read-pages'
+import { useLiteratureClient } from '../literature-read-pages'
 export function useLiteratureEntries(
   options: LiteratureEntriesOptions<LiteratureCatalogSearchPage>
 ): ReturnType<LiteratureEntries<LiteratureCatalogSearchPage>['bind']> & {
@@ -21,9 +22,13 @@ export function useLiteratureEntries(
   failed: boolean
   pageTransitionLoading: boolean
 } {
+  const literatureClient = useLiteratureClient()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { enabled = true, request, scopeKey, onPage, onEmptyPage, onItems, onError } = options
   const [owner] = useState(() =>
-    createLiteratureEntries(literatureClient, (id) => window.api.literature.get(id))
+    createLiteratureEntries(literatureClient, (id) => hostApi.literature.get(id))
   )
   const { oversizedItemId, loading, loadedKey, failedKey, cachedKeys } = useSyncExternalStore(
     owner.subscribe,

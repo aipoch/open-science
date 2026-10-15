@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { FOCUS_COMPOSER_EVENT, requestComposerFocus } from './composer-focus-events'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Annotation } from '../../../../shared/annotations'
