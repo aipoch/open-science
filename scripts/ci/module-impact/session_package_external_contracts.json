@@ -1,0 +1,36 @@
+{
+  "ownerPaths": ["src/main/session-package-external-port.ts"],
+  "interfacePaths": ["src/main/session-package-external-port.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [],
+    "contract": [],
+    "consumer": [
+      "src/main/acp/runtime.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/session-package/headless.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/runtime-electron-wiring.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

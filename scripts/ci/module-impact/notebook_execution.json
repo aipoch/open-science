@@ -143,8 +143,6 @@
     "src/main/notebook/managed-environment-directory.ts",
     "src/main/notebook/managed-output-redaction.test.ts",
     "src/main/notebook/managed-output-redaction.ts",
-    "src/main/notebook/managed-research-environment.test.ts",
-    "src/main/notebook/managed-research-environment.ts",
     "src/main/notebook/managed-research-node-runtime.test.ts",
     "src/main/notebook/managed-research-node-runtime.ts",
     "src/main/notebook/managed-shell-execution.test.ts",
@@ -246,7 +244,6 @@
     "src/main/notebook/node-local-service-preload.mjs",
     "src/main/notebook/managed-environment-directory.ts",
     "src/main/notebook/managed-output-redaction.ts",
-    "src/main/notebook/managed-research-environment.ts",
     "src/main/notebook/managed-research-node-runtime.ts",
     "src/main/notebook/managed-shell-execution.ts"
   ],
@@ -304,7 +301,6 @@
       "src/main/notebook/research-service.macos.integration.test.ts",
       "src/main/notebook/managed-confinement.macos.integration.test.ts",
       "src/main/notebook/managed-output-redaction.test.ts",
-      "src/main/notebook/managed-research-environment.test.ts",
       "src/main/notebook/managed-research-node-runtime.test.ts",
       "src/main/notebook/managed-shell-execution.test.ts",
       "src/main/notebook/managed-shell-runtime.test.ts",
@@ -884,7 +880,8 @@
       "src/main/notebook/screened-auxiliary-output.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/research-execution-profiles/ipc.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/notebook/managed-research-environment.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -1407,7 +1407,8 @@
       "src/main/notebook/managed-execution-output.test.ts",
       "src/main/notebook/screened-auxiliary-output.test.ts",
       "src/main/notebook/managed-shell-execution.test.ts",
-      "src/main/notebook/powershell-search-parser.windows.integration.test.ts"
+      "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
+      "src/main/notebook/host-artifacts-service.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

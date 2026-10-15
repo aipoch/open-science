@@ -668,6 +668,9 @@ vi.mock('./composition/handoff', () => ({
 vi.mock('./composition/managed-files', () => ({
   composeManagedFiles: vi.fn(() => rootFixture.owners)
 }))
+vi.mock('./composition/managed-execution', () => ({
+  composeManagedExecution: vi.fn(() => rootFixture.owners)
+}))
 vi.mock('./composition/notebook-bridge', () => ({
   composeNotebookBridge: vi.fn(() => rootFixture.owners)
 }))
@@ -782,6 +785,11 @@ it('connects committed deletion to the same credential broker used by approval s
     sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
+    notebookLifecycle: {},
+    notebookActivityRef: { current: undefined },
+    stopProject: vi.fn(async () => undefined),
+    recover: vi.fn(async () => undefined),
+    external: {},
     specialistDomain: {},
     notebookCommands: {},
     jobRepository: {},
@@ -839,6 +847,10 @@ it('connects committed deletion to the same credential broker used by approval s
     vi.mocked(composeConnectors).mock.invocationCallOrder.at(-1)!
   )
   expect(lifecycle.getNotebookService()).toBe(owners.notebookService)
+  await lifecycle.stopManagedProject?.('project')
+  expect(owners.stopProject).toHaveBeenCalledWith('project')
+  expect(owners.notebookActivityRef.current).toBe(owners.notebookLifecycle)
+  expect(owners.recover).toHaveBeenCalledOnce()
 
   const settings = vi.mocked(composeSettingsBootstrap).mock.calls.at(-1)![0]
   expect(settings.getSpecialistDomain()).toBe(owners.specialistDomain)

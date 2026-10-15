@@ -37,8 +37,7 @@
     "src/main/navigation-policy.ts",
     "src/main/source-preview-webview.test.ts",
     "src/main/source-preview-webview.ts",
-    "src/main/window-ipc.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts"
+    "src/main/window-ipc.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -109,8 +108,7 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts"
+    "src/main/websocket-frame-sender.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {

@@ -1,9 +1,20 @@
 {
-  "ownerPaths": ["src/shared/runtime-view.ts"],
-  "interfacePaths": ["src/shared/runtime-view.ts"],
-  "consumerModules": ["notebook_application"],
+  "ownerPaths": [
+    "src/shared/research-execution-profile.ts",
+    "src/shared/research-reproduction.test.ts",
+    "src/shared/research-reproduction.ts",
+    "src/shared/managed-execution.ts",
+    "src/shared/runtime-view.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/research-execution-profile.ts",
+    "src/shared/research-reproduction.ts",
+    "src/shared/managed-execution.ts",
+    "src/shared/runtime-view.ts"
+  ],
+  "consumerModules": [],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/shared/research-reproduction.test.ts"],
     "contract": ["src/main/notebook/managed-execution-service.test.ts"],
     "consumer": [
       "src/main/notebook/managed-execution-collection.integration.test.ts",
@@ -160,9 +171,45 @@
       "src/main/acp/prompt-turn-workflow.test.ts",
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/native-follow-up-workflow.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/managed-research-environment.test.ts",
+      "src/main/notebook/research-material-authority.test.ts",
+      "src/main/notebook/research-materials.test.ts",
+      "src/main/notebook/research-material-archive.test.ts",
+      "src/main/research-execution-profiles/configuration-broker.test.ts",
+      "src/main/research-execution-profiles/store.test.ts",
+      "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx",
+      "src/main/compute/application-commands.test.ts",
+      "src/main/compute/compute-service.architecture.test.ts",
+      "src/main/notebook/runtime-application-commands.test.ts",
+      "src/main/permission-grants/application-commands.test.ts",
+      "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
+      "src/main/settings/application-commands.test.ts",
+      "src/main/settings/integration-application-commands.test.ts",
+      "src/main/settings/runtime-application-commands.test.ts",
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/specialist/application-commands.test.ts",
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/preload/electron-renderer-contract-adapter.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/renderer/src/App.test.tsx",
+      "src/renderer/src/main.render.test.tsx",
+      "src/main/research-execution-profiles/store-recovery.test.ts",
+      "src/main/credential-identity/ciphertext-inventory.test.ts",
+      "src/main/credential-identity/linux.test.ts",
+      "src/main/credential-identity/macos.test.ts",
+      "src/main/credential-identity/probe-logging.test.ts"
     ]
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "shared_contract"
 }

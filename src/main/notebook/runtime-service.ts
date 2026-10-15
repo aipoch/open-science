@@ -140,7 +140,10 @@ import {
 } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
+import {
+  readTrustedNotebookBindingPermissionPrompts,
+  type NotebookRuntimeBindingDecisionRequest
+} from './runtime-binding-admission'
 import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
 import { saveIpynbAll } from './save-ipynb-all'
 import {
@@ -454,7 +457,7 @@ class NotebookRuntimeService {
   // Read-only classification for authenticated outer-tool admission. The binding boundary repeats
   // this decision; a correlated handoff requires it still to be valid when the actual call arrives.
   async canOwnRuntimeBindingDecision(
-    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
+    request: NotebookRuntimeBindingDecisionRequest
   ): Promise<boolean> {
     if (!this.runtimeBindingApproval) return false
     try {

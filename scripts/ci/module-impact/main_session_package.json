@@ -57,7 +57,6 @@
     "src/main/session-package/records-contract.ts",
     "src/main/session-package/reproducibility-contract.ts",
     "src/main/session-package/research-reproduction.integration.test.ts",
-    "src/main/session-package-external-port.ts",
     "src/main/session-package/headless.test.ts",
     "src/main/session-package/headless.ts"
   ],
@@ -70,7 +69,6 @@
     "src/main/session-package/quit-guard.ts",
     "src/main/session-package/service.ts",
     "src/main/session-package/pdf-notes.ts",
-    "src/main/session-package-external-port.ts",
     "src/main/session-package/headless.ts"
   ],
   "consumerModules": [],
