@@ -190,8 +190,12 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           nt="$RUNNER_TEMP/notarytool.json"
           shopt -s nullglob
+          stapler_prefix=()
 
           if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]; then
+            # Diagnostic A/B: deny QUIC only in this child process; retain TLS and normal TCP.
+            stapler_prefix=(/usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote udp "*:443"))')
+            echo 'Stapler transport experiment: child-process UDP/443 denied'
             sw_vers
             xcodebuild -version
             xcrun --find stapler
@@ -266,9 +270,9 @@ jobs:
           for dmg in "${dmgs[@]}"; do
             if [ "$OPERATION" = "notarize" ]; then submit "$dmg"; fi
             if [ "$OPERATION" != "smoke" ]; then
-              node scripts/ci/apple-notarization-retry.mjs stapler staple "$dmg"
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$dmg"
             fi
-            node scripts/ci/apple-notarization-retry.mjs stapler validate "$dmg"
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$dmg"
           done
 
           for zip in "${zips[@]}"; do
@@ -277,9 +281,9 @@ jobs:
             app=$(find "$work" -maxdepth 1 -name '*.app' -print -quit)
             if [ -z "$app" ]; then echo "no .app inside $zip" >&2; exit 1; fi
             if [ "$OPERATION" != "smoke" ]; then
-              node scripts/ci/apple-notarization-retry.mjs stapler staple "$app"
+              "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler staple "$app"
             fi
-            node scripts/ci/apple-notarization-retry.mjs stapler validate "$app"
+            "${stapler_prefix[@]}" node scripts/ci/apple-notarization-retry.mjs stapler validate "$app"
             if [ "$OPERATION" != "smoke" ]; then
               ditto -c -k --keepParent "$app" "$zip"
             fi
