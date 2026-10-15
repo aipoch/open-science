@@ -194,19 +194,12 @@ describe('module registration approval boundary', () => {
     }
   )
 
-  it('separates package and host ownership while preserving CI rules and registration exemptions', () => {
+  it('protects CI tooling and exempts only registration JSON', () => {
     const entries = readFileSync(join(process.cwd(), '.github/CODEOWNERS'), 'utf8')
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith('#'))
     expect(entries).toEqual([
-      '/packages/ @aipoch/ci-maintainers',
-      '/src/ @aipoch/ci-maintainers',
-      '/cli/ @aipoch/ci-maintainers',
-      '/e2e/ @aipoch/ci-maintainers',
-      '/test/ @aipoch/ci-maintainers',
-      '/prisma/ @aipoch/ci-maintainers',
-      '/resources/ @aipoch/ci-maintainers',
       '/packages/test-impact/ @aipoch/ci-maintainers',
       '/.github/CODEOWNERS @aipoch/ci-maintainers',
       '/CODEOWNERS @aipoch/ci-maintainers',
