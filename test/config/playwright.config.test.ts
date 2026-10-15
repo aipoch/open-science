@@ -281,3 +281,66 @@ it('preserves separate CI blob directories across consecutive suites', async () 
     rmSync(root, { recursive: true, force: true })
   }
 }, 90_000)
+
+it.each(['unrelated', 'mismatched', 'outcome'])(
+  'scopes backend outcome faults to their isolated fixture (%s)',
+  (kind) => {
+    const root = mkdtempSync(
+      join(tmpdir(), kind === 'unrelated' ? 'restart-fixture-' : 'open-science-electron-e2e-')
+    )
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+        import assert from 'node:assert/strict'
+        import fs from 'node:fs/promises'
+        import { join } from 'node:path'
+        import { createRequire } from 'node:module'
+        const original = fs.rename
+        createRequire(import.meta.url)(${JSON.stringify(resolve('e2e/fixtures/session-outcome-preload.cjs'))})
+        const active = ${JSON.stringify(kind)} === 'outcome'
+        assert.equal(fs.rename !== original, active)
+        const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+        const directory = join(root, 'sessions', 'project')
+        await fs.mkdir(directory, { recursive: true })
+        const source = join(directory, 'session.tmp')
+        const destination = join(directory, 'session.json')
+        const contents = JSON.stringify({session:{messages:[{id:'prompt',role:'user',content:'reject me'}]}})
+        await fs.writeFile(source, contents)
+        await fs.writeFile(join(root, 'e2e-session-outcome-fault.json'), JSON.stringify({
+          kind:'submission', projectId:'project', sessionId:'session', prompt:'reject me', dataRoot:root
+        }))
+        if (active) {
+          // Unrelated Session writes still succeed; named ESM imports see the same fault.
+          const { rename } = await import('node:fs/promises')
+          const other = join(directory, 'other.json')
+          await fs.writeFile(other + '.tmp', contents)
+          await rename(other + '.tmp', other)
+          await assert.rejects(rename(source, destination), {code:'EIO'})
+          assert.equal((await fs.readFile(join(root, 'e2e-session-outcome-hits'),'utf8')).trim(), String(process.pid))
+          await fs.rm(join(root, 'e2e-session-outcome-fault.json'))
+        }
+        await fs.rename(source, destination)
+        assert.equal(await fs.readFile(destination, 'utf8'), contents)
+      `
+        ],
+        {
+          encoding: 'utf8',
+          timeout: 10_000,
+          env: {
+            ...process.env,
+            OPEN_SCIENCE_E2E_STORAGE_ROOT: root,
+            OPEN_SCIENCE_CONFIG_ROOT: root,
+            OPEN_SCIENCE_STORAGE_ROOT: kind === 'mismatched' ? join(root, 'different') : root
+          }
+        }
+      )
+      expect(result.status, result.stderr).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)

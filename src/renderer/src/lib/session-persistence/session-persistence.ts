@@ -1207,7 +1207,11 @@ const createOrderedSessionPersistence = (
           await Promise.allSettled([...deferredSaves])
           if (queue === draining && deferredSaves.size === 0) break
         }
-        const failure = failedWritesByTarget.values().next()
+        const failure = target
+          ? failedWritesByTarget.has(target)
+            ? { done: false, value: failedWritesByTarget.get(target) }
+            : { done: true }
+          : failedWritesByTarget.values().next()
         if (!failure.done) throw failure.value
         const deferredTarget = target
           ? deferredConversationCommandTargets.has(target)
@@ -1331,7 +1335,11 @@ const flushSessionPersistence = async (target?: string): Promise<void> => {
     await retryDeferredSessionPersistence(target)
     await liveSessionPersistence.flush(target)
   }
-  if (unresolvedSessionRevisionConflictTargets.size > 0) {
+  if (
+    target
+      ? unresolvedSessionRevisionConflictTargets.has(target)
+      : unresolvedSessionRevisionConflictTargets.size > 0
+  ) {
     throw new SessionPersistenceFlushConflictError()
   }
 }

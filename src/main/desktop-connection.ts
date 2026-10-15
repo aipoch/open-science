@@ -20,9 +20,9 @@ const MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 export async function listenForDesktop(
   version: string,
-  onConnection: (socket: WebSocket) => void
+  onConnection: (socket: WebSocket) => void,
+  generation: string = randomUUID()
 ): Promise<{ endpoint: DesktopEndpoint; close(): Promise<void> }> {
-  const generation = randomUUID()
   const directory =
     process.platform === 'win32' ? undefined : await mkdtemp(join(tmpdir(), 'os-desktop-'))
   const path = directory ? join(directory, 'host.sock') : `\\\\.\\pipe\\open-science-${generation}`
@@ -38,7 +38,6 @@ export async function listenForDesktop(
     maxPayload: MAX_MESSAGE_BYTES,
     perMessageDeflate: false
   })
-  let active: WebSocket | undefined
   let closing: Promise<void> | undefined
   server.on('upgrade', (request, socket, head) => {
     const authorization = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') ?? '')
@@ -54,16 +53,8 @@ export async function listenForDesktop(
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
       return
     }
-    if (active && active.readyState !== WebSocket.CLOSED) {
-      socket.end('HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n')
-      return
-    }
     sockets.handleUpgrade(request, socket, head, (connection) => {
-      active = connection
       connection.on('error', () => connection.terminate())
-      connection.once('close', () => {
-        if (active === connection) active = undefined
-      })
       onConnection(connection)
     })
   })

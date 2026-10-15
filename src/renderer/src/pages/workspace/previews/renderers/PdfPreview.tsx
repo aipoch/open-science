@@ -176,7 +176,11 @@ import {
   PdfTranslationSidebar
 } from './PdfTranslationView'
 import { usePdfTranslationAgent } from './use-pdf-translation-agent'
-import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
+import {
+  usePdfTranslationJob,
+  type PdfTranslationExecutor,
+  type PdfTranslationOptions
+} from './use-pdf-translation-job'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
@@ -1000,6 +1004,7 @@ const PdfSearchControls = ({
   query,
   current,
   total,
+  incomplete,
   onQueryChange,
   onFindAgain,
   onClose,
@@ -1009,6 +1014,7 @@ const PdfSearchControls = ({
   query: string
   current: number
   total: number
+  incomplete: boolean
   onQueryChange: (query: string) => void
   onFindAgain: (previous: boolean) => void
   onClose: () => void
@@ -1016,9 +1022,10 @@ const PdfSearchControls = ({
   onScopeChange?: (translated: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const coverageNoticeId = useId()
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={300}>
-      <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+      <div className="absolute top-3 right-3 z-40 flex h-8 max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         {onScopeChange ? (
           <Button
             size="sm"
@@ -1038,6 +1045,7 @@ const PdfSearchControls = ({
           data-preview-escape-boundary
           value={query}
           aria-label={t('Search document')}
+          aria-describedby={incomplete ? coverageNoticeId : undefined}
           placeholder={t('Search document')}
           className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
@@ -1100,6 +1108,15 @@ const PdfSearchControls = ({
           </TooltipTrigger>
           <TooltipContent className="z-[120]">{t('Close search')}</TooltipContent>
         </Tooltip>
+        {incomplete ? (
+          <ErrorNotice
+            id={coverageNoticeId}
+            role="status"
+            level="warning"
+            className="absolute top-full left-0 mt-2"
+            description={t('Search incomplete. Some pages could not be read.')}
+          />
+        ) : null}
       </div>
     </TooltipProvider>
   )
@@ -1672,7 +1689,7 @@ const PdfEvidenceLayer = ({
             </button>
           )
         })}
-        {matchingBookmarks.flatMap((bookmark) => {
+        {matchingBookmarks.map((bookmark) => {
           const selector = bookmark.selector
           if (selector.kind !== 'text' && selector.kind !== 'region') return []
           const boxes = selector.kind === 'text' ? selector.quads : [selector.rect]
@@ -1680,73 +1697,68 @@ const PdfEvidenceLayer = ({
           const colorValue = pdfMarkColorValue(color)
           const isRevealed = reveal?.id === bookmark.id
           const isSelected = selectedBookmarkId === bookmark.id
-          return boxes.map((rect, index) => (
-            <button
-              key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
-              type="button"
-              data-pdf-bookmark-highlight={bookmark.id}
-              data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
-              aria-label={t('Select annotation')}
-              aria-pressed={isSelected}
-              className={cn(
-                'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                markKind === 'area' && 'ring-1 ring-inset',
-                isRevealed && 'pdf-evidence-reveal',
-                isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
-              )}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                onSelectBookmark?.(bookmark.id)
-              }}
-              style={{
-                left: `${rect.x * 100}%`,
-                top: `${rect.y * 100}%`,
-                width: `${rect.width * 100}%`,
-                height: `${rect.height * 100}%`,
-                backgroundColor:
-                  markKind === 'highlight' || markKind === 'area'
-                    ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
-                    : 'transparent',
-                borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
-                ...(markKind === 'strikethrough'
-                  ? {
-                      backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
-                    }
-                  : markKind === 'squiggly'
-                    ? {
-                        backgroundColor: colorValue,
-                        maskImage: PDF_SQUIGGLY_MASK,
-                        maskRepeat: 'repeat-x',
-                        maskPosition: 'left bottom',
-                        maskSize: '8px 4px'
-                      }
-                    : markKind === 'underline'
-                      ? { borderBottom: `0.12rem solid ${colorValue}` }
-                      : {})
-              }}
-            />
-          ))
-        })}
-        {pageAnnotations.flatMap((annotation) => {
-          const selector = annotation.target.selector
-          if (!pdfBookmarkSelectorMatchesPage(selector, pageNumber, pageRotation)) return []
-          const rect =
-            selector.kind === 'text'
-              ? selector.quads.at(-1)
-              : selector.kind === 'region'
-                ? selector.rect
-                : undefined
-          if (!rect) return []
-          return [
-            <PdfAnnotationMarker
-              key={annotation.id}
-              id={annotation.id}
-              note={annotation.note}
-              left={`${Math.min(0.97, rect.x + rect.width) * 100}%`}
-              top={`${rect.y * 100}%`}
-            />
-          ]
+          const annotation = pageAnnotations.find((item) => item.id === bookmark.id)
+          const anchor = boxes.at(-1)
+          return (
+            <div key={bookmark.id} className="group/pdf-annotation">
+              {boxes.map((rect, index) => (
+                <button
+                  key={`${bookmark.id}-${index}-${isRevealed ? reveal.sequence : 0}`}
+                  type="button"
+                  data-pdf-bookmark-highlight={bookmark.id}
+                  data-pdf-bookmark-revealed={isRevealed ? 'true' : undefined}
+                  aria-label={t('Select annotation')}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    'pointer-events-auto absolute appearance-none rounded-[2px] border-0 p-0 text-left transition-[box-shadow,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    markKind === 'area' && 'ring-1 ring-inset',
+                    isRevealed && 'pdf-evidence-reveal',
+                    isSelected && 'z-10 brightness-95 ring-2 ring-primary/80'
+                  )}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onSelectBookmark?.(bookmark.id)
+                  }}
+                  style={{
+                    left: `${rect.x * 100}%`,
+                    top: `${rect.y * 100}%`,
+                    width: `${rect.width * 100}%`,
+                    height: `${rect.height * 100}%`,
+                    backgroundColor:
+                      markKind === 'highlight' || markKind === 'area'
+                        ? `color-mix(in oklab, ${colorValue} 42%, transparent)`
+                        : 'transparent',
+                    borderColor: `color-mix(in oklab, ${colorValue} 70%, transparent)`,
+                    ...(markKind === 'strikethrough'
+                      ? {
+                          backgroundImage: `linear-gradient(to bottom, transparent 45%, ${colorValue} 45%, ${colorValue} 57%, transparent 57%)`
+                        }
+                      : markKind === 'squiggly'
+                        ? {
+                            backgroundColor: colorValue,
+                            maskImage: PDF_SQUIGGLY_MASK,
+                            maskRepeat: 'repeat-x',
+                            maskPosition: 'left bottom',
+                            maskSize: '8px 4px'
+                          }
+                        : markKind === 'underline'
+                          ? { borderBottom: `0.12rem solid ${colorValue}` }
+                          : {})
+                  }}
+                />
+              ))}
+              {annotation && anchor ? (
+                <PdfAnnotationMarker
+                  id={annotation.id}
+                  note={annotation.note}
+                  selected={isSelected}
+                  left={`${Math.min(0.97, anchor.x + anchor.width) * 100}%`}
+                  top={`${anchor.y * 100}%`}
+                />
+              ) : null}
+            </div>
+          )
         })}
         {draft ? (
           <span
@@ -2452,6 +2464,14 @@ export const PdfPreviewContent = ({
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
   const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
+  const pendingNewTranslation = useRef<
+    | {
+        key: string
+        document: PdfDocument
+        options: PdfTranslationOptions
+      }
+    | undefined
+  >(undefined)
   const translationToggleRef = useRef<HTMLButtonElement>(null)
   const translationCloseRef = useRef<HTMLButtonElement>(null)
   const translationPanelId = useId()
@@ -2520,6 +2540,7 @@ export const PdfPreviewContent = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<readonly PdfSearchPageMatches[]>([])
   const [searchResultCount, setSearchResultCount] = useState(0)
+  const [searchIncomplete, setSearchIncomplete] = useState(false)
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
   const [textLayerEpoch, setTextLayerEpoch] = useState(0)
   const searchTextCacheRef = useRef(new PdfSearchTextCache())
@@ -2567,6 +2588,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useLayoutEffect(
@@ -2726,7 +2748,10 @@ export const PdfPreviewContent = ({
           try {
             await window.api.previewResources.release({ resourceId })
           } catch (error) {
-            console.error('Failed to release PDF preview resource', error)
+            // A disconnected backend has already revoked its preview resources.
+            if (desktopRuntimeWritable()) {
+              console.error('Failed to release PDF preview resource', error)
+            }
           }
         }
       })()
@@ -2850,7 +2875,7 @@ export const PdfPreviewContent = ({
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recovery.checkpoint
+    recoveryCheckpoint
   )
   const jobSource =
     document && presentation !== 'search'
@@ -2872,6 +2897,25 @@ export const PdfPreviewContent = ({
     effectiveTranslationExecutor,
     recoveryCheckpoint
   )
+  useEffect(() => {
+    const pending = pendingNewTranslation.current
+    if (!pending) return
+    if (
+      pending.key !== resourceRequestKey ||
+      pending.document !== document ||
+      preparation.state.status === 'error' ||
+      preparation.state.status === 'cancelled'
+    ) {
+      pendingNewTranslation.current = undefined
+      return
+    }
+    if (preparation.state.status === 'idle') prepareFullText()
+    else if (preparation.state.status === 'ready') {
+      // Start only after React has installed the freshly extracted source in the job owner.
+      pendingNewTranslation.current = undefined
+      translationJob.restart(pending.options)
+    }
+  }, [resourceRequestKey, document, preparation.state.status, prepareFullText, translationJob])
   const {
     status: translationStatus,
     done: translatedCount,
@@ -3023,6 +3067,7 @@ export const PdfPreviewContent = ({
     setSearchedDocument(searchDocument)
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useEffect(() => {
@@ -3263,6 +3308,7 @@ export const PdfPreviewContent = ({
     let canceled = false
     const timer = setTimeout(() => {
       void (async () => {
+        setSearchIncomplete(false)
         const normalizedQuery = searchQuery.toLocaleLowerCase()
         const matches: PdfSearchPageMatches[] = []
         let matchCount = 0
@@ -3282,6 +3328,8 @@ export const PdfPreviewContent = ({
               }
             })
           } catch {
+            if (canceled) return
+            setSearchIncomplete(true)
             continue
           }
           if (canceled) return
@@ -3530,6 +3578,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
     searchTextCacheRef.current.clear()
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
@@ -3719,12 +3768,25 @@ export const PdfPreviewContent = ({
       onCancel={translationJob.cancel}
       onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
       onNewTranslation={(options) => {
+        if (!document) return
         setSuppressedRecoveryKey(resourceRequestKey)
-        translationJob.restart({
+        const requestedOptions = {
           ...options,
           ...(attachmentVersionId ? { attachmentVersionId } : {}),
           ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
-        })
+        }
+        pendingNewTranslation.current = undefined
+        if (preparationAvailable) {
+          translationJob.reset()
+          preparation.reset()
+          pendingNewTranslation.current = {
+            key: resourceRequestKey,
+            document,
+            options: requestedOptions
+          }
+        } else {
+          translationJob.restart(requestedOptions)
+        }
         setTranslationQuery('')
         setSelectedTranslation(undefined)
         setShowParagraphMarkers(false)
@@ -4779,6 +4841,7 @@ export const PdfPreviewContent = ({
                           pairedDocument
                             ? (translated) => {
                                 setSearchQuery('')
+                                setSearchIncomplete(false)
                                 setSearchTranslated(translated)
                                 if (effectiveRendition !== 'compare')
                                   setRendition(translated ? 'translated' : 'original')
@@ -4788,10 +4851,12 @@ export const PdfPreviewContent = ({
                         query={searchQuery}
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
+                        incomplete={searchIncomplete}
                         onQueryChange={(query) => {
                           setSearchQuery(query)
                           setSearchResults([])
                           setSearchResultCount(0)
+                          setSearchIncomplete(false)
                           setSelectedSearchIndex(0)
                         }}
                         onFindAgain={findAgain}

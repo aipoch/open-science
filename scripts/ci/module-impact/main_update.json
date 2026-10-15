@@ -22,7 +22,29 @@
     "src/main/update/strategy.ts",
     "src/main/update/update-integrity-regressions.test.ts",
     "src/main/update/command-owner.ts",
-    "src/main/update/runtime-strategy.ts"
+    "src/main/update/runtime-strategy.ts",
+    "src/main/update/blocked-tasks.test.ts",
+    "src/main/update/blocked-tasks.ts",
+    "src/main/update/channel-certification.test.ts",
+    "src/main/update/channel-certification.ts",
+    "src/main/update/deb-gate-recovery.test.ts",
+    "src/main/update/deb-systemd-gate.test.ts",
+    "src/main/update/deb-systemd-gate.ts",
+    "src/main/update/installation-artifact.test.ts",
+    "src/main/update/installation-artifact.ts",
+    "src/main/update/installation-executor.test.ts",
+    "src/main/update/installation-executor.ts",
+    "src/main/update/installation-filesystem.ts",
+    "src/main/update/installation-formats.test.ts",
+    "src/main/update/installation-occupancy.ts",
+    "src/main/update/installation-protection.test.ts",
+    "src/main/update/installation-protection.ts",
+    "src/main/update/installation-reboot-recovery.test.ts",
+    "src/main/update/installation-reboot-recovery.ts",
+    "src/main/update/verification-process.test.ts",
+    "src/main/update/verification-process.ts",
+    "src/main/update/installation-occupancy.test.ts",
+    "src/main/update/installation-preparation.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -30,7 +52,16 @@
     "src/main/update/scheduler.ts",
     "src/main/update/strategy.ts",
     "src/main/update/command-owner.ts",
-    "src/main/update/runtime-strategy.ts"
+    "src/main/update/runtime-strategy.ts",
+    "src/main/update/blocked-tasks.ts",
+    "src/main/update/channel-certification.ts",
+    "src/main/update/deb-systemd-gate.ts",
+    "src/main/update/installation-artifact.ts",
+    "src/main/update/installation-executor.ts",
+    "src/main/update/installation-occupancy.ts",
+    "src/main/update/installation-protection.ts",
+    "src/main/update/installation-reboot-recovery.ts",
+    "src/main/update/verification-process.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -47,7 +78,19 @@
       "src/main/update/service.save-dialog.test.ts",
       "src/main/update/service.test.ts",
       "src/main/update/strategy.test.ts",
-      "src/main/update/update-integrity-regressions.test.ts"
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/main/update/blocked-tasks.test.ts",
+      "src/main/update/channel-certification.test.ts",
+      "src/main/update/deb-gate-recovery.test.ts",
+      "src/main/update/deb-systemd-gate.test.ts",
+      "src/main/update/installation-artifact.test.ts",
+      "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-formats.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/installation-reboot-recovery.test.ts",
+      "src/main/update/verification-process.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -55,6 +98,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -84,7 +130,12 @@
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

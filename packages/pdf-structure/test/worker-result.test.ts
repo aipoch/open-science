@@ -310,11 +310,11 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
   })
-  it.each(['algorithm', 'graphical-table'])(
+  it.each(['algorithm', 'graphical-table', 'open-rule-table'])(
     'accounts for and cleans %s thumbnails while retaining unexpected scratch files',
     async (kind) => {
       const originalBytes = await inspectScratch(root)
-      await writeFile(join(root, `thumbnails/p1-${kind}-1.png`), png)
+      await writeFile(join(root, `thumbnails/p1-${kind}-0.png`), png)
       expect(await inspectScratch(root)).toBe(originalBytes + png.length)
       await writeFile(join(root, 'thumbnails/unowned.png'), png)
       await expect(inspectScratch(root)).rejects.toThrow('Unexpected PDF scratch')

@@ -146,6 +146,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         ])
     )
     const sharedContracts = {
+      literatureDiscovery: digest(readSource(join(mainRoot, 'literature/discovery-contract.ts'))),
       planSchema: digest(z.toJSONSchema(generatePlanToolSchema)),
       planValidation: digest(readSource(join(mainRoot, '../shared/session-plan/contract.ts'))),
       activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts')))
@@ -155,25 +156,26 @@ describe('Auto operation completeness against real tool registrations', () => {
         'artifacts/mcp-server.ts':
           '6b43e2b69387c7310dee65d97674b94e608a349f987ef90d7dd5cee7ff675c7f',
         'literature/library-mcp-server.ts':
-          '3ee3013dd0775d3b8b3c1190ab75d1fd18941d70f45dc5fea9a25d3e837ce738',
+          'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
         'literature/mcp-server.ts':
           'd7baeae460b294940d198e2a16f701c399b7630da945f31226260f19decdae72',
         'notebook/mcp-server.ts':
-          'ad036e2da30658225b2526d3fabed33355ce189e9b1825c0fa86b22b021640af',
+          'e2dc287c4bf562ed688bebedbadff44b9b8aa6498472f5fa37478d87bba73c60',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'
       },
       notebookSchemas: {
-        ask_user_question: 'f4a3e6c178ec5dc5fbbd9ef256a046f32565a58be8bc8fa263a9e642e789002a',
+        ask_user_question: '7621da9ed798afbbf98fd8672e9356787088e9420d01df096f707247f3021983',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
         request_network_access: '6b5a49d73cc704691da193510764101bc5577b48bb7c0fa8bf99f1b29b500f95'
       },
       sharedContracts: {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
+        literatureDiscovery: '3ded9eab859b472f0d20d7a232c8971a517f3b493db318efb0a07753278fdee6',
         planSchema: '16f6ba38e7ae9320c2fb9d1a215592c11ada256781882e5e3f16336eb303cfb7',
-        planValidation: '0b1349725044d30d8cd9518e5891a237ff11cfde31c9f613b3550bdb37463414'
+        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb'
       }
     })
   })

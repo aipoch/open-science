@@ -82,7 +82,10 @@ vi.mock('electron', () => ({
 vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
 vi.mock('./desktop-runtime-launcher', () => ({
   startOrAttachDesktopBackend: vi.fn(),
-  desktopBackendPaths: vi.fn()
+  desktopBackendPaths: vi.fn(() => ({
+    command: '/isolated-test/node',
+    entry: '/isolated-test/application/backend.cjs'
+  }))
 }))
 vi.mock('./credential-identity/node-cipher', () => ({ initializeNodeWindowsProfileKey: vi.fn() }))
 

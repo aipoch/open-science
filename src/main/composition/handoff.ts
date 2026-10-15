@@ -1,3 +1,4 @@
+import { projectUpdateBlockedTasks } from '../update/blocked-tasks'
 import {
   registerStorageIpcHandlers,
   registerUpdateIpcHandlers
@@ -28,6 +29,7 @@ import {
   createActiveResearchSafeInstallGate,
   createDataRootResearchSafeInstallGate,
   createDurableInstallGate,
+  canForceUpdateBlockers,
   type InstallReadiness
 } from '../update/strategy'
 import { type ReviewerRuntimeShutdownOwner } from './reviewer'
@@ -46,6 +48,7 @@ export async function composeHandoff({
   translate,
   confirmRendererDurability,
   notifyRendererDurabilityAborted,
+  loadSessionSummaries,
   modules
 }: {
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
@@ -67,6 +70,7 @@ export async function composeHandoff({
       import('../session-persistence/flush-protocol').RendererSessionPersistenceSurface | undefined
   ) => Promise<boolean>
   notifyRendererDurabilityAborted: () => void
+  loadSessionSummaries?: () => Promise<readonly { id: string; projectId: string; title: string }[]>
   modules: ApplicationModuleBuilder
 }): Promise<{
   reviewerModelRuntimeShutdown: { current: ReviewerRuntimeShutdownOwner | undefined }
@@ -77,6 +81,7 @@ export async function composeHandoff({
   ) => Promise<InstallReadiness>
   updateCommandOwner: ReturnType<typeof createUpdateCommandOwner>
   prepareDesktopUpdate: import('../update/strategy').InstallGate
+  inspectDesktopUpdate: () => Promise<InstallReadiness>
   abortDesktopUpdate: () => void
 }> {
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
@@ -174,12 +179,57 @@ export async function composeHandoff({
     durableBackendHandoffGate,
     () => isMigrationInProgress() || isMigrationPending()
   )
+  const inspectDesktopUpdate = async (): Promise<InstallReadiness> => {
+    const blockedBy = [...new Set(detectResearchBlockers())]
+    const result: InstallReadiness = {
+      completed: blockedBy.length === 0,
+      reaped: false,
+      blockedBy,
+      canForce: canForceUpdateBlockers(blockedBy)
+    }
+    if (
+      isMigrationInProgress() ||
+      isMigrationPending() ||
+      sessionPackageDesktopLifecycle.isActive()
+    )
+      return { ...result, completed: false, canForce: false, reason: 'installation-busy' }
+    if (!loadSessionSummaries || !blockedBy.length) return result
+    const summaries = await loadSessionSummaries()
+    const active = detectActiveSessions({
+      runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      delegated: { getActiveDelegatedSessions },
+      notebook: notebookLifecycle
+    })
+    return { ...result, blockedTasks: projectUpdateBlockedTasks(active, summaries, blockedBy) }
+  }
   const prepareDesktopUpdate: import('../update/strategy').InstallGate = async (options) => {
     packageHandoffHeld.current = true
     if (sessionPackageDesktopLifecycle.isActive())
       throw new Error('Wait for the Session package operation to finish before updating.')
     releaseSettingsInstallAdmission ??= settingsService.holdInstallAdmission()
-    return updateInstallGate(options)
+    const gateResult = await updateInstallGate(options)
+    const result = {
+      ...gateResult,
+      canForce: !options?.force && canForceUpdateBlockers(gateResult.blockedBy ?? [])
+    }
+    if (!result.blockedBy?.length || !loadSessionSummaries) return result
+    let summaries: Awaited<ReturnType<NonNullable<typeof loadSessionSummaries>>>
+    try {
+      summaries = await loadSessionSummaries()
+    } catch {
+      return result
+    }
+    const active = detectActiveSessions({
+      runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      delegated: { getActiveDelegatedSessions },
+      notebook: notebookLifecycle
+    })
+    return {
+      ...result,
+      blockedTasks: projectUpdateBlockedTasks(active, summaries, result.blockedBy)
+    }
   }
   const updateStrategy = createRuntimeUpdateStrategy(process.platform, {
     translate,
@@ -203,6 +253,7 @@ export async function composeHandoff({
     durableDataRootHandoffGate,
     updateCommandOwner,
     prepareDesktopUpdate,
+    inspectDesktopUpdate,
     abortDesktopUpdate: abortUpdateHandoff
   }
 }

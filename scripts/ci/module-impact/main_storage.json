@@ -86,6 +86,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "cli/config-root.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
@@ -699,7 +702,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/session-diagnostics/desktop-log-paths.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

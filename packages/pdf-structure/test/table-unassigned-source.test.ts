@@ -18,6 +18,9 @@ const { recoverUnassignedCompleteSourceRows } = await import(
 const { recoverUnassignedInsertedParameterRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
+const { recoverUnassignedAggregateRows } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids', `${name}.jsonl`))
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
@@ -97,6 +100,101 @@ it('recovers a complete numbered record straddling duplicate empty bands', () =>
   expect(result.unassigned).toEqual([])
   expect(result.issues).toEqual([])
   expect(result.repairs).toContain('duplicate-source-row-merged')
+})
+
+it('inserts a proved first aggregate row before repeated metric groups', () => {
+  type TestCell = {
+    row: number
+    column: number
+    rowSpan: number
+    colSpan: number
+    rect: number[]
+    text: string
+    origin?: string
+  }
+  type TestItem = {
+    text: string
+    rect: number[]
+    baseline: number
+    height: number
+    horizontal: boolean
+  }
+  const columnRects = Array.from({ length: 8 }, (_, column) => [
+    column * 50,
+    0,
+    (column + 1) * 50,
+    220
+  ])
+  const rows: Array<{ rect: number[]; origin: string }> = [
+    { rect: [0, 0, 400, 10], origin: 'model' },
+    { rect: [0, 20, 400, 30], origin: 'model' },
+    { rect: [0, 40, 400, 50], origin: 'model' },
+    { rect: [0, 60, 400, 70], origin: 'model' },
+    { rect: [0, 80, 400, 90], origin: 'model' },
+    { rect: [0, 100, 400, 110], origin: 'model' },
+    { rect: [0, 120, 400, 130], origin: 'model' },
+    { rect: [0, 140, 400, 150], origin: 'model' },
+    { rect: [0, 160, 400, 170], origin: 'model' },
+    { rect: [0, 180, 400, 190], origin: 'model' },
+    { rect: [0, 200, 400, 210], origin: 'model' }
+  ]
+  const cells: TestCell[] = []
+  const assignments = new Map<TestItem, TestCell>()
+  const item = (text: string, column: number, baseline: number): TestItem => {
+    const token = {
+      text,
+      rect: [column * 50 + 5, baseline - 8, column * 50 + 15, baseline],
+      baseline,
+      height: 8,
+      horizontal: true
+    }
+    return token
+  }
+  const addOwnedRow = (row: number, values: string[], baseline: number): void => {
+    values.forEach((text, column) => {
+      const cell = {
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column * 50, rows[row].rect[1], (column + 1) * 50, rows[row].rect[3]],
+        text
+      }
+      const source = item(text, column, baseline)
+      cells.push(cell)
+      assignments.set(source, cell)
+    })
+  }
+  addOwnedRow(0, ['Subset', 'Class', 'Img', 'Inst', 'P', 'R', 'mAP', 'mAP95'], 8)
+  for (let row = 1; row < rows.length; row++)
+    addOwnedRow(
+      row,
+      row % 5 === 0
+        ? ['', 'all', '-', '-', '0.5', '0.6', '0.7', '0.8']
+        : ['', row === 1 ? 'echinus' : 'holothurian', '10', '20', '0.1', '0.2', '0.3', '0.4'],
+      8 + row * 20
+    )
+  const unassigned = ['all', '-', '-', '0.01', '0.02', '0.03', '0.04'].map((text, index) =>
+    item(text, index + 1, 18)
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedAggregateRows({
+    items: [...assignments.keys(), ...unassigned],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs
+  })
+  expect(recovered).toBe(1)
+  expect(rows).toHaveLength(12)
+  expect(cells.find((cell) => cell.row === 1 && cell.column === 1)?.origin).toBe(
+    'source-aggregate-row'
+  )
+  expect(assignments.get(unassigned[0])?.row).toBe(1)
+  expect(repairs).toContain('unassigned-aggregate-row-inserted')
 })
 
 it.each(['visual', 'shuffled'])(

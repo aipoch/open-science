@@ -1400,6 +1400,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/main/application-command-wiring.test.ts',
+      'src/main/composition/project-lifecycle.test.ts',
       'src/main/storage/wsl-npm-migration.integration.test.ts',
       'src/main/composition/notebook-environment.test.ts',
       'src/main/literature/command-owner.test.ts',

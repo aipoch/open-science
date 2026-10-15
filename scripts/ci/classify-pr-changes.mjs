@@ -190,6 +190,17 @@ export function classifyChanges(
         owners.length === 0 &&
         fixtureTestPatterns(path, manifest).length === 0
       ) {
+        // Explicit consumer evidence can live outside source ownership (for example scripts).
+        // Keep every declaring module's capabilities; declarations never exempt executable inputs.
+        const evidenceModules = /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+          ? Object.entries(moduleManifest.modules).filter(([, module]) =>
+              Object.values(module.testFiles).some((tests) => tests.includes(path))
+            )
+          : []
+        if (evidenceModules.length > 0) {
+          for (const [id] of evidenceModules) visitModule(id, path)
+          continue
+        }
         selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }

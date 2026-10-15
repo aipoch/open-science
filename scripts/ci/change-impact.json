@@ -225,6 +225,7 @@
         "src/main/immutable-input-authority.ts",
         "src/main/index.ts",
         "src/main/ipc.ts",
+        "src/main/legacy-service-termination.ts",
         "src/main/lifecycle-shutdown.ts",
         "src/main/literature/pdf-structure/engine.ts",
         "src/main/literature/pdf-translation/local.ts",
@@ -310,6 +311,7 @@
         "src/main/storage/**",
         "src/main/tray.ts",
         "src/main/window-shortcuts.ts",
+        "src/main/update/channel-certification.ts",
         "src/main/update/create-strategy.ts",
         "src/main/update/electron-updater-strategy.ts",
         "src/main/wsl/**",
@@ -341,7 +343,15 @@
         "src/main/notebook/environment-resources.ts",
         "src/main/notebook/environment-runner.ts",
         "packages/environment/src/micromamba-cache-powershell.test.ts",
-        "packages/environment/src/micromamba-cache-acl.integration.test.ts"
+        "packages/environment/src/micromamba-cache-acl.integration.test.ts",
+        "src/main/composition/session-foundation.ts",
+        "src/main/system-boot-identity.ts",
+        "src/main/update/installation-artifact.ts",
+        "src/main/update/installation-executor.ts",
+        "src/main/update/installation-occupancy.ts",
+        "src/main/update/installation-protection.ts",
+        "src/main/update/installation-reboot-recovery.ts",
+        "src/main/update/verification-process.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },

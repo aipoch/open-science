@@ -68,6 +68,26 @@ it('preserves uniquely owned mixed native caption fragments across a page bounda
   ])
   expect(resolveFigureCaption(f.caption, [f.caption])).toBe(f.caption)
 })
+
+it('preserves a multi-line native caption continuation across a page boundary', () => {
+  const f = input()
+  f.pages[1].lines = [
+    line('coefficients (', 72, 74, 100),
+    line('a', 180, 74, 8),
+    line(') and intervals (', 190, 74, 200),
+    line('b), measured over the complete native sample', 72, 96, 300),
+    line('with confidence bounds and the reported error.', 72, 118, 320)
+  ]
+  const r = resolveFigureCaption(f.caption, [f.caption], f.pages)
+  expect(r.lines).toEqual([
+    ...f.caption.lines,
+    'coefficients ( a ) and intervals (',
+    'b), measured over the complete native sample',
+    'with confidence bounds and the reported error.'
+  ])
+  expect(r.regions?.[1]).toEqual({ page: 2, rect: [72, 74, 392, 130] })
+})
+
 it.each([
   'font',
   'indent',

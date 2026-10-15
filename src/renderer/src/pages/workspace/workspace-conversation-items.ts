@@ -60,14 +60,15 @@ type ConversationSubagentMessageItem = {
   message: InlineParentMessageProjection
 }
 
-// A quiet divider derived (never persisted) above a user Message whose resolved send target
-// differs from the previous stamped turn.
+// A quiet divider derived from a user send target or the first visible output of an adopted
+// Runtime Segment. History remains owned by its original prompt.
 type ConversationSessionConfigChangeItem = {
   id: string
   type: 'session-config-change'
   createdAt: number
   sortIndex: number
   agentTarget: PersistedMessageAgentTarget
+  followsLiveActivity?: true
 }
 
 type ConversationItem =
@@ -235,12 +236,15 @@ const formatActivityTitle = (
   return t('Using tool: {{name}}', { name: toolName })
 }
 
-// Config-change dividers are annotations on the following user Message. Hide them with that
-// Message (and other message-like rows) so they cannot appear while the owning turn is still
-// behind the presentation barrier. Tool and activity rows stay live so running work remains
-// visible above the paced reply.
-const hidesBehindPresentationBarrier = (type: string): boolean =>
-  type === 'message' || type === 'subagent-message' || type === 'session-config-change'
+// Dividers follow their owning row through presentation pacing: text waits behind the barrier,
+// while a resumed tool and its framework switch remain visible together.
+const hidesBehindPresentationBarrier = (item: {
+  type: string
+  followsLiveActivity?: true
+}): boolean =>
+  item.type === 'message' ||
+  item.type === 'subagent-message' ||
+  (item.type === 'session-config-change' && !item.followsLiveActivity)
 
 // Two send targets describe the same turn configuration only when every routed field matches.
 const agentTargetsMatch = (
@@ -253,11 +257,11 @@ const agentTargetsMatch = (
   left.model === right.model &&
   left.reasoningEffort === right.reasoningEffort
 
-// Derives divider rows above user Messages whose resolved send target changed from the previous
-// stamped turn. Messages without a snapshot (legacy turns, relayed side-chat messages) neither
-// emit a divider nor move the baseline, so upgraded sessions show no false markers.
+// Derives changes from active-branch rows only. Legacy user messages without a target do not
+// change the baseline; output identity comes from Main-owned Runtime Segment provenance.
 const createSessionConfigChangeItems = (
-  messages: readonly ConversationMessageItem[]
+  messages: readonly ConversationItem[],
+  graph?: ChatSession['conversationGraph']
 ): ConversationSessionConfigChangeItem[] => {
   const ordered = [...messages].sort(
     (left, right) =>
@@ -266,25 +270,92 @@ const createSessionConfigChangeItems = (
       left.id.localeCompare(right.id)
   )
   const items: ConversationSessionConfigChangeItem[] = []
+  const messageSegments = new Map(
+    graph?.messages.map((message) => [message.id, message.runtimeSegmentId])
+  )
+  const activitySegments = new Map(
+    graph?.activities.map((activity) => [activity.id, activity.runtimeSegmentId])
+  )
+  // A later tool can be visible while its segment's first text is still paced. Only projected
+  // activities release that segment's divider; hidden or inactive graph rows do not count.
+  const liveActivitySegments = new Set(
+    messages.flatMap((item) => {
+      const segmentId = 'activity' in item ? activitySegments.get(item.activity.id) : undefined
+      return segmentId ? [segmentId] : []
+    })
+  )
+  const segments = new Map(
+    graph?.runtimeSegments
+      .filter((segment) => segment.agentFrameId === graph.activeFrameId)
+      .map((segment) => [segment.id, segment])
+  )
   let baseline: PersistedMessageAgentTarget | undefined
+  let runtimeBaseline = false
   for (const item of ordered) {
-    const target =
-      item.message.role === 'user' && !item.message.relayedFrom
+    const userTarget =
+      item.type === 'message' && item.message.role === 'user' && !item.message.relayedFrom
         ? item.message.agentTarget
         : undefined
+    const outputSegmentId =
+      item.type === 'message'
+        ? item.message.role === 'agent' && item.message.content.trim()
+          ? messageSegments.get(item.id)
+          : undefined
+        : 'activity' in item
+          ? activitySegments.get(item.activity.id)
+          : undefined
+    const segment = outputSegmentId && segments.get(outputSegmentId)
+    const runtimeTarget: PersistedMessageAgentTarget | undefined =
+      segment && ['claude-code', 'codex', 'opencode', 'codebuddy'].includes(segment.frameworkId)
+        ? {
+            frameworkId: segment.frameworkId as PersistedMessageAgentTarget['frameworkId'],
+            backendId: segment.backendId,
+            providerId: segment.providerId ?? '',
+            // OpenCode and CodeBuddy expose the app-generated transport provider as a model
+            // prefix. Strip only that exact route format; vendor/model IDs remain intact.
+            model:
+              segment.frameworkId === 'opencode' || segment.frameworkId === 'codebuddy'
+                ? segment.model?.replace(/^open-science-[a-f0-9]{16}\//u, '')
+                : segment.model,
+            reasoningEffort: 'default'
+          }
+        : undefined
+    const target = userTarget ?? runtimeTarget
     if (!target) continue
-    if (baseline && !agentTargetsMatch(baseline, target)) {
+    // Output ownership can change inside an interrupted user turn. A newly opened segment alone
+    // is not visible evidence: only a displayed text/tool row can introduce the switch marker.
+    let changed = false
+    if (baseline) {
+      const frameworkChanged =
+        baseline.frameworkId !== target.frameworkId || baseline.backendId !== target.backendId
+      if (!userTarget) {
+        changed = frameworkChanged
+      } else if (runtimeBaseline) {
+        changed =
+          frameworkChanged ||
+          (baseline.providerId !== '' && baseline.providerId !== target.providerId) ||
+          (baseline.model !== undefined && baseline.model !== target.model)
+      } else {
+        changed = !agentTargetsMatch(baseline, target)
+      }
+    }
+    if (changed) {
       items.push({
         id: `session-config-change-${item.id}`,
         type: 'session-config-change',
         createdAt: item.createdAt,
-        // Half a step below the owning Message keeps the divider directly above it under the
-        // shared (createdAt, sortIndex) transcript sort.
         sortIndex: item.sortIndex - 0.5,
-        agentTarget: target
+        agentTarget: target,
+        ...(!userTarget && outputSegmentId && liveActivitySegments.has(outputSegmentId)
+          ? { followsLiveActivity: true as const }
+          : {})
       })
     }
-    baseline = target
+    // A same-framework fallback must not erase the full configuration snapshot of its user turn.
+    if (userTarget || changed || !baseline) {
+      baseline = target
+      runtimeBaseline = !userTarget
+    }
   }
   return items
 }
@@ -357,7 +428,7 @@ const createConversationItems = (
     ...activities,
     ...handoffs,
     ...subagentMessages,
-    ...createSessionConfigChangeItems(messages)
+    ...createSessionConfigChangeItems([...messages, ...activities], session?.conversationGraph)
   ].sort((left, right) => {
     if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt
     if (left.sortIndex !== right.sortIndex) return left.sortIndex - right.sortIndex

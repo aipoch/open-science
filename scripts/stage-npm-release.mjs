@@ -43,7 +43,10 @@ export async function stageNpmRelease(root, source = join(root, 'out/standalone'
   await mkdir(join(stage, 'main'), { recursive: true })
   for (const file of await readdir(join(root, 'packages/open-science'))) {
     if (file.includes('.test.')) continue
-    if (/\.(mjs|d\.ts|d\.mts)$/.test(file) || ['LICENSE', 'README.md', 'CLI.md'].includes(file))
+    if (
+      /\.(mjs|cjs|d\.ts|d\.mts|d\.cts)$/.test(file) ||
+      ['LICENSE', 'README.md', 'CLI.md'].includes(file)
+    )
       await cp(join(root, 'packages/open-science', file), join(stage, 'main', file))
   }
   await cp(source, join(stage, target.id), { recursive: true })

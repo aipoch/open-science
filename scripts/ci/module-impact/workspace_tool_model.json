@@ -190,7 +190,9 @@
       "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "consumerModules": [],

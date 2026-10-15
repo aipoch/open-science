@@ -77,6 +77,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
@@ -445,6 +447,7 @@
       "src/main/settings/claude-runtime-provisioner.test.ts",
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",

@@ -60,6 +60,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/stage-default-envs.test.ts",
@@ -569,6 +571,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/codex-transport-fallback-log.test.ts",
       "src/main/settings/compute-grants.test.ts",

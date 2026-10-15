@@ -19,7 +19,7 @@ export function isMachO(header) {
     ]).has(header.subarray(0, 4).toString('hex'))
   )
 }
-export async function verifyRuntimeSignatures(directory) {
+export async function verifyRuntimeSignatures(directory, { nightly = false } = {}) {
   if (process.platform === 'linux') return
   if (process.platform === 'win32') {
     execFileSync(
@@ -29,7 +29,8 @@ export async function verifyRuntimeSignatures(directory) {
         '-File',
         join(import.meta.dirname, 'verify-runtime-signatures.ps1'),
         '-Directory',
-        directory
+        directory,
+        ...(nightly ? ['-AllowUnsigned'] : [])
       ],
       { stdio: 'inherit' }
     )
@@ -62,17 +63,23 @@ export async function verifyRuntimeSignatures(directory) {
         )
           continue
         // Check each loose binary, including Apple's notarization record for its code hash.
-        execFileSync('codesign', ['--verify', '--strict', '--check-notarization', file], {
-          stdio: 'pipe'
-        })
+        execFileSync(
+          'codesign',
+          ['--verify', '--strict', ...(!nightly ? ['--check-notarization'] : []), file],
+          {
+            stdio: 'pipe'
+          }
+        )
         const details = spawnSync('codesign', ['--display', '--verbose=4', file], {
           encoding: 'utf8'
         })
         assert.equal(details.status, 0, details.stderr)
         assert.match(
           details.stderr,
-          /Authority=Developer ID Application:/,
-          `Missing Developer ID: ${file}`
+          nightly
+            ? /(?:Authority=Developer ID Application:|Signature=adhoc)/
+            : /Authority=Developer ID Application:/,
+          `Missing ${nightly ? 'Developer ID or ad-hoc signature' : 'Developer ID'}: ${file}`
         )
         count++
       }
@@ -80,5 +87,5 @@ export async function verifyRuntimeSignatures(directory) {
   }
   await visit(directory)
   assert.ok(count > 0, 'No Mach-O payloads found')
-  console.log(`Verified ${count} notarized native payloads`)
+  console.log(`Verified ${count} ${nightly ? 'nightly' : 'notarized'} native payloads`)
 }

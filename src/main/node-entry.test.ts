@@ -2,10 +2,25 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
 
 const f = vi.hoisted(() => ({
+  startupFailure: false,
+  releaseInstallation: vi.fn(),
+  writeExit: vi.fn(async () => {}),
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
   disposeCipher: vi.fn(),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+}))
+
+vi.mock('./runtime-stop-confirmation', () => ({ writeRuntimeExit: f.writeExit }))
+vi.mock('./storage/config-root', () => ({
+  resolveBootstrapConfigRoot: () => '/isolated-fixture/config'
+}))
+vi.mock('./storage/electron-profile', () => ({
+  resolveElectronProfile: () => '/isolated-fixture/profile'
+}))
+vi.mock('./update/installation-protection', () => ({
+  installationRootForEntry: () => '/isolated-fixture/app',
+  registerInstallationRuntime: () => ({ release: f.releaseInstallation })
 }))
 
 // Keep the real entry's startup/cancellation/exit handling; replace external process resources.
@@ -30,7 +45,9 @@ vi.mock('./runtime-network-node', () => ({
 }))
 vi.mock('./secure-storage', () => ({ configureSecureStorageCipher: vi.fn() }))
 vi.mock('./settings/credential-store-mode', () => ({
-  configureCredentialStore: vi.fn(),
+  configureCredentialStore: () => {
+    if (f.startupFailure) throw new Error('isolated startup failure')
+  },
   getCredentialStore: () => 'os'
 }))
 vi.mock('./credential-identity/node-cipher', () => ({
@@ -87,10 +104,12 @@ it('reports credential recovery during startup as a failure after draining resou
   process.exitCode = undefined
   const attemptId = 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'
   vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', attemptId)
-  // The Vitest worker has a real parent pipe: intercept only this entry's send boundary.
+  // Keep startup reporting from sending on or unrefing the Vitest worker's real parent pipe.
   const send = vi.spyOn(process, 'send').mockImplementation(() => true)
+  const unref = vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
   await import('./node-entry')
   await vi.waitFor(() => expect(process.exitCode).toBeDefined())
+  expect(unref).toHaveBeenCalledOnce()
   expect(f.log.error).toHaveBeenCalledWith('credential recovery required', {
     reason: 'decryption-failed'
   })
@@ -110,3 +129,38 @@ it('reports credential recovery during startup as a failure after draining resou
   })
   expect(JSON.stringify(messages)).not.toContain('fixture key')
 })
+
+it.each(['directory', 'installation'] as const)(
+  'replaces clean evidence when %s ownership release fails',
+  async (kind) => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    f.startupFailure = true
+    process.exitCode = undefined
+    const failure = new Error('injected release failure')
+    if (kind === 'directory') f.closeOwnership.mockRejectedValueOnce(failure)
+    else
+      f.releaseInstallation.mockImplementationOnce(() => {
+        throw failure
+      })
+    const send = vi.spyOn(process, 'send').mockImplementation(() => true)
+    vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
+    try {
+      await import('./node-entry')
+      await vi.waitFor(() => expect(process.exitCode).toBe(1))
+      expect(
+        f.writeExit.mock.calls.map(
+          (call) => (call as unknown as [string, { outcome: string }])[1].outcome
+        )
+      ).toEqual(['clean', 'failed'])
+      expect(f.log.error).toHaveBeenCalledWith(
+        'shutdown ownership release failed',
+        expect.any(Object)
+      )
+      if (kind === 'directory') expect(f.releaseInstallation).not.toHaveBeenCalled()
+    } finally {
+      f.startupFailure = false
+      send.mockRestore()
+    }
+  }
+)

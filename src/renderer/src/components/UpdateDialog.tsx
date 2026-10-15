@@ -1,3 +1,4 @@
+import { RuntimeUpdateDialog } from './RuntimeUpdateDialog'
 import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
@@ -38,7 +39,7 @@ const UPDATE_SETTINGS_INSTALL_ERROR =
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
-const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
+const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
   const { t, i18n } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -425,6 +426,22 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
         }}
       />
     </Dialog.Root>
+  )
+}
+
+const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
+  const status = useUpdateStore((state) => state.status)
+  return status.reason ||
+    status.recovery ||
+    status.cliConfirmation ||
+    status.outcome ||
+    (status.state === 'ready' &&
+      status.applyKind === 'restart' &&
+      !status.error &&
+      !status.legacyShellRecovery) ? (
+    <RuntimeUpdateDialog active={active} />
+  ) : (
+    <LegacyUpdateDialog active={active} />
   )
 }
 

@@ -2,3 +2,4 @@
 {"name":"reversed stacked labels","draws":[[40,692,6,"TokenB"],[40,700,6,"TokenA"]],"source":"TokenA TokenB","bounds":[40,691,70,706]}
 {"name":"interleaved numeric labels","draws":[[40,700,6,"Group:"],[64,699.8,6,"1"],[80,699.8,6,"1"],[72,699.8,6,"2"],[88,699.8,6,"2"],[96,699.8,6,"3"]],"source":"Group: 1 2 1 2 3","bounds":[40,698,101,706]}
 {"name":"raised suffix painted first","draws":[[67,703,4,"X42R"],[40,700,6,"TokenA"]],"source":"TokenAX42R","bounds":[40,699,80,707]}
+{"name":"dense reversed row beside partially overlapping neighbor ink","draws":[[134,186.35,5.13,"32"],[119,181.33,5.13,"POS"],[134,181.9,5.13,"18"],[119,185.78,5.13,"NEG"]],"source":"NEG 32","bounds":[119,184.5,153,190.72]}

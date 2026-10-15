@@ -328,7 +328,12 @@
       "src/renderer/src/stores/settings-write-coordinator.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "consumerModules": [],

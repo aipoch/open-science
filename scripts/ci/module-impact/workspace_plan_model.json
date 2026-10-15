@@ -241,7 +241,10 @@
       "src/renderer/src/stores/navigation-store.test.ts",
       "src/renderer/src/stores/preview-workbench-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "consumerModules": [],

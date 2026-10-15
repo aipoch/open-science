@@ -1,3 +1,5 @@
+import { homeNewProjectButton } from './fixtures/project'
+import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { test, expect } from '@playwright/test'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -9,7 +11,7 @@ import { electronLaunchTarget, launchEnvironment, launchOpenScience } from './fi
 
 test('headless desktop creates no renderer and exits after Web shutdown', async () => {
   test.skip(Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE), 'Source entry certification')
-  const root = await mkdtemp(join(tmpdir(), 'open-science-headless-lifetime-'))
+  const root = await mkdtemp(join(tmpdir(), 'open-science-headless-lifetime-with spaces-'))
   const storageRoot = join(root, 'storage')
   const profileRoot = join(root, 'profile')
   await mkdir(storageRoot)
@@ -31,7 +33,7 @@ test('headless desktop creates no renderer and exits after Web shutdown', async 
       env
     })
     const child = application.process()
-    const logPath = join(profileRoot, 'logs', 'main.log')
+    const logPath = join(profileRoot, 'desktop-logs', 'main.log')
     // Main publishes readiness only after it installs the window/quit lifecycle.
     await expect
       .poll(() => readFile(logPath, 'utf8').catch(() => ''), { timeout: 60000 })
@@ -66,7 +68,7 @@ test('headless desktop creates no renderer and exits after Web shutdown', async 
 
 for (const borrowed of [false, true]) {
   test(`desktop ${borrowed ? 'detaches from a CLI-owned' : 'stops its own'} ordinary Node runtime`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-desktop-lifetime-'))
+    const root = await mkdtemp(join(tmpdir(), 'open-science-desktop-lifetime-with spaces-'))
     const roots = {
       storageRoot: join(root, 'storage'),
       userDataRoot: join(root, 'profile'),
@@ -87,7 +89,7 @@ for (const borrowed of [false, true]) {
     const nodeArgs = [
       resolve('out/backend/index.cjs'),
       '--development',
-      '--serve',
+      '--serve=0',
       ...(process.platform === 'linux' ? ['--password-store=gnome-libsecret'] : [])
     ]
     const server = borrowed
@@ -97,8 +99,12 @@ for (const borrowed of [false, true]) {
       ? new Promise<void>((settle) => server.once('exit', () => settle()))
       : undefined
     let app: ElectronApplication | undefined
-    const owner = async (): Promise<{ pid: number; port: number; generation: string }> =>
-      JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
+    const owner = async (): Promise<{
+      pid: number
+      port: number
+      generation: string
+      desktop: { generation: string }
+    }> => JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
     const alive = async (): Promise<boolean> => {
       try {
         const state = await owner()
@@ -142,21 +148,78 @@ for (const borrowed of [false, true]) {
           .toBe(true)
       }
       app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
+      await app.evaluate(({ dialog }) => {
+        dialog.showErrorBox = (_title, message) => {
+          process
+            .getBuiltinModule('node:fs')
+            .writeFileSync(process.env.OPEN_SCIENCE_CONFIG_ROOT + '/quit-error.txt', message)
+        }
+      })
       const page = await app.firstWindow()
       await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
       await expect
         .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })
         .toMatchObject({ phase: 'ready' })
+      // Database readiness precedes React's persistence subscription. Quit only after the
+      // application surface is mounted, so this checks runtime ownership rather than startup.
+      await page.evaluate(() => window.api.settings.markOnboardingComplete())
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(homeNewProjectButton(page)).toBeVisible()
       const before = await owner()
       const desktopPid = app.process().pid
       expect(before.pid).not.toBe(desktopPid)
       if (borrowed) expect(before.pid).toBe(server!.pid)
-      await app.close()
+      const closing = app.process()
+      const closingApplication = app
+      void closingApplication.close().catch(() => undefined)
+      await expect
+        .poll(
+          async () => ({
+            exitCode: closing.exitCode,
+            error: await readFile(join(roots.storageRoot, 'quit-error.txt'), 'utf8').catch(() => '')
+          }),
+          { timeout: 25000 }
+        )
+        .toEqual({ exitCode: 0, error: '' })
       app = undefined
       await expect.poll(alive).toBe(borrowed)
+      if (!borrowed) {
+        await expect
+          .poll(
+            () => {
+              try {
+                process.kill(before.pid, 0)
+                return false
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+                throw error
+              }
+            },
+            { timeout: 30000 }
+          )
+          .toBe(true)
+        expect(
+          JSON.parse(await readFile(join(roots.storageRoot, 'runtime-exit.json'), 'utf8'))
+        ).toMatchObject({
+          pid: before.pid,
+          generation: before.desktop.generation,
+          outcome: 'clean'
+        })
+        acquireRuntimeDirectorySync(roots.storageRoot).release()
+      }
       if (borrowed) {
         expect(await owner()).toEqual(before)
         expect(server!.exitCode).toBeNull()
+        const service = JSON.parse(
+          await readFile(join(roots.storageRoot, 'web-service.json'), 'utf8')
+        )
+        const token = (await readFile(join(roots.storageRoot, 'web-token'), 'utf8')).trim()
+        const response = await fetch(`http://127.0.0.1:${service.port}/api/bootstrap`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000)
+        })
+        expect(response.ok).toBe(true)
+        await response.text()
         await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
           env,
           timeout: 30000
@@ -165,7 +228,10 @@ for (const borrowed of [false, true]) {
         expect(server!.exitCode).toBe(0)
       }
     } finally {
-      await app?.close()
+      const desktop = app?.process()
+      await app?.evaluate(({ app }) => app.exit(0)).catch(() => desktop?.kill('SIGKILL'))
+      if (desktop)
+        await expect.poll(() => desktop.exitCode !== null || desktop.signalCode !== null).toBe(true)
       // Cleanup targets only this test's unique profile, then its actual spawned handle if startup failed.
       if (await alive())
         await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {

@@ -13,6 +13,13 @@ it('rebuilds raw resources, worker edits and newly discovered workers without El
   }
   const builder = await createBackendBuilder({ root, development: true })
   try {
+    await put(
+      'packages/open-science/installation-startup.cjs',
+      await readFile(
+        new URL('../packages/open-science/installation-startup.cjs', import.meta.url),
+        'utf8'
+      )
+    )
     await put('package.json', JSON.stringify({ dependencies: {} }))
     await put(
       'src/shared/i18n/locales/de.json',
@@ -29,7 +36,12 @@ it('rebuilds raw resources, worker edits and newly discovered workers without El
     expect(await builder.rebuild()).toBe(1)
     const run = (): string =>
       execFileSync(process.execPath, [join(root, 'out/backend/index.cjs')], {
-        encoding: 'utf8'
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          OPEN_SCIENCE_CONFIG_ROOT: join(root, 'config'),
+          OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installation-state')
+        }
       }).trim()
     expect(run()).toBe('before\nworker-before')
     await put('src/main/message.txt', 'after')

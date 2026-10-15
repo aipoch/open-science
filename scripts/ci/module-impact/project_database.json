@@ -14,6 +14,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/composition/project-lifecycle.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
@@ -241,7 +242,8 @@
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
       "src/renderer/src/stores/project-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/database/session-research-membership-migration.test.ts"
     ]
   },
   "consumerModules": [],

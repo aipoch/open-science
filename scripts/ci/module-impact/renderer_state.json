@@ -527,6 +527,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/renderer/src/stores/settings-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",

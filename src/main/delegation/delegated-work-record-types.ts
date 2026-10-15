@@ -2,6 +2,7 @@ import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usag
 import type { ArtifactFile } from '../../shared/artifacts'
 import type {
   DelegatedCallerSource,
+  DelegatedQuestionAnswer,
   ResolvedSubagentModelSnapshot
 } from '../../shared/delegated-work-contract'
 import type { AgentUserChoicePrompt } from '../../shared/elicitation'
@@ -45,8 +46,6 @@ type DurableChildSummary = Readonly<{
   agentName: string
   status: 'running' | 'awaiting_user' | 'completed' | 'cancelled' | 'error'
 }>
-
-type DelegatedQuestionAnswer = Readonly<{ questionIndex: number; value: string }>
 
 type DurableDelegatedQuestionRequest = Readonly<{
   requestId: string

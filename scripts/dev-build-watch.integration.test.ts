@@ -18,6 +18,13 @@ it('watches real package edits, refreshes optimized CJS only after success and c
   const info = vi.spyOn(logger, 'info')
   const warn = vi.spyOn(logger, 'warn')
   try {
+    await put(
+      'packages/open-science/installation-startup.cjs',
+      await readFile(
+        new URL('../packages/open-science/installation-startup.cjs', import.meta.url),
+        'utf8'
+      )
+    )
     await json('package.json', { dependencies: {} })
     await json('packages/core/package.json', {
       name: 'fixture-core',
