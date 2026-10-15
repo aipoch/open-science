@@ -25,8 +25,8 @@ const workflow = load(text) as {
   >
 }
 
-it('runs the three-platform fixed collection daily without an unchanged-SHA bypass or PR trigger', () => {
-  expect(Object.keys(workflow.on).sort()).toEqual(['schedule', 'workflow_dispatch'])
+it('runs the three-platform fixed collection daily without an unchanged-SHA bypass', () => {
+  expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch'])
   expect(workflow.on.schedule).toEqual([{ cron: '23 19 * * *' }])
   expect(workflow.jobs.lifecycle.strategy?.matrix.include.map((row) => row.platform)).toEqual([
     'macos',
@@ -38,7 +38,24 @@ it('runs the three-platform fixed collection daily without an unchanged-SHA bypa
   expect(workflow.permissions).toEqual({ contents: 'read' })
   const run = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Run lifecycle checks')!
   expect(run.run).toContain('node scripts/ci/run-process-lifecycle.mjs')
-  expect(run.if).toContain("github.event_name == 'schedule'")
+  expect(run.if).toContain("github.event_name != 'workflow_dispatch'")
+})
+
+it('validates only lifecycle PR changes at the exact head and retains manual platform selection', () => {
+  expect(workflow.on.pull_request).toEqual({
+    paths: [
+      '.github/workflows/process-lifecycle.yml',
+      'scripts/ci/*process-lifecycle*',
+      'scripts/ci/lifecycle-process-table.py'
+    ]
+  })
+  const checkout = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Checkout')!
+  expect(checkout.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}')
+  expect(checkout.with?.['persist-credentials']).toBe(false)
+  for (const step of workflow.jobs.lifecycle.steps) {
+    expect(step.if).toContain("github.event_name != 'workflow_dispatch'")
+    expect(step.if).toContain("inputs.platform == 'all' || inputs.platform == matrix.platform")
+  }
 })
 
 it('retains evidence on failure and uses the existing reporter only for complete scheduled outcomes', () => {
