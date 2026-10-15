@@ -190,6 +190,7 @@ import {
   spawnCodexWithInstallAdmission,
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
+  patchCodexAcpReviewerMcpSource,
   patchCodexAcpPromptFailureSource,
   patchCodexAcpCompactionSource,
   patchCodexAcpSkillInputSource,
@@ -2193,6 +2194,66 @@ describe('patchCodexAcpModelCatalogStartupSource', () => {
     expect(() => patchCodexAcpModelCatalogStartupSource(drifted)).toThrow(
       /model-catalog startup patch no longer matches/
     )
+  })
+})
+
+describe('patchCodexAcpReviewerMcpSource', () => {
+  // The config projection from pinned codex-acp 1.6.2; transport conversion is unchanged.
+  const fixture = `function createSessionConfig(serversToConfigure) {
+    return {
+      "mcp_servers": Object.fromEntries(serversToConfigure.map((mcp) => [mcp.name, this.createMcpSeverConfig(mcp.server)]))
+    };
+  }`
+
+  it('requires only Reviewer MCP and preserves stdio/HTTP transport config', () => {
+    const patched = patchCodexAcpReviewerMcpSource(fixture)
+    const project = Function(`${patched}; return createSessionConfig;`)() as (
+      servers: Array<{ name: string; server: Record<string, unknown> }>
+    ) => { mcp_servers: Record<string, Record<string, unknown>> }
+    for (const server of [
+      { command: 'node', args: ['reviewer.js'], env: { TOKEN: 'test' } },
+      { url: 'http://127.0.0.1:1234/mcp', http_headers: { Authorization: 'test' } }
+    ]) {
+      const result = project.call({ createMcpSeverConfig: (value: unknown) => value }, [
+        { name: 'open-science-reviewer', server },
+        { name: 'optional-user-server', server }
+      ])
+      expect(result.mcp_servers['open-science-reviewer']).toEqual({ ...server, required: true })
+      expect(result.mcp_servers['optional-user-server']).toEqual(server)
+      expect(server).not.toHaveProperty('required')
+    }
+    expect(patchCodexAcpReviewerMcpSource(patched)).toBe(patched)
+  })
+
+  it('upgrades an existing managed adapter atomically and leaves the second check unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-reviewer-'))
+    try {
+      const adapterPath = join(root, 'index.js')
+      const previous = withPinnedSkillMapper(fixture)
+      await writeFile(adapterPath, previous)
+      await ensureManagedCodexContextUsage(adapterPath)
+      const upgraded = await readFile(adapterPath, 'utf8')
+      expect(upgraded).toContain(patchCodexAcpReviewerMcpSource(fixture))
+      const before = await stat(adapterPath)
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(upgraded)
+      expect((await stat(adapterPath)).mtimeMs).toBe(before.mtimeMs)
+      expect(await readdir(root)).toEqual(['index.js'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects drifted, duplicated or mixed config projections', () => {
+    for (const source of [
+      fixture.replace('mcp.server)', 'mcp.server, true)'),
+      `${fixture}\n${fixture}`,
+      `${fixture}\n${patchCodexAcpReviewerMcpSource(fixture)}`
+    ]) {
+      expect(() => patchCodexAcpReviewerMcpSource(source)).toThrow(
+        'Pinned Codex ACP Reviewer MCP patch no longer matches the adapter bundle'
+      )
+    }
   })
 })
 

@@ -832,6 +832,25 @@ export const patchCodexAcpModelCatalogStartupSource = (source: string): string =
   )
 }
 
+const CODEX_ACP_REVIEWER_MCP_SOURCE = '[mcp.name, this.createMcpSeverConfig(mcp.server)]'
+const CODEX_ACP_REVIEWER_MCP_REPLACEMENT =
+  '[mcp.name, { ...this.createMcpSeverConfig(mcp.server), ...(mcp.name === "open-science-reviewer" ? { required: true } : {}) }]'
+
+// Reviewer cannot submit without this server. Native required-server startup waits for tools/list
+// and fails before model dispatch; optional MCP servers retain the upstream startup grace period.
+export const patchCodexAcpReviewerMcpSource = (source: string): string => {
+  const variants = [CODEX_ACP_REVIEWER_MCP_SOURCE, CODEX_ACP_REVIEWER_MCP_REPLACEMENT]
+  const matches = variants.filter((variant) => source.includes(variant))
+  if (matches.length === 1 && source.split(matches[0]).length === 2) {
+    return source.replace(matches[0], CODEX_ACP_REVIEWER_MCP_REPLACEMENT)
+  }
+  if (matches.length > 0 || source.includes('createSessionConfig(')) {
+    throw new Error('Pinned Codex ACP Reviewer MCP patch no longer matches the adapter bundle')
+  }
+  // Unit-test fixtures use tiny stand-in adapters without session configuration.
+  return source
+}
+
 const CODEX_ACP_PROMPT_FAILURE_SOURCE =
   '    return createAgentTextMessageChunk(`${params.error.message}\n\n`);'
 const CODEX_ACP_PROMPT_FAILURE_REPLACEMENT = [
@@ -936,11 +955,13 @@ export const patchCodexAcpCompactionSource = (source: string): string => {
 
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpModelCatalogStartupSource(
-    patchCodexAcpSkillInputSource(
-      patchCodexAcpTurnUsageSource(
-        patchCodexAcpContextUsageSource(
-          patchCodexAcpPromptFailureSource(patchCodexAcpCompactionSource(source))
+  const patched = patchCodexAcpReviewerMcpSource(
+    patchCodexAcpModelCatalogStartupSource(
+      patchCodexAcpSkillInputSource(
+        patchCodexAcpTurnUsageSource(
+          patchCodexAcpContextUsageSource(
+            patchCodexAcpPromptFailureSource(patchCodexAcpCompactionSource(source))
+          )
         )
       )
     )
