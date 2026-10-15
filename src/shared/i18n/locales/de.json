@@ -7454,6 +7454,19 @@
     "Your separate installation will not be updated. Check data compatibility before using it again.": "Ihre separate Installation wird nicht aktualisiert. Prüfen Sie vor der erneuten Nutzung die Datenkompatibilität.",
     "Continue opening Open-Science?": "Open-Science weiter öffnen?",
     "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Laufende Aufgaben werden beendet und andere Verbindungen getrennt. Nicht gespeicherte Arbeit kann verloren gehen. Ihre Einstellungen und Datenorte bleiben erhalten. Das Schließen dieser App beendet danach auch die Hintergrundarbeit.",
-    "Search incomplete. Some pages could not be read.": "Suche unvollständig. Einige Seiten konnten nicht gelesen werden."
+    "Search incomplete. Some pages could not be read.": "Suche unvollständig. Einige Seiten konnten nicht gelesen werden.",
+    "Set two-column body": "Zweispaltigen Textbereich festlegen",
+    "Applies to your next message. Select body text only; exclude tables.": "Gilt für Ihre nächste Nachricht. Wählen Sie nur den Fließtext aus; Tabellen müssen ausgeschlossen bleiben.",
+    "Redrawing replaces the body area on that page.": "Beim erneuten Zeichnen wird der Textbereich auf dieser Seite ersetzt.",
+    "Body areas: {{count}}_one": "{{count}} Textbereich",
+    "Body areas: {{count}}_other": "{{count}} Textbereiche",
+    "Clear this page": "Diese Seite leeren",
+    "Drag across both columns, then confirm the divider.": "Ziehen Sie über beide Spalten und bestätigen Sie anschließend die Trennlinie.",
+    "Two-column body": "Zweispaltiger Textbereich",
+    "Column divider": "Spaltentrennlinie",
+    "Save body area": "Textbereich speichern",
+    "Body areas are unavailable on rotated pages.": "Auf gedrehten Seiten sind Textbereiche nicht verfügbar.",
+    "You can configure up to 32 pages.": "Sie können bis zu 32 Seiten konfigurieren.",
+    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet."
   }
 }

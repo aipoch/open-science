@@ -77,6 +77,7 @@ type ConversationComposer = {
   lifecycle: Pick<
     WorkspaceComposerController['lifecycle'],
     | 'captureSend'
+    | 'consumePdfProseReading'
     | 'preserveAdmissionContext'
     | 'bindAdmissionContext'
     | 'clearDraft'
@@ -508,6 +509,7 @@ const useWorkspaceConversationController = (
             specialistId: activeSession.specialistId
           })
         ) {
+          composer.lifecycle.consumePdfProseReading(snapshot)
           composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
         }
         return
@@ -580,6 +582,12 @@ const useWorkspaceConversationController = (
 
       const dispatch = (sessionId: string | undefined): void => {
         let preparationRejected = false
+        let proseReadingConsumed = false
+        const consumePdfProseReading = (): void => {
+          if (proseReadingConsumed || preparationRejected) return
+          proseReadingConsumed = true
+          optionsRef.current.composer.lifecycle.consumePdfProseReading(snapshot)
+        }
         const optimisticMessage = sessionId
           ? {
               id: `optimistic-${snapshot.draftKey}-${snapshot.version}`,
@@ -612,6 +620,7 @@ const useWorkspaceConversationController = (
             sessionId,
             isOriginCurrent,
             onMessageAppended: (message) => {
+              consumePdfProseReading()
               clearOptimisticMessage()
               if (wasNewConversation && !sessionId && !branchInNewSession) {
                 optionsRef.current.composer.lifecycle.bindAdmissionContext(snapshot, message)
@@ -669,6 +678,7 @@ const useWorkspaceConversationController = (
             pdfContext: snapshot.pdfContext,
             pdfReadingPosition: snapshot.pdfReadingPosition,
             pdfReadingPositionSource: snapshot.pdfReadingPositionSource,
+            pdfProseReadingSelections: snapshot.pdfProseReadingSelections,
             pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,
@@ -705,6 +715,7 @@ const useWorkspaceConversationController = (
               if (!preparationRejected) composer.lifecycle.restoreFailedSend(snapshot)
               return
             }
+            consumePdfProseReading()
             if (snapshot.annotations.length > 0) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
             }

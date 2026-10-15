@@ -43,8 +43,15 @@ import {
 } from '../../../../shared/session-persistence'
 import type { LiteratureReference } from '../../../../shared/session-message-contract'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { PersistedConversationGraph } from '../../../../shared/conversation-graph'
+import {
+  pdfProseReadingSelectionsFromContext,
+  type PdfProseReadingSelection,
+  type PdfReadingPositionSource
+} from '../../../../shared/session-pdf-context'
+import type { PdfProseRegion } from '../../../../shared/pdf-text'
 
-import type { ComposerDraft } from './composer-contract'
+import type { ComposerDraft, ComposerPdfProseReadingRestore } from './composer-contract'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   appendLiteratureMentions,
@@ -78,6 +85,7 @@ type ComposerSessionContext = {
   id: string
   projectId: string
   isPending?: boolean
+  conversationGraph?: PersistedConversationGraph
   messages?: readonly { id: string; pdfContext?: MessagePdfContextSnapshot }[]
   runtimeContext?: {
     revision: number
@@ -126,6 +134,116 @@ type ReadingMutationRuntime = {
 
 const pdfContextSourceKey = ({ sourceKind, sourceVersionId }: SessionPdfContextSource): string =>
   `${sourceKind}:${sourceVersionId}`
+
+type PdfProseReadingSource = { bindingId: string; source: PdfReadingPositionSource }
+
+const pdfProseSourceKey = (source: PdfReadingPositionSource): string =>
+  'attachmentId' in source ? `staged:${source.attachmentId}` : pdfContextSourceKey(source)
+
+// The preview store is the sole active policy. Restored drafts are projected into it before
+// capture, while immutable source identities keep fresh binding IDs and other PDFs separate.
+const capturePdfProseReadingSelections = (
+  sources: readonly PdfProseReadingSource[],
+  configured: Readonly<Record<string, readonly PdfProseRegion[]>>
+): PdfProseReadingSelection[] => {
+  const included = new Set<string>()
+  return sources.flatMap(({ bindingId, source }) => {
+    const key = pdfProseSourceKey(source)
+    if (included.has(key)) return []
+    included.add(key)
+    return Object.hasOwn(configured, bindingId)
+      ? [
+          {
+            source: { ...source },
+            proseRegions: configured[bindingId].map((region) => ({ ...region }))
+          }
+        ]
+      : []
+  })
+}
+
+const draftPdfProseReadingSources = (
+  draft: Pick<ComposerDraft, 'doc' | 'attachments'>
+): PdfProseReadingSource[] => [
+  ...draft.attachments.map(({ id, versionId }) => ({
+    bindingId: `staged:${id}`,
+    source: versionId
+      ? { sourceKind: 'upload-version' as const, sourceFileId: id, sourceVersionId: versionId }
+      : { attachmentId: id }
+  })),
+  ...docToPdfContextSources(draft.doc).map((source) => ({
+    bindingId: `version:${pdfContextSourceKey(source)}`,
+    source
+  }))
+]
+
+const projectRestoredPdfProseReading = (
+  restored: ComposerPdfProseReadingRestore | undefined,
+  scope: string,
+  sources: readonly PdfProseReadingSource[]
+): ComposerPdfProseReadingRestore | undefined => {
+  if (!restored || (restored.scope && restored.scope !== scope)) return undefined
+  const preview = usePreviewWorkbenchStore.getState()
+  if (preview.pdfProseRegionsScope !== scope) return restored
+  for (const selection of restored.selections ?? []) {
+    // Current durable bindings precede draft aliases: project one policy per immutable PDF.
+    const target = sources.find(
+      ({ source }) =>
+        pdfProseSourceKey(selection.source) === pdfProseSourceKey(source) &&
+        ('attachmentId' in selection.source ||
+          'attachmentId' in source ||
+          !selection.source.sourceFileId ||
+          !source.sourceFileId ||
+          selection.source.sourceFileId === source.sourceFileId)
+    )
+    if (target) preview.setPdfProseRegions(target.bindingId, selection.proseRegions)
+  }
+  // No hidden send override survives projection; this scope marker only enables parking.
+  return { scope }
+}
+
+const restorePdfProseReading = (
+  snapshot: ComposerSendSnapshot,
+  scope: string | undefined
+): ComposerPdfProseReadingRestore => {
+  const finalizedSource = (source: PdfReadingPositionSource): PdfReadingPositionSource => {
+    if (!('attachmentId' in source)) return source
+    const attachment = snapshot.attachments.find(({ id }) => id === source.attachmentId)
+    return attachment?.versionId
+      ? {
+          sourceKind: 'upload-version',
+          sourceFileId: attachment.id,
+          sourceVersionId: attachment.versionId
+        }
+      : source
+  }
+  const selections = new Map(
+    (
+      snapshot.pdfProseReadingSelections ??
+      pdfProseReadingSelectionsFromContext(snapshot.pdfContext)
+    ).map((selection) => {
+      const source = finalizedSource(selection.source)
+      return [pdfProseSourceKey(source), { ...selection, source }] as const
+    })
+  )
+  // Native extraction is a captured policy too; a later live area must not silently replace it.
+  for (const source of [
+    ...(snapshot.pdfContext?.bindings ?? []),
+    ...(snapshot.pendingPdfContextVersions ?? []),
+    ...(snapshot.pendingPdfContextAttachmentIds ?? []).map((attachmentId) => ({ attachmentId }))
+  ]) {
+    const finalized = finalizedSource(source)
+    const key = pdfProseSourceKey(finalized)
+    if (!selections.has(key)) selections.set(key, { source: finalized, proseRegions: [] })
+  }
+  return {
+    scope,
+    selections: [...selections.values()].map(({ source, proseRegions }) => ({
+      source: { ...source },
+      proseRegions: proseRegions.map((region) => ({ ...region }))
+    }))
+  }
+}
 
 const samePdfContextSources = (
   left: readonly SessionPdfContextSource[],
@@ -212,6 +330,7 @@ type WorkspaceComposerController = {
   }
   lifecycle: {
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
+    consumePdfProseReading: (snapshot: ComposerSendSnapshot) => void
     preserveAdmissionContext: (snapshot: ComposerSendSnapshot) => void
     bindAdmissionContext: (
       snapshot: ComposerSendSnapshot,
@@ -280,6 +399,22 @@ const useWorkspaceComposerController = ({
   onSessionSizeLimit
 }: WorkspaceComposerControllerInput): WorkspaceComposerController => {
   const { t } = useTranslation()
+  const graph = activeSession?.conversationGraph
+  const activeFrame = graph?.frames.find((frame) => frame.id === graph.activeFrameId)
+  const pdfProseRegionsScope = JSON.stringify([
+    activeProjectId,
+    currentDraftKey,
+    activeFrame?.id,
+    activeFrame?.activeBranchId
+  ])
+  const pdfProseRegionsByBindingId = usePreviewWorkbenchStore((state) =>
+    state.pdfProseRegionsScope === pdfProseRegionsScope
+      ? state.pdfProseRegionsByBindingId
+      : undefined
+  )
+  const capturedPdfProseRegions = useRef(
+    new WeakMap<ComposerSendSnapshot, Record<string, readonly PdfProseRegion[]>>()
+  )
   const retryMessage = t('Upload interrupted or unavailable. Remove it and select the file again.')
   const projectIdRef = useRef(activeProjectId ?? 'default-project')
   const { draftsRef, versionsRef, deletedDraftKeysRef } = useWorkspaceComposerDrafts()
@@ -333,6 +468,37 @@ const useWorkspaceComposerController = ({
     [currentDraftKey]: activeProjectId ?? 'default-project'
   })
   const activeDraftKeyRef = useRef(currentDraftKey)
+  const restoredPdfProseReadingRef = useRef(initialDraft.restoredPdfProseReading)
+  const pdfProseRegionsScopeRef = useRef(pdfProseRegionsScope)
+  const pdfProseReadingSourcesRef = useRef<readonly PdfProseReadingSource[]>([])
+  useLayoutEffect(() => {
+    pdfProseRegionsScopeRef.current = pdfProseRegionsScope
+    const restored = restoredPdfProseReadingRef.current
+    if (
+      activeDraftKeyRef.current === currentDraftKey &&
+      restored &&
+      restored.scope &&
+      restored.scope !== pdfProseRegionsScope
+    )
+      restoredPdfProseReadingRef.current = undefined
+    usePreviewWorkbenchStore.getState().setPdfProseRegionsScope(pdfProseRegionsScope)
+    return () => {
+      const preview = usePreviewWorkbenchStore.getState()
+      if (
+        activeDraftKeyRef.current !== currentDraftKey ||
+        restoredPdfProseReadingRef.current?.scope !== pdfProseRegionsScope ||
+        preview.pdfProseRegionsScope !== pdfProseRegionsScope
+      )
+        return
+      restoredPdfProseReadingRef.current = {
+        scope: pdfProseRegionsScope,
+        selections: capturePdfProseReadingSelections(
+          pdfProseReadingSourcesRef.current,
+          preview.pdfProseRegionsByBindingId
+        )
+      }
+    }
+  }, [currentDraftKey, pdfProseRegionsScope])
   const docRef = useRef(doc)
   const annotationsRef = useRef(annotations)
   const [automaticReadingEnabled, setAutomaticReadingEnabled] = useState(
@@ -470,6 +636,7 @@ const useWorkspaceComposerController = ({
       if (!deletedDraftKeys.has(draftKey)) {
         drafts[draftKey] = {
           retrySessionOwner: retrySessionOwnerRef.current,
+          restoredPdfProseReading: restoredPdfProseReadingRef.current,
           doc: history[draftKey]?.scratch ?? docRef.current,
           annotations: annotationsRef.current,
           ...captureDraftAttachments(),
@@ -605,6 +772,40 @@ const useWorkspaceComposerController = ({
     pendingReadingItems.find(({ selection }) => selection.previewItemId === activePreviewItemId) ??
     pendingReadingItems[0]
   )?.selection
+  useLayoutEffect(() => {
+    pdfProseReadingSourcesRef.current = [
+      ...durableReadingBindings.map((binding) => ({
+        bindingId: binding.bindingId,
+        source: binding
+      })),
+      ...pendingReadingSelections.flatMap((selection) =>
+        selection.kind === 'version'
+          ? [
+              {
+                bindingId: pendingPdfContextBindingId(selection),
+                source: {
+                  sourceKind: selection.sourceKind,
+                  sourceFileId: selection.sourceFileId,
+                  sourceVersionId: selection.sourceVersionId
+                }
+              }
+            ]
+          : []
+      ),
+      ...draftPdfProseReadingSources({ doc, attachments })
+    ]
+  }, [attachments, doc, durableReadingBindings, pendingReadingSelections])
+  useLayoutEffect(() => {
+    if (
+      activeDraftKeyRef.current === currentDraftKey &&
+      restoredPdfProseReadingRef.current?.selections
+    )
+      restoredPdfProseReadingRef.current = projectRestoredPdfProseReading(
+        restoredPdfProseReadingRef.current,
+        pdfProseRegionsScope,
+        pdfProseReadingSourcesRef.current
+      )
+  }, [currentDraftKey, pdfProseRegionsScope])
   const readingPositionBindingId =
     activeReadingBinding?.bindingId ??
     (activePendingReading ? pendingPdfContextBindingId(activePendingReading) : undefined)
@@ -947,6 +1148,7 @@ const useWorkspaceComposerController = ({
     } else {
       draftsRef.current[previousDraftKey] = {
         retrySessionOwner: retrySessionOwnerRef.current,
+        restoredPdfProseReading: restoredPdfProseReadingRef.current,
         setupSessionToken: setupSessionTokenRef.current,
         doc: outgoingHistory?.scratch ?? doc,
         annotations,
@@ -974,6 +1176,11 @@ const useWorkspaceComposerController = ({
     activateDraftAttachments(nextDraft)
     setActiveAutomaticReadingEnabled(nextDraft.automaticReadingEnabled)
     setActiveQueuedEdit(nextDraft.queuedEdit)
+    restoredPdfProseReadingRef.current = projectRestoredPdfProseReading(
+      nextDraft.restoredPdfProseReading,
+      pdfProseRegionsScope,
+      [...pdfProseReadingSourcesRef.current, ...draftPdfProseReadingSources(nextDraft)]
+    )
     retrySessionOwnerRef.current = nextDraft.retrySessionOwner
     setActiveSetupSessionToken(nextDraft.setupSessionToken)
     activeDraftKeyRef.current = currentDraftKey
@@ -984,6 +1191,7 @@ const useWorkspaceComposerController = ({
     annotations,
     attachments,
     currentDraftKey,
+    pdfProseRegionsScope,
     doc,
     deletedDraftKeysRef,
     draftsRef,
@@ -1273,6 +1481,38 @@ const useWorkspaceComposerController = ({
           return true
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
+      const proseSources: PdfProseReadingSource[] = []
+      for (const binding of includedDurableBindings) {
+        proseSources.push({
+          bindingId: binding.bindingId,
+          source: {
+            sourceKind: binding.sourceKind,
+            sourceFileId: binding.sourceFileId,
+            sourceVersionId: binding.sourceVersionId
+          }
+        })
+      }
+      if (includeReadingContext) {
+        for (const attachmentId of pendingPdfContextAttachmentIds) {
+          const attachment = attachments.find(({ id }) => id === attachmentId)
+          if (
+            attachment?.versionId &&
+            includedDurableBindings.some(
+              (binding) =>
+                binding.sourceKind === 'upload-version' &&
+                binding.sourceVersionId === attachment.versionId
+            )
+          )
+            continue
+          proseSources.push({ bindingId: `staged:${attachmentId}`, source: { attachmentId } })
+        }
+        for (const source of pendingPdfContextVersions)
+          proseSources.push({ bindingId: `version:${pdfContextSourceKey(source)}`, source })
+      }
+      const pdfProseReadingSelections = capturePdfProseReadingSelections(
+        proseSources,
+        pdfProseRegionsByBindingId ?? {}
+      )
       const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
@@ -1284,6 +1524,8 @@ const useWorkspaceComposerController = ({
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
+        ...(proseSources.length ? { pdfProseRegionsScope } : {}),
+        ...(pdfProseReadingSelections.length ? { pdfProseReadingSelections } : {}),
         ...(includeReadingContext && durableReadingContext
           ? {
               pdfContext: {
@@ -1318,6 +1560,8 @@ const useWorkspaceComposerController = ({
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
       }
+      if (pdfProseReadingSelections.length && pdfProseRegionsByBindingId)
+        capturedPdfProseRegions.current.set(snapshot, pdfProseRegionsByBindingId)
       return snapshot
     },
     [
@@ -1329,6 +1573,8 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo,
       clearUndo,
       durableReadingContext,
+      pdfProseRegionsByBindingId,
+      pdfProseRegionsScope,
       durableReadingBindings,
       pendingReadingSelections,
       pdfReadingPosition,
@@ -1336,6 +1582,34 @@ const useWorkspaceComposerController = ({
       versionsRef
     ]
   )
+  const consumePdfProseReading = useCallback((snapshot: ComposerSendSnapshot): void => {
+    if (!snapshot.pdfProseRegionsScope || !snapshot.pdfProseReadingSelections?.length) return
+    const captured = capturedPdfProseRegions.current.get(snapshot)
+    if (!captured) return
+    capturedPdfProseRegions.current.delete(snapshot)
+    usePreviewWorkbenchStore.setState((state) => {
+      if (state.pdfProseRegionsScope !== snapshot.pdfProseRegionsScope) return state
+      let remaining = state.pdfProseRegionsByBindingId
+      for (const selection of snapshot.pdfProseReadingSelections ?? []) {
+        const source = selection.source
+        const bindingId =
+          'attachmentId' in source
+            ? `staged:${source.attachmentId}`
+            : (snapshot.pdfContext?.bindings.find(
+                (binding) => pdfProseSourceKey(binding) === pdfProseSourceKey(source)
+              )?.bindingId ?? `version:${pdfProseSourceKey(source)}`)
+        const current = remaining[bindingId]
+        // The store replaces each array on edit, even for an identical redraw. Keep
+        // this transient identity out of the immutable message and persisted draft.
+        if (!current || current !== captured[bindingId]) continue
+        if (remaining === state.pdfProseRegionsByBindingId) remaining = { ...remaining }
+        delete remaining[bindingId]
+      }
+      return remaining === state.pdfProseRegionsByBindingId
+        ? state
+        : { pdfProseRegionsByBindingId: remaining }
+    })
+  }, [])
   const preserveAdmissionContext = useCallback(
     (snapshot: ComposerSendSnapshot): void => {
       const discussionAnnotations = snapshot.annotations.filter(replayAnnotationTarget)
@@ -1386,6 +1660,7 @@ const useWorkspaceComposerController = ({
       )
       if (activeDraftKeyRef.current !== draftKey) return true
       retrySessionOwnerRef.current = undefined
+      restoredPdfProseReadingRef.current = undefined
       setActiveSetupSessionToken(undefined)
       setActiveDoc(emptyDoc)
       setActiveQueuedEdit(undefined)
@@ -1437,6 +1712,16 @@ const useWorkspaceComposerController = ({
       if (projection?.draftKey === snapshot.draftKey && projection.version === snapshot.version)
         clearAdmissionProjection()
       const draftKey = boundDraftKey ?? snapshot.draftKey
+      const restoredReadingForDraft = (key: string): ComposerPdfProseReadingRestore => {
+        const scope =
+          key !== snapshot.draftKey
+            ? activeDraftKeyRef.current === key
+              ? pdfProseRegionsScopeRef.current
+              : undefined
+            : (snapshot.pdfProseRegionsScope ??
+              (activeDraftKeyRef.current === key ? pdfProseRegionsScopeRef.current : undefined))
+        return restorePdfProseReading(snapshot, scope)
+      }
       if (deletedDraftKeysRef.current.has(draftKey)) {
         if (!preserveOnConflict)
           releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
@@ -1464,6 +1749,7 @@ const useWorkspaceComposerController = ({
           ) {
             draftsRef.current[key] = {
               retrySessionOwner: snapshot.retrySessionOwner,
+              restoredPdfProseReading: restoredReadingForDraft(key),
               setupSessionToken: snapshot.setupSessionToken,
               queuedEdit: snapshot.queuedEdit,
               doc: snapshot.doc,
@@ -1494,6 +1780,11 @@ const useWorkspaceComposerController = ({
       clearHistory(draftKey)
       if (activeDraftKeyRef.current === draftKey) {
         retrySessionOwnerRef.current = snapshot.retrySessionOwner
+        restoredPdfProseReadingRef.current = projectRestoredPdfProseReading(
+          restoredReadingForDraft(draftKey),
+          pdfProseRegionsScopeRef.current,
+          [...pdfProseReadingSourcesRef.current, ...draftPdfProseReadingSources(snapshot)]
+        )
         setActiveSetupSessionToken(snapshot.setupSessionToken)
         setActiveQueuedEdit(snapshot.queuedEdit)
         setActiveDoc(snapshot.doc)
@@ -1504,6 +1795,7 @@ const useWorkspaceComposerController = ({
       }
       draftsRef.current[draftKey] = {
         retrySessionOwner: snapshot.retrySessionOwner,
+        restoredPdfProseReading: restoredReadingForDraft(draftKey),
         setupSessionToken: snapshot.setupSessionToken,
         queuedEdit: snapshot.queuedEdit,
         doc: snapshot.doc,
@@ -1700,6 +1992,7 @@ const useWorkspaceComposerController = ({
     },
     lifecycle: {
       captureSend,
+      consumePdfProseReading,
       preserveAdmissionContext,
       bindAdmissionContext,
       captureRevision,
@@ -1717,6 +2010,7 @@ const useWorkspaceComposerController = ({
         delete versionsRef.current[draftKey]
         deletedDraftKeysRef.current.add(draftKey)
         if (activeDraftKeyRef.current !== draftKey) return
+        restoredPdfProseReadingRef.current = undefined
         setActiveSetupSessionToken(undefined)
         clearHistory(draftKey)
         setActiveDoc(emptyDoc)

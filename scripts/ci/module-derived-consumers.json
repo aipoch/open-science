@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "modules": {
+    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
     "research_workspace_state": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/app-shell-presentation-owner.test.ts",

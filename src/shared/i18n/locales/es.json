@@ -7622,6 +7622,20 @@
     "Your separate installation will not be updated. Check data compatibility before using it again.": "La instalación independiente no se actualizará. Compruebe la compatibilidad de los datos antes de volver a usarla.",
     "Continue opening Open-Science?": "¿Continuar abriendo Open-Science?",
     "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Las tareas en curso se detendrán y las demás conexiones se cerrarán. El trabajo sin guardar podría perderse. Se conservarán la configuración y las ubicaciones de los datos. A partir de entonces, cerrar esta aplicación también detendrá el trabajo en segundo plano.",
-    "Search incomplete. Some pages could not be read.": "La búsqueda está incompleta. No se pudieron leer algunas páginas."
+    "Search incomplete. Some pages could not be read.": "La búsqueda está incompleta. No se pudieron leer algunas páginas.",
+    "Set two-column body": "Definir el cuerpo en dos columnas",
+    "Applies to your next message. Select body text only; exclude tables.": "Se aplica al siguiente mensaje. Seleccione solo el texto principal y excluya las tablas.",
+    "Redrawing replaces the body area on that page.": "Al volver a dibujar, se sustituirá el área del cuerpo de esa página.",
+    "Body areas: {{count}}_one": "{{count}} área del cuerpo",
+    "Body areas: {{count}}_many": "{{count}} áreas del cuerpo",
+    "Body areas: {{count}}_other": "{{count}} áreas del cuerpo",
+    "Clear this page": "Borrar esta página",
+    "Drag across both columns, then confirm the divider.": "Arrastre sobre ambas columnas y confirme la línea divisoria.",
+    "Two-column body": "Cuerpo en dos columnas",
+    "Column divider": "Línea divisoria de columnas",
+    "Save body area": "Guardar el área del cuerpo",
+    "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
+    "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
+    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje."
   }
 }

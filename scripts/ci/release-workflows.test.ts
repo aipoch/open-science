@@ -940,30 +940,42 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     'windows-full-test.yml',
     'source-regression.yml',
     'runtime-resource-soak.yml'
-  ])('reports scheduled %s outcomes to a tracking issue after every job', (name) => {
+  ])('reports scheduled %s outcomes after all scheduled validation jobs', (name) => {
     const document = workflow(name)
     const { report, ...jobs } = document.jobs
     const script = step(report, 'Open, refresh, or close the tracking issue')
 
     expect(report.name).toBe('Report scheduled outcome')
     expect(report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
-    expect([...(report.needs as string[])].sort()).toEqual(Object.keys(jobs).sort())
     expect(report).toMatchObject({
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 5,
       permissions: { contents: 'read', issues: 'write' }
     })
     expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
+    const scheduledJobIds: string[] = []
     for (const [id, job] of Object.entries(jobs)) {
       if (
         job.uses === './.github/workflows/build.yml' ||
         job.uses === './.github/workflows/performance-package-dryrun.yml'
       ) {
         expect(job.permissions, id).toEqual({ contents: 'read', 'id-token': 'write' })
+      } else if (
+        name === 'source-regression.yml' &&
+        (id === 'runtime_evidence' || id === 'static_impact')
+      ) {
+        expect(job.permissions, id).toEqual({ contents: 'read' })
+        const mode = id === 'runtime_evidence' ? 'runtime-evidence' : 'static-impact'
+        expect(job.if, id).toBe(
+          `\${{ github.event_name == 'workflow_dispatch' && inputs.mode == '${mode}' }}`
+        )
+        continue
       } else {
         expect(job.permissions, id).toBeUndefined()
       }
+      scheduledJobIds.push(id)
     }
+    expect([...(report.needs as string[])].sort()).toEqual(scheduledJobIds.sort())
     expect(step(report, 'Checkout reporter')).toMatchObject({
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       with: {
