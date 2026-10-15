@@ -7259,6 +7259,7 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "其他連線將中斷。更新後，關閉此應用程式也會停止背景工作。您的設定和資料位置將保留。",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "另外安裝的版本不會更新。再次使用前，請確認其與現有資料相容。",
     "Continue opening Open-Science?": "繼續開啟 Open-Science？",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "正在執行的任務將停止，其他連線將中斷。未儲存的工作可能遺失。您的設定和資料位置將保留。此後關閉此應用程式也會停止背景工作。"
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "正在執行的任務將停止，其他連線將中斷。未儲存的工作可能遺失。您的設定和資料位置將保留。此後關閉此應用程式也會停止背景工作。",
+    "Search incomplete. Some pages could not be read.": "搜尋結果不完整。部分頁面無法讀取。"
   }
 }

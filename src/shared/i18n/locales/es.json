@@ -7587,6 +7587,7 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "Las demás conexiones se cerrarán. Tras la actualización, cerrar esta aplicación también detendrá el trabajo en segundo plano. Se conservarán la configuración y las ubicaciones de los datos.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "La instalación independiente no se actualizará. Compruebe la compatibilidad de los datos antes de volver a usarla.",
     "Continue opening Open-Science?": "¿Continuar abriendo Open-Science?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Las tareas en curso se detendrán y las demás conexiones se cerrarán. El trabajo sin guardar podría perderse. Se conservarán la configuración y las ubicaciones de los datos. A partir de entonces, cerrar esta aplicación también detendrá el trabajo en segundo plano."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Las tareas en curso se detendrán y las demás conexiones se cerrarán. El trabajo sin guardar podría perderse. Se conservarán la configuración y las ubicaciones de los datos. A partir de entonces, cerrar esta aplicación también detendrá el trabajo en segundo plano.",
+    "Search incomplete. Some pages could not be read.": "La búsqueda está incompleta. No se pudieron leer algunas páginas."
   }
 }

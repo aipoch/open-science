@@ -7257,6 +7257,7 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "다른 연결이 끊어집니다. 업데이트 후 이 앱을 닫으면 백그라운드 작업도 중지됩니다. 설정과 데이터 위치는 유지됩니다.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "별도로 설치한 버전은 업데이트되지 않습니다. 다시 사용하기 전에 데이터 호환성을 확인하세요.",
     "Continue opening Open-Science?": "Open-Science를 계속 여시겠습니까?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "실행 중인 작업이 중지되고 다른 연결이 끊어집니다. 저장하지 않은 작업이 손실될 수 있습니다. 설정과 데이터 위치는 유지됩니다. 이후 이 앱을 닫으면 백그라운드 작업도 중지됩니다."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "실행 중인 작업이 중지되고 다른 연결이 끊어집니다. 저장하지 않은 작업이 손실될 수 있습니다. 설정과 데이터 위치는 유지됩니다. 이후 이 앱을 닫으면 백그라운드 작업도 중지됩니다.",
+    "Search incomplete. Some pages could not be read.": "검색 결과가 불완전합니다. 일부 페이지를 읽을 수 없었습니다."
   }
 }

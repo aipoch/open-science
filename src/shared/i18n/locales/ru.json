@@ -7726,6 +7726,7 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "Другие подключения будут закрыты. После обновления закрытие этого приложения также остановит фоновую работу. Ваши настройки и расположение данных сохранятся.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "Отдельная установка не будет обновлена. Перед её повторным использованием проверьте совместимость данных.",
     "Continue opening Open-Science?": "Продолжить открытие Open-Science?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Выполняемые задачи остановятся, а другие подключения будут закрыты. Несохранённая работа может быть потеряна. Ваши настройки и расположение данных сохранятся. После этого закрытие приложения также остановит фоновую работу."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Выполняемые задачи остановятся, а другие подключения будут закрыты. Несохранённая работа может быть потеряна. Ваши настройки и расположение данных сохранятся. После этого закрытие приложения также остановит фоновую работу.",
+    "Search incomplete. Some pages could not be read.": "Поиск выполнен не полностью. Некоторые страницы не удалось прочитать."
   }
 }

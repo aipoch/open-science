@@ -1004,6 +1004,7 @@ const PdfSearchControls = ({
   query,
   current,
   total,
+  incomplete,
   onQueryChange,
   onFindAgain,
   onClose,
@@ -1013,6 +1014,7 @@ const PdfSearchControls = ({
   query: string
   current: number
   total: number
+  incomplete: boolean
   onQueryChange: (query: string) => void
   onFindAgain: (previous: boolean) => void
   onClose: () => void
@@ -1020,9 +1022,10 @@ const PdfSearchControls = ({
   onScopeChange?: (translated: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const coverageNoticeId = useId()
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={300}>
-      <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+      <div className="absolute top-3 right-3 z-40 flex h-8 max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         {onScopeChange ? (
           <Button
             size="sm"
@@ -1042,6 +1045,7 @@ const PdfSearchControls = ({
           data-preview-escape-boundary
           value={query}
           aria-label={t('Search document')}
+          aria-describedby={incomplete ? coverageNoticeId : undefined}
           placeholder={t('Search document')}
           className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
@@ -1104,6 +1108,15 @@ const PdfSearchControls = ({
           </TooltipTrigger>
           <TooltipContent className="z-[120]">{t('Close search')}</TooltipContent>
         </Tooltip>
+        {incomplete ? (
+          <ErrorNotice
+            id={coverageNoticeId}
+            role="status"
+            level="warning"
+            className="absolute top-full left-0 mt-2"
+            description={t('Search incomplete. Some pages could not be read.')}
+          />
+        ) : null}
       </div>
     </TooltipProvider>
   )
@@ -2527,6 +2540,7 @@ export const PdfPreviewContent = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<readonly PdfSearchPageMatches[]>([])
   const [searchResultCount, setSearchResultCount] = useState(0)
+  const [searchIncomplete, setSearchIncomplete] = useState(false)
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
   const [textLayerEpoch, setTextLayerEpoch] = useState(0)
   const searchTextCacheRef = useRef(new PdfSearchTextCache())
@@ -2574,6 +2588,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useLayoutEffect(
@@ -3052,6 +3067,7 @@ export const PdfPreviewContent = ({
     setSearchedDocument(searchDocument)
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useEffect(() => {
@@ -3292,6 +3308,7 @@ export const PdfPreviewContent = ({
     let canceled = false
     const timer = setTimeout(() => {
       void (async () => {
+        setSearchIncomplete(false)
         const normalizedQuery = searchQuery.toLocaleLowerCase()
         const matches: PdfSearchPageMatches[] = []
         let matchCount = 0
@@ -3311,6 +3328,8 @@ export const PdfPreviewContent = ({
               }
             })
           } catch {
+            if (canceled) return
+            setSearchIncomplete(true)
             continue
           }
           if (canceled) return
@@ -3559,6 +3578,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
     searchTextCacheRef.current.clear()
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
@@ -4821,6 +4841,7 @@ export const PdfPreviewContent = ({
                           pairedDocument
                             ? (translated) => {
                                 setSearchQuery('')
+                                setSearchIncomplete(false)
                                 setSearchTranslated(translated)
                                 if (effectiveRendition !== 'compare')
                                   setRendition(translated ? 'translated' : 'original')
@@ -4830,10 +4851,12 @@ export const PdfPreviewContent = ({
                         query={searchQuery}
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
+                        incomplete={searchIncomplete}
                         onQueryChange={(query) => {
                           setSearchQuery(query)
                           setSearchResults([])
                           setSearchResultCount(0)
+                          setSearchIncomplete(false)
                           setSelectedSearchIndex(0)
                         }}
                         onFindAgain={findAgain}
