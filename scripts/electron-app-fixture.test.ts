@@ -10,9 +10,66 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   closeElectronApplicationForCleanup,
+  launchEnvironment,
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
+  const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+    OPEN_SCIENCE_E2E_ISOLATE_HOME: '1',
+    HOME: '/operator',
+    OPENAI_API_KEY: 'operator-secret',
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-display/Xauthority',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
+    XDG_CURRENT_DESKTOP: 'GNOME'
+  })
+  expect(environment).toMatchObject({
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-display/Xauthority',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
+    XDG_CURRENT_DESKTOP: 'GNOME',
+    HOME: resolve('fixture/isolated home'),
+    OPEN_SCIENCE_CONFIG_ROOT: resolve('fixture/storage')
+  })
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+})
+
+it.each([true, false])(
+  'requires an explicit Linux test vault before restoring it: %s',
+  async (explicit) => {
+    const source = await readFile('e2e/fixtures/node-runtime-preload.cjs', 'utf8')
+    const appendSwitch = vi.fn()
+    const load = (name: string): unknown => {
+      if (name === 'electron') return { app: { isPackaged: false, commandLine: { appendSwitch } } }
+      if (name === 'node:path') return { join: resolve }
+      if (name === 'node:fs') return { readFileSync: vi.fn() }
+      if (name === 'node:module') return { _load: vi.fn() }
+      throw new Error(`Unexpected module: ${name}`)
+    }
+    const run = (): void =>
+      runInNewContext(source, {
+        require: load,
+        process: {
+          platform: 'linux',
+          versions: { electron: 'test' },
+          argv: explicit ? ['--password-store=gnome-libsecret'] : [],
+          env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: resolve('fixture/storage') }
+        },
+        __dirname: resolve('e2e/fixtures')
+      })
+    if (explicit) {
+      run()
+      expect(appendSwitch).toHaveBeenCalledExactlyOnceWith('password-store', 'gnome-libsecret')
+    } else {
+      expect(run).toThrow('requires an explicit Secret Service backend')
+      expect(appendSwitch).not.toHaveBeenCalled()
+    }
+  }
+)
 
 describe('source macOS mock Keychain metadata', () => {
   it('replaces only the native probe path for an explicit source mock launch', async () => {

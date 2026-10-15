@@ -59,7 +59,8 @@ test('keeps the desktop connected after stopping several active chats through th
     true,
     false,
     roots.fakeRemoteItRoot,
-    'hidden',
+    // Streaming assertions need animation frames from a visible Linux X11 window.
+    process.platform === 'linux' ? 'normal' : 'hidden',
     false
   )
   const page = await application.firstWindow()
@@ -195,7 +196,7 @@ test('keeps the desktop connected after stopping several active chats through th
       contentType: 'application/json'
     })
     for (const [name, path] of [
-      ['electron-log', join(roots.userDataRoot, 'logs', 'main.log')],
+      ['electron-log', join(roots.userDataRoot, 'desktop-logs', 'main.log')],
       ['backend-log', join(roots.storageRoot, 'logs', 'main.log')]
     ]) {
       await testInfo.attach(name, {

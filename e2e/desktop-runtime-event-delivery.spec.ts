@@ -370,7 +370,8 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'reconciling' })
-      await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+      // Recovery hides its buttons while reconciling; native Quit remains available.
+      await application.evaluate(({ app }) => app.quit())
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'disconnected', closing: false })

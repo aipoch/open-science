@@ -122,9 +122,10 @@ test('installation manifests capture physical ASAR bytes in Electron and reject 
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('legacy service recheck hands the startup window to a usable Desktop', async ({}) => {
+test('legacy service recheck API hands the startup window to a usable Desktop', async ({}) => {
   test.skip(
-    process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+    !['darwin', 'linux'].includes(process.platform) ||
+      Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
   )
   const root = await mkdtemp(join(tmpdir(), 'legacy-recheck-e2e-'))
@@ -180,18 +181,23 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
     const originalOwner = await readFile(join(config, 'runtime-owner.json'), 'utf8')
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
+    await expect(
+      page.getByRole('heading', { name: 'An older version is still running' })
+    ).toBeVisible({
       timeout: 30000
     })
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+    // The current legacy-service UI stops directly; exercise the read-only recovery API here.
+    await page.evaluate(() => window.api.runtimeStartup!.recover())
+    await expect
+      .poll(() => page.evaluate(() => window.api.runtimeStartup!.getState()))
+      .toMatchObject({ phase: 'blocked' })
     expect(requests.every((request) => request === 'GET /owner')).toBe(true)
     expect(await readFile(join(config, 'runtime-owner.json'), 'utf8')).toBe(originalOwner)
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
     const replacement = app.waitForEvent('window')
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    void page.evaluate(() => window.api.runtimeStartup!.recover()).catch(() => undefined)
     const workspace = await replacement
     await expect
       .poll(() => workspace.evaluate(() => window.api?.runtimeStartup?.getState()), {
@@ -220,9 +226,10 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}, testInfo) => {
+test('guides legacy shutdown through a failed stop, retry and opening the saved project', async ({}, testInfo) => {
   test.skip(
-    process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+    !['darwin', 'linux'].includes(process.platform) ||
+      Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
   )
   const { build } = await import('esbuild')
@@ -290,38 +297,26 @@ async function main() {
     service.disconnect()
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
-    const continueButton = page.getByRole('button', {
-      name: '继续',
-      exact: true
-    })
+    const continueButton = page.getByRole('button', { name: '关闭并继续', exact: true })
     await expect(continueButton).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('real-startup.png'), animations: 'disabled' })
-    await continueButton.click()
-    await page.screenshot({ path: testInfo.outputPath('real-confirm.png'), animations: 'disabled' })
-    await page.getByRole('button', { name: '取消', exact: true }).click()
-    await page.screenshot({
-      path: testInfo.outputPath('real-cancelled.png'),
-      animations: 'disabled'
-    })
     await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
     expect(service.exitCode).toBeNull()
     await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
     await expect
       .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
       .toBe('1')
-    await expect(continueButton).toBeEnabled()
-    await expect(
-      page.getByText('无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。', { exact: true })
-    ).toBeVisible()
+    const retryButton = page.getByRole('button', { name: '重试', exact: true })
+    await expect(retryButton).toBeEnabled()
+    await expect
+      .poll(() => page.evaluate(() => window.api.runtimeStartup!.getState()))
+      .toMatchObject({ phase: 'blocked' })
     await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
     const replacement = app.waitForEvent('window')
-    await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
+    await retryButton.click()
     await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath('real-stopping.png'),

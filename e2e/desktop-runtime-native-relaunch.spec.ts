@@ -13,9 +13,9 @@ for (const stalled of [false, true]) {
   // eslint-disable-next-line no-empty-pattern
   test(`Runtime-requested relaunch ${stalled ? 'times out before the transport closes' : 'replies before clean shutdown and Desktop relaunch'}`, async ({}, testInfo) => {
     test.skip(
-      !['darwin', 'win32'].includes(process.platform) ||
+      !['darwin', 'win32', 'linux'].includes(process.platform) ||
         Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-      'Isolated macOS or Windows source credential fixture'
+      'Isolated source credential fixture'
     )
     // Windows acceptance exercises spaced paths; macOS rejects them for environment data.
     const root = await mkdtemp(
@@ -175,9 +175,9 @@ for (const stalled of [false, true]) {
 // eslint-disable-next-line no-empty-pattern
 test('actual Electron relaunch starts a new Desktop and Runtime and reads the original Session', async ({}, testInfo) => {
   test.skip(
-    !['darwin', 'win32'].includes(process.platform) ||
+    !['darwin', 'win32', 'linux'].includes(process.platform) ||
       Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-    'Isolated macOS or Windows source relaunch'
+    'Isolated source relaunch'
   )
   const root = await mkdtemp(
     join(
@@ -194,7 +194,8 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
   await mkdir(join(root, 'workspace'))
   const capability = randomUUID()
   const target = electronLaunchTarget(profileRoot)
-  const initialArgs = [...target.args]
+  // Match Playwright's source Electron launch in Linux containers without a setuid sandbox.
+  const initialArgs = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ...target.args]
   initialArgs.splice(
     initialArgs.length - 1,
     0,
@@ -277,6 +278,10 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       join(root, 'workspace')
     )
     const firstDesktop = desktop
+    // Refuse to request a native successor unless the cleanup observer is already active.
+    expect(await readFile(join(configRoot, 'fixture-desktop-pids'), 'utf8')).toBe(
+      `${firstDesktop.pid}\n`
+    )
     const firstOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
     await page
       .evaluate(
