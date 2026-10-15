@@ -526,7 +526,8 @@
       "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
-      "src/renderer/src/stores/settings-store.test.ts"
+      "src/renderer/src/stores/settings-store.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

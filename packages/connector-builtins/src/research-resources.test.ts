@@ -292,6 +292,60 @@ describe('research-resources / search_antibodies', () => {
     })
   })
 
+  it.each([10, 150, 196, 200])(
+    'returns at most %i records with the default page size',
+    async (maxRecords) => {
+      // Index rows can share an abId; the limit applies to rows, not unique antibodies.
+      const items = Array.from({ length: 196 }, (_, i) => abRecord({ abId: Math.floor(i / 2) }))
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonRes({ totalElements: 196, items: items.slice(0, 100) }))
+        .mockResolvedValueOnce(jsonRes({ totalElements: 196, items: items.slice(100) }))
+      const out = (await engine(fetchImpl).call(
+        tool('search_antibodies'),
+        { query: 'CD4', max_records: maxRecords },
+        {}
+      )) as Record<string, unknown>
+      const retrieved = Math.min(maxRecords, items.length)
+      expect(fetchImpl).toHaveBeenCalledTimes(Math.ceil(retrieved / 100))
+      expect(fetchImpl.mock.calls[0][0]).toContain('page=1&size=100')
+      if (retrieved > 100) expect(fetchImpl.mock.calls[1][0]).toContain('page=2&size=100')
+      expect(out).toMatchObject({
+        total_elements: 196,
+        retrieved,
+        unique_ab_ids: Math.ceil(retrieved / 2),
+        complete: retrieved === 196,
+        truncated_at_max_records: retrieved < 196,
+        anonymous_limit_hit: false
+      })
+      expect(out.items).toEqual(items.slice(0, retrieved).map((r) => stripped({ abId: r.abId })))
+    }
+  )
+
+  it('caps the last reachable page without reporting the anonymous limit', async () => {
+    const items = Array.from({ length: 500 }, (_, i) => abRecord({ abId: i }))
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get('page'))
+      return jsonRes({ totalElements: 700, items: items.slice((page - 1) * 100, page * 100) })
+    })
+    const out = (await engine(fetchImpl).call(
+      tool('search_antibodies'),
+      { query: 'CD4', max_records: 450 },
+      {}
+    )) as Record<string, unknown>
+    expect(fetchImpl).toHaveBeenCalledTimes(5)
+    expect(fetchImpl.mock.calls[4][0]).toContain('page=5&size=100')
+    expect(out).toMatchObject({
+      total_elements: 700,
+      retrieved: 450,
+      unique_ab_ids: 450,
+      complete: false,
+      truncated_at_max_records: true,
+      anonymous_limit_hit: false
+    })
+    expect(out.items).toEqual(items.slice(0, 450).map((r) => stripped({ abId: r.abId })))
+  })
+
   it('single-page mode returns the page-shaped result', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ totalElements: 1, items: [abRecord()] }))
     const out = (await engine(fetchImpl).call(
@@ -310,6 +364,26 @@ describe('research-resources / search_antibodies', () => {
       complete: true
     })
     expect('anonymous_limit_hit' in out).toBe(false)
+  })
+
+  it('preserves the full requested page when max_records is smaller than the page', async () => {
+    const items = [abRecord({ abId: 1 }), abRecord({ abId: 2 })]
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ totalElements: 12, items }))
+    const out = (await engine(fetchImpl).call(
+      tool('search_antibodies'),
+      { query: 'CD4', page: 2, page_size: 10, max_records: 1 },
+      {}
+    )) as Record<string, unknown>
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0][0]).toContain('page=2&size=10')
+    expect(out).toEqual({
+      query: 'CD4',
+      page: 2,
+      total_elements: 12,
+      retrieved: 2,
+      complete: false,
+      items: [stripped({ abId: 1 }), stripped({ abId: 2 })]
+    })
   })
 
   it('rejects single-page requests past the anonymous row limit', async () => {

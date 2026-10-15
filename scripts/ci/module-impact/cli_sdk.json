@@ -24,7 +24,9 @@
     "cli/managed-execution-contract.test.ts",
     "packages/open-science/runtime-package.mjs",
     "packages/open-science/locate-backend.test.ts",
-    "packages/open-science/test/fixtures.ts"
+    "packages/open-science/test/fixtures.ts",
+    "packages/open-science/installation-startup.cjs",
+    "packages/open-science/installation-startup.d.cts"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -36,7 +38,9 @@
     "packages/open-science/locate-backend.mjs",
     "packages/open-science/runtime-control.mjs",
     "packages/open-science/runtime-control.d.mts",
-    "packages/open-science/runtime-package.mjs"
+    "packages/open-science/runtime-package.mjs",
+    "packages/open-science/installation-startup.cjs",
+    "packages/open-science/installation-startup.d.cts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -53,6 +57,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "cli/config-root.test.ts",
       "cli/index.test.ts",
       "cli/lifecycle.test.ts",
@@ -67,7 +72,22 @@
       "scripts/npm-runtime-workflow.test.ts",
       "scripts/runtime-archives.test.ts",
       "scripts/linux-cli-packages.test.ts",
-      "scripts/publish-linux-cli-packages.test.ts"
+      "scripts/publish-linux-cli-packages.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/update/deb-gate-recovery.test.ts",
+      "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/installation-reboot-recovery.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/update/installation-formats.test.ts",
+      "src/main/update/installation-artifact.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

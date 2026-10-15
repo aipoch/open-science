@@ -68,6 +68,11 @@ const GENERATED_SOURCE_OMISSIONS = [
   'artifacts.onReproducibilityCheckChanged',
   'artifacts.startReproducibilityCheck',
   'artifacts.sessionReproducibility',
+  'runtimeStartup.getState',
+  'runtimeStartup.stopAndContinue',
+  'runtimeStartup.recover',
+  'runtimeStartup.quit',
+  'runtimeStartup.onStateChanged',
   'databaseStartup.getState',
   'databaseStartup.onStateChanged',
   'databaseStartup.quit',
@@ -342,7 +347,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-data-root-and-relaunch',
     'validate-data-root'
   ],
-  update: ['apply', 'cancel', 'download'],
+  update: ['apply', 'cancel', 'download', 'recheck', 'recover'],
   uploads: ['stage-local-path']
 }
 

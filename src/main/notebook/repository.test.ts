@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -37,6 +38,78 @@ const admittedRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRec
   workingFiles: [],
   ...overrides
 })
+
+const createTerminalRecoveryFixture = async (
+  kind: 'root' | 'frame' = 'root'
+): Promise<{
+  root: string
+  repository: NotebookRunRepository
+  projectId: string
+  sessionId: string
+  lane: ReturnType<typeof createRootNotebookLane>
+  running: NotebookRunRecord
+  terminal: NotebookRunRecord
+  fact: {
+    version: number
+    projectId: string
+    sessionId: string
+    expectedStatus: string
+    run: NotebookRunRecord
+  }
+  outboxRoot: string
+  factPath: string
+  temporaryPath: string
+}> => {
+  const root = await createStorageRoot()
+  const projectId = 'default-project'
+  const sessionId = 'session-1'
+  const agentFrameId = kind === 'root' ? 'root-frame-session-1' : 'frame-1'
+  const lane =
+    kind === 'root'
+      ? createRootNotebookLane(projectId, sessionId, agentFrameId)
+      : createFrameNotebookLane(projectId, sessionId, agentFrameId)
+  const repository = new NotebookRunRepository(root)
+  const document = await repository.loadOrCreate({
+    projectId,
+    sessionId,
+    lane,
+    workspaceCwd: '/workspace'
+  })
+  const running = admittedRun({ status: 'running', executionMode: 'background', agentFrameId })
+  await repository.appendRun({ projectId, sessionId, lane, run: running })
+  const terminal: NotebookRunRecord = {
+    ...running,
+    status: 'completed',
+    endedAt: 2,
+    text: { stdout: '42\n', stderr: '', traceback: '', plain: ['42\n'] },
+    outputs: [{ type: 'stream', name: 'stdout', text: '42\n' }]
+  }
+  const fact = { version: 1, projectId, sessionId, expectedStatus: 'running', run: terminal }
+  const outboxRoot = join(document.notebookSessionRoot, '.run-terminal-outbox')
+  await mkdir(outboxRoot)
+  const factPath = join(outboxRoot, `${terminal.runId}.json`)
+  const exitedPid = execFileSync(
+    process.execPath,
+    ['-e', 'process.stdout.write(String(process.pid))'],
+    {
+      encoding: 'utf8'
+    }
+  )
+  const temporaryPath = `${factPath}.${exitedPid}-12345678-1234-1234-1234-123456789abc.tmp`
+  return {
+    root,
+    repository,
+    projectId,
+    sessionId,
+    lane,
+    running,
+    terminal,
+    fact,
+    outboxRoot,
+    factPath,
+    temporaryPath
+  }
+}
 
 afterEach(async () => {
   if (storageRoot) {
@@ -310,6 +383,101 @@ describe('notebook run repository', () => {
       'session-1'
     )
     expect(recovered?.runs[0]).toMatchObject({ status: 'completed', endedAt: 2 })
+  })
+
+  it.each(['root', 'frame'] as const)(
+    'recovers a temp-only terminal fact before interrupting its %s lane and replays background delivery',
+    async (kind) => {
+      const fixture = await createTerminalRecoveryFixture(kind)
+      await writeFile(fixture.temporaryPath, JSON.stringify(fixture.fact), 'utf8')
+
+      const reopened = new NotebookRunRepository(fixture.root)
+      const deliveries = await reopened.recoverAllRunLifecycles()
+      const document = await reopened.findExisting(
+        fixture.projectId,
+        fixture.sessionId,
+        fixture.lane
+      )
+      expect(document?.runs[0]).toMatchObject(fixture.terminal)
+      expect(deliveries).toEqual([
+        {
+          projectId: fixture.projectId,
+          sessionId: fixture.sessionId,
+          run: expect.objectContaining(fixture.terminal)
+        }
+      ])
+      await expect(readdir(fixture.outboxRoot)).resolves.toEqual([])
+      await expect(
+        new NotebookRunRepository(fixture.root).recoverAllRunLifecycles()
+      ).resolves.toEqual(deliveries)
+    }
+  )
+
+  it.each(['live writer', 'unrecognized suffix', 'invalid fact'] as const)(
+    'preserves a terminal temp from a %s without adopting its outcome',
+    async (kind) => {
+      const fixture = await createTerminalRecoveryFixture()
+      const temporaryPath =
+        kind === 'live writer'
+          ? `${fixture.factPath}.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+          : kind === 'unrecognized suffix'
+            ? `${fixture.factPath}.unrecognized.tmp`
+            : fixture.temporaryPath
+      const contents = JSON.stringify(
+        kind === 'invalid fact' ? { ...fixture.fact, expectedStatus: 'queued' } : fixture.fact
+      )
+      await writeFile(temporaryPath, contents, 'utf8')
+
+      const reopened = new NotebookRunRepository(fixture.root)
+      const deliveries = await reopened.recoverAllRunLifecycles()
+      const document = await reopened.findExisting(
+        fixture.projectId,
+        fixture.sessionId,
+        fixture.lane
+      )
+      expect(document?.runs[0]).toMatchObject({
+        status: 'interrupted',
+        interruptionReason: 'app-terminated',
+        text: fixture.running.text,
+        outputs: []
+      })
+      expect(deliveries[0]?.run.status).toBe('interrupted')
+      await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(contents)
+      await expect(stat(fixture.factPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it('rejects a recovered foreign terminal fact before mutating its lane', async () => {
+    const fixture = await createTerminalRecoveryFixture()
+    const contents = JSON.stringify({ ...fixture.fact, sessionId: 'another-session' })
+    await writeFile(fixture.temporaryPath, contents, 'utf8')
+
+    const reopened = new NotebookRunRepository(fixture.root)
+    await expect(reopened.recoverAllRunLifecycles()).rejects.toThrow(
+      'Notebook terminal outcome recovery fact ownership mismatch.'
+    )
+    const document = await reopened.findExisting(fixture.projectId, fixture.sessionId, fixture.lane)
+    expect(document?.runs[0]).toMatchObject(fixture.running)
+    await expect(readFile(fixture.factPath, 'utf8')).resolves.toBe(contents)
+  })
+
+  it('keeps an existing terminal Run authoritative over a recovered temporary fact', async () => {
+    const fixture = await createTerminalRecoveryFixture()
+    await fixture.repository.transitionRun({
+      projectId: fixture.projectId,
+      sessionId: fixture.sessionId,
+      lane: fixture.lane,
+      expectedStatus: 'running',
+      run: { ...fixture.running, status: 'cancelled', endedAt: 3 }
+    })
+    await writeFile(fixture.temporaryPath, JSON.stringify(fixture.fact), 'utf8')
+
+    const reopened = new NotebookRunRepository(fixture.root)
+    const deliveries = await reopened.recoverAllRunLifecycles()
+    const document = await reopened.findExisting(fixture.projectId, fixture.sessionId, fixture.lane)
+    expect(document?.runs[0]).toMatchObject({ status: 'cancelled', endedAt: 3, outputs: [] })
+    expect(deliveries[0]?.run).toMatchObject({ status: 'cancelled', endedAt: 3 })
+    await expect(readdir(fixture.outboxRoot)).resolves.toEqual([])
   })
 
   it('globally interrupts stale admitted Runs without opening their Sessions', async () => {

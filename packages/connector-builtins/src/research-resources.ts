@@ -188,7 +188,7 @@ const walkAntibodies = async (
     total = data.totalElements
     const batch = data.items ?? []
     if (batch.length === 0) break
-    items.push(...batch.map(normAntibody))
+    items.push(...batch.slice(0, maxRecords - items.length).map(normAntibody))
     if (items.length >= Math.min(total ?? 0, maxRecords)) break
     pg += 1
   }

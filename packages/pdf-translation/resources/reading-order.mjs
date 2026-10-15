@@ -3,7 +3,7 @@
 // Read-only proof for PDFs whose paint order differs from their visual order.
 // Never use this spelling to delete/repaint objects: it can include bounded parts
 // of shared runs. The caller must reserve the entire unchanged region.
-export function nativeReadingOrder(e, page, rect) {
+export function nativeReadingOrder(e, page, rect, ownedObjects = new Set()) {
   const p = e.p,
     text = p.FPDFText_LoadPage(page)
   if (!text) return undefined
@@ -26,6 +26,16 @@ export function nativeReadingOrder(e, page, rect) {
         bottom >= rect.top
       )
         continue
+      const object = p.FPDFText_GetTextObject(text, i)
+      // Dense rows can graze the em-box of their neighbor. Only omit that
+      // partial ink when native preflight assigned its object outside this unit.
+      // Owned/cropped glyphs and complete extra glyphs still reject the proof.
+      if (
+        ownedObjects.size &&
+        !ownedObjects.has(object) &&
+        (bottom < rect.bottom - 0.05 || top > rect.top + 0.05)
+      )
+        continue
       // Require complete glyphs, with the same horizontal ink allowance as the
       // native object preflight. Do not clip a neighboring row or script.
       if (
@@ -35,7 +45,6 @@ export function nativeReadingOrder(e, page, rect) {
         top > rect.top + 0.05
       )
         return undefined
-      const object = p.FPDFText_GetTextObject(text, i)
       if (!objects.has(object)) {
         if (!object || !p.FPDFPageObj_GetMatrix(object, at)) return undefined
         const [a, b, c, d] = e.m.HEAPF32.slice(at / 4, at / 4 + 4)
@@ -76,6 +85,58 @@ export function nativeReadingOrder(e, page, rect) {
     // must continue through the existing strict source checks.
     if (!ordered.some((glyph, i) => glyph.i !== glyphs[i].i)) return undefined
     return ordered.map((glyph) => glyph.text).join('')
+  } finally {
+    e.free(at)
+    p.FPDFText_ClosePage(text)
+  }
+}
+
+// PDFium can omit a line-end hyphen from object/bounded text while retaining
+// its explicit IsHyphen character in the logical stream. This is preservation
+// evidence only: character ownership can point to an earlier empty text object.
+export function nativeHyphenatedText(e, page, rect, zeroInkObjects) {
+  const p = e.p,
+    text = p.FPDFText_LoadPage(page)
+  if (!text) return undefined
+  const at = e.alloc(32)
+  try {
+    const count = p.FPDFText_CountChars(text)
+    if (count < 0 || count > 100000) return undefined
+    let result = '',
+      hasHyphen = false
+    for (let i = 0; i < count; i++) {
+      const code = p.FPDFText_GetUnicode(text, i)
+      if (!code || /\s/u.test(String.fromCodePoint(code))) continue
+      if (!p.FPDFText_GetCharBox(text, i, at, at + 8, at + 16, at + 24)) return undefined
+      const [left, right, bottom, top] = e.m.HEAPF64.slice(at / 8, at / 8 + 4)
+      if (![left, right, bottom, top].every(Number.isFinite)) return undefined
+      if (right < rect.x || left > rect.x + rect.width || top < rect.bottom || bottom > rect.top)
+        continue
+      if (
+        left < rect.x - 2 ||
+        right > rect.x + rect.width + 2 ||
+        bottom < rect.bottom - 2 ||
+        top > rect.top + 2
+      )
+        return undefined
+      if (code === 2 && p.FPDFText_IsHyphen(text, i) === 1) {
+        hasHyphen = true
+        // ActualText can retain a painted hyphen before the engine's line-end
+        // marker. They represent one boundary, whether source kept or joined it.
+        if (result.endsWith('-')) result = result.slice(0, -1)
+        result += '\u0002'
+      } else if (
+        /^[\u00ad\u200b\u200c]$/u.test(String.fromCodePoint(code)) &&
+        zeroInkObjects.has(p.FPDFText_GetTextObject(text, i))
+      )
+        continue
+      else {
+        if (/\p{C}/u.test(String.fromCodePoint(code))) return undefined
+        result += String.fromCodePoint(code)
+      }
+      if (result.length > 8192) return undefined
+    }
+    return hasHyphen ? result : undefined
   } finally {
     e.free(at)
     p.FPDFText_ClosePage(text)

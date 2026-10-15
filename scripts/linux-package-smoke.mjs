@@ -14,6 +14,7 @@ import {
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
 import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
+import { collectSmokeDiagnostics } from './package-smoke-diagnostics.mjs'
 
 const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-(?:x64|x86_64|arm64)\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
@@ -277,6 +278,7 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     throw new Error('Installed CLI did not initialize the isolated production profile.')
   }
   let failure
+  let daemonPid
   try {
     const started = await invoke([
       'start',
@@ -287,6 +289,7 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     ])
     const statePath = join(initialized.configRoot, 'web-service.json')
     const firstState = JSON.parse(await readFile(statePath, 'utf8'))
+    daemonPid = firstState.pid
     const reused = await invoke(['start', '--no-open'])
     const secondState = JSON.parse(await readFile(statePath, 'utf8'))
     if (firstState.pid !== secondState.pid || firstState.port !== 44109) {
@@ -333,7 +336,10 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     const token = await readFile(join(initialized.configRoot, 'web-token'), 'utf8')
       .then((text) => text.trim())
       .catch(() => '')
-    const logs = (await readDaemonLogs(initialized.configRoot)) || '(daemon log unavailable)'
+    const logs = await collectSmokeDiagnostics({
+      configRoot: initialized.configRoot,
+      pid: daemonPid
+    })
     const diagnostic = `${failure.message}\n${logs}`
     throw new Error(token ? diagnostic.replaceAll(token, '<REDACTED>') : diagnostic)
   }

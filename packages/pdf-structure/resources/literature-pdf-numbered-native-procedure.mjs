@@ -118,6 +118,151 @@ function findInsetDotProcedure(page, title, titles, lines, rules) {
   return frames.length === 1 ? frames : []
 }
 
+// Some publishers use a numbered algorithm frame for a short straight-line
+// routine without colons, step numbers, or loop controls. Keep this proof
+// separate from the established I/O/loop recognizers: the complete native
+// three-rule frame and the ordered assignment/return body are required.
+function findStraightLineProcedure(page, title, titles, lines, rules) {
+  const finiteRules = rules.filter(
+    (rule) =>
+      rule.length === 4 &&
+      rule.every(Number.isFinite) &&
+      rule[2] > rule[0] &&
+      rule[3] >= rule[1] &&
+      rule[2] - rule[0] >= page.width * 0.65 &&
+      rule[3] - rule[1] <= page.height / 64
+  )
+  const frames = finiteRules.flatMap((top) => {
+    if (Math.abs(top[1] - title.y) > title.fontSize || title.x < top[0] || title.right > top[2])
+      return []
+    const aligned = finiteRules
+      .filter(
+        (rule) =>
+          Math.abs(rule[0] - top[0]) <= 1 && Math.abs(rule[2] - top[2]) <= 1 && rule[1] >= top[1]
+      )
+      .sort((a, b) => a[1] - b[1])
+    if (aligned.length !== 3 || aligned[0] !== top) return []
+    const [, divider, bottom] = aligned
+    if (
+      divider[1] <= title.bottom ||
+      divider[1] - title.bottom > title.fontSize * 1.6 ||
+      bottom[1] <= divider[3] + title.fontSize * 2 ||
+      bottom[1] >= page.height - title.fontSize * 2
+    )
+      return []
+    const rect = [top[0] - 2, top[1] - 2, top[2] + 2, bottom[3] + 2]
+    if (rect[0] < 0 || rect[1] < 0 || rect[2] > page.width || rect[3] > page.height) return []
+    if (
+      titles.filter(
+        (candidate) => candidate !== title && candidate.y >= rect[1] && candidate.bottom <= rect[3]
+      ).length
+    )
+      return []
+    const intersecting = lines.filter(
+      (line) =>
+        line.text.trim() &&
+        line.x < rect[2] &&
+        line.right > rect[0] &&
+        line.y < rect[3] &&
+        line.bottom > rect[1]
+    )
+    if (
+      !intersecting.length ||
+      intersecting.some(
+        (line) =>
+          ![line.x, line.y, line.right, line.bottom, line.fontSize].every(Number.isFinite) ||
+          line.right <= line.x ||
+          line.bottom <= line.y ||
+          line.x < rect[0] ||
+          line.right > rect[2] ||
+          line.y < rect[1] ||
+          line.bottom > rect[3]
+      )
+    )
+      return []
+    const body = lines
+      .filter(
+        (line) =>
+          // Quantized divider paint can overlap the input font's ascender;
+          // require its baseline region to start below the divider itself.
+          line.y > divider[1] + title.fontSize * 0.2 &&
+          line.bottom <= bottom[1] + title.fontSize * 0.2 &&
+          line.x >= rect[0] &&
+          line.right <= rect[2]
+      )
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+    const input = body[0]
+    if (
+      !input ||
+      !/^input\b/i.test(input.text.trim()) ||
+      input.x - rect[0] > title.fontSize * 1.2 ||
+      /:/.test(input.text)
+    )
+      return []
+    const assignments = body.filter((line) =>
+      /^(?:where\s+)?[\p{L}][\p{L}\d_']*(?:\s*[\p{S}\p{M}*⋆])*\s*←/u.test(line.text.trim())
+    )
+    const continuations = body.filter((line) => /^←/.test(line.text.trim()))
+    const primary = assignments.filter((line) => !/^where\s+/i.test(line.text.trim()))
+    const subordinate = assignments.filter((line) => /^where\s+/i.test(line.text.trim()))
+    const returns = body.filter((line) => /^return\b/i.test(line.text.trim()))
+    if (
+      primary.length < 2 ||
+      primary.length > 8 ||
+      subordinate.length > 1 ||
+      returns.length !== 1 ||
+      assignments.some((line) => line.y >= returns[0].y) ||
+      primary.some(
+        (line, index) => index > 0 && Math.abs(line.x - primary[index - 1].x) > title.fontSize * 0.3
+      ) ||
+      returns[0].x - primary[0].x > title.fontSize * 0.3 ||
+      primary[0].y <= input.bottom ||
+      returns[0].y <= primary.at(-1).bottom
+    )
+      return []
+    if (
+      continuations.some(
+        (line) =>
+          !assignments.some(
+            (owner) =>
+              owner.y < line.y &&
+              line.y - owner.y <= title.fontSize * 1.8 &&
+              line.x >= owner.x &&
+              line.x - owner.x <= title.fontSize * 2.5
+          )
+      )
+    )
+      return []
+    const allowed = new Set([input, ...assignments, ...continuations, ...returns])
+    const fragments = body.filter((line) => !allowed.has(line))
+    if (
+      fragments.some(
+        (line) =>
+          !assignments.some(
+            (owner) =>
+              line.y >= owner.y - title.fontSize * 0.8 &&
+              line.bottom <= owner.bottom + title.fontSize * 0.8 &&
+              line.fontSize <= owner.fontSize &&
+              (line.x >= owner.x - title.fontSize * 0.5 ||
+                Math.abs(line.y - owner.y) <= title.fontSize * 0.3)
+          )
+      )
+    )
+      return []
+    return [
+      {
+        caption: {
+          page: page.pageNumber,
+          lines: [title.text],
+          rect: [title.x, title.y, title.right, title.bottom]
+        },
+        rect
+      }
+    ]
+  })
+  return frames.length === 1 ? frames : []
+}
+
 // Complete labelled native rules own the pseudocode; keep its original image.
 export function findAlgorithmCandidates(page, nativeRules = []) {
   const lines = groupPageLines(page)
@@ -136,6 +281,8 @@ export function findAlgorithmCandidates(page, nativeRules = []) {
   return titles.flatMap((title) => {
     const inset = findInsetDotProcedure(page, title, titles, lines, insetRules)
     if (inset.length) return inset
+    const straightLine = findStraightLineProcedure(page, title, titles, lines, insetRules)
+    if (straightLine.length) return straightLine
     const aligned = rules.filter((r) => Math.abs(r[0] - title.x) <= 8 && r[2] >= title.right - 4)
     const top = aligned
       .filter((r) => Math.abs(r[1] - title.y) <= title.fontSize)
@@ -160,7 +307,20 @@ export function findAlgorithmCandidates(page, nativeRules = []) {
     )
     const io = content.some((line) => /^(?:Require|Ensure|Inputs?|Outputs?)\s*:/i.test(line.text))
     const ordinals = content.filter((line) => /^\d+\s*:/.test(line.text))
-    const controls = content.filter((line) => /^(?:for|if|while)\b/i.test(line.text))
+    const controls = content.filter(
+      (line) =>
+        /^(?:for|if|while)\b/i.test(line.text) &&
+        // Native math can split a statement before an inline "for" quantifier.
+        // A control begins its own baseline; a preceding same-font fragment
+        // on that baseline owns the trailing phrase as statement content.
+        !content.some(
+          (other) =>
+            other !== line &&
+            other.right <= line.x &&
+            Math.abs(other.y - line.y) <= line.fontSize * 0.2 &&
+            Math.abs(other.fontSize - line.fontSize) <= line.fontSize * 0.15
+        )
+    )
     const closes = content.filter((line) => /^end\s+(?:for|if|while)\b/i.test(line.text))
     // A labelled native frame can use indented loop controls instead of line
     // numbers. Require both the input/output anchor and matching closures.

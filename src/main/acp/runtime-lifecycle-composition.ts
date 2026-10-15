@@ -35,7 +35,7 @@ type AcpRuntimeLifecycleHost = Readonly<{
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ) => Promise<AcpAgentConnectionCandidate>
   clearPromptResources?: () => void
-  onPromptEnded?: (sessionId: string, turnToken: string) => void
+  releasePromptTurns?: () => void
 }>
 
 // Composes the model/connection lifecycle cycle around authoritative base and Session owners.
@@ -76,7 +76,10 @@ const composeAcpRuntimeLifecycleOwners = (
     clearPlanInteractions: () =>
       base.planInteractions.clearAll('The Session Plan interaction was disconnected.'),
     settleActivePrompts: () => base.sessionInteractions.settleActivePrompts(),
-    supersedeInteractions: () => base.sessionInteractions.supersedeAll(),
+    supersedeInteractions: () => {
+      base.sessionInteractions.supersedeAll()
+      host.releasePromptTurns?.()
+    },
     clearContextUsage: () => base.contextUsageTracker.clear(),
     clearAppliedSessionModels: () => session.sessionRegistry.clearAppliedModels(),
     activeSessionIds,
@@ -108,34 +111,27 @@ const composeAcpRuntimeLifecycleOwners = (
     disposeSessionProjection: () => session.sessionUpdateProjector.dispose(),
     clearHttpRoutes: () => base.sessionCapabilities.clearHttpRoutes(),
     selectSession: () => session.sessionRegistry.select(undefined),
-    publishInterruptedPromptFailures: (prompts) => {
+    publishInterruptedPromptFailures: (prompts, cause = 'connection-lost') => {
       for (const { scope, terminal } of prompts as ReturnType<
         AcpSessionInteractionOwner['settleActivePrompts']
       >) {
         try {
-          // Close has synchronously superseded these exact interactions. Their finalizers no
-          // longer own prompt-end notification, so release admission before detached retries.
-          // Keep this synchronous: awaiting the commit first could release a newer turn's lease.
-          try {
-            session.sessionUpdateProjector.clearAssistantOutput(scope.sessionId)
-            host.onPromptEnded?.(scope.sessionId, scope.turnToken)
-            options.callbacks?.onPromptEnded?.(scope.sessionId, scope.turnToken)
-          } catch (error) {
-            safeLogError('connection-close prompt-end callback failed', error)
-          }
           const event: AcpRuntimeEvent = {
             id: session.publication.nextEventId(),
             kind: 'error',
             level: 'error',
             providerError: false,
-            interruptionCause: 'connection-lost',
+            interruptionCause: cause,
             errorReportable: false,
             sessionId: scope.sessionId,
             promptExecutionId: scope.turnToken,
             ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
             timestamp: terminal.timestamp,
             title: ACP_PROMPT_FAILED_EVENT_TITLE,
-            text: 'ACP connection closed'
+            text:
+              cause === 'app-restart'
+                ? 'Session was interrupted before the app closed.'
+                : 'ACP connection closed'
           }
           if (options.runtimeSessions) {
             void options.runtimeSessions

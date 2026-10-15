@@ -48,7 +48,7 @@ const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Guidance only applies when using open-science-notebook tools.',
-  'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first. Put all 1-3 known questions in one call with 2-4 options. Infer reversible details; omit Other (UI adds custom, agent-decide, Skip). Finish continues; pending ends the turn.',
+  'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
@@ -181,6 +181,10 @@ const userChoiceOptionSchema = z.object({
 const userChoiceQuestionSchema = z.object({
   question: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS),
   header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
+  kind: z
+    .enum(['single-select', 'multi-select'])
+    .default('single-select')
+    .describe('Single answer or combinable choices.'),
   options: z
     .array(userChoiceOptionSchema)
     .min(MIN_AGENT_USER_CHOICE_OPTIONS)
@@ -1540,7 +1544,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'Collect 1-3 decisions when a request has materially different interpretations. Use this app-owned tool as the first tool call, before inspecting the workspace or using other tools, and include every known question in one call. Never print a textual choice list. Give each question 2-4 unique options with descriptions and omit Other; the app adds custom, agent-decide, and Skip. Questions appear one at a time. A pending result ends the turn normally; the app continues after Finish.',
+      'For materially different interpretations, use this app-owned tool as the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique, described options each. Never print choice lists or add Other (UI adds custom, agent-decide, Skip). Use multi-select only for combinable choices, never exclusive alternatives; otherwise single-select. Questions appear individually; multiple answers return as a JSON array of labels. Pending ends the turn; Finish continues.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,

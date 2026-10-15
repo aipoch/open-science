@@ -51,7 +51,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
 
-> 💡 **[AIPOCH Open-Science v0.37.1 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert Oktober 2026)_. AIPOCH Open-Science v0.37.1 stellt die Treue der PDF-Strukturextraktion wieder her — Abbildungen, linierte Tabellen und Beschriftungen behalten ihre native Zuordnung. Die Windows-Erfahrung wird robuster: Die Desktop-CLI funktioniert ab Installationspfaden mit Nicht-ASCII-Zeichen (z. B. Chinesisch), die PDF-Übersetzung unterstützt Windows-Laufwerkspfade, und Notebook-Unterprozesse öffnen keine Konsolenfenster mehr. Die Installer werden zudem schlanker, da ungenutzte Laufzeit-Payloads aus der Backend-Aufteilung von v0.37.0 entfernt wurden. Details finden Sie in den [neuesten Release Notes](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.0** _(aktualisiert im Oktober 2026)_. Dieser Meilenstein vereint den lokal ausgerichteten Forschungsarbeitsbereich, wissenschaftliche Agenten, Python/R-Ausführung im Notebook, Literaturwerkzeuge und portable `.science`-Forschungspakete. Die [Versionshinweise zu 1.0.0](../../release-notes/1.0.0/de.md) beschreiben Änderungen seit v0.37.2 und Hinweise zum CLI-Upgrade. Downloads entsprechen weiterhin der [neuesten veröffentlichten Version](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -173,13 +173,33 @@ Importierte Pakete sind schreibgeschützt. Sie führen keinen Code aus und stell
 
 ## Benchmark-Ergebnisse
 
-### 🏆 Platz 1 bei BiomniBench-DA Public 50
+### 🏆 AstaBench LitQA2-FullText-Search — 10/10 Zielpublikationen gefunden
 
-AIPOCH Open-Science erzielte im zusammengestellten Vergleich BiomniBench-DA Public 50 den höchsten Ranking-Wert: **79.05** mit **gpt-5.6-sol (xhigh)**. Das Ergebnis kombiniert einen Bewertungswert von Gemini 3.1 Pro (**81.04**) und einen Bewertungswert von DeepSeek v4-pro (**77.06**) als gleich gewichteten Mittelwert und platziert AIPOCH Open-Science damit auf **Platz 1** der gesammelten Public-50-Ergebnisse. Erkunden Sie den [BiomniBench-DA-Datensatz](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+AIPOCH Open-Science erreichte mit **DeepSeek v4-flash (max)**, Spezialisten für Literaturrecherche und Skills **100% recall@30** auf den zehn offiziellen Validierungsfragen: Jede gesuchte Publikation erschien unter den ersten 30 Ergebnissen. Der Wert liegt über den drei im Bericht aufgeführten öffentlichen Validierungsergebnissen und **20 Prozentpunkte** über dem höchsten Vergleichswert von **80%**. Der Bericht dokumentiert drei lokale Wiederholungen und damit die Publikationssuche für diese wissenschaftlichen Fragen.
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA-Public-50-Vergleich mit AIPOCH Open-Science auf Platz 1 und einem Wert von 79.05" width="1200" />
-</p>
+![AIPOCH Open-Science: 100% recall@30 und 10/10 Treffer auf der AstaBench-LitQA2-Validierungsmenge; Test und Validierung verwenden unterschiedliche Fragen](../images/readme/astabench-litqa2.png)
+
+Die Grafik enthält Test- und Validierungseinträge; die Reihenfolge ist rein numerisch. Recall@30 misst das Auffinden der Zielpublikation, nicht die Richtigkeit wissenschaftlicher Antworten.
+
+### 🏆 ASI-Bench B1–B4 — Höchste angezeigte Werte in allen vier aufgeführten Vergleichen
+
+AIPOCH Open-Science erzielte mit **GPT-6 (gpt-6-astra / xhigh)**, Fachspezialisten und Skills in ASI-Bench B1, B2, B3 und B4 **79.35, 56.11, 59.67 und 59.46 Punkte** — jeweils den höchsten angezeigten Wert der im Bericht erfassten Vergleiche. Die vier Bedingungen prüfen **das Ausführen eines vollständigen Plans, das Organisieren eines Arbeitsablaufs, die selbstständige Methodenwahl und autonome Forschung mit ablenkenden Hintergrundinformationen**.
+
+Die lokalen Codex-Vergleichswerte mit demselben Modell und derselben angegebenen Schlussfolgerungsstufe betragen 74.78, 56.09, 58.12 und 55.45. Die numerischen Abstände sind **+4.57, +0.02, +1.55 und +4.01 Punkte**. Für B1/B2 wurden drei lokale Wiederholungen berichtet; B3/B4 sind jeweils Mittelwerte aus drei lokalen Durchläufen mit je 60 Aufgaben.
+
+![AIPOCH Open-Science erzielt 79.35, 56.11, 59.67 und 59.46 in ASI-Bench B1–B4; lokale Ergebnisse und öffentliche Referenzen sind gekennzeichnet](../images/readme/asi-bench-b1-b4.jpg)
+
+Die lokalen Durchläufe nutzten seed31415. Bei AIPOCH wurden in B1 59 Aufgaben gewertet; eine wurde wegen des im Bericht beschriebenen Bewertungsfehlers ausgeschlossen. B3/B4 verwendeten v0.32.0 und einen Ersatzbewerter. Öffentliche Referenzen unterscheiden sich in Aufgabeninstanzen, Konfiguration und Bewertung; der B2-Abstand von 0.02 Punkten ist nur ein numerischer Unterschied.
+
+### 🏆 Höchster Wert im zusammengestellten BiomniBench-DA-Public-50-Vergleich — 79.05
+
+AIPOCH Open-Science erreichte mit **gpt-5.6-sol (xhigh)** in einer internen Bewertung der als BiomniBench-DA Public 50 bezeichneten 50 Aufgaben **79.05**, den höchsten angezeigten Wert im zusammengestellten Vergleich. Der Wert ist das gleich gewichtete Mittel aus **81.04** des Gemini-3.1-Pro-Bewerters und **77.06** des DeepSeek-v4-pro-Bewerters und beschreibt die biomedizinische Datenanalyse dieser Konfiguration. Siehe den [Bewertungsbericht](https://aipoch.com/blog/open-science-biomnibench-da).
+
+![AIPOCH Open-Science: interner BiomniBench-DA-Public-50-Mittelwert 79.05 aus den Bewertungen 77.06 und 81.04](../images/readme/biomnibench-public50-leaderboard.png)
+
+Der Vergleich mischt Einträge mit unterschiedlicher Bewerterabdeckung und ist keine offizielle Rangfolge unter einheitlichen Bewertungsbedingungen.
+
+**Bewertungsumfang:** Dies sind selbst berichtete lokale/interne Ergebnisse. Spitzenwerte in den aufgeführten Vergleichen belegen weder einen offiziellen ersten Rang noch statistisch signifikante Verbesserungen. Quellenstände, Modell- und Laufzeitkonfigurationen, Bewertungsumfang und das separate PaperFinding-Ergebnis auf 66 Validierungsfragen stehen im [ausführlichen Benchmark-Bericht (Englisch)](../benchmarks/README.md).
 
 ## Kernkompetenzen
 

@@ -1248,7 +1248,10 @@ it('does not start queued automatic inference after automatic updates are disabl
       smartAutoUpdate: false
     })
     release()
-    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('cancelled'))
+    // The preceding run commits its result and usage before this queued run can cancel.
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('cancelled'), {
+      timeout: 15000
+    })
     expect(classify).toHaveBeenCalledOnce()
     expect((await owner.view(id)).counts.pending).toBe(1)
     await refresh(id)

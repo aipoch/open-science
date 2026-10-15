@@ -12,6 +12,7 @@ import {
 } from 'typescript'
 import { expect, it } from 'vitest'
 
+// Keep the full-tree parser under V8 coverage; it can exceed the CI default of 30s.
 it('consumes Connector packages only through exports and keeps packages independent of host source', () => {
   const root = resolve(__dirname, '../../..')
   const resolutionOptions = ['tsconfig.node.json', 'tsconfig.web.json'].map((name) => ({
@@ -70,13 +71,12 @@ it('consumes Connector packages only through exports and keeps packages independ
     const owner = packages.find((pkg) => file.startsWith(pkg.directory + sep))
     const source = readFileSync(file, 'utf8')
     for (const { fileName: specifier } of preProcessFile(source, true, true).importedFiles) {
-      const target = resolutionOptions
-        .map(
-          (options, index) =>
-            resolveModuleName(specifier, file, options, sys, resolutionCaches[index]).resolvedModule
-              ?.resolvedFileName
-        )
-        .find(Boolean)
+      let target: string | undefined
+      for (const [index, options] of resolutionOptions.entries()) {
+        target = resolveModuleName(specifier, file, options, sys, resolutionCaches[index])
+          .resolvedModule?.resolvedFileName
+        if (target) break
+      }
       for (const pkg of packages) {
         if (specifier === pkg.manifest.name || specifier.startsWith(pkg.manifest.name + '/')) {
           if (!pkg.entries.has(specifier)) violations.push(`${path} -> private export ${specifier}`)
@@ -106,4 +106,4 @@ it('consumes Connector packages only through exports and keeps packages independ
     }
   }
   expect(violations).toEqual([])
-})
+}, 60_000)

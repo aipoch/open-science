@@ -6,6 +6,7 @@ import { expect, it } from 'vitest'
 import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { requiredLanesForModulePlan } from './module-impact-shadow.mjs'
 import {
   createPackageTestPlan,
   dedicatedPackageTestRoots,
@@ -255,6 +256,33 @@ it('local module and affected plans obey the same downstream package direction a
 })
 
 const hostBoundaryManifest = loadModuleImpactManifest()
+it('retains dedicated downstream host evidence while excluding independent upstream suites', async () => {
+  const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
+  const manifest = structuredClone(hostBoundaryManifest)
+  const source = 'src/shared/in-flight-promise.ts'
+  const id = Object.keys(manifest.modules).find((id) =>
+    manifest.modules[id].ownerPaths.includes(source)
+  )!
+  const module = manifest.modules[id]
+  delete module.fullTestReason
+  module.ownerPaths = [source, 'src/shared/in-flight-promise.test.ts']
+  module.interfacePaths = [source]
+  module.consumerModules = []
+  const upstream = 'packages/diagnostics/src/index.test.ts'
+  const dedicated = 'packages/notebook-network-sandbox/src/address-policy.test.ts'
+  module.testFiles.consumer = [upstream, dedicated]
+  const plan = createAffectedTestPlan(
+    [{ path: source, status: 'modified' }],
+    { status: 'not-requested', testFiles: [] },
+    manifest
+  )
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(dedicated)
+  expect(plan.testFiles).not.toContain(upstream)
+  // Explicit module runs keep their declared evidence; registration guards bound that evidence.
+  expect(createModuleTestPlan(id, manifest).testFiles).toContain(dedicated)
+})
+
 const hostBoundaryCases = (
   Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][]
 ).flatMap(([id, module]) => {
@@ -276,7 +304,7 @@ it('includes host modules with selective test plans', async () => {
 
 // Each module keeps its own timeout as the ownership manifest grows.
 it.each(hostBoundaryCases)(
-  'host-only selective plans never include package-owned unit suites: $id',
+  'host-only selective plans exclude independent upstream package suites: $id',
   async ({ id, source }) => {
     const { createAffectedTestPlan, createModuleTestPlan } =
       await import('./module-test-impact.mjs')
@@ -290,9 +318,25 @@ it.each(hostBoundaryCases)(
     ]) {
       if (plan.mode !== 'selective') continue
       expect(
-        plan.testFiles.filter((path: string) => path.startsWith('packages/')),
+        plan.testFiles.filter(
+          (path: string) =>
+            path.startsWith('packages/') &&
+            !dedicatedPackageTestRoots.some((root) => path.startsWith(root + '/'))
+        ),
         `${id}: ${source}`
       ).toEqual([])
+      // Portable CI excludes these integration tests; their declarations must retain the Linux job.
+      if (
+        plan.testFiles.some((path: string) =>
+          [
+            'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+            'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
+          ].includes(path)
+        )
+      )
+        expect(requiredLanesForModulePlan(plan), `${id}: Linux isolation evidence`).toContain(
+          'linux_runtime'
+        )
     }
   }
 )
@@ -456,7 +500,7 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   // The executor forwards the exact filters to Vitest; upstream builds are a separate step.
   const invocations: string[][] = []
   executeModuleTestPlan(durable, {
-    environment: {},
+    environment: { npm_execpath: '/fixture/npm-cli.js' },
     spawn: (_command: string, args: string[]) => {
       invocations.push(args)
       return { status: 0 }
@@ -523,7 +567,7 @@ it('routes download package changes downstream and host adapters without unchang
       ).toBe(false)
     const invocations: string[][] = []
     executeModuleTestPlan(plan, {
-      environment: {},
+      environment: { npm_execpath: '/fixture/npm-cli.js' },
       spawn: (_command: string, args: string[]) => {
         invocations.push(args)
         return { status: 0 }

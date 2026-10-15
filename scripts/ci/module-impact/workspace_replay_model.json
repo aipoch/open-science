@@ -195,7 +195,11 @@
       "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
       "src/renderer/src/stores/navigation-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
+      "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
+      "src/renderer/src/components/UpdateDialog.render.test.tsx"
     ]
   },
   "consumerModules": [],

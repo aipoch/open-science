@@ -66,7 +66,9 @@ import {
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import {
   deduplicateTableRegions,
-  narrativeDuplicateTableIndices
+  narrativeDuplicateTableIndices,
+  recoverCaptionedBorderlessMathTables,
+  encodedControlImageOnlyTable
 } from './literature-pdf-table-regions.mjs'
 import {
   splitRuledComparisonSections,
@@ -1607,6 +1609,30 @@ try {
           }
         })
       }
+      const borderlessMathFrames = pageGeometry.invalidGraphicsBounds
+        ? []
+        : recoverCaptionedBorderlessMathTables(
+            tokens,
+            rules,
+            pageCaptions,
+            pageNumber,
+            pageInference.tables,
+            nativeEvidenceGraphics
+          )
+      for (const frame of borderlessMathFrames) {
+        const rect = frame.cropRect.map((v) => v / 1.5)
+        if (
+          [...recognizedTableRects, ...graphicalTables.map((table) => table.rect)].some(
+            (other) =>
+              other[0] < rect[2] && other[2] > rect[0] && other[1] < rect[3] && other[3] > rect[1]
+          )
+        )
+          continue
+        graphicalTables.push({
+          rect,
+          caption: { ...frame.caption, rect: frame.caption.rect.map((v) => v / 1.5) }
+        })
+      }
       // A noisy caption can produce both a graphical-table fallback and a
       // detector fragment for the same source region. Keep the source-backed
       // candidate when their captions agree and their regions materially
@@ -2268,7 +2294,7 @@ try {
             }))
           }
         // Rendering-only regions must not enter the persisted worker transport.
-        const { cropRects, ...result } = table
+        const { cropRects, ...candidate } = table
         table.notes = [
           ...(table.notes ?? []),
           ...(nativeDefinitionTails.has(table.id)
@@ -2279,6 +2305,12 @@ try {
                 geometry.pages.find((p) => p.pageNumber === pageNumber + 1)
               ))
         ]
+        const result = encodedControlImageOnlyTable(
+          { ...candidate, notes: table.notes },
+          wholeOwnerFonts,
+          sourceContent,
+          rules
+        ) ?? { ...candidate, notes: table.notes }
         tables.push({
           ...result,
           notes: table.notes,

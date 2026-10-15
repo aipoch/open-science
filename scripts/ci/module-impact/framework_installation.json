@@ -32,6 +32,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/agent-process.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -462,6 +464,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/codex-transport-fallback-log.test.ts",
       "src/main/settings/compute-grants.test.ts",

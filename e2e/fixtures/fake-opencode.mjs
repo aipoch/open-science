@@ -12,6 +12,17 @@ import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
 const autoReviewResumeCounts = new Map()
+// A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
+const failResumeAttachmentWhenRequested = async (cwd) => {
+  let message
+  try {
+    message = await readFile(join(cwd, '.e2e-resume-attachment-failure'), 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
+  throw acp.RequestError.internalError({}, message)
+}
 const planRecoveryScenarios = new Set()
 const PLAN_DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
 const PLAN_RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
@@ -1529,6 +1540,7 @@ if (process.argv.includes('--version')) {
     }))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.new, async (context) => {
+      await failResumeAttachmentWhenRequested(context.params.cwd)
       const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
@@ -1542,6 +1554,7 @@ if (process.argv.includes('--version')) {
       configOptions: inlineThinkingModelOptions()
     }))
     .onRequest(acp.methods.agent.session.resume, async (context) => {
+      await failResumeAttachmentWhenRequested(context.params.cwd)
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(context.params.sessionId, {
         cwd: context.params.cwd,
@@ -1563,6 +1576,22 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes('Run the framework Resume acceptance journey.')) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: resumed ? 'Framework Resume completed.' : 'Framework execution ready for Stop.'
+            }
+          }
+        })
+        if (!resumed) await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: resumed ? 'end_turn' : 'cancelled' }
+      }
       if (
         !prompt.includes('Generate Session metadata only from the following JSON data:') &&
         (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))

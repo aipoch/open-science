@@ -388,6 +388,8 @@
       "src/main/notebook/windows-runtime-download.contract.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/notebook/windows-runtime-probe.windows.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",

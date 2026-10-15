@@ -6,6 +6,8 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
       "src/main/pdf-annotations/sharing.integration.test.ts",
       "src/main/storage/content-repository.test.ts",
       "src/main/storage/content-blob-registry.test.ts",

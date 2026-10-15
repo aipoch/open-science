@@ -67,11 +67,14 @@ jobs:
           RELEASE_TAG: ${{ steps.ref.outputs.tag }}
         run: |
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
-          # Standalone CLI runtime archives distribute via npm/GitHub release downloads, not the
-          # website CDN — keep them out of the mirrored asset set.
+          # Standalone CLI runtime archives and CLI distribution packages distribute via
+          # npm/GitHub release downloads, not the website CDN — keep them out of the mirrored
+          # asset set (their names also fail the desktop-installer manifest validation).
           rm -f dist-assets/open-science-*-darwin-*.tar.gz \
             dist-assets/open-science-*-linux-*-gnu.tar.gz \
-            dist-assets/open-science-*-win32-x64.zip
+            dist-assets/open-science-*-win32-x64.zip \
+            dist-assets/open-science-cli_*.deb \
+            dist-assets/open-science-cli-*.rpm
 
       # A dry-run exercises the real manifest/feed transforms without downloading every installer.
       # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name
@@ -90,6 +93,9 @@ jobs:
             --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
           while IFS=$'\t' read -r name size; do
             case "$name" in
+              # CLI distribution packages stay on GitHub Releases, not the website CDN.
+              open-science-cli_*.deb|open-science-cli-*.rpm)
+                ;;
               *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*-linux-arm64.AppImage|*_amd64.deb|*_arm64.deb|*-mac-arm64.zip|*-mac-x64.zip)
                 [ "$name" = "$(basename "$name")" ] || { echo "Unsafe asset name: $name" >&2; exit 1; }
                 truncate -s "$size" "dist-assets/$name"

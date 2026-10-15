@@ -7,9 +7,14 @@ export const WINDOWS_TEST_SHARD_COUNT = 8
 // tests, including new directories, so this routing never limits Vitest's discovery. Groups are
 // sized from measured scheduled-run durations so each serial shard stays inside the job timeout.
 export const WINDOWS_TEST_MODULE_GROUPS = [
-  // 1: Session packages (26 minutes in run 38172974522). Combining these with the
-  // renderer exceeded 60 minutes; pages and other renderer tests now join groups 4 and 6.
-  ['src/main/session-package/', 'src/main/archive/'],
+  // 1: Session packages and PDF packages. Run 38471659827 left this shard at 18 minutes
+  // while the catch-all exceeded 60; PDF writer alone used over six minutes there.
+  [
+    'src/main/session-package/',
+    'src/main/archive/',
+    'packages/pdf-structure/',
+    'packages/pdf-translation/'
+  ],
   // 2: Database and storage.
   ['src/main/database/', 'src/main/storage/', 'src/main/session-deletion/', 'src/main/local-fs/'],
   // 3: Session persistence, file versions and project files.
@@ -63,6 +68,8 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
 
 export function windowsTestShard(path: string): number {
   const normalized = path.replaceAll('\\', '/')
+  // Run 38536308322: this 14-minute suite pushed shard 2 past 60 minutes; shard 5 used 16.
+  if (normalized === 'src/main/database/migration-service.test.ts') return 5
   const group = WINDOWS_TEST_MODULE_GROUPS.findIndex((prefixes) =>
     prefixes.some((prefix) => normalized.startsWith(prefix))
   )

@@ -2,30 +2,36 @@ import { load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 
 const readFrontmatter = (
   raw: string
-): { value?: unknown; body: string; hasFrontmatter: boolean } => {
+): { value?: unknown; body: string; hasFrontmatter: boolean; frontmatterValid: boolean } => {
   const normalized = raw.replace(/\r\n?/g, '\n')
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
 
-  if (!match) return { body: raw, hasFrontmatter: false }
+  if (!match) return { body: raw, hasFrontmatter: false, frontmatterValid: true }
 
   const body = normalized.slice(match[0].length).replace(/^\n+/, '')
   try {
     return {
       value: loadYaml(match[1], { schema: FAILSAFE_SCHEMA }),
       body,
-      hasFrontmatter: true
+      hasFrontmatter: true,
+      frontmatterValid: true
     }
   } catch {
-    return { body, hasFrontmatter: true }
+    return { body, hasFrontmatter: true, frontmatterValid: false }
   }
 }
 
 // SKILL.md frontmatter reader shared by main and renderer. Values remain strings so metadata can
 // round-trip through previews and the repository without YAML bool/number/Date coercion.
-const parseFrontmatter = (
+const readFrontmatterFields = (
   raw: string
-): { fields: Record<string, string>; body: string; hasFrontmatter: boolean } => {
-  const { value: parsed, body, hasFrontmatter } = readFrontmatter(raw)
+): {
+  fields: Record<string, string>
+  body: string
+  hasFrontmatter: boolean
+  frontmatterValid: boolean
+} => {
+  const { value: parsed, body, hasFrontmatter, frontmatterValid } = readFrontmatter(raw)
 
   const fields: Record<string, string> = {}
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -39,6 +45,13 @@ const parseFrontmatter = (
     }
   }
 
+  return { fields, body, hasFrontmatter, frontmatterValid }
+}
+
+const parseFrontmatter = (
+  raw: string
+): { fields: Record<string, string>; body: string; hasFrontmatter: boolean } => {
+  const { fields, body, hasFrontmatter } = readFrontmatterFields(raw)
   return { fields, body, hasFrontmatter }
 }
 
@@ -66,10 +79,27 @@ const parseSkillDocument = (
   return { name, description, metadata, body, hasFrontmatter }
 }
 
+// Editors need to distinguish a temporarily invalid header from successfully parsed missing fields.
+// Keep the legacy document shape unchanged for import and repository consumers.
+// frontmatterValid reports YAML syntax only, not Skill schema validity; absent headers are valid.
+const parseSkillDocumentWithStatus = (
+  raw: string
+): ReturnType<typeof parseSkillDocument> & { frontmatterValid: boolean } => {
+  const { fields, body, hasFrontmatter, frontmatterValid } = readFrontmatterFields(raw)
+  const { name, description, ...metadata } = fields
+  return { name, description, metadata, body, hasFrontmatter, frontmatterValid }
+}
+
 const splitFrontmatter = (raw: string): { description: string; body: string } => {
   const { fields, body } = parseFrontmatter(raw)
 
   return { description: fields.description ?? '', body }
 }
 
-export { frontmatterFieldNames, parseFrontmatter, parseSkillDocument, splitFrontmatter }
+export {
+  frontmatterFieldNames,
+  parseFrontmatter,
+  parseSkillDocument,
+  parseSkillDocumentWithStatus,
+  splitFrontmatter
+}
