@@ -193,7 +193,7 @@ describe('runtime certification workflow', () => {
       uses: './.github/workflows/runtime-certification.yml',
       with: { allow_failure: "${{ github.event_name != 'workflow_dispatch' }}" }
     })
-    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke', 'cli-artifacts'])
     expect(workflow('release.yml').jobs).not.toHaveProperty('runtime-certification')
   })
 })
