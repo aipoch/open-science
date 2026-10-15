@@ -195,3 +195,11 @@ it('verifies resilient-download alone without inventing environment or sibling p
     { script: 'check:resilient-download-package', packages: ['resilient-download'] }
   ])
 })
+
+it('verifies the private test-impact tool without selecting application packages', () => {
+  const plan = verificationPlanFromArguments(['--packages=test-impact'], {})
+  expect(plan).toEqual({ builds: ['packages/test-impact'], tests: ['packages/test-impact'] })
+  expect(verificationCommands(plan)).toEqual([
+    { script: 'check:test-impact-package', packages: ['test-impact'] }
+  ])
+})

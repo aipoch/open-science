@@ -93,6 +93,10 @@
         "packages/literature-screening",
         "packages/journal-catalog"
       ]
+    },
+    {
+      "root": "packages/test-impact",
+      "dependencies": []
     }
   ]
 }
