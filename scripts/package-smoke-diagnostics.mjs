@@ -27,6 +27,19 @@ const processTable = () =>
     )
   })
 
+const sampleMacProcess = (pid) =>
+  new Promise((resolveSample) => {
+    execFile(
+      '/usr/bin/sample',
+      [String(pid), '1', '10'],
+      { timeout: 4_000, maxBuffer: 1024 * 1024 },
+      (error, stdout) =>
+        resolveSample(
+          stdout?.slice(0, TAIL_BYTES) || `(sample unavailable: ${error?.code ?? 'empty'})`
+        )
+    )
+  })
+
 export const selectSmokeProcesses = (table, pid) => {
   if (table === '(process table unavailable)') return table
   const rows = table
@@ -52,14 +65,31 @@ export const selectSmokeProcesses = (table, pid) => {
 
 export const collectSmokeDiagnostics = async (
   { configRoot, pid, desktop = false },
-  { getProcessTable = processTable } = {}
+  {
+    getProcessTable = processTable,
+    sampleProcess = sampleMacProcess,
+    platform = process.platform
+  } = {}
 ) => {
   const sections = []
   try {
     if (Number.isSafeInteger(pid) && pid > 0) {
-      sections.push(
-        `Process snapshot (PID PPID STAT ELAPSED COMMAND):\n${selectSmokeProcesses(await getProcessTable(), pid)}`
-      )
+      const owned = selectSmokeProcesses(await getProcessTable(), pid)
+      sections.push(`Process snapshot (PID PPID STAT ELAPSED COMMAND):\n${owned}`)
+      if (desktop && platform === 'darwin') {
+        // Sample only the observed desktop and its Node backend, never unrelated runner processes.
+        const targets = owned
+          .split('\n')
+          .filter((line) => Number(line.trim().split(/\s+/)[0]) === pid || /\/node$/.test(line))
+          .slice(0, 2)
+        const samples = await Promise.all(
+          targets.map(async (line) => {
+            const target = Number(line.trim().split(/\s+/)[0])
+            return `macOS sample PID ${target}:\n${await sampleProcess(target)}`
+          })
+        )
+        sections.push(...samples)
+      }
       if (process.platform === 'linux') {
         for (const name of ['stat', 'wchan']) {
           sections.push(

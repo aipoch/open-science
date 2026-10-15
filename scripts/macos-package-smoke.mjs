@@ -76,6 +76,8 @@ const waitFor = async (description, check, timeoutMs = STARTUP_TIMEOUT_MS) => {
 
 const runProcess = (executable, args, options = {}) =>
   new Promise((resolveProcess, rejectProcess) => {
+    const started = Date.now()
+    console.log(`macOS smoke command: ${basename(executable)} ${args[0] ?? ''} started`)
     const child = spawn(executable, args, {
       cwd: options.cwd,
       env: options.env,
@@ -89,6 +91,9 @@ const runProcess = (executable, args, options = {}) =>
     child.stderr?.on('data', (chunk) => (stderr += chunk))
     child.once('error', rejectProcess)
     child.once('exit', (code) => {
+      console.log(
+        `macOS smoke command: ${basename(executable)} exited ${code}; elapsedMs=${Date.now() - started}`
+      )
       // Electron's detached crashpad process can inherit these descriptors after the app exits.
       // Close our readers at the direct child's exit so the successful smoke does not stay alive
       // waiting for an unrelated crash reporter to close its copy of the pipe.

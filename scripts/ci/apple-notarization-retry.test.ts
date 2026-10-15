@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isRetryableAppleFailure, runAppleCommand } from './apple-notarization-retry.mjs'
+import {
+  isRetryableAppleFailure,
+  runAppleCommand,
+  summarizeAppleNetworkLog
+} from './apple-notarization-retry.mjs'
 
 const network = 'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."'
 const failed = {
@@ -10,6 +14,32 @@ const failed = {
 const success = { code: 0, stdout: 'validated', stderr: '' }
 
 describe('Apple operation retries', () => {
+  it('extracts only stapler protocol metrics without exporting headers, bodies or other processes', () => {
+    const event = (process: string, eventMessage: string): string =>
+      JSON.stringify({
+        processImagePath: `/usr/bin/${process}`,
+        processID: 42,
+        eventMessage
+      })
+    const summary = summarizeAppleNetworkLog(
+      [
+        'stream startup banner',
+        event(
+          'stapler',
+          'Task summary {protocol="h2", response_status=200, reused=0, transaction_duration_ms=12.5, Authorization=secret}'
+        ),
+        event('stapler', 'Request header Authorization: secret; body: private ticket'),
+        event('notarytool', 'Task summary {protocol=h3, response_status=200}'),
+        event('stapler', 'Task summary {protocol=http/1.1, response_status=0}')
+      ].join('\n')
+    )
+    expect(summary).toEqual([
+      { pid: 42, protocol: 'h2', response_status: 200, reused: 0, transaction_duration_ms: 12.5 },
+      { pid: 42, protocol: 'http/1.1', response_status: 0 }
+    ])
+    expect(JSON.stringify(summary)).not.toMatch(/secret|private|h3/)
+  })
+
   it('recognizes observed connection loss but never treats Error 68 alone as transient', () => {
     expect(isRetryableAppleFailure(failed.stderr)).toBe(true)
     expect(isRetryableAppleFailure('The staple and validate action failed! Error 68.')).toBe(false)

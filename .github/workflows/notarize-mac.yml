@@ -180,6 +180,8 @@ jobs:
       - name: Notarize + staple
         if: steps.gate.outputs.enabled == 'true'
         env:
+          # Diagnose public ticket transport only; never log authenticated notary requests.
+          CFNETWORK_DIAGNOSTICS: ${{ !inputs.certified_build && inputs.source_run != '' && inputs.operation != 'notarize' && '3' || '0' }}
           OPERATION: ${{ inputs.operation }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -188,6 +190,28 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           nt="$RUNNER_TEMP/notarytool.json"
           shopt -s nullglob
+
+          if [ "${CFNETWORK_DIAGNOSTICS:-0}" = 3 ]; then
+            sw_vers
+            xcodebuild -version
+            xcrun --find stapler
+            network_log="$RUNNER_TEMP/stapler-network.jsonl"
+            (umask 077; touch "$network_log")
+            sudo /usr/bin/log stream --style ndjson --level debug \
+              --predicate 'process == "stapler"' > "$network_log" 2>&1 &
+            network_pid=$!
+            finish_network_diagnostics() {
+              local code=$?
+              trap - EXIT
+              sudo kill -TERM "$network_pid" || true
+              wait "$network_pid" || true
+              node scripts/ci/apple-notarization-retry.mjs --summarize-network "$network_log" || \
+                echo '::warning::CFNetwork summaries unavailable'
+              rm -f "$network_log"
+              exit "$code"
+            }
+            trap finish_network_diagnostics EXIT
+          fi
 
           if [ "$OPERATION" = "notarize" ] && { [ -z "${KEY_ID:-}" ] || [ -z "${ISSUER:-}" ]; }; then
             echo "::error::APPLE_API_KEY_ID / APPLE_API_ISSUER are not set — cannot notarize"; exit 1

@@ -1062,6 +1062,18 @@ describe('build verification throughput', () => {
     expect(step(job, 'Remove App Store Connect API key').if).toBe('always()')
   })
 
+  it('limits CFNetwork capture to unauthenticated diagnostics and exports only summaries', () => {
+    const capture = step(workflow('notarize-mac.yml').jobs.notarize, 'Notarize + staple')
+    expect(capture.env?.CFNETWORK_DIAGNOSTICS).toBe(
+      "${{ !inputs.certified_build && inputs.source_run != '' && inputs.operation != 'notarize' && '3' || '0' }}"
+    )
+    expect(capture.run).toContain('--predicate \'process == "stapler"\'')
+    expect(capture.run).toContain('--summarize-network "$network_log"')
+    expect(capture.run).toContain('trap finish_network_diagnostics EXIT')
+    expect(capture.run).toContain('exit "$code"')
+    expect(capture.run).toContain('rm -f "$network_log"')
+  })
+
   it('reuses source artifacts in focused dry runs without emitting release certification', () => {
     const dryRun = workflow('notarize-dryrun.yml')
     expect(dryRun.jobs.build.if).toContain("inputs.source_run == ''")

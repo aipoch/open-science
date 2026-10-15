@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { collectSmokeDiagnostics, selectSmokeProcesses } from './package-smoke-diagnostics.mjs'
 
 const roots: string[] = []
@@ -31,7 +31,7 @@ describe('package smoke failure evidence', () => {
     )
     const diagnostic = await collectSmokeDiagnostics(
       { configRoot: root, pid: 42, desktop: true },
-      { getProcessTable: async () => '42 1 S 00:10 Open-Science' }
+      { getProcessTable: async () => '42 1 S 00:10 Open-Science', platform: 'linux' }
     )
     expect(diagnostic).toContain('42 1 S')
     expect(diagnostic).toContain('current <REDACTED>')
@@ -39,6 +39,34 @@ describe('package smoke failure evidence', () => {
     expect(diagnostic).not.toContain('other launch')
     expect(diagnostic).not.toContain('old')
     expect(diagnostic.length).toBeLessThan(34_000)
+  })
+  it('samples only observed desktop and backend processes and redacts sample tokens', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mac-sample-'))
+    roots.push(root)
+    await writeFile(join(root, 'web-token'), 'private-smoke-token')
+    const sampleProcess = vi.fn(async (pid: number) => `stack ${pid} private-smoke-token`)
+    const diagnostic = await collectSmokeDiagnostics(
+      { configRoot: root, pid: 42, desktop: true },
+      {
+        platform: 'darwin',
+        sampleProcess,
+        getProcessTable: async () =>
+          '42 1 S 00:10 /app\n43 42 S 00:09 /backend/node\n44 42 S 00:09 /helper\n99 1 S 00:10 /unrelated/node'
+      }
+    )
+    expect(sampleProcess.mock.calls).toEqual([[42], [43]])
+    expect(diagnostic).toContain('stack 43 <REDACTED>')
+    expect(diagnostic).not.toContain('private-smoke-token')
+    sampleProcess.mockClear()
+    await collectSmokeDiagnostics(
+      { configRoot: root, pid: 404, desktop: true },
+      {
+        platform: 'darwin',
+        sampleProcess,
+        getProcessTable: async () => '99 1 S 00:10 /unrelated/node'
+      }
+    )
+    expect(sampleProcess).not.toHaveBeenCalled()
   })
   it('collects CLI daemon logs even after the service state has been removed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cli-diagnostics-'))
