@@ -17,6 +17,7 @@ import {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  installDmgApp,
   packagedLaunchArguments,
   launchAndProbe,
   parseArguments,
@@ -32,6 +33,39 @@ afterEach(async () => {
 })
 
 describe('macOS package smoke', () => {
+  it('copies the complete DMG app and detaches before returning the installed launch path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dmg-install-'))
+    roots.push(root)
+    const mount = join(root, 'mounted image')
+    const source = join(mount, 'Open Science.app')
+    const installed = join(root, 'installed apps', 'Open Science.app')
+    await mkdir(source, { recursive: true })
+    const run = vi.fn().mockResolvedValue({})
+    await expect(
+      installDmgApp('signed.dmg', mount, join(root, 'installed apps'), run)
+    ).resolves.toBe(installed)
+    expect(run.mock.calls).toEqual([
+      [
+        '/usr/bin/hdiutil',
+        ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, 'signed.dmg']
+      ],
+      ['/usr/bin/ditto', [source, installed]],
+      ['/usr/bin/hdiutil', ['detach', '-force', mount]]
+    ])
+    run
+      .mockReset()
+      .mockResolvedValue({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('copy failed'))
+    await expect(
+      installDmgApp('signed.dmg', mount, join(root, 'installed apps'), run)
+    ).rejects.toThrow('copy failed')
+    expect(run).toHaveBeenLastCalledWith('/usr/bin/hdiutil', ['detach', '-force', mount])
+    run.mockReset().mockRejectedValue(new Error('mount failed'))
+    await expect(installDmgApp('signed.dmg', mount, root, run)).rejects.toThrow('mount failed')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('captures the backend log and process state before cleaning up a timed-out launch', async () => {
     vi.useFakeTimers()
     const events: string[] = []
