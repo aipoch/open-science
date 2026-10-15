@@ -194,12 +194,13 @@ describe('module registration approval boundary', () => {
     }
   )
 
-  it('exempts only registration JSON after the CI script owner rule', () => {
+  it('protects CI tooling and exempts only registration JSON', () => {
     const entries = readFileSync(join(process.cwd(), '.github/CODEOWNERS'), 'utf8')
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith('#'))
     expect(entries).toEqual([
+      '/packages/test-impact/ @aipoch/ci-maintainers',
       '/.github/CODEOWNERS @aipoch/ci-maintainers',
       '/CODEOWNERS @aipoch/ci-maintainers',
       '/.github/workflows/ @aipoch/ci-maintainers',

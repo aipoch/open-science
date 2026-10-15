@@ -66,6 +66,9 @@
     },
     {
       "path": "./packages/literature-library/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/test-impact/tsconfig.dev.json"
     }
   ]
 }
