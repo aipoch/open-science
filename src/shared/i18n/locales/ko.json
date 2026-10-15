@@ -7290,6 +7290,18 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "URL이나 와일드카드 없이 정확한 공개 호스트 이름을 한 줄에 하나씩 입력하세요. 저장하면 이 구성에서 해당 호스트만 허용됩니다.",
     "Could not update this local configuration. Your experiment has not been started.": "로컬 구성을 업데이트하지 못했습니다. 실험은 시작되지 않았습니다.",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "고유한 대문자 환경 변수 이름을 사용하세요. 런타임 제어 변수는 허용되지 않습니다.",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "변경된 모델, 서비스 또는 매개변수를 한 줄에 하나씩 기록하세요. 이러한 차이는 결과와 함께 저장됩니다."
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "변경된 모델, 서비스 또는 매개변수를 한 줄에 하나씩 기록하세요. 이러한 차이는 결과와 함께 저장됩니다.",
+    "Set two-column body": "본문을 두 단으로 설정",
+    "Applies to your next message. Select body text only; exclude tables.": "다음 메시지에 적용됩니다. 본문만 선택하고 표는 제외하세요.",
+    "Redrawing replaces the body area on that page.": "다시 그리면 해당 페이지의 본문 영역이 바뀝니다.",
+    "Body areas: {{count}}_other": "본문 영역 {{count}}개",
+    "Clear this page": "이 페이지 지우기",
+    "Drag across both columns, then confirm the divider.": "두 단을 모두 드래그한 다음 구분선을 확인하세요.",
+    "Two-column body": "두 단 본문",
+    "Column divider": "단 구분선",
+    "Save body area": "본문 영역 저장",
+    "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
+    "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
+    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다."
   }
 }

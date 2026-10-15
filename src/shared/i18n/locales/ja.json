@@ -7292,6 +7292,18 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "URL やワイルドカードを含めず、正確な公開ホスト名を1行に1つ入力してください。保存すると、この設定でこれらのホストのみが許可されます。",
     "Could not update this local configuration. Your experiment has not been started.": "ローカル設定を更新できませんでした。実験は開始していません。",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "環境変数名には重複しない大文字を使用してください。ランタイム制御変数は使用できません。",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "変更したモデル、サービス、パラメーターを1行に1つ記録してください。これらの相違点は結果とともに保存されます。"
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "変更したモデル、サービス、パラメーターを1行に1つ記録してください。これらの相違点は結果とともに保存されます。",
+    "Set two-column body": "本文を2段組に設定",
+    "Applies to your next message. Select body text only; exclude tables.": "次のメッセージに適用されます。本文のみを選択し、表は含めないでください。",
+    "Redrawing replaces the body area on that page.": "描画し直すと、そのページの本文領域が置き換わります。",
+    "Body areas: {{count}}_other": "本文領域 {{count}} 個",
+    "Clear this page": "このページをクリア",
+    "Drag across both columns, then confirm the divider.": "両方の段をドラッグして選択し、境界線を確定してください。",
+    "Two-column body": "2段組の本文",
+    "Column divider": "段の境界線",
+    "Save body area": "本文領域を保存",
+    "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
+    "You can configure up to 32 pages.": "最大32ページまで設定できます。",
+    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
   }
 }

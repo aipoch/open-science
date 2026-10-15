@@ -7292,6 +7292,18 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "每行輸入一個確切的公用主機名稱，不含 URL 或萬用字元。儲存僅為此設定授權這些主機。",
     "Could not update this local configuration. Your experiment has not been started.": "無法更新此本機設定。實驗尚未啟動。",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "使用唯一的大寫環境變數名稱，不允許設定執行階段控制變數。",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "記錄變更的模型、服務或參數，每行一項。這些差異將隨結果儲存。"
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "記錄變更的模型、服務或參數，每行一項。這些差異將隨結果儲存。",
+    "Set two-column body": "設定雙欄正文",
+    "Applies to your next message. Select body text only; exclude tables.": "此設定適用於你的下一則訊息。僅選取正文，排除表格。",
+    "Redrawing replaces the body area on that page.": "重新繪製會取代該頁的正文區域。",
+    "Body areas: {{count}}_other": "{{count}} 個正文區域",
+    "Clear this page": "清除本頁",
+    "Drag across both columns, then confirm the divider.": "拖曳選取兩欄，然後確認分隔線。",
+    "Two-column body": "雙欄正文",
+    "Column divider": "欄間分隔線",
+    "Save body area": "儲存正文區域",
+    "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
+    "You can configure up to 32 pages.": "最多可設定 32 頁。",
+    "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。"
   }
 }

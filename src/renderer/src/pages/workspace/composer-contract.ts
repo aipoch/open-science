@@ -1,6 +1,9 @@
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
+import type {
+  PdfReadingPositionSource,
+  PdfProseReadingSelection
+} from '../../../../shared/session-pdf-context'
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,
@@ -14,11 +17,19 @@ import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import type { ComposerDoc } from './composer/composer-doc'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 
+export type ComposerPdfProseReadingRestore = {
+  // Process-local: park with the draft, never persist preview authority across a reload.
+  scope?: string
+  // Consumed after projection; retaining only scope marks a draft whose live areas must park.
+  selections?: readonly PdfProseReadingSelection[]
+}
+
 export type ComposerDraft = {
   // Process-local retry owner for this restored snapshot; never a Main Session field.
   retrySessionOwner?: { sessionId: string; projectId: string }
   setupSessionToken?: string
   queuedEdit?: MessageQueueEditIntent
+  restoredPdfProseReading?: ComposerPdfProseReadingRestore
   doc: ComposerDoc
   annotations: Annotation[]
   attachments: UploadedAttachment[]
@@ -40,6 +51,8 @@ export type ComposerSendSnapshot = {
   pdfContext?: MessagePdfContextSnapshot
   pdfReadingPosition?: PdfReadingPosition
   pdfReadingPositionSource?: PdfReadingPositionSource
+  pdfProseReadingSelections?: readonly PdfProseReadingSelection[]
+  pdfProseRegionsScope?: string
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: Array<{
     sourceKind: SessionPdfContextSource['sourceKind']

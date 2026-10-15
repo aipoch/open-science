@@ -7759,6 +7759,21 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "Введите по одному точному публичному имени хоста в строке, без URL и масок. Сохранение разрешает только эти хосты для данной конфигурации.",
     "Could not update this local configuration. Your experiment has not been started.": "Не удалось обновить локальную конфигурацию. Эксперимент не запущен.",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "Используйте уникальные имена переменных окружения в верхнем регистре. Управляющие переменные среды выполнения запрещены.",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Запишите изменения моделей, служб или параметров, по одному в строке. Эти отличия будут сохранены вместе с результатами."
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Запишите изменения моделей, служб или параметров, по одному в строке. Эти отличия будут сохранены вместе с результатами.",
+    "Set two-column body": "Задать две колонки основного текста",
+    "Applies to your next message. Select body text only; exclude tables.": "Применяется к следующему сообщению. Выделите только основной текст, исключив таблицы.",
+    "Redrawing replaces the body area on that page.": "Повторное выделение заменит область основного текста на этой странице.",
+    "Body areas: {{count}}_one": "{{count}} область основного текста",
+    "Body areas: {{count}}_few": "{{count}} области основного текста",
+    "Body areas: {{count}}_many": "{{count}} областей основного текста",
+    "Body areas: {{count}}_other": "{{count}} области основного текста",
+    "Clear this page": "Очистить эту страницу",
+    "Drag across both columns, then confirm the divider.": "Выделите обе колонки перетаскиванием, затем подтвердите разделитель.",
+    "Two-column body": "Основной текст в две колонки",
+    "Column divider": "Разделитель колонок",
+    "Save body area": "Сохранить область основного текста",
+    "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
+    "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
+    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
   }
 }

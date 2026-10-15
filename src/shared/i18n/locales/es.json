@@ -7620,6 +7620,20 @@
     "Enter one exact public hostname per line, without a URL or wildcard. Saving authorizes only these hosts for this configuration.": "Introduzca un nombre de host público exacto por línea, sin URL ni comodines. Al guardar se autorizan solo estos hosts para esta configuración.",
     "Could not update this local configuration. Your experiment has not been started.": "No se pudo actualizar esta configuración local. El experimento no se ha iniciado.",
     "Use unique uppercase environment variable names. Runtime control variables are not allowed.": "Utilice nombres únicos de variables de entorno en mayúsculas. No se permiten variables de control del entorno de ejecución.",
-    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Registre los cambios de modelos, servicios o parámetros, uno por línea. Estas diferencias acompañarán a los resultados."
+    "Record changed models, services, or parameters, one change per line. These differences will accompany the results.": "Registre los cambios de modelos, servicios o parámetros, uno por línea. Estas diferencias acompañarán a los resultados.",
+    "Set two-column body": "Definir el cuerpo en dos columnas",
+    "Applies to your next message. Select body text only; exclude tables.": "Se aplica al siguiente mensaje. Seleccione solo el texto principal y excluya las tablas.",
+    "Redrawing replaces the body area on that page.": "Al volver a dibujar, se sustituirá el área del cuerpo de esa página.",
+    "Body areas: {{count}}_one": "{{count}} área del cuerpo",
+    "Body areas: {{count}}_many": "{{count}} áreas del cuerpo",
+    "Body areas: {{count}}_other": "{{count}} áreas del cuerpo",
+    "Clear this page": "Borrar esta página",
+    "Drag across both columns, then confirm the divider.": "Arrastre sobre ambas columnas y confirme la línea divisoria.",
+    "Two-column body": "Cuerpo en dos columnas",
+    "Column divider": "Línea divisoria de columnas",
+    "Save body area": "Guardar el área del cuerpo",
+    "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
+    "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
+    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje."
   }
 }
