@@ -3,7 +3,7 @@ name: Nightly Publish
 # Publish successful scheduled Nightlies, or explicitly promote a verified main run. Certification and
 # regression jobs must also pass. The low-privilege triggering workflow prepares all metadata; this
 # publisher uses gate code from main and never executes triggering-run code. Branch dry-runs may
-# exercise candidate gate code with a read-only token; release writes require main.
+# exercise candidate gate code without credentials; release writes require main.
 on:
   workflow_run:
     workflows:
@@ -48,7 +48,7 @@ jobs:
     env:
       SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
     steps:
-      # Candidate gate code is permitted only for an explicit dry-run with read-only permissions.
+      # Candidate gate code is permitted only for an explicit dry-run and receives no credentials.
       - name: Checkout trusted gate code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -57,31 +57,35 @@ jobs:
           sparse-checkout: scripts/ci/nightly-publish-gates.mjs
           sparse-checkout-cone-mode: false
 
-      - name: Resolve and validate source run
-        id: source
+      - name: Fetch source run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
           source_file="$RUNNER_TEMP/nightly-source.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$source_file"
-          node scripts/ci/nightly-publish-gates.mjs --source-run "$source_file"
-          source_sha=$(jq -r .head_sha "$source_file")
+          source_sha=$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' "$source_file")
           status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$source_sha...main" --jq .status)
           [[ "$status" == ahead || "$status" == identical ]] || exit 1
+
+      - name: Validate source run
+        id: source
+        run: node scripts/ci/nightly-publish-gates.mjs --source-run "$RUNNER_TEMP/nightly-source.json"
 
       # runtime-certification and regression are continue-on-error in Nightly so the build and its
       # artifacts stay diagnosable, which means the run concludes `success` even when they failed.
       # The jobs API still reports each job's real conclusion, so gate publication on it here.
-      - name: Require advisory certification and regression jobs to have passed
-        id: gates
+      - name: Fetch publication jobs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           jobs_file="$RUNNER_TEMP/nightly-jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" --paginate \
             --jq '.jobs[] | {name, conclusion}' | jq -s . > "$jobs_file"
-          node scripts/ci/nightly-publish-gates.mjs --jobs "$jobs_file" --publish
+
+      - name: Require advisory certification and regression jobs to have passed
+        id: gates
+        run: node scripts/ci/nightly-publish-gates.mjs --jobs "$RUNNER_TEMP/nightly-jobs.json" --publish
 
       - name: Check for an unpublished build
         id: decide

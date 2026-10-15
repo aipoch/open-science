@@ -475,9 +475,10 @@ describe('release and scheduled workflow topology', () => {
     })
     const gates = step(plan, 'Require advisory certification and regression jobs to have passed')
     expect(gates.id).toBe('gates')
-    expect(gates.run).toContain('repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs')
-    expect(gates.run).toContain('--paginate')
-    expect(gates.run).toContain('{name, conclusion}')
+    const fetchJobs = step(plan, 'Fetch publication jobs')
+    expect(fetchJobs.run).toContain('repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs')
+    expect(fetchJobs.run).toContain('--paginate')
+    expect(fetchJobs.run).toContain('{name, conclusion}')
     expect(gates.run).toContain('node scripts/ci/nightly-publish-gates.mjs --jobs')
     expect(gates.run).not.toContain('workflow_run.head')
     expect(plan.steps?.some(({ run }) => run?.includes('npm '))).toBe(false)
@@ -552,7 +553,7 @@ describe('release and scheduled workflow topology', () => {
       SOURCE_SHA: '${{ needs.plan.outputs.source_sha }}'
     })
     const steps = flow.jobs.plan.steps!
-    expect(steps.indexOf(step(flow.jobs.plan, 'Resolve and validate source run'))).toBeLessThan(
+    expect(steps.indexOf(step(flow.jobs.plan, 'Validate source run'))).toBeLessThan(
       steps.indexOf(
         step(flow.jobs.plan, 'Require advisory certification and regression jobs to have passed')
       )
@@ -560,6 +561,25 @@ describe('release and scheduled workflow topology', () => {
     expect(
       step(flow.jobs.plan, 'Require advisory certification and regression jobs to have passed').run
     ).toContain('--publish')
+  })
+
+  it('keeps credentials out of candidate gate execution', () => {
+    const flow = workflow('nightly-publish.yml')
+    const plan = flow.jobs.plan
+    expect(plan.env).not.toHaveProperty('GH_TOKEN')
+    expect(plan.env).not.toHaveProperty('GITHUB_TOKEN')
+    const evaluators = plan.steps!.filter(({ run }) => run?.includes('node scripts/'))
+    expect(evaluators).toHaveLength(2)
+    for (const evaluator of evaluators) {
+      expect(evaluator.env).toBeUndefined()
+      expect(evaluator.run).not.toContain('gh api')
+      expect(evaluator.run).not.toContain('secrets.')
+    }
+    for (const name of ['Fetch source run', 'Fetch publication jobs']) {
+      const fetch = step(plan, name)
+      expect(fetch.env?.GH_TOKEN).toBe('${{ secrets.GITHUB_TOKEN }}')
+      expect(fetch.run).not.toContain('node ')
+    }
   })
 
   it.skipIf(process.platform === 'win32')(
@@ -577,10 +597,11 @@ describe('release and scheduled workflow topology', () => {
         conclusion: 'success',
         event: 'workflow_dispatch'
       }
-      const script = step(
-        workflow('nightly-publish.yml').jobs.plan,
-        'Resolve and validate source run'
-      ).run!
+      const plan = workflow('nightly-publish.yml').jobs.plan
+      const script = [
+        step(plan, 'Fetch source run').run,
+        step(plan, 'Validate source run').run
+      ].join('\n')
       const run = (status: string, id = '123'): string =>
         execFileSync(
           'bash',
