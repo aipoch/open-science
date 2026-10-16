@@ -1,5 +1,4 @@
 // Bump the revision whenever dependency or source-file analysis semantics change.
 // The format version is independent: rule additions do not require a data migration.
 export const NOTEBOOK_ANALYZER_VERSION = 1 as const
-export const NOTEBOOK_ANALYZER_REVISION =
-  'tree-sitter-in-process-212-bounded-checksum-comprehension-inputs-optim-exact-method-empty-r-loop-helper-writer-guards-python-partial-callbacks-r-json-helper-static-paths-checksum-namespace-guards-evaluation-boundaries-opaque-checksum-tails-json-first-read-local-path-checksum-json-helper-local-path-prefix-json-reader-options-multi-helper-replay-python-open-stat-metadata-helper-inline-digest-known-scientific-call-authority-r-json-writer-static-path-opaque-payload-python-path-rebinding-metadata-helper-loop-guards-rsamtools-bam-index-lineage-scanbam-reader-family-rsamtools-filterbam-rsamtools-sort-merge-rsamtools-asbam-rsamtools-pileup-files-readpileup-rsamtools-scientific-readers-rsamtools-indexed-handles-rsamtools-fa-gzindex-pysam-fasta-fastx-explicit-index-lineage-pysam-cram-positional-reference-rsamtools-bam-file-list-lineage'
+export const NOTEBOOK_ANALYZER_REVISION = 'scientific-lineage-hardening-20261013'
