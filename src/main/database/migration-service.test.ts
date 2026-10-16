@@ -589,24 +589,28 @@ describe('application database migrations', () => {
     )
   })
 
-  it('fills derived literature text when adopting an already current schema', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtReleasedManifest(client)
-    await client.literatureItem.create({
-      data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
-    })
-    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
-    await migrateApplicationDatabase(client)
-    expect(
-      (
-        await new LiteratureCatalog(async () => client!).search({
-          scope: 'library',
-          query: 'étude'
-        })
-      ).totalCount
-    ).toBe(1)
-  })
+  it(
+    'fills derived literature text when adopting an already current schema',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtReleasedManifest(client)
+      await client.literatureItem.create({
+        data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
+      })
+      await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
+      await migrateApplicationDatabase(client)
+      expect(
+        (
+          await new LiteratureCatalog(async () => client!).search({
+            scope: 'library',
+            query: 'étude'
+          })
+        ).totalCount
+      ).toBe(1)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rolls back a failed literature text backfill and retries the upgrade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-rollback-'))

@@ -91,6 +91,7 @@ const requestSchema = z.discriminatedUnion('kind', [
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_PENDING_REQUESTS = 256
 const MAX_CLIENTS = 128
+const CONTROLLER_RETIRE_DEADLINE_MS = 15_000
 
 // This is a projection of the same command owners and event source used by Web and Task.
 // Only a process authenticated over the OS-local endpoint may assert Electron caller identity.
@@ -111,6 +112,10 @@ export async function startDesktopRuntimeTransport(options: {
     disconnect(): void | Promise<void>
   }
   onNotificationAction?: (token: string, action: 'clicked' | 'closed') => void
+  // True once the owning process has begun stopping; new Desktops must not adopt it.
+  isStopping?: () => boolean
+  // Upper bound for retiring a disconnected controller; defaults to CONTROLLER_RETIRE_DEADLINE_MS.
+  controllerRetireDeadlineMs?: number
   onDisconnect?: () => void
   onConnect?: () => void
   onNotificationView?: (state: z.infer<typeof desktopNotificationViewSchema>) => Promise<void>
@@ -154,10 +159,42 @@ export async function startDesktopRuntimeTransport(options: {
     (request: DesktopNativeOperation, clientId?: string, signal?: AbortSignal) => Promise<unknown>
   >()
   let shutdownRequested = false
+  const isStopping = (): boolean => shutdownRequested || (options.isStopping?.() ?? false)
   const activeSocket = (): WebSocket | undefined =>
     [...(controller?.sockets ?? []), ...connections.keys()].find(
       (socket) => socket.readyState === WebSocket.OPEN
     )
+  // The retiring fence is bounded and never sticky: a stuck operation, a never-converging teardown or a
+  // throwing disconnect is logged and abandoned so the next Desktop can take control.
+  const retireController = async (previous: NonNullable<typeof controller>): Promise<void> => {
+    const deadline = options.controllerRetireDeadlineMs ?? CONTROLLER_RETIRE_DEADLINE_MS
+    const bounded = async (label: string, work: () => Promise<unknown>): Promise<void> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          work(),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              logger.warn('desktop controller retirement step timed out', { step: label })
+              resolve()
+            }, deadline)
+            timer.unref?.()
+          })
+        ])
+      } catch (error) {
+        logger.warn('desktop controller retirement step failed', {
+          step: label,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    await bounded('operations', () => Promise.allSettled([...previous.operations]))
+    await bounded('settlement', () => waitForLifecycleSettlement({ timeoutMs: deadline }))
+    await bounded('disconnect', async () => previous.lifecycle?.disconnect())
+    if (controller === previous) controller = undefined
+  }
   const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
   const send = (socket: WebSocket, frame: string, onSent?: () => void): void => {
     senders.get(socket)?.send(frame, onSent)
@@ -289,15 +326,7 @@ export async function startDesktopRuntimeTransport(options: {
             !shutdownRequested
           ) {
             previous.retiring = true
-            void Promise.allSettled([...previous.operations])
-              .then(waitForLifecycleSettlement)
-              .then(() => previous.lifecycle?.disconnect())
-              .then(() => {
-                if (controller === previous) controller = undefined
-              })
-              .catch(() => {
-                /* Unsettled teardown retains the controller fence. */
-              })
+            void retireController(previous)
           }
         }
         socket.once('close', cleanup)
@@ -335,9 +364,15 @@ export async function startDesktopRuntimeTransport(options: {
               stringifyRpcJson({
                 kind: 'bootstrap',
                 launch: options.launch ?? 'cli',
-                control: controls() ? 'granted' : 'held',
-                ...(!controls()
-                  ? { controlReason: controller.retiring ? 'operation-pending' : 'controller-held' }
+                control: controls() && !isStopping() ? 'granted' : 'held',
+                ...(!controls() || isStopping()
+                  ? {
+                      controlReason: isStopping()
+                        ? 'runtime-stopping'
+                        : controller?.retiring
+                          ? 'operation-pending'
+                          : 'controller-held'
+                    }
                   : {}),
                 generation: listener.endpoint.generation,
                 entryPath: options.entryPath ?? process.execPath,
@@ -452,9 +487,20 @@ export async function startDesktopRuntimeTransport(options: {
             (request.kind === 'lifecycle' && request.request.operation !== 'inspect') ||
             (request.kind === 'host-invoke' &&
               ['desktop:update-gate', 'desktop:update-abort'].includes(request.channel))
+          // Recovery and rollback commands are never blocked by a pending settlement: the lifecycle
+          // owner defers reopening admission until it is safe, and settlement waits are bounded.
+          // Only starting new preparation (prepare/hold/update-gate) waits for a live teardown.
+          const isRecovery =
+            request.kind === 'shutdown' ||
+            (request.kind === 'lifecycle' &&
+              ['abort', 'release'].includes(request.request.operation)) ||
+            (request.kind === 'host-invoke' && request.channel === 'desktop:update-abort')
+          // Shutdown is the last-resort escape hatch and is allowed even over a running operation.
+          const overlapsOperation =
+            request.kind !== 'shutdown' && Boolean(controller?.operations.size)
           if (
             requiresControl &&
-            (!controls() || Boolean(controller?.operations.size) || hasPendingLifecycleSettlement())
+            (!controls() || overlapsOperation || (!isRecovery && hasPendingLifecycleSettlement()))
           ) {
             respond({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,

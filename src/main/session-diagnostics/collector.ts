@@ -222,6 +222,20 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
       })
     }
   }
+  if (input.legacyDesktopLogPath) {
+    for (let index = 0; index < 3; index++) {
+      const name = index === 0 ? 'main.log' : `main.${index}.log`
+      sources.push({
+        id: `desktop-legacy-log:${name}`,
+        name: `Desktop (earlier version): ${name}`,
+        kind: 'log',
+        available: false,
+        root: dirname(input.legacyDesktopLogPath),
+        path: join(dirname(input.legacyDesktopLogPath), name),
+        output: `logs/desktop-legacy/${name}`
+      })
+    }
+  }
   sources.push({
     id: 'database',
     name: 'Session database records',

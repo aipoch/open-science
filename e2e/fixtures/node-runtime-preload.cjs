@@ -56,6 +56,7 @@ if (process.versions.electron) {
   const childPreload = join(__dirname, 'node-runtime-child-preload.cjs')
   process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(childPreload)}`
 } else {
+  require('./session-outcome-preload.cjs')
   if (process.platform === 'darwin') require('./mock-node-credentials.cjs')
   const fs = require('node:fs/promises')
   const statfs = fs.statfs

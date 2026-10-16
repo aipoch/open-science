@@ -1,6 +1,7 @@
 import { RuntimeStopError } from './runtime-stop-confirmation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
+import type { UpdateStatus } from '../shared/update'
 import type { InstallationUpdateRecord } from './update/installation-protection'
 const state = vi.hoisted(() => ({
   record: undefined as InstallationUpdateRecord | undefined,
@@ -52,8 +53,12 @@ const base = {
 } as InstallationUpdateRecord
 function setup(
   launch: 'desktop' | 'cli' = 'desktop',
-  verifyInstallerReady?: () => Promise<void>
+  verifyInstallerReady?: () => Promise<void>,
+  legacyInstall?: (status: UpdateStatus) => boolean
 ): {
+  setClosing: ReturnType<typeof vi.fn>
+  verifyArtifact: ReturnType<typeof vi.fn>
+  onHandoff: ReturnType<typeof vi.fn>
   hooks: ReturnType<typeof createDesktopUpdateIntegration>
   invoke: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
@@ -90,23 +95,39 @@ function setup(
   } as unknown as DesktopRuntimeClient
   const restart = vi.fn().mockResolvedValue(undefined)
   const retainLease = vi.fn()
+  const setClosing = vi.fn()
+  const verifyArtifact = vi.fn().mockResolvedValue({ version: '2', files: {} })
+  const onHandoff = vi.fn()
   const hooks = createDesktopUpdateIntegration({
     location: { installationRoot: '/tmp' },
     client: () => client,
     currentVersion: '1',
     allowedProcessIds: () => [],
     verifyInstallerReady,
-    verifyArtifact: vi.fn().mockResolvedValue({ version: '2', files: {} }),
+    verifyArtifact,
+    ...(legacyInstall ? { legacyInstall } : {}),
     validateConfiguration: vi.fn(),
-    setClosing: vi.fn(),
+    setClosing,
     retainLease,
     restart,
     reconnectOriginal: reconnect,
     onProgress: progress,
-    onHandoff: vi.fn(),
+    onHandoff,
     onStopped: vi.fn()
   })
-  return { hooks, invoke, stop, restart, retainLease, refresh, reconnect, progress }
+  return {
+    hooks,
+    invoke,
+    stop,
+    restart,
+    retainLease,
+    refresh,
+    reconnect,
+    progress,
+    setClosing,
+    verifyArtifact,
+    onHandoff
+  }
 }
 const status = { state: 'ready' as const, current: '1', latest: '2' }
 beforeEach(() => {
@@ -340,5 +361,120 @@ describe('Desktop installation orchestration', () => {
     expect((await hooks.recoverInstall!()).outcome).toBe('recovered')
     expect(state.finish).toHaveBeenCalledWith(expect.anything(), 'op', 'cancel')
     expect(restart).toHaveBeenCalledWith(config)
+  })
+})
+
+const stopBeforeAbort = (invoke: ReturnType<typeof vi.fn>): void => {
+  invoke.mockRejectedValueOnce(new Error('gate unavailable'))
+}
+
+describe('supervised install admission release', () => {
+  it('releases admission when the update gate throws', async () => {
+    const { hooks, invoke, setClosing } = setup()
+    invoke.mockRejectedValueOnce(
+      Object.assign(new Error('Another Desktop controls this Runtime'), {
+        code: 'command-unavailable'
+      })
+    )
+    await hooks.prepareInstall!(status, {})
+    await expect(hooks.installGate!({})).rejects.toThrow('Another Desktop')
+    expect(setClosing).toHaveBeenCalledWith(true)
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the supervised stop is not confirmed', async () => {
+    const { hooks, stop, setClosing } = setup()
+    stop.mockRejectedValue(new RuntimeStopError('runtime-stop-timeout', {} as never))
+    await hooks.prepareInstall!(status, {})
+    await expect(hooks.installGate!({})).rejects.toMatchObject({ reason: 'runtime-stop-timeout' })
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the supervised handoff release cannot abort the gate', async () => {
+    const { hooks, invoke, setClosing, progress } = setup()
+    invoke.mockResolvedValueOnce({ completed: false, reaped: false, blockedBy: ['agent'] })
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    invoke.mockRejectedValue(new Error('abort unavailable'))
+    setClosing.mockClear()
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('legacy install for uncertified channels', () => {
+  const legacy = (): true => true
+  it('stops and confirms the runtime without a supervised record or artifact verification', async () => {
+    const { hooks, invoke, stop, retainLease, verifyArtifact, onHandoff } = setup(
+      'desktop',
+      undefined,
+      legacy
+    )
+    expect(await hooks.prepareInstall!(status, {})).toBeUndefined()
+    expect(state.availability).toHaveBeenCalled()
+    expect(await hooks.installGate!({})).toMatchObject({ completed: true, reaped: true })
+    await hooks.beforeInstallHandoff!(status)
+    expect(invoke).toHaveBeenCalledWith('desktop:update-gate', [{}])
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(retainLease).toHaveBeenCalledTimes(1)
+    expect(onHandoff).toHaveBeenCalledTimes(1)
+    expect(verifyArtifact).not.toHaveBeenCalled()
+    expect(state.begin).not.toHaveBeenCalled()
+  })
+
+  it('aborts an unconfirmed stop and releases admission', async () => {
+    const { hooks, invoke, stop, setClosing } = setup('desktop', undefined, legacy)
+    stop.mockRejectedValue(new RuntimeStopError('runtime-stop-timeout', {} as never))
+    await hooks.prepareInstall!(status, {})
+    await expect(hooks.installGate!({})).rejects.toMatchObject({ reason: 'runtime-stop-timeout' })
+    expect(invoke).toHaveBeenCalledWith('desktop:update-abort')
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the task gate refuses', async () => {
+    const { hooks, invoke, setClosing, stop } = setup('desktop', undefined, legacy)
+    invoke.mockResolvedValue({ completed: false, reaped: false, blockedBy: ['agent'] })
+    await hooks.prepareInstall!(status, {})
+    expect(await hooks.installGate!({})).toMatchObject({ completed: false, blockedBy: ['agent'] })
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+    expect(stop).not.toHaveBeenCalled()
+  })
+
+  it('refuses a live occupant before touching the runtime', async () => {
+    const { hooks, invoke, setClosing } = setup('desktop', undefined, legacy)
+    const busy = new Error('occupied')
+    state.availability.mockRejectedValue(busy)
+    await expect(hooks.prepareInstall!(status, {})).rejects.toBe(busy)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(setClosing).not.toHaveBeenCalledWith(true)
+  })
+
+  it('restarts the runtime and releases admission when the installer cannot start', async () => {
+    const { hooks, restart, setClosing } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledWith(config))
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('releases admission when the legacy handoff release cannot abort the gate', async () => {
+    const { hooks, invoke, setClosing, progress } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    stopBeforeAbort(invoke)
+    await expect(hooks.installGate!({})).rejects.toThrow()
+    invoke.mockRejectedValue(new Error('abort unavailable'))
+    setClosing.mockClear()
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('keeps the supervised path when the channel is certified', async () => {
+    const { hooks, verifyArtifact } = setup('desktop', undefined, () => false)
+    await hooks.prepareInstall!(status, {})
+    expect(verifyArtifact).toHaveBeenCalled()
+    expect(state.begin).toHaveBeenCalled()
   })
 })

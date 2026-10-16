@@ -21,6 +21,7 @@ type Step = {
   with?: Record<string, unknown>
 }
 type Job = {
+  permissions?: Record<string, string>
   'timeout-minutes'?: number
   env?: Record<string, string>
   if?: string
@@ -76,6 +77,11 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   )!
   expect(enforce.run).toContain('check windows_regressions')
   for (const path of [
+    'src/main/database/migration-service.test.ts',
+    'scripts/ci/package-boundaries.test.ts',
+    'src/main/desktop-startup-recovery.test.ts',
+    'src/main/update/installation-protection.test.ts',
+    'src/main/update/deb-systemd-gate.test.ts',
     'src/main/session-diagnostics/collector.test.ts',
     'src/main/literature/smart-collections.test.ts',
     'src/main/literature/pdf-structure/owner.test.ts',
@@ -83,6 +89,13 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
   ])
     expect(step.run).toContain(path)
   expect(step.run).toContain('--testNamePattern')
+  for (const name of [
+    'fills derived literature text',
+    'persisted path spelling',
+    'queued automatic inference',
+    'startup Recover settles'
+  ])
+    expect(step.run).toContain(name)
   expect(step.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
   expect(step.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
 })
@@ -323,9 +336,12 @@ describe('independent source regression', () => {
           options: [
             'full',
             'portable',
+            'scheduled-fixes',
             'presentation',
             'workspace-images',
-            'presentation-screening'
+            'presentation-screening',
+            'runtime-evidence',
+            'static-impact'
           ]
         }
       }
@@ -338,6 +354,8 @@ describe('independent source regression', () => {
       'cancel-in-progress': true
     })
     expect(Object.keys(scheduled.jobs)).toEqual([
+      'static_impact',
+      'runtime_evidence',
       'regression',
       'portable',
       'portable_report',
@@ -378,6 +396,7 @@ describe('independent source regression', () => {
 
   it('leaves setup and upload time beyond all serial suite budgets including accessibility', () => {
     const coreBudgets = scheduled.jobs.regression.steps
+      .filter((step) => step.if?.includes("inputs.mode == 'full'"))
       .flatMap(({ run }) => [...(run ?? '').matchAll(/--global-timeout=(\d+)/g)])
       .map((match) => Number(match[1]))
     const regressions = action.runs.steps.find(
@@ -403,7 +422,7 @@ describe('independent source regression', () => {
   it('runs both scheduled rounds even when main has not changed', () => {
     expect(scheduled.jobs).not.toHaveProperty('plan')
     expect(scheduled.jobs.regression.if).toBe(
-      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' }}"
+      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
     )
     expect(scheduled.jobs.regression.steps.some(({ run }) => run?.includes('previous'))).toBe(false)
   })
@@ -716,3 +735,42 @@ it.skipIf(process.platform === 'win32')(
     }
   }
 )
+
+it('runs the same isolated test-impact verifier on three operating systems only on explicit dispatch', () => {
+  const job = scheduled.jobs.static_impact
+  expect(job.if).toBe(
+    "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'static-impact' }}"
+  )
+  expect(job.permissions).toEqual({ contents: 'read' })
+  expect(job.strategy).toEqual({
+    'fail-fast': false,
+    matrix: { os: ['ubuntu-latest', 'windows-latest', 'macos-15'] }
+  })
+  expect(job.steps.filter((step) => step.run).map((step) => step.run)).toEqual([
+    'npm run check:test-impact-package'
+  ])
+  expect(
+    job.steps.some(
+      (step) => step.uses?.startsWith('actions/setup-node@') && step.with?.['node-version'] === 24
+    )
+  ).toBe(true)
+  expect(scheduled.jobs.regression.if).toContain("inputs.mode != 'static-impact'")
+  for (const name of ['portable', 'portable_report', 'packages', 'report'])
+    expect(scheduled.jobs[name].if).not.toContain('static-impact')
+})
+
+it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
+  const step = scheduled.jobs.regression.steps.find(
+    ({ name }) => name === 'Test scheduled regression fixes'
+  )!
+  expect(step.if).toContain("inputs.mode == 'scheduled-fixes'")
+  for (const file of [
+    'session-turn-outcome',
+    'auto-review-stop-resume',
+    'transcript-capacity',
+    'desktop-runtime-restart'
+  ])
+    expect(step.run).toContain(`e2e/${file}.spec.ts`)
+  expect(step.run).toContain('--retries=0 --fail-on-flaky-tests')
+  expect(step['continue-on-error']).toBeUndefined()
+})

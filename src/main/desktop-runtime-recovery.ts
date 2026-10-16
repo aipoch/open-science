@@ -1,4 +1,5 @@
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { ChildProcess } from 'node:child_process'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { DesktopRuntimeRecoveryState } from '../shared/desktop-runtime-recovery'
@@ -83,6 +84,9 @@ export function createDesktopRuntimeRecovery(options: {
             publish({ ...state, phase: 'unavailable' })
             throw new Error('The original desktop backend is no longer available.')
           }
+          // A new socket can authenticate while its predecessor still owns cleanup. Do not
+          // expose a usable conversation or cache spectator authority before that fence settles.
+          await waitForDesktopRuntimeControl(candidate, controller.signal)
           await abortable(
             options.activate(candidate, controller.signal, () => {
               controller.signal.throwIfAborted()
@@ -117,6 +121,29 @@ export function createDesktopRuntimeRecovery(options: {
       return attempt
     }
   }
+}
+
+/** The attached Runtime has started stopping and must be replaced, never reused. */
+export class RuntimeStoppingError extends Error {
+  constructor() {
+    super('The Runtime is shutting down and cannot be reused.')
+    this.name = 'RuntimeStoppingError'
+  }
+}
+
+/** Refresh only attachment authority; never replay a command or bypass a live controller. */
+export async function waitForDesktopRuntimeControl(
+  client: DesktopRuntimeClient,
+  signal: AbortSignal
+): Promise<void> {
+  signal.throwIfAborted()
+  if (client.runtimeInfo().controlReason === 'runtime-stopping') throw new RuntimeStoppingError()
+  while (client.runtimeInfo().controlReason === 'operation-pending') {
+    await delay(100, undefined, { signal })
+    await abortable(client.refreshControl(), signal)
+    if (client.runtimeInfo().controlReason === 'runtime-stopping') throw new RuntimeStoppingError()
+  }
+  signal.throwIfAborted()
 }
 
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {

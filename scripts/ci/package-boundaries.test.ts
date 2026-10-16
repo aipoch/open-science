@@ -500,7 +500,7 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   // The executor forwards the exact filters to Vitest; upstream builds are a separate step.
   const invocations: string[][] = []
   executeModuleTestPlan(durable, {
-    environment: {},
+    environment: { npm_execpath: '/fixture/npm-cli.js' },
     spawn: (_command: string, args: string[]) => {
       invocations.push(args)
       return { status: 0 }
@@ -567,7 +567,7 @@ it('routes download package changes downstream and host adapters without unchang
       ).toBe(false)
     const invocations: string[][] = []
     executeModuleTestPlan(plan, {
-      environment: {},
+      environment: { npm_execpath: '/fixture/npm-cli.js' },
       spawn: (_command: string, args: string[]) => {
         invocations.push(args)
         return { status: 0 }

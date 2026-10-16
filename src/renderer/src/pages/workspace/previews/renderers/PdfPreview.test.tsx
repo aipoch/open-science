@@ -36,7 +36,9 @@ import { type PdfTranslationCheckpoint } from '../../../../../../shared/pdf-tran
 
 import { renderPdfNativeLinks } from './pdf-native-links'
 import * as translationJobs from './use-pdf-translation-job'
+import * as translationDocuments from './use-pdf-translation-document'
 import type { PdfDocumentSource } from '../../../../../../shared/pdf-document-source'
+import type { PdfProseRegion } from '../../../../../../shared/pdf-text'
 
 // Keep the real reader behavior while allowing the layout-admission spy below.
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
@@ -250,6 +252,147 @@ describe('PdfPreviewContent', () => {
   const flush = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await Promise.resolve()
   }
+
+  it('confirms body bounds and an adjustable divider, replacing only the current page', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const original: PdfProseRegion[] = [
+      { page: 1, left: 0.2, top: 0.2, right: 0.8, bottom: 0.8, split: 0.5 },
+      { page: 2, left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, split: 0.5 }
+    ]
+    const onChange = vi.fn()
+    const render = async (regions: readonly PdfProseRegion[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/body.pdf"
+            name="body.pdf"
+            pdfProseRegions={regions}
+            pdfProseRegionIdentityKey="scope/binding"
+            onPdfProseRegionsChange={onChange}
+          />
+        )
+        await flush()
+      })
+    }
+    await render(original)
+    expect(container.querySelectorAll('[data-pdf-prose-region]')).toHaveLength(2)
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(100, 80, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 140, clientY: 136, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 460, clientY: 584, button: 0 })
+    )
+    expect(onChange).not.toHaveBeenCalled()
+    await act(async () =>
+      fireEvent.change(screen.getByRole('slider', { name: 'Column divider' }), {
+        target: { value: '60' }
+      })
+    )
+    expect(
+      container.querySelector<HTMLElement>('[data-pdf-prose-draft] [data-pdf-prose-split]')?.style
+        .left
+    ).toBe('60%')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save body area' })))
+    const confirmed = onChange.mock.calls[0][0] as PdfProseRegion[]
+    expect(confirmed).toHaveLength(2)
+    expect(confirmed[0]).toMatchObject({ page: 1, left: 0.1, top: 0.1, right: 0.9 })
+    expect(confirmed[0].bottom).toBeCloseTo(0.9)
+    expect(confirmed[0].split).toBeCloseTo(0.58)
+    expect(confirmed[1]).toEqual(original[1])
+    expect(container.querySelector('[data-pdf-prose-draft]')).toBeNull()
+    await render(confirmed)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Clear this page' })))
+    expect(onChange).toHaveBeenLastCalledWith([original[1]])
+  })
+
+  it('drops an unconfirmed body draft on identity change and cancels without publishing a region', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const onChange = vi.fn()
+    const render = async (identity: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/body.pdf"
+            name="body.pdf"
+            pdfProseRegionIdentityKey={identity}
+            onPdfProseRegionsChange={onChange}
+          />
+        )
+        await flush()
+      })
+    }
+    await render('branch-a/binding')
+    const acquisitions = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 360, clientY: 504, button: 0 })
+    )
+    expect(screen.getByRole('button', { name: 'Save body area' })).toBeTruthy()
+    await render('branch-b/binding')
+    expect(screen.queryByRole('button', { name: 'Save body area' })).toBeNull()
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[data-pdf-preview-root]')!, { key: 'Escape' })
+    )
+    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(acquisitions)
+  })
+
+  it('refuses body selection on rotated pages without enabling annotation or Agent actions', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    const page = await (
+      getPage as ReturnType<typeof vi.fn<() => Promise<{ getViewport: ReturnType<typeof vi.fn> }>>>
+    )()
+    page.getViewport.mockReturnValue({ width: 800, height: 600, rotation: 90 })
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const onChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="/rotated.pdf"
+          name="rotated.pdf"
+          onPdfProseRegionsChange={onChange}
+        />
+      )
+      await flush()
+    })
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    expect(screen.getAllByText('Body areas are unavailable on rotated pages.')).toHaveLength(2)
+    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('hides successful native import receipts, while keeping progress and incomplete-import warnings', async () => {
     const cancel = vi.fn()
     const renderProgress = async (
@@ -2584,6 +2727,29 @@ describe('PdfPreviewContent', () => {
     )
   })
 
+  it.each(['connected', 'disconnected'] as const)(
+    'reports rejected PDF releases only while the backend is connected (%s)',
+    async (phase) => {
+      const error = new Error('Preview release unavailable')
+      const report = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      vi.mocked(window.api.previewResources.release).mockRejectedValue(error)
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/report.pdf" name="report.pdf" source="local" />)
+      )
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase, epoch: phase === 'connected' ? 0 : 1 })
+        root.unmount()
+      })
+      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+      expect(destroyDocument).toHaveBeenCalled()
+      if (phase === 'connected') {
+        expect(report).toHaveBeenCalledWith('Failed to release PDF preview resource', error)
+      } else {
+        expect(report).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it.each(['web', 'desktop'] as const)(
     'reloads revoked %s PDF ranges while retaining zoom, position and the selected version',
     async (surface) => {
@@ -4567,6 +4733,260 @@ describe('PdfPreviewContent', () => {
     )
     expect(container.querySelector('[title="First"]')?.getAttribute('aria-selected')).toBe('false')
     expect(container.querySelector('[title="Second"]')?.getAttribute('aria-selected')).toBe('true')
+  })
+
+  describe('search coverage', () => {
+    const incompleteMessage = 'Search incomplete. Some pages could not be read.'
+    const textPage = (
+      text: string
+    ): { cleanup: ReturnType<typeof vi.fn>; getTextContent: ReturnType<typeof vi.fn> } => ({
+      cleanup: vi.fn(),
+      getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] })
+    })
+    const renderSearchDocument = async (
+      searchGetPage: ReturnType<typeof vi.fn>,
+      path = '/workspace/search-coverage.pdf'
+    ): Promise<void> => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 3, getPage: searchGetPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path={path} name="search.pdf" />)
+        await flush()
+      })
+    }
+    const changeQuery = async (input: HTMLInputElement, query: string): Promise<void> => {
+      await act(async () => fireEvent.change(input, { target: { value: query } }))
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      // Keep viewport page rendering out of these full-document search assertions.
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = vi.fn()
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+    })
+
+    it.each(['getPage', 'getTextContent'])(
+      'keeps available matches and announces incomplete coverage when %s fails',
+      async (failureStage) => {
+        const failedPage = {
+          cleanup: vi.fn(),
+          getTextContent: vi.fn().mockRejectedValue(new Error('Unreadable page'))
+        }
+        const searchGetPage = vi.fn(async (pageNumber: number) => {
+          if (pageNumber === 2) {
+            if (failureStage === 'getPage') throw new Error('Unreadable page')
+            return failedPage
+          }
+          return textPage(pageNumber === 1 ? 'needle' : 'needle needle')
+        })
+        await renderSearchDocument(searchGetPage)
+        const input = await openSearch('needle')
+
+        expect(input.parentElement?.textContent).toContain('1/3')
+        expect(searchGetPage.mock.calls.map(([pageNumber]) => pageNumber)).toEqual([1, 2, 3])
+        expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+        expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe(
+          incompleteMessage
+        )
+        if (failureStage === 'getTextContent') expect(failedPage.cleanup).toHaveBeenCalledOnce()
+        await act(async () => screen.getByRole('button', { name: 'Next match' }).click())
+        expect(input.parentElement?.textContent).toContain('2/3')
+        await act(async () => screen.getByRole('button', { name: 'Previous match' }).click())
+        expect(input.parentElement?.textContent).toContain('1/3')
+      }
+    )
+
+    it('distinguishes all unreadable pages from a completed search with no matches', async () => {
+      await renderSearchDocument(
+        vi.fn(async (pageNumber: number) => {
+          if (pageNumber !== 2) throw new Error('Unreadable page')
+          return {
+            cleanup: vi.fn(),
+            getTextContent: vi.fn().mockRejectedValue(new Error('Unreadable text'))
+          }
+        })
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('0/0')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+      expect(screen.getByRole('button', { name: 'Next match' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('button', { name: 'Previous match' }).hasAttribute('disabled')).toBe(
+        true
+      )
+    })
+
+    it('announces a failed page while preserving matches before the remaining scan finishes', async () => {
+      let resolveLastPage: ((page: ReturnType<typeof textPage>) => void) | undefined
+      await renderSearchDocument(
+        vi.fn(async (pageNumber: number) => {
+          if (pageNumber === 1) return textPage('needle')
+          if (pageNumber === 2) throw new Error('Unreadable page')
+          return new Promise((resolve) => (resolveLastPage = resolve))
+        })
+      )
+      const input = await openSearch('needle')
+      expect(resolveLastPage).toBeDefined()
+      expect(input.parentElement?.textContent).toContain('1/1')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+      await act(async () => {
+        resolveLastPage?.(textPage('needle'))
+        await flush()
+      })
+      expect(input.parentElement?.textContent).toContain('1/2')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+    })
+
+    it.each([
+      { text: 'needle', count: '1/3' },
+      { text: 'other', count: '0/0' }
+    ])('shows $count without a warning for a fully readable document', async ({ text, count }) => {
+      await renderSearchDocument(vi.fn(async () => textPage(text)))
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain(count)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+    })
+
+    it('does not carry a replaced query failure into a later successful search', async () => {
+      let rejectOldRead: ((error: Error) => void) | undefined
+      const searchGetPage = vi
+        .fn()
+        .mockResolvedValueOnce({
+          cleanup: vi.fn(),
+          getTextContent: () =>
+            new Promise((_, reject) => {
+              rejectOldRead = reject
+            })
+        })
+        .mockImplementation(async () => textPage('replacement'))
+      await renderSearchDocument(searchGetPage)
+      const input = await openSearch('needle')
+      expect(rejectOldRead).toBeDefined()
+      await changeQuery(input, 'replacement')
+      await act(async () => {
+        rejectOldRead?.(new Error('Old query read failed'))
+        await flush()
+      })
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('does not carry an old document failure into the replacement document search', async () => {
+      let rejectOldPage: ((error: Error) => void) | undefined
+      await renderSearchDocument(vi.fn(() => new Promise((_, reject) => (rejectOldPage = reject))))
+      await openSearch('needle')
+      expect(rejectOldPage).toBeDefined()
+      await renderSearchDocument(
+        vi.fn(async () => textPage('needle')),
+        '/workspace/replacement.pdf'
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('1/3')
+      await act(async () => {
+        rejectOldPage?.(new Error('Old document page failed'))
+        await flush()
+      })
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('clears incomplete coverage when the query is cleared or search is closed', async () => {
+      await renderSearchDocument(vi.fn().mockRejectedValue(new Error('Unreadable page')))
+      const input = await openSearch('needle')
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await changeQuery(input, '')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      await changeQuery(input, 'needle')
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await act(async () => screen.getByRole('button', { name: 'Close search' }).click())
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      const reopened = await openSearch('')
+      expect(reopened.hasAttribute('aria-describedby')).toBe(false)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('ignores a page failure that arrives after search is closed', async () => {
+      let rejectRead: ((error: Error) => void) | undefined
+      await renderSearchDocument(vi.fn(() => new Promise((_, reject) => (rejectRead = reject))))
+      await openSearch('needle')
+      await act(async () => screen.getByRole('button', { name: 'Close search' }).click())
+      await act(async () => {
+        rejectRead?.(new Error('Closed search failed'))
+        await flush()
+      })
+      const input = await openSearch('')
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('clears incomplete coverage when a fallback search succeeds on retry', async () => {
+      let pageTwoReads = 0
+      const originalLoad = vi.fn(async (number: number) => {
+        if (number === 2 && ++pageTwoReads === 1) throw new Error('Transient fallback failure')
+        return textPage('needle')
+      })
+      const ready = {
+        status: 'ready' as const,
+        document: { numPages: 3, getPage: vi.fn(async () => textPage('needle')), destroy: vi.fn() },
+        pages: Array.from({ length: 3 }, () => ({ width: 600, height: 800, rotation: 0 })),
+        originalUnitCount: 0,
+        retainedUnitIds: []
+      }
+      let translationReady = true
+      vi.spyOn(translationDocuments, 'usePdfTranslationDocument').mockImplementation(
+        () =>
+          ({
+            ready: translationReady ? ready : undefined,
+            state: translationReady ? ready : { status: 'idle' },
+            updateAvailable: false,
+            isCurrent: translationReady,
+            unchangedLayoutUnitIds: [],
+            unfilledUnitIds: [],
+            layoutFailures: {},
+            refresh: vi.fn(),
+            retry: vi.fn(),
+            registerDisposer: () => () => {}
+          }) as never
+      )
+      await renderSearchDocument(originalLoad)
+      const input = await openSearch('')
+      await act(async () => screen.getByRole('button', { name: 'Search in Original' }).click())
+      await changeQuery(input, 'needle')
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      translationReady = false
+      await renderSearchDocument(originalLoad)
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/2')
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await act(async () => {
+        container.querySelector<HTMLElement>('[role="region"]')!.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'f',
+            metaKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(pageTwoReads).toBe(2)
+      expect(input.value).toBe('needle')
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
   })
 
   it('stops a stale full-document search before parsing the remaining pages', async () => {

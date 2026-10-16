@@ -58,6 +58,8 @@ import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-erro
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -1170,6 +1172,58 @@ describe('ConversationPanel header spacing', () => {
     expect(execute).not.toHaveBeenCalled()
   })
 
+  it('keeps header actions waiting for a remote approval without creating an empty permission card', async () => {
+    const activeSession: ChatSession = {
+      id: 'remote-header',
+      projectId: 'project-a',
+      title: 'Remote research',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    useComputeStore.getState().enqueueApproval({
+      id: 'remote-approval',
+      session_id: activeSession.id,
+      provider_id: 'ssh:cluster',
+      provider_name: 'Cluster',
+      shape: 'direct_ssh',
+      intent: 'Run remote analysis',
+      operation: 'call_command',
+      command_preview: 'python analysis.py',
+      command_full: 'python analysis.py'
+    })
+    const execute = vi.fn()
+    const disabled = vi.fn(({ presentedStatus }: { presentedStatus: string }) =>
+      presentedStatus.startsWith('waiting-')
+    )
+    renderPanel({
+      view: { activeSession },
+      conversation: { availability: { submit: true } },
+      composer: { view: { doc: docFromText('Keep the research draft') } },
+      sessionTools: { menuBindings: { fork: { execute, disabled } } }
+    })
+    await act(async () =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label="Session actions"]')!
+        .click()
+    )
+    const fork = document.querySelector<HTMLButtonElement>('[data-action-id="fork"]')!
+    expect(disabled).toHaveBeenLastCalledWith(
+      expect.objectContaining({ presentedStatus: 'waiting-permission' })
+    )
+    expect(fork.disabled).toBe(true)
+    expect(container.querySelector('[data-testid="permission-composer"]')).toBeNull()
+    expect(getComposerForm().getAttribute('aria-hidden')).toBeNull()
+    expect(getComposerEditor().textContent).toContain('Keep the research draft')
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(true)
+    await act(async () => fork.click())
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('opens Session information and routes editing through the owner', () => {
     const session: ChatSession = {
       id: 'info-session',
@@ -1695,6 +1749,8 @@ beforeEach(() => {
   respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useSettingsStore.setState(createInitialSettingsState())
+  useComputeStore.setState({ pendingApprovals: [] })
+  useSkillImportStore.setState(createInitialSkillImportState())
   usePackageOperationStore.setState({ operation: null, open: false, dismissedId: undefined })
   useSpecialistStore.setState({ items: [], isLoaded: true })
   mockHasRunningJobs = false

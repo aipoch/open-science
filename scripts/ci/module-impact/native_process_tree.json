@@ -13,6 +13,7 @@
     "owner": [],
     "contract": ["scripts/native-components.test.ts"],
     "consumer": [
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
@@ -393,6 +394,7 @@
       "src/main/settings/claude-provider-configuration.integration.test.ts",
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -603,7 +605,9 @@
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-artifact.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

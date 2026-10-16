@@ -49,6 +49,7 @@ import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
+const SETTLEMENT_GRACE_MS = 3_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
   event.kind === 'compaction' ||
@@ -562,7 +563,10 @@ class AcpRuntimeCoordinator {
         resolve(outcome)
       }
       const timer = setTimeout(() => finish('timeout'), Math.max(0, timeoutMs))
-      void trackLifecycleSettlement(cancelAndDrain()).then(
+      void trackLifecycleSettlement(cancelAndDrain(), {
+        owner: 'quit-preparation',
+        abandonAfterMs: Math.max(0, timeoutMs) + SETTLEMENT_GRACE_MS
+      }).then(
         () => finish('completed'),
         () => finish('failed')
       )
@@ -579,6 +583,7 @@ class AcpRuntimeCoordinator {
       this.promptAdmissionClosedForQuit = false
       this.durableQuitDetachedSessionIds.clear()
     }
+    // Bounded: a cancellation that never settles is abandoned, so a refused quit always reopens.
     if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(reopen)
     else reopen()
   }
@@ -1065,8 +1070,7 @@ class AcpRuntimeCoordinator {
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
     startAdmission?: PromptAcceptance
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement())
-      return this.rejectPromptForQuit()
+    if (this.admissionClosedReason()) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
       this.linearizeRootAdmission(request.sessionId, (cancellation) =>
         this.dispatchPrompt(
@@ -1424,8 +1428,7 @@ class AcpRuntimeCoordinator {
     delegatedMessageId?: string,
     cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement())
-      return this.rejectPromptForQuit()
+    if (this.admissionClosedReason()) return this.rejectPromptForQuit()
     const origin =
       operation === 'sendAppContinuation' && request.provenanceContext?.promptMessageId
         ? this.getLatestUserPrompt(request.sessionId, request.provenanceContext.promptMessageId)
@@ -2018,7 +2021,7 @@ class AcpRuntimeCoordinator {
   ): ReturnType<AcpRuntime['buildReviewerSession']> {
     this.assertPromptAdmissionOpen()
     const built = await runtime.buildReviewerSession(request)
-    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement()) {
+    if (this.admissionClosedReason()) {
       try {
         runtime.disposeReviewerSession(built.session)
       } finally {
@@ -2041,14 +2044,27 @@ class AcpRuntimeCoordinator {
     this.initializationGeneration += 1
   }
 
+  // A committed quit latches admission closed; a live (non-abandoned) teardown only pauses it.
+  private admissionClosedReason(): 'quit' | 'settling' | undefined {
+    if (this.promptAdmissionClosedForQuit) return 'quit'
+    return hasPendingLifecycleSettlement() ? 'settling' : undefined
+  }
+
+  private admissionClosedError(reason: 'quit' | 'settling'): Error {
+    return new Error(
+      reason === 'quit'
+        ? 'Open-Science is quitting, so new messages cannot be sent.'
+        : 'Open-Science is finishing a background cleanup. Try sending again in a moment.'
+    )
+  }
+
   private assertPromptAdmissionOpen(): void {
-    if (this.promptAdmissionClosedForQuit || hasPendingLifecycleSettlement()) {
-      throw new Error('ACP prompt admission is closed because the app is quitting.')
-    }
+    const reason = this.admissionClosedReason()
+    if (reason) throw this.admissionClosedError(reason)
   }
 
   private rejectPromptForQuit(): Promise<never> {
-    return Promise.reject(new Error('ACP prompt admission is closed because the app is quitting.'))
+    return Promise.reject(this.admissionClosedError(this.admissionClosedReason() ?? 'quit'))
   }
 
   private invalidateSessionTurn(sessionId: string, notifyCancellation = true): void {

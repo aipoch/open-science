@@ -10,7 +10,10 @@ import WindowsTestSequencer, {
 describe('Windows module-based test sharding', () => {
   it.each([
     ['src/main/session-package/service.test.ts', 1],
-    ['src/main/database/migration-service.test.ts', 2],
+    ['packages/pdf-structure/test/native-complete-records.test.ts', 1],
+    ['packages/pdf-translation/test/writer.test.ts', 1],
+    ['src/main/database/migration-service.test.ts', 5],
+    ['src/main/database/migration-service-extra.test.ts', 2],
     ['src/main/storage/ipc.test.ts', 2],
     ['src/main/session-persistence/coordinator.test.ts', 3],
     ['src/main/managed-file-versions/service.integration.test.ts', 3],
@@ -52,6 +55,7 @@ describe('Windows module-based test sharding', () => {
     const root = resolve('fixture-root')
     const paths = [
       ...WINDOWS_TEST_MODULE_GROUPS.flat().map((prefix) => `${prefix}new.test.ts`),
+      'src/main/database/migration-service.test.ts',
       'src/main/new-module/new.test.ts'
     ]
     const specs = ['default', 'process', 'database'].flatMap((name) =>

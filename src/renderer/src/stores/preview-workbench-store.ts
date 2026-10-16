@@ -7,6 +7,7 @@ import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
 import type { PdfReadingPosition, SessionPdfSourceKind } from '../../../shared/session-persistence'
+import { validatePdfProseRegions, type PdfProseRegion } from '../../../shared/pdf-text'
 
 import { resolvePlanFileProjection } from '../pages/workspace/session-plan/plan-file-projection'
 import {
@@ -190,6 +191,9 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
   draftStagedUploadIds: string[]
   // Ephemeral viewport state. Only captureSend copies the active value into a durable Message.
   pdfReadingPositionByBindingId: Record<string, PdfReadingPosition>
+  // An empty array explicitly requests native order for the next message; absent means unconfigured.
+  pdfProseRegionsByBindingId: Record<string, readonly PdfProseRegion[]>
+  pdfProseRegionsScope?: string
   // Tool tab currently shown as a large modal instead of inline panel content (files tab only).
   expandedToolItemId: string | null
   // A one-off file preview stays outside the tab list so Files and Global Search can open the same
@@ -210,6 +214,9 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   setDraftStagedUploadIds: (ids: string[]) => void
   setPdfReadingPosition: (bindingId: string, position: PdfReadingPosition) => void
   clearPdfReadingPosition: (bindingId: string) => void
+  setPdfProseRegions: (bindingId: string, regions: readonly PdfProseRegion[]) => void
+  clearPdfProseRegions: (bindingId: string) => void
+  setPdfProseRegionsScope: (scope: string) => void
   upsertItem: (item: PreviewItem, skipGuard?: boolean) => boolean
   setFileViewState: (
     projectId: string | undefined,
@@ -241,6 +248,8 @@ export const createInitialPreviewWorkbenchState = (): PreviewWorkbenchStoreData 
   pendingPdfContextByProject: {},
   draftStagedUploadIds: [],
   pdfReadingPositionByBindingId: {},
+  pdfProseRegionsByBindingId: {},
+  pdfProseRegionsScope: undefined,
   expandedToolItemId: null,
   fileDialogItem: undefined
 })
@@ -795,11 +804,40 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   clearPdfReadingPosition: (bindingId) => {
     set((state) => {
-      if (!state.pdfReadingPositionByBindingId[bindingId]) return state
+      if (
+        !state.pdfReadingPositionByBindingId[bindingId] &&
+        !state.pdfProseRegionsByBindingId[bindingId]
+      )
+        return state
       const pdfReadingPositionByBindingId = { ...state.pdfReadingPositionByBindingId }
+      const pdfProseRegionsByBindingId = { ...state.pdfProseRegionsByBindingId }
       delete pdfReadingPositionByBindingId[bindingId]
-      return { pdfReadingPositionByBindingId }
+      delete pdfProseRegionsByBindingId[bindingId]
+      return { pdfReadingPositionByBindingId, pdfProseRegionsByBindingId }
     })
+  },
+
+  setPdfProseRegions: (bindingId, regions) => {
+    if (regions.length) validatePdfProseRegions(regions)
+    set((state) => ({
+      pdfProseRegionsByBindingId: {
+        ...state.pdfProseRegionsByBindingId,
+        [bindingId]: regions.map((region) => ({ ...region }))
+      }
+    }))
+  },
+
+  clearPdfProseRegions: (bindingId) => get().setPdfProseRegions(bindingId, []),
+
+  setPdfProseRegionsScope: (scope) => {
+    set((state) =>
+      state.pdfProseRegionsScope === scope
+        ? state
+        : {
+            pdfProseRegionsScope: scope,
+            pdfProseRegionsByBindingId: {}
+          }
+    )
   },
 
   // Inserts a preview item or refreshes the existing tab without changing focus.

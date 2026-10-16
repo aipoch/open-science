@@ -47,6 +47,7 @@ import {
   flushSessionPersistence,
   loadPersistedSession,
   loadPersistedSessions,
+  resetSessionPersistenceWriteFailuresForTests,
   retryPendingArtifactFinalization,
   saveSessionInOrder,
   type SessionPersistenceApi
@@ -4991,6 +4992,18 @@ describe('renderer session persistence bridge', () => {
     await expect(persistence.flush()).resolves.toBeUndefined()
   })
 
+  it('isolates session flush failures while retaining the global shutdown barrier', async () => {
+    const session = createPersistedSession()
+    const failure = new Error('Other Session write failed')
+    const persistence = createOrderedSessionPersistence(
+      createApi({ saveSession: vi.fn().mockRejectedValue(failure) })
+    )
+    await expect(persistence.saveSession(session)).rejects.toBe(failure)
+    await expect(persistence.flush('session:unrelated')).resolves.toBeUndefined()
+    await expect(persistence.flush(`session:${session.id}`)).rejects.toBe(failure)
+    await expect(persistence.flush()).rejects.toBe(failure)
+  })
+
   it('keeps an explicit save revision conflict unresolved until that Session saves successfully', async () => {
     const session = createPersistedSession({ revision: 1 })
     const conflict = new SessionRevisionConflictError(1, 2)
@@ -5008,6 +5021,12 @@ describe('renderer session persistence bridge', () => {
     })
     try {
       await expect(saveSessionInOrder(session)).rejects.toBe(conflict)
+      // The unresolved revision guard survives queue error cleanup and must retain its scope.
+      resetSessionPersistenceWriteFailuresForTests()
+      await expect(flushSessionPersistence('session:unrelated')).resolves.toBeUndefined()
+      await expect(flushSessionPersistence(`session:${session.id}`)).rejects.toMatchObject({
+        code: 'session-revision-conflict'
+      })
       await expect(flushSessionPersistence()).rejects.toMatchObject({
         code: 'session-revision-conflict'
       })

@@ -2,6 +2,8 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { continueInterruptedTurn } from './interrupted-turn-continuation'
+import { applySessionConversationCommands } from '../../shared/session-conversation-command'
 import {
   CompletionHandoffLifecycle,
   InMemoryCompletionHandoffRepository
@@ -98,6 +100,7 @@ import {
 } from '../../shared/session-persistence'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRepository } from '../session-persistence/repository'
+import { initDataRoot } from '../storage-root'
 import { HeadlessTaskApi } from '../web-service/task-api'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
@@ -6026,6 +6029,14 @@ describe('ACP runtime session management', () => {
     await runtime.shutdownForQuit()
 
     expect(events).not.toContainEqual(expect.objectContaining({ text: 'ACP connection closed' }))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        sessionId: session.sessionId,
+        interruptionCause: 'app-restart',
+        errorReportable: false
+      })
+    )
     promptGate.resolve()
   })
 
@@ -6110,6 +6121,304 @@ describe('ACP runtime session management', () => {
       expect(process.killed).toBe(true)
       expect(events).toContain('Prompt cancellation timed out')
       promptGate.resolve()
+    }
+  )
+
+  it.each([false, true])(
+    'reopens quit admission after real cancellation teardown with captured terminal=%s',
+    async (terminalCaptured) => {
+      const { waitForLifecycleSettlement } = await import('../lifecycle-settlement')
+      const oldProcess = new FakeAgentProcess()
+      const nextProcess = new FakeAgentProcess()
+      const oldPromptGate = createDeferred()
+      const oldAgent = startFakeAgent(oldProcess, ['quit-recovery-old'], {
+        onPrompt: () => oldPromptGate.promise
+      })
+      startFakeAgent(nextProcess, ['quit-recovery-new'])
+      let fireCancelTimeout: (() => void) | undefined
+      const onPromptEnded = vi.fn()
+      const runtimes: AcpRuntime[] = []
+      let spawnCount = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const runtime = new AcpRuntime({
+          appVersion: '0.2.0',
+          defaultCwd: '/workspace',
+          spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : nextProcess),
+          cancelTimeoutMs: 1,
+          setTimer: (callback) => {
+            fireCancelTimeout = callback
+            return 1 as unknown as ReturnType<typeof setTimeout>
+          },
+          clearTimer: vi.fn(),
+          callbacks: {
+            ...callbacks,
+            onPromptEnded: (sessionId, turnToken) => {
+              onPromptEnded(sessionId, turnToken)
+              callbacks.onPromptEnded?.(sessionId, turnToken)
+            }
+          }
+        })
+        runtimes.push(runtime)
+        return runtime
+      })
+      let turn: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({ cwd: '/workspace' })
+        turn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'keep working' })
+        void turn.catch(() => undefined)
+        await vi.waitFor(() => expect(oldAgent.prompts).toHaveLength(1))
+        const interactions = (
+          runtimes[0] as unknown as {
+            sessionInteractions: import('./session-interaction-owner').AcpSessionInteractionOwner
+          }
+        ).sessionInteractions
+        const interaction = interactions.current(session.sessionId)
+        expect(interaction?.kind).toBe('prompt')
+        if (terminalCaptured && interaction?.kind === 'prompt') {
+          // Provider terminal observation can precede usage/artifact finalization. Closing the
+          // connection must release its start callback even though terminal settlement owns outcome.
+          interactions.captureTerminal(interaction, 'error')
+        }
+        await expect(coordinator.prepareForQuit(1)).resolves.toBe('timeout')
+        coordinator.abortQuitPreparation()
+        await expect(coordinator.createSession()).rejects.toThrow('quitting')
+        expect(fireCancelTimeout).toBeDefined()
+        fireCancelTimeout?.()
+        await vi.waitFor(() => expect(oldProcess.killed).toBe(true))
+        await vi.waitFor(() => expect(onPromptEnded).toHaveBeenCalledOnce())
+        let settled = false
+        void waitForLifecycleSettlement().then(() => {
+          settled = true
+        })
+        await vi.waitFor(() => expect(settled).toBe(true))
+        const next = await coordinator.createSession({ cwd: '/workspace' })
+        await expect(
+          coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
+        ).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(onPromptEnded).toHaveBeenCalledTimes(2)
+        oldPromptGate.resolve()
+        await turn.catch(() => undefined)
+        expect(onPromptEnded).toHaveBeenCalledTimes(2)
+        if (terminalCaptured) {
+          expect(runtimes[0].getSnapshot().events).not.toContainEqual(
+            expect.objectContaining({ text: 'ACP connection closed' })
+          )
+        }
+      } finally {
+        oldPromptGate.resolve()
+        await turn?.catch(() => undefined)
+        await Promise.all(runtimes.map((runtime) => runtime.disconnect()))
+        await waitForLifecycleSettlement()
+      }
+    }
+  )
+
+  it.each(['disconnect', 'quit teardown', 'cancel timeout'] as const)(
+    'resumes the same durable prompt after %s and fences its late terminal',
+    async (closeMode) => {
+      const root = await mkdtemp(join(tmpdir(), 'runtime-durable-disconnect-'))
+      initDataRoot(root)
+      const oldProcess = new FakeAgentProcess()
+      const resumedProcess = new FakeAgentProcess()
+      const oldPromptGate = createDeferred()
+      const resumedPromptGate = createDeferred()
+      const oldAgent = startFakeAgent(oldProcess, ['durable-disconnect-session'], {
+        supportsResume: true,
+        onPrompt: () => oldPromptGate.promise
+      })
+      const resumedAgent = startFakeAgent(resumedProcess, [], {
+        supportsResume: true,
+        onPrompt: () => resumedPromptGate.promise
+      })
+      let runtime!: AcpRuntime
+      const repository = new SessionRepository(root, {
+        hasLiveRuntimeSession: (projectId, sessionId) =>
+          runtime?.hasLiveSession(projectId, sessionId) ?? false,
+        hasActiveRuntimePrompt: (_projectId, sessionId) =>
+          runtime?.getSnapshot().promptInFlightSessionIds.includes(sessionId) ?? false
+      })
+      const sessions = new SessionPersistenceCoordinator(repository, {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: (scope) =>
+          sessions.loadSessionForContinuation(scope.projectId, scope.sessionId),
+        mutateSession: (scope, mutate) => sessions.mutateRuntimeSession(scope, mutate),
+        finalizeArtifacts: async () => []
+      })
+      let fireCancelTimeout: (() => void) | undefined
+      let spawnCount = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        runtime = new AcpRuntime({
+          appVersion: 'test',
+          defaultCwd: '/workspace',
+          framework: opencodeFramework,
+          spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : resumedProcess),
+          runtimeSessions,
+          cancelTimeoutMs: 1,
+          setTimer: (callback) => {
+            fireCancelTimeout = callback
+            return 1 as unknown as ReturnType<typeof setTimeout>
+          },
+          clearTimer: vi.fn(),
+          callbacks: {
+            ...callbacks,
+            onEvent: (event) => {
+              runtimeSessions.accept(event)
+              callbacks.onEvent?.(event)
+            }
+          }
+        })
+        return runtime
+      })
+      let oldTurn: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1'
+        })
+        const promptMessageId = 'durable-disconnect-prompt'
+        const initial = await repository.saveSession(
+          materializeSessionConversationGraph({
+            id: session.sessionId,
+            projectId: 'project-1',
+            title: 'Interrupted execution',
+            cwd: '/workspace',
+            status: 'running',
+            agentFrameworkId: 'opencode',
+            activeRun: { promptMessageId, startedAt: Date.now() - 10 },
+            messages: [
+              {
+                id: promptMessageId,
+                role: 'user',
+                content: 'Complete the original research.',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ],
+            createdAt: 1,
+            updatedAt: Date.now()
+          })
+        )
+        const provenanceContext = getActiveConversationContext(
+          initial.conversationGraph!,
+          promptMessageId
+        )
+        oldTurn = coordinator.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'Complete the original research.',
+          provenanceContext
+        })
+        void oldTurn.catch(() => undefined)
+        await vi.waitFor(() => expect(oldAgent.prompts).toHaveLength(1))
+        const before = await sessions.loadSessionForContinuation('project-1', session.sessionId)
+        const oldExecutionId = before!.runtimeSessionAdmissions!.at(-1)!.executionId
+        if (closeMode === 'cancel timeout') {
+          await runtime.cancelPrompt({ sessionId: session.sessionId })
+          expect(fireCancelTimeout).toBeDefined()
+          fireCancelTimeout?.()
+          await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+        } else {
+          await runtime.disconnect(closeMode !== 'quit teardown')
+        }
+        await sessions.prepareRuntimeResume('project-1', session.sessionId)
+        const interrupted = await sessions.loadSessionForContinuation(
+          'project-1',
+          session.sessionId
+        )
+        expect(interrupted?.resumeRecovery).toMatchObject({
+          kind: 'resume-required',
+          promptMessageId
+        })
+        oldPromptGate.resolve()
+        await oldTurn.catch(() => undefined)
+        await coordinator.resumeSession({
+          projectId: 'project-1',
+          sessionId: session.sessionId,
+          cwd: '/workspace'
+        })
+        // Renderer Resume persists its new run intent before dispatching the original prompt.
+        await sessions.mutateRuntimeSession(
+          { projectId: 'project-1', sessionId: session.sessionId },
+          (current) =>
+            applySessionConversationCommands(current, [
+              {
+                id: 'resume-durable-disconnect',
+                kind: 'resume-run',
+                timestamp: Date.now(),
+                run: { promptMessageId, startedAt: Date.now() }
+              }
+            ])
+        )
+        const continuation = continueInterruptedTurn(
+          {
+            runtime: coordinator,
+            startDispatchAdmittedContinuation: (request, validate) =>
+              coordinator
+                .startContinuationWhenDispatchAdmitted(request, validate)
+                .then(() => undefined),
+            loadSession: (projectId, sessionId) =>
+              sessions.loadSessionForContinuation(projectId, sessionId)
+          },
+          { projectId: 'project-1', sessionId: session.sessionId, promptMessageId }
+        )
+        void continuation.catch(() => undefined)
+        await vi.waitFor(() => expect(resumedAgent.prompts).toHaveLength(1))
+        const resumed = await sessions.loadSessionForContinuation('project-1', session.sessionId)
+        const resumedExecutionId = resumed!.runtimeSessionAdmissions!.at(-1)!.executionId
+        expect(resumedExecutionId).not.toBe(oldExecutionId)
+        expect(resumed?.activeRun?.promptMessageId).toBe(promptMessageId)
+        await runtimeSessions.commitTerminal(
+          {
+            id: 'late-old-execution-terminal',
+            kind: 'error',
+            level: 'error',
+            timestamp: Date.now(),
+            sessionId: session.sessionId,
+            promptMessageId,
+            promptExecutionId: oldExecutionId,
+            title: 'Prompt failed',
+            text: 'Late failure from the disconnected execution',
+            interruptionCause: 'connection-lost'
+          },
+          () => {
+            throw new Error('A retired execution must not publish over its successor')
+          }
+        )
+        const afterLateTerminal = await sessions.loadSessionForContinuation(
+          'project-1',
+          session.sessionId
+        )
+        expect(afterLateTerminal?.activeRun).toEqual(resumed?.activeRun)
+        expect(
+          afterLateTerminal?.messages.find(({ id }) => id === promptMessageId)?.turnOutcome
+        ).toBeUndefined()
+        resumedPromptGate.resolve()
+        await continuation
+        await vi.waitFor(async () => {
+          const completed = await sessions.loadSessionForContinuation(
+            'project-1',
+            session.sessionId
+          )
+          expect(completed?.activeRun).toBeUndefined()
+          expect(completed?.messages.filter(({ role }) => role === 'user')).toHaveLength(1)
+        })
+      } finally {
+        oldPromptGate.resolve()
+        resumedPromptGate.resolve()
+        await oldTurn?.catch(() => undefined)
+        await runtime?.disconnect()
+        await runtimeSessions.flush('durable-disconnect-session', 'durable-disconnect-prompt')
+        await rm(root, { recursive: true, force: true })
+      }
     }
   )
 
@@ -29508,6 +29817,86 @@ describe('Specialist Skill scoping', () => {
     expect(notebookSpecialists.at(-1)).toBe('new')
     expect(startedTurnTokens).toEqual([startedTurnTokens[0], startedTurnTokens[0]])
   })
+
+  it.each([
+    ['codex-responses', false],
+    ['codex-responses', true],
+    ['codex-bridge', false],
+    ['codex-bridge', true]
+  ] as const)(
+    'restores the %s attachment when retrying a failed Specialist switch (scoped loader: %s)',
+    async (modelRoute, scopedLoader) => {
+      const process = new FakeAgentProcess()
+      const resumedIds: string[] = []
+      const agent = startFakeAgent(
+        process,
+        ['codex-specialist-original', 'failed-replacement', 'codex-specialist-replacement'],
+        {
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+          onResumeRequest: ({ sessionId }) => {
+            resumedIds.push(sessionId)
+            throw acp.RequestError.internalError()
+          },
+          onNewSession: ({ index }) => {
+            if (index === 1) throw acp.RequestError.internalError()
+          }
+        }
+      )
+      const publishedSessionIds: string[][] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onStateChanged: (state) => publishedSessionIds.push(state.sessionIds) },
+        resolveBackend: () => ({
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          modelRoute,
+          executablePath: '/bin/codex-acp',
+          env: {},
+          ...(scopedLoader
+            ? {
+                sessionOptions: {
+                  openScienceSkillRuntime: {
+                    command: '/node',
+                    entryPath: '/main.js',
+                    root: '/codex',
+                    skillsDirectory: '/codex/skills'
+                  }
+                }
+              }
+            : {}),
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        }),
+        resolveSpecialistIdentity: async () => ({ append: '', prefix: 'New Specialist identity' })
+      })
+      try {
+        const { sessionId } = await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project'
+        })
+        await expect(runtime.switchSpecialist(sessionId, 'new')).rejects.toThrow()
+        // Recovery failure must still reject: the binding transaction must not clear pending.
+        await expect(runtime.switchSpecialist(sessionId, 'new')).rejects.toThrow()
+        expect(agent.prompts).toHaveLength(0)
+        publishedSessionIds.length = 0
+        await expect(runtime.switchSpecialist(sessionId, 'new')).resolves.toEqual({
+          contextReset: true
+        })
+        expect(publishedSessionIds.at(-1)).toContain(sessionId)
+        expect(runtime.liveSessionProjectId(sessionId)).toBe('project')
+        await expect(
+          runtime.sendPrompt({ sessionId, text: 'Continue after the switch' })
+        ).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(resumedIds).toEqual([sessionId])
+        expect(agent.newSessions).toHaveLength(3)
+        expect(agent.prompts[0]?.sessionId).toBe('codex-specialist-replacement')
+        expect(agent.prompts[0]?.text).toContain('New Specialist identity')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
 
   it('updates Codex native Skill selection to the switched specialist, including mcp-* connectors', async () => {
     const process = new FakeAgentProcess()

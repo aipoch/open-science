@@ -246,6 +246,7 @@ const CategoryForm = ({
         <Input
           name="memory-category-name"
           value={name}
+          disabled={saving}
           required
           maxLength={MEMORY_CATEGORY_NAME_MAX_LENGTH}
           placeholder={t('e.g. experiment results')}
@@ -261,6 +262,7 @@ const CategoryForm = ({
         <Textarea
           name="memory-category-guidance"
           value={guidance}
+          disabled={saving}
           required
           maxLength={MEMORY_CATEGORY_GUIDANCE_MAX_LENGTH}
           placeholder={t('Save findings that will be useful in future sessions')}
@@ -277,6 +279,7 @@ const CategoryForm = ({
         </div>
         <Switch
           checked={autoRecall}
+          disabled={saving}
           onCheckedChange={setAutoRecall}
           aria-label={t('Auto-recall')}
         />
@@ -303,7 +306,7 @@ const CategoryForm = ({
           })}
         </p>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
             {t('Cancel')}
           </Button>
           <Button type="submit" disabled={!canSubmit}>

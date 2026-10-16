@@ -16,9 +16,17 @@ import {
   inspectInstallationUpdate
 } from './update/installation-protection'
 import {
+  connectDesktopRuntimeForStartup,
   DesktopRuntimeStartupError,
   resolveDesktopInstallationStartup
 } from './desktop-startup-recovery'
+import type { DesktopRuntimeClient } from './desktop-runtime-client'
+// Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
+vi.mock('./system-boot-identity', async (original) => ({
+  ...(await original<typeof import('./system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
+
 const roots: string[] = []
 afterEach(() => {
   vi.restoreAllMocks()
@@ -76,7 +84,10 @@ it('retains installation protection through early resolution and rechecks integr
   expect(recovery.startupOptions).toEqual(options)
   expect(inspectInstallationUpdate(location)).toBeDefined()
   writeFileSync(join(installationRoot, 'program'), 'partial')
-  await expect(recovery.completeBeforeLaunch()).rejects.toThrow('integrity')
+  await expect(recovery.completeBeforeLaunch()).rejects.toMatchObject({
+    name: 'DesktopRuntimeStartupError',
+    issue: { reason: 'startup-recovery-required', canRecover: true }
+  })
   expect(inspectInstallationUpdate(location)).toBeDefined()
   writeFileSync(join(installationRoot, 'program'), 'new')
   await recovery.completeBeforeLaunch()
@@ -342,4 +353,43 @@ it('deduplicates pending stops and allows a rejected stop to be retried', async 
   await expect(error.stopAndContinue()).rejects.toThrow('unavailable')
   await Promise.all([error.stopAndContinue(), error.stopAndContinue()])
   expect(stop).toHaveBeenCalledTimes(2)
+})
+
+const fakeClient = (controlReason?: string): DesktopRuntimeClient =>
+  ({
+    runtimeInfo: () => ({ control: 'held', controlReason }),
+    refreshControl: vi.fn(async () => undefined),
+    close: vi.fn()
+  }) as unknown as DesktopRuntimeClient
+
+it('replaces a runtime that is already stopping instead of entering as a spectator', async () => {
+  const stopping = fakeClient('runtime-stopping')
+  const fresh = { ...fakeClient(undefined), runtimeInfo: () => ({ control: 'granted' }) }
+  const connect = vi
+    .fn()
+    .mockResolvedValueOnce(stopping)
+    .mockResolvedValueOnce(fresh as unknown as DesktopRuntimeClient)
+  const replaceRuntime = vi.fn(async () => undefined)
+  await expect(
+    connectDesktopRuntimeForStartup({ connect, version: 'test', replaceRuntime })
+  ).resolves.toBe(fresh)
+  expect(replaceRuntime).toHaveBeenCalledOnce()
+  expect(stopping.close).toHaveBeenCalled()
+})
+
+it('makes startup recover do real work when the runtime is stopping', async () => {
+  const connect = vi.fn().mockResolvedValue(fakeClient('runtime-stopping'))
+  let replaced = 0
+  const replaceRuntime = vi.fn(async () => {
+    replaced += 1
+    if (replaced === 1) throw new Error('first replacement failed')
+  })
+  const error = await connectDesktopRuntimeForStartup({
+    connect,
+    version: 'test',
+    replaceRuntime
+  }).catch((reason: unknown) => reason)
+  expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
+  await (error as DesktopRuntimeStartupError).recover()
+  expect(replaceRuntime).toHaveBeenCalledTimes(2)
 })

@@ -1657,3 +1657,18 @@ it.each([false, true])('uses exclusive custom installer hook, failure=%s', async
   expect(updater.quitAndInstall).not.toHaveBeenCalled()
   if (fail) expect(strategy.getStatus().error).toContain('executor unavailable')
 })
+
+it('falls through to electron-updater quitAndInstall when the custom hook defers as legacy', async () => {
+  const updater = new FakeUpdater()
+  const executeInstall = vi.fn(async () => 'legacy' as const)
+  const strategy = createStrategy({
+    updater,
+    currentVersion: '0.2.0',
+    broadcast: vi.fn(),
+    executeInstall
+  })
+  await markUpdateReady(strategy, updater)
+  await strategy.apply()
+  expect(executeInstall).toHaveBeenCalledOnce()
+  expect(updater.quitAndInstall).toHaveBeenCalledOnce()
+})

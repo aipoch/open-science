@@ -34,6 +34,7 @@
     "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
     "src/renderer/src/components/RuntimeUpdateDialog.tsx",
     "src/renderer/src/components/runtime-diagnostics.tsx",
+    "src/renderer/src/components/save-runtime-diagnostics.ts",
     "src/renderer/src/components/runtime-startup-gate.test.tsx",
     "src/renderer/src/components/runtime-startup-gate.tsx",
     "src/renderer/src/components/runtime-update-copy.ts",

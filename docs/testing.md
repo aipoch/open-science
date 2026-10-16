@@ -124,6 +124,38 @@ reply/failure waits and scenario-specific assertions in the caller. The explicit
 `activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
 state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
 
+## Fast impact-registration gate
+
+After dependencies are installed, run this fixed registration suite from the repository root:
+
+```bash
+npx vitest run --config scripts/ci/vitest.registration.config.ts
+```
+
+It checks module schema and path references, exact source/test ownership, test consumer evidence
+(including declared runtime-loading edges), package dependency registration, classifier invariants
+and platform/core-check selection. This includes the Windows source-signal check that otherwise
+could be missed by selective test execution. The explicit inventory is independent of
+`change-impact.json` and module registration data; it does not run application behavior tests.
+
+PR Gate runs it in the independent **Impact registration** job on every PR and merge group,
+including documentation-only and full-fallback plans. The job installs the locked parsing/test
+toolchain with lifecycle scripts disabled, as CI Integrity does; this is not an application
+installation. The dedicated Vitest config needs no app setup, Prisma generation, package build,
+Electron or browser launch. The final PR Gate requires success even if affected tests would not
+select these suites. Failure, cancellation, skipping or a missing result blocks admission.
+
+The gate catches violations of the existing registration rules. It cannot infer arbitrary IPC,
+events or filesystem relationships; those still require the explicit contracts described below.
+Behavior tests and trusted-base Integrity preservation checks remain separate requirements.
+
+The workflow, fixed inventory and assertions execute from the candidate checkout. They are
+protected CI policy under `/scripts/ci/` and `/.github/workflows/`, requiring CI-owner approval;
+new commits dismiss stale approvals under the main-branch ruleset. Independence here means that
+registration data cannot select or skip its own checks. Changes to the checking policy itself use
+the existing [CI control-plane approval](ci.md#ci-control-plane-approval) process, while trusted-base
+Integrity continues to validate registration data and preservation rules.
+
 ## Module-impact registration
 
 Module registration is part of the same change as the source and tests, not a follow-up after CI
@@ -139,11 +171,11 @@ Before committing:
 - Register new tests in the appropriate `testFiles` category: `owner` for the module's behavior,
   `contract` for its interfaces, or `consumer` for downstream behavior depending on it. Within one
   module, list a test in only one category; the same test may provide evidence for multiple modules.
-- Check upstream modules when adding a test or changing imports, re-exports or mocks. The
-  consumer-coverage guard follows transitive dependencies: registering a test only in its owning
-  module may leave several upstream modules without evidence. For each reported
-  `<module-id> -> <test-path>` gap, add the test to that module's appropriate category, normally
-  `testFiles.consumer` for a downstream test. Do not remove valid dependency edges to silence it.
+- After changing tests, imports, mocks or runtime-loading declarations, run
+  `npm run generate:module-consumers`, then `npm run check:module-consumers`.
+  The generated index records additional reachable tests without repeated manual registrations.
+  Preserve explicit consumer contracts, including IPC, event and filesystem relationships;
+  static reachability alone does not prove behavioral coverage or justify removing a contract.
 - Keep public boundaries in `interfacePaths`, including test files that export helpers used by other
   tests. Keep `consumerModules` accurate for module-to-module relationships; it does not replace
   explicit test evidence. Native/worker loading edges use `scripts/ci/module-runtime-consumers.json`.

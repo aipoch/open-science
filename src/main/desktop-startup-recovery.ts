@@ -4,6 +4,8 @@ import { acquireRuntimeDirectorySync } from './runtime-ownership'
 import { waitForRuntimeStopped } from './runtime-stop-confirmation'
 import type { RuntimeStartupIssue } from '../shared/runtime-startup'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
+import type { DesktopRuntimeClient } from './desktop-runtime-client'
+import { RuntimeStoppingError, waitForDesktopRuntimeControl } from './desktop-runtime-recovery'
 import {
   checkInstallationResultAsync,
   finishInstallationRecoveryAsync,
@@ -39,6 +41,59 @@ export class DesktopRuntimeStartupError extends Error {
       throw error
     })
     await this.stopOperation
+  }
+}
+
+/** Retry the original endpoint only; a failed attachment never authorizes a replacement service. */
+export async function connectDesktopRuntimeForStartup(options: {
+  connect(signal: AbortSignal): Promise<DesktopRuntimeClient>
+  version: string
+  timeoutMs?: number
+  // Replaces a Runtime that is stopping with a fresh one. Without it, a stopping Runtime is only
+  // reported as a recoverable failure.
+  replaceRuntime?: () => Promise<void>
+}): Promise<DesktopRuntimeClient> {
+  let candidate: DesktopRuntimeClient | undefined
+  let needsReplacement = false
+  const attempt = async (): Promise<DesktopRuntimeClient> => {
+    const signal = AbortSignal.timeout(options.timeoutMs ?? 12_000)
+    candidate = await options.connect(signal)
+    await waitForDesktopRuntimeControl(candidate, signal)
+    return candidate
+  }
+  const replace = async (): Promise<void> => {
+    if (!options.replaceRuntime) throw new Error('The Runtime is shutting down.')
+    await options.replaceRuntime()
+  }
+  try {
+    try {
+      return await attempt()
+    } catch (error) {
+      // A Runtime that already began shutting down is never reused: stop it and launch a fresh one.
+      if (!(error instanceof RuntimeStoppingError) || !options.replaceRuntime) throw error
+      needsReplacement = true
+      candidate?.close()
+      candidate = undefined
+      await replace()
+      return await attempt()
+    }
+  } catch (error) {
+    candidate?.close()
+    throw new DesktopRuntimeStartupError(
+      {
+        reason: 'startup-recovery-required',
+        desktopVersion: options.version,
+        canStop: false,
+        canRecover: true,
+        diagnostics: error instanceof Error ? error.message : 'Desktop attachment failed.'
+      },
+      'The Runtime connection or control could not be confirmed.',
+      undefined,
+      // Recovery does real work: replace a stopping Runtime; the startup owner then re-verifies.
+      async () => {
+        if (needsReplacement || error instanceof RuntimeStoppingError) await replace()
+      }
+    )
   }
 }
 
@@ -106,6 +161,19 @@ export async function resolveDesktopInstallationStartup(
         }
       }
     )
+  // Launch-time verification failures are recoverable startup states, never fatal errors.
+  const recoverable = async (verify: () => Promise<void>): Promise<void> => {
+    try {
+      await verify()
+    } catch (error) {
+      if (error instanceof DesktopRuntimeStartupError) throw error
+      throw blocked(
+        error instanceof Error
+          ? `The installation could not be verified before launch: ${error.message}`
+          : 'The installation could not be verified before launch.'
+      )
+    }
+  }
   try {
     const record = inspectInstallationUpdate(options)
     if (!record) {
@@ -117,9 +185,10 @@ export async function resolveDesktopInstallationStartup(
         startupOptions: ticket.startupOptions,
         operationId: ticket.operationId,
         outcome: ticket.intent === 'complete' ? 'installed' : 'recovered',
-        completeBeforeLaunch: async () => {
-          await inspectInstallationStartupAsync(options)
-        },
+        completeBeforeLaunch: () =>
+          recoverable(async () => {
+            await inspectInstallationStartupAsync(options)
+          }),
         completeAfterReady: () => completeInstallationStartupAsync(options, ticket.operationId)
       }
     }
@@ -136,10 +205,11 @@ export async function resolveDesktopInstallationStartup(
       startupOptions: record.startupOptions,
       operationId: record.operationId,
       outcome: 'installed',
-      completeBeforeLaunch: async () => {
-        // Re-check the exact operation and the complete target manifest at launch time.
-        await finishInstallationRecoveryAsync(options, record.operationId, 'complete')
-      },
+      completeBeforeLaunch: () =>
+        recoverable(async () => {
+          // Re-check the exact operation and the complete target manifest at launch time.
+          await finishInstallationRecoveryAsync(options, record.operationId, 'complete')
+        }),
       completeAfterReady: () => completeInstallationStartupAsync(options, record.operationId)
     }
   } catch (error) {

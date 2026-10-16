@@ -8,6 +8,8 @@
     "src/main/session-diagnostics/database.ts",
     "src/main/session-diagnostics/desktop.test.ts",
     "src/main/session-diagnostics/desktop.ts",
+    "src/main/session-diagnostics/desktop-log-paths.ts",
+    "src/main/session-diagnostics/desktop-log-paths.test.ts",
     "src/main/session-diagnostics/detail.test.ts",
     "src/main/session-diagnostics/detail.ts",
     "src/main/session-diagnostics/environment.test.ts",
@@ -45,7 +47,8 @@
       "src/main/session-diagnostics/detail.test.ts",
       "src/main/session-diagnostics/environment.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
-      "src/main/session-diagnostics/projection.test.ts"
+      "src/main/session-diagnostics/projection.test.ts",
+      "src/main/session-diagnostics/desktop-log-paths.test.ts"
     ],
     "contract": [
       "src/main/data-content-application-commands.test.ts",

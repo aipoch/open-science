@@ -409,7 +409,6 @@ test('captures all runtime update states in isolated Electron (presentation-only
         phase: 'blocked',
         issue: { ...issue, reason: 'startup-recovery-required', canStop: false, canRecover: true }
       },
-      S19: { phase: 'blocked', issue: { ...issue, reason: 'legacy-host', canStop: false } },
       S26: { phase: 'stopping', issue }
     }
     for (const [id, state] of Object.entries(startupStates)) {

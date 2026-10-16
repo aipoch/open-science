@@ -798,6 +798,7 @@
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",
@@ -1011,7 +1012,8 @@
       "src/main/websocket-frame-sender.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/session-diagnostics/desktop-log-paths.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

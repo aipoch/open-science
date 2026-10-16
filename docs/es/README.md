@@ -51,7 +51,7 @@ AIPOCH Open-Science respalda la investigación computacional y con uso intensivo
 
 Las sesiones de investigación terminadas también pueden exportarse como paquetes `.science` portátiles para revisión, traspaso y archivo, con ramas de conversación, versiones de archivos, registros de Notebook y evidencias de verificación seleccionados.
 
-> 💡 **[AIPOCH Open-Science v0.37.2 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en octubre de 2026)_. AIPOCH Open-Science v0.37.2 se recupera con más facilidad: el inicio repara por sí solo los fallos de backend, ajustes y red; una desconexión del runtime ya no bloquea la app — Salir sigue disponible y se ofrece una reconexión manual — y las instantáneas grandes de sesión y notebook se transfieren de forma fiable. La extracción de estructura de PDF científicos sigue mejorando, la CLI de Linux también se distribuye como paquetes .deb y .rpm independientes, y los subprocesos en segundo plano de Windows ya no abren ventanas de consola. Consulta las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) para más detalles.
+> 💡 **AIPOCH Open-Science v1.0.0** _(actualizado en octubre de 2026)_. Este hito reúne el espacio de investigación con prioridad local, los agentes científicos, la ejecución de Python/R en Notebook, las herramientas bibliográficas y los paquetes de investigación portátiles `.science`. Consulte las [notas de la versión 1.0.0](../../release-notes/1.0.0/es.md) para conocer los cambios desde v0.37.2 y los cambios de actualización de la CLI. Las descargas siguen correspondiendo a la [última versión publicada](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
@@ -173,13 +173,33 @@ Los paquetes importados son de solo lectura. No ejecutan código ni restauran cr
 
 ## Rendimiento en benchmarks
 
-### 🏆 N.º 1 en BiomniBench-DA Public 50
+### 🏆 AstaBench LitQA2-FullText-Search — 10/10 artículos objetivo encontrados
 
-AIPOCH Open-Science obtuvo la puntuación de clasificación más alta en la comparación recopilada de BiomniBench-DA Public 50: **79.05** con **gpt-5.6-sol (xhigh)**. El resultado combina una puntuación del evaluador Gemini 3.1 Pro de **81.04** y una puntuación del evaluador DeepSeek v4-pro de **77.06** mediante una media con ponderación equivalente, lo que sitúa a AIPOCH Open-Science en el **n.º 1** entre los resultados recopilados de Public 50. Consulte el [conjunto de datos BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+AIPOCH Open-Science logró **100% recall@30** en las diez consultas del conjunto oficial de validación con **DeepSeek v4-flash (max)**, especialistas en búsqueda bibliográfica y habilidades. Todos los artículos objetivo aparecieron entre los primeros 30 resultados. La puntuación supera los tres resultados públicos de validación incluidos en el informe, con **20 puntos porcentuales** sobre la referencia más alta de **80%**. Se informaron tres repeticiones locales, que muestran la localización de artículos para este conjunto de preguntas científicas.
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="Comparación BiomniBench-DA Public 50 que muestra a AIPOCH Open-Science en primer lugar con una puntuación de 79.05" width="1200" />
-</p>
+![AIPOCH Open-Science obtiene 100% recall@30 y 10/10 aciertos en la validación de AstaBench LitQA2; prueba y validación usan preguntas distintas](../images/readme/astabench-litqa2.png)
+
+La figura incluye registros de prueba y validación; el orden es exclusivamente numérico. Recall@30 mide la recuperación del artículo objetivo, no la exactitud de las respuestas científicas.
+
+### 🏆 ASI-Bench B1–B4 — Puntuaciones más altas en las cuatro comparaciones incluidas
+
+AIPOCH Open-Science obtuvo **79.35, 56.11, 59.67 y 59.46** en ASI-Bench B1, B2, B3 y B4 con **GPT-6 (gpt-6-astra / xhigh)**, especialistas de dominio y habilidades: los valores mostrados más altos en las respectivas comparaciones recogidas en los informes. Las cuatro condiciones evalúan **ejecutar un plan completo, organizar un flujo de trabajo, seleccionar métodos de investigación de forma autónoma y realizar investigación autónoma con información distractora**.
+
+Las referencias locales de Codex con el mismo modelo e intensidad de razonamiento indicada obtuvieron 74.78, 56.09, 58.12 y 55.45, con diferencias numéricas de **+4.57, +0.02, +1.55 y +4.01 puntos**, respectivamente. Se informaron tres repeticiones locales para B1/B2; B3/B4 son medias de tres ejecuciones locales de 60 tareas cada una.
+
+![AIPOCH Open-Science obtiene 79.35, 56.11, 59.67 y 59.46 en ASI-Bench B1–B4; se distinguen resultados locales y referencias públicas](../images/readme/asi-bench-b1-b4.jpg)
+
+Las ejecuciones locales usaron seed31415. La puntuación B1 de AIPOCH abarca 59 tareas; una se excluyó por el problema del evaluador descrito en el informe. B3/B4 usaron v0.32.0 y un juez sustituto. Las referencias públicas difieren en instancias, configuración y evaluación; la ventaja de 0.02 puntos en B2 es solo numérica.
+
+### 🏆 Mayor puntuación en la comparación recopilada de BiomniBench-DA Public 50 — 79.05
+
+AIPOCH Open-Science logró **79.05** con **gpt-5.6-sol (xhigh)** en una evaluación interna de las 50 tareas denominadas BiomniBench-DA Public 50, el valor mostrado más alto de la comparación recopilada. Es la media con igual ponderación de **81.04** del juez Gemini 3.1 Pro y **77.06** del juez DeepSeek v4-pro, que refleja el análisis de datos biomédicos de esta configuración. Consulte el [informe de evaluación](https://aipoch.com/blog/open-science-biomnibench-da).
+
+![AIPOCH Open-Science registra una media interna de 79.05 en BiomniBench-DA Public 50, con puntuaciones de jueces de 77.06 y 81.04](../images/readme/biomnibench-public50-leaderboard.png)
+
+La comparación mezcla registros con distinta cobertura de jueces y no constituye una clasificación oficial bajo condiciones uniformes de evaluación.
+
+**Alcance de la evaluación:** Son resultados locales/internos comunicados por el propio equipo. Encabezar las comparaciones incluidas no acredita un primer puesto oficial ni mejoras estadísticamente significativas. Consulte el [informe detallado (en inglés)](../benchmarks/README.md) para fechas de las fuentes, configuración de modelos y ejecución, alcance y el resultado independiente de PaperFinding sobre 66 consultas de validación.
 
 ## Capacidades principales
 

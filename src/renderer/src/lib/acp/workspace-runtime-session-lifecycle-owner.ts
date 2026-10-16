@@ -46,7 +46,7 @@ type ResumeInterruptedWorkspaceSessionOptions = {
   historyReplayDescriptor?: HistoryReplayDescriptor
   supportsImageInput?: boolean
   agentTarget?: AcpSessionAgentTarget
-  flushPersistence?: () => Promise<void>
+  flushPersistence?: (target?: string) => Promise<void>
 }
 
 type WorkspaceMessageRuntime = Pick<
@@ -190,7 +190,7 @@ const continueInterruptedWorkspaceTurn = async (
 
     // Persist the recovery marker, original prompt, and any fresh Runtime Segment before Main reads
     // them. If the app exits before provider acceptance, the same recovery remains retryable.
-    await (options?.flushPersistence ?? flushSessionPersistence)()
+    await (options?.flushPersistence ?? flushSessionPersistence)(`session:${sessionId}`)
     if (!runtime.continueInterruptedTurn) {
       throw new Error('Interrupted turn continuation is not available.')
     }
@@ -315,6 +315,19 @@ const resumeInterruptedWorkspaceSession = async (
     // A truncated prompt can retain its old recovery marker in the local projection. It no longer
     // owns a continuation, but the attachment-only path must retain the empty provider context.
     return removedPromptSettled ? { ...current, resumeRecovery: undefined } : current
+  }
+
+  // Commit pending preferences before attachment/preparation returns an authoritative snapshot.
+  // Otherwise that snapshot can restore an older auto-review setting before continuation.
+  try {
+    await (options?.flushPersistence ?? flushSessionPersistence)(`session:${sessionId}`)
+    if (!currentRecoverySession()) return
+  } catch (error) {
+    reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
+      operation: 'resume',
+      rawError: error
+    })
+    return
   }
 
   if (runtimeAlreadyAttached) {

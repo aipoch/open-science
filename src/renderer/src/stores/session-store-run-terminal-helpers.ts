@@ -12,7 +12,10 @@ import type {
 } from '../../../shared/session-persistence'
 import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
 import type { ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
-import { projectSessionInteractionState } from './session-store-interaction-state'
+import {
+  projectLiveSessionInteractionState,
+  projectSessionInteractionState
+} from './session-store-interaction-state'
 import { synchronizeSessionGraph } from './session-store-message-graph-helpers'
 import {
   completeOpenActivities,
@@ -230,14 +233,32 @@ export const projectAgentPromptInFlight = (
       }
 }
 
-export const projectElicitationPending = (session: ChatSession, pending: boolean): ChatSession => {
+export const projectElicitationPending = (
+  session: ChatSession,
+  pending: boolean,
+  liveProjection?: 'writer' | 'observer'
+): ChatSession => {
+  if (liveProjection)
+    return projectLiveSessionInteractionState(
+      session,
+      { elicitation: pending },
+      liveProjection === 'observer'
+    )
   return projectSessionInteractionState(session, { elicitation: pending })
 }
 
 export const projectPermissionPending = (
   session: ChatSession,
-  rearmAuthority = false
+  rearmAuthority = false,
+  liveProjection?: 'writer' | 'observer'
 ): ChatSession => {
+  if (liveProjection) {
+    return projectLiveSessionInteractionState(
+      session,
+      { permission: true },
+      liveProjection === 'observer'
+    )
+  }
   const runtimeContext = session.runtimeContext
   const permission = runtimeContext?.permission
   if (rearmAuthority && (!runtimeContext || permission?.state !== 'continuing')) return session
@@ -256,8 +277,16 @@ export const projectPermissionPending = (
 export const projectPermissionCleared = (
   session: ChatSession,
   authority?: 'continuing' | 'settled',
-  requestId?: string
+  requestId?: string,
+  liveProjection?: 'writer' | 'observer'
 ): ChatSession => {
+  if (liveProjection) {
+    return projectLiveSessionInteractionState(
+      session,
+      { permission: false },
+      liveProjection === 'observer'
+    )
+  }
   const runtimeContext = session.runtimeContext
   const permission = runtimeContext?.permission
   if (

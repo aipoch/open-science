@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.37.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.37.2는 복원력을 강화합니다 — 시작 시 백엔드, 설정, 네트워크 오류를 스스로 복구하고, 런타임 연결 해제가 앱을 잠그지 않으며(종료는 항상 가능하고 수동 재연결도 제공), 큰 세션 및 노트북 스냅샷도 안정적으로 전송됩니다. 과학 PDF 구조 추출은 계속 개선되고, Linux CLI는 독립 실행형 .deb 및 .rpm 패키지로도 제공되며, Windows 백그라운드 하위 프로세스는 콘솔 창을 띄우지 않습니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **AIPOCH Open-Science v1.0.0** _(2026년 10월 업데이트)_. 이번 이정표는 로컬 우선 연구 작업 공간, 과학 에이전트, Python/R Notebook 실행, 문헌 도구, 이동 가능한 `.science` 연구 패키지를 아우릅니다. v0.37.2 이후의 개선 사항과 CLI 업그레이드 변경 사항은 [1.0.0 릴리스 노트](../../release-notes/1.0.0/ko.md)를 참조하세요. 다운로드는 계속 [최신 공개 릴리스](https://github.com/aipoch/open-science/releases/latest)를 기준으로 합니다.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
@@ -172,13 +172,33 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 
 ## 벤치마크 성능
 
-### 🏆 BiomniBench-DA Public 50 1위
+### 🏆 AstaBench LitQA2-FullText-Search — 대상 논문 10/10 검색 성공
 
-AIPOCH Open-Science는 집계된 BiomniBench-DA Public 50 비교에서 **gpt-5.6-sol (xhigh)**로 **79.05**를 기록해 가장 높은 순위 점수를 달성했습니다. 이 결과는 Gemini 3.1 Pro 평가 점수 **81.04**와 DeepSeek v4-pro 평가 점수 **77.06**을 동일 가중치로 평균한 값이며, 수집된 Public 50 결과에서 AIPOCH Open-Science를 **1위**에 올렸습니다. [BiomniBench-DA 데이터세트](https://huggingface.co/datasets/phylobio/BiomniBench-DA)를 살펴보세요.
+AIPOCH Open-Science는 **DeepSeek v4-flash(max)**, 문헌 검색 스페셜리스트와 스킬을 활용해 공식 검증 세트 10문항에서 **100% recall@30**을 기록했습니다. 모든 대상 논문이 검색 결과 상위 30개에 포함되었습니다. 보고서에 실린 공개 검증 결과 3개보다 높으며, 그중 최고인 **80%보다 20%포인트 높습니다**. 로컬 반복 테스트 3회를 보고했으며, 이 과학 질문 세트에서 대상 논문을 찾는 능력을 보여줍니다.
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="AIPOCH Open-Science가 79.05점으로 1위를 기록한 BiomniBench-DA Public 50 비교" width="1200" />
-</p>
+![AIPOCH Open-Science의 AstaBench LitQA2 검증 결과: 100% recall@30, 10/10 대상 논문 검색 성공. 테스트와 검증 문항은 다름](../images/readme/astabench-litqa2.png)
+
+그림에는 테스트 및 검증 기록이 함께 있으며 순서는 수치 비교입니다. Recall@30은 대상 논문 검색을 측정하며 과학 질문의 정답률을 의미하지 않습니다.
+
+### 🏆 ASI-Bench B1–B4 — 보고서의 네 비교 모두에서 최고 표시 점수
+
+AIPOCH Open-Science는 **GPT-6(gpt-6-astra / xhigh)**, 분야별 스페셜리스트와 스킬을 활용해 ASI-Bench B1, B2, B3, B4에서 각각 **79.35, 56.11, 59.67, 59.46점**을 기록했습니다. 각 점수는 보고서에 수록된 해당 비교의 최고 표시 값입니다. 네 조건은 **완전한 계획 실행, 연구 흐름 구성, 자율적인 연구 방법 선택, 방해 배경 정보가 있는 상황에서의 자율 연구**를 평가합니다.
+
+동일한 모델과 같은 이름의 추론 강도를 사용한 로컬 Codex 대조군 점수는 74.78, 56.09, 58.12, 55.45이며, 수치 차이는 각각 **+4.57, +0.02, +1.55, +4.01점**입니다. B1/B2는 로컬 반복 테스트 3회를 보고했으며, B3/B4는 각 60개 과제를 3회 실행한 평균입니다.
+
+![AIPOCH Open-Science의 ASI-Bench B1–B4 점수 79.35, 56.11, 59.67, 59.46. 로컬 결과와 공개 참조를 구분](../images/readme/asi-bench-b1-b4.jpg)
+
+로컬 실행은 seed31415를 사용했습니다. AIPOCH B1은 보고서에 설명된 채점기 문제로 1개를 제외한 59개 과제를 채점했습니다. B3/B4는 v0.32.0 및 대체 평가 모델을 사용했습니다. 공개 참조와 과제 인스턴스, 구성, 채점 조건이 다르며 B2의 0.02점은 수치 차이일 뿐입니다.
+
+### 🏆 수집된 BiomniBench-DA Public 50 비교에서 최고 값 — 79.05점
+
+AIPOCH Open-Science는 **gpt-5.6-sol(xhigh)**을 사용해 BiomniBench-DA Public 50으로 표시된 50개 과제의 내부 평가에서 **79.05점**을 얻어 수집된 비교의 최고 표시 점수를 기록했습니다. Gemini 3.1 Pro 평가의 **81.04점**과 DeepSeek v4-pro 평가의 **77.06점**을 동일 가중치로 평균한 결과로, 해당 구성의 생물의학 데이터 분석 성능을 보여줍니다. [평가 보고서](https://aipoch.com/blog/open-science-biomnibench-da)를 참고하세요.
+
+![AIPOCH Open-Science의 BiomniBench-DA Public 50 내부 평가: 두 평가 점수 77.06과 81.04의 평균 79.05](../images/readme/biomnibench-public50-leaderboard.png)
+
+서로 다른 평가 모델 적용 범위가 혼합된 비교이며, 동일한 평가 조건의 공식 순위가 아닙니다.
+
+**평가 범위:** 자체 보고한 로컬·내부 결과입니다. 제시된 비교에서 최고 점수라는 사실이 공식 1위나 통계적으로 유의한 개선을 입증하지는 않습니다. 출처 날짜, 모델 및 실행 구성, 평가 범위와 별도 PaperFinding 검증 66문항 결과는 [상세 보고서(영어)](../benchmarks/README.md)를 참고하세요.
 
 ## 핵심 기능
 

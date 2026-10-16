@@ -14,6 +14,7 @@ import {
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
 import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
+import { collectSmokeDiagnostics } from './package-smoke-diagnostics.mjs'
 
 const ARTIFACT_PATTERN = /^aipoch-open-science-(.+)-mac-(?:arm64|x64)\.(dmg|zip)$/
 const SMOKE_ROOT_PREFIX = 'open-science-macos-package-smoke-'
@@ -75,6 +76,8 @@ const waitFor = async (description, check, timeoutMs = STARTUP_TIMEOUT_MS) => {
 
 const runProcess = (executable, args, options = {}) =>
   new Promise((resolveProcess, rejectProcess) => {
+    const started = Date.now()
+    console.log(`macOS smoke command: ${basename(executable)} ${args[0] ?? ''} started`)
     const child = spawn(executable, args, {
       cwd: options.cwd,
       env: options.env,
@@ -88,6 +91,9 @@ const runProcess = (executable, args, options = {}) =>
     child.stderr?.on('data', (chunk) => (stderr += chunk))
     child.once('error', rejectProcess)
     child.once('exit', (code) => {
+      console.log(
+        `macOS smoke command: ${basename(executable)} exited ${code}; elapsedMs=${Date.now() - started}`
+      )
       // Electron's detached crashpad process can inherit these descriptors after the app exits.
       // Close our readers at the direct child's exit so the successful smoke does not stay alive
       // waiting for an unrelated crash reporter to close its copy of the pipe.
@@ -98,6 +104,19 @@ const runProcess = (executable, args, options = {}) =>
         rejectProcess(new Error(`${basename(executable)} exited with ${code}.\n${stdout}${stderr}`))
     })
   })
+
+const installDmgApp = async (dmg, mount, installedRoot, run = runProcess) => {
+  await run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, dmg])
+  try {
+    const source = await findAppBundle(mount)
+    const installed = join(installedRoot, basename(source))
+    // Test drag-install semantics, not execution from the compressed read-only image (TN2206).
+    await run('/usr/bin/ditto', [source, installed])
+    return installed
+  } finally {
+    await run('/usr/bin/hdiutil', ['detach', '-force', mount])
+  }
+}
 
 const terminateSpawnedProcessGroup = (child) => {
   if (!child.pid) return
@@ -153,6 +172,7 @@ const packagedLaunchArguments = (userDataRoot) => [
 ]
 
 const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }) => {
+  const started = Date.now()
   const child = spawn(executable, packagedLaunchArguments(userDataRoot), {
     detached: true,
     env: { ...env, OPEN_SCIENCE_E2E_NATIVE_SHELL_CERTIFICATION: '1' },
@@ -185,6 +205,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
         throw new Error(`Packaged macOS app exited before becoming healthy (${code}).\n${output}`)
       })
     ])
+    console.log(`macOS smoke: endpoint ready; elapsedMs=${Date.now() - started}`)
     const response = await fetch(`${service.endpoint}/api/bootstrap?${service.auth}`, {
       signal: AbortSignal.timeout(15_000)
     })
@@ -206,6 +227,9 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     if (shellCertification.status !== 'passed') {
       throw new Error('Packaged macOS native shell lifecycle certification failed.')
     }
+    console.log(
+      `macOS smoke: bootstrap and native shell verified; elapsedMs=${Date.now() - started}`
+    )
     const shutdown = await fetch(`${service.endpoint}/api/shutdown?${service.auth}`, {
       method: 'POST',
       signal: AbortSignal.timeout(15_000)
@@ -214,6 +238,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     if (shutdown.status !== 202) {
       throw new Error(`Packaged macOS shutdown returned ${shutdown.status}.`)
     }
+    const shutdownStarted = Date.now()
     const exitCode = await Promise.race([
       exit,
       delay(60_000).then(() => {
@@ -222,11 +247,19 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     ])
     terminateSpawnedProcessGroup(child)
     if (exitCode !== 0) throw new Error(`Packaged macOS app exited with ${exitCode}.\n${output}`)
+    console.log(
+      `macOS smoke: clean exit; shutdownMs=${Date.now() - shutdownStarted}; elapsedMs=${Date.now() - started}`
+    )
     return await readDesktopSqliteVersion(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, child.pid)
   } catch (error) {
+    const diagnostics = await collectSmokeDiagnostics({
+      configRoot: env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+      pid: child.pid,
+      desktop: true
+    })
     child.kill('SIGKILL')
     terminateSpawnedProcessGroup(child)
-    throw error
+    throw new Error(`${error.message}\n${diagnostics}`, { cause: error })
   }
 }
 
@@ -240,6 +273,9 @@ const smokeAppBundle = async ({
   expectLegacyProject = true,
   launches = 1
 }) => {
+  console.log(
+    `macOS smoke: ${appBundle}; profile=${storageRoot}; Gatekeeper=${gatekeeper}; launches=${launches}`
+  )
   await runProcess(
     '/usr/bin/codesign',
     ['--verify', '--deep', '--strict', '--verbose=2', appBundle],
@@ -274,6 +310,7 @@ const smokeAppBundle = async ({
   )
   const sqliteVersions = []
   for (let launch = 0; launch < launches; launch += 1) {
+    console.log(`macOS smoke: launch ${launch + 1}/${launches}`)
     sqliteVersions.push(await launchAndProbe({ executable, expectedVersion, env, userDataRoot }))
   }
   await verifyDatabaseMigrationLedger(storageRoot)
@@ -336,28 +373,17 @@ const main = async () => {
         { env }
       )
     }
-    await runProcess('/usr/bin/hdiutil', [
-      'attach',
-      '-nobrowse',
-      '-readonly',
-      '-mountpoint',
-      mount,
-      dmg
-    ])
-    try {
-      sqliteVersions.push(
-        ...(await smokeAppBundle({
-          appBundle: await findAppBundle(mount),
-          expectedVersion,
-          env,
-          gatekeeper: false,
-          userDataRoot,
-          storageRoot
-        }))
-      )
-    } finally {
-      await runProcess('/usr/bin/hdiutil', ['detach', '-force', mount])
-    }
+    const installedApp = await installDmgApp(dmg, mount, join(root, 'dmg-installed'))
+    sqliteVersions.push(
+      ...(await smokeAppBundle({
+        appBundle: installedApp,
+        expectedVersion,
+        env,
+        gatekeeper: options.gatekeeper,
+        userDataRoot,
+        storageRoot
+      }))
+    )
 
     await runProcess('/usr/bin/ditto', ['-x', '-k', zip, extracted], { env })
     const zipAppBundle = await findAppBundle(extracted)
@@ -421,6 +447,7 @@ export {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  installDmgApp,
   launchAndProbe,
   packagedLaunchArguments,
   parseArguments,

@@ -10,13 +10,6 @@ type FaultRequest = SessionIdentity &
     | { kind: 'submission'; prompt: string }
     | { kind: 'artifact-publication'; artifactRunId: string; artifactStorageSessionId: string }
   )
-type FaultState = {
-  original: typeof import('node:fs/promises').rename
-  proxy: typeof import('node:fs/promises').rename
-  hits: number
-}
-
-const FAULT_KEY = '__openScienceSessionOutcomeFault'
 const nativeApplication = (app: NativeApp): ElectronApplication => {
   // The existing diagnostic fixture uses this same private native handle. Keep it contained here.
   const application = (app as unknown as { application?: ElectronApplication }).application
@@ -121,8 +114,7 @@ export const releaseOutcomeArtifact = async (app: NativeApp, sessionId: string):
   }, sessionId)
 }
 
-// Replace only fs.rename in this isolated Main process. Candidate JSON and exact run identity
-// distinguish terminal persistence from admission, streaming and unrelated preference writes.
+// The Node backend owns writes; its source-test preload reads this isolated control file.
 export const installSessionOutcomeFault = async (
   app: NativeApp,
   request: FaultRequest
@@ -132,7 +124,7 @@ export const installSessionOutcomeFault = async (
     async () => (await window.api.storage.getInfo()).dataRoot
   )
   await application.evaluate(
-    async (_electron, { input, key, dataRoot }) => {
+    async (_electron, input) => {
       const fs = process.getBuiltinModule('node:fs/promises')!
       const path = process.getBuiltinModule('node:path')!
       const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
@@ -143,95 +135,46 @@ export const installSessionOutcomeFault = async (
         !root.includes('open-science-electron-e2e-')
       )
         throw new Error('Refusing an outcome fault outside fixture-owned storage.')
-      for (const value of [input.projectId, input.sessionId])
-        if (!/^[a-zA-Z0-9_-]+$/u.test(value)) throw new Error('Unsafe outcome fixture identity.')
-      const registry = globalThis as unknown as Record<string, FaultState | undefined>
-      if (registry[key]) throw new Error('An outcome fault is already installed.')
-      const sessionPath = path.join(root, 'sessions', input.projectId, `${input.sessionId}.json`)
-      if (
-        path.resolve(dataRoot) !== path.resolve(root) &&
-        !path.resolve(dataRoot).startsWith(path.resolve(root) + path.sep)
-      )
-        throw new Error('The Artifact root must belong to the isolated fixture.')
-      const storageSessionId =
-        input.kind === 'artifact-publication' ? input.artifactStorageSessionId : input.sessionId
-      if (!/^[a-zA-Z0-9_-]+$/u.test(storageSessionId))
-        throw new Error('Unsafe Artifact storage scope.')
-      const artifactRoot = path.join(dataRoot, 'artifacts', input.projectId, storageSessionId)
-      if (input.kind === 'artifact-publication' && !/^[a-zA-Z0-9_-]+$/u.test(input.artifactRunId))
-        throw new Error('Unsafe outcome Artifact run identity.')
-      const state: FaultState = { original: fs.rename, proxy: fs.rename, hits: 0 }
-      state.proxy = new Proxy(state.original, {
-        apply: async (original, receiver, args: Parameters<typeof fs.rename>) => {
-          const [source, destination] = args
-          let reject = false
-          if (input.kind === 'artifact-publication') {
-            reject =
-              path.dirname(String(source)) ===
-                path.join(artifactRoot, '.pending', input.artifactRunId) &&
-              path.dirname(path.dirname(String(destination))) ===
-                path.join(dataRoot, 'artifacts', input.projectId, input.sessionId) &&
-              path.basename(String(destination)) === path.basename(String(source))
-          } else if (String(destination) === sessionPath) {
-            const candidate = JSON.parse(await fs.readFile(source, 'utf8'))
-              .session as PersistedChatSession
-            if (input.kind === 'terminal') {
-              reject =
-                !candidate.activeRun &&
-                Boolean(
-                  candidate.runtimeSessionAdmissions?.some(
-                    (admission) =>
-                      admission.executionId === input.executionId &&
-                      admission.promptMessageId === input.promptMessageId
-                  )
-                ) &&
-                candidate.runtimeTranscriptLastRun?.promptMessageId === input.promptMessageId &&
-                candidate.runtimeTranscriptLastRun?.startedAt === input.startedAt
-            } else {
-              const prompt = (candidate.conversationGraph?.messages ?? candidate.messages).find(
-                (message) => message.role === 'user' && message.content === input.prompt
-              )
-              reject = Boolean(
-                prompt &&
-                !candidate.runtimeSessionAdmissions?.some(
-                  (admission) => admission.promptMessageId === prompt.id
-                )
-              )
-            }
-          }
-          if (reject) {
-            state.hits++
-            throw Object.assign(new Error(`Synthetic ${input.kind} write failure.`), {
-              code: 'EIO'
-            })
-          }
-          return Reflect.apply(original, receiver, args)
-        }
-      })
-      registry[key] = state
-      fs.rename = state.proxy
+      await fs.rm(path.join(root, 'e2e-session-outcome-hits'), { force: true })
+      const control = path.join(root, 'e2e-session-outcome-fault.json')
+      // Publish complete JSON atomically: the backend reads this during unrelated writes too.
+      await fs.writeFile(`${control}.tmp`, JSON.stringify(input), { flag: 'wx' })
+      try {
+        await fs.link(`${control}.tmp`, control)
+      } finally {
+        await fs.rm(`${control}.tmp`, { force: true })
+      }
     },
-    { input: request, key: FAULT_KEY, dataRoot }
+    { ...request, dataRoot }
   )
   return {
     hits: () =>
-      application.evaluate(
-        (_electron, key) =>
-          (globalThis as unknown as Record<string, FaultState | undefined>)[key]?.hits ?? 0,
-        FAULT_KEY
-      ),
-    restore: async () => {
-      await application.evaluate((_electron, key) => {
+      application.evaluate(async () => {
         const fs = process.getBuiltinModule('node:fs/promises')!
-        const registry = globalThis as unknown as Record<string, FaultState | undefined>
-        const state = registry[key]
-        if (!state) return
-        if (fs.rename !== state.proxy)
-          throw new Error('The outcome fault lost ownership of fs.rename.')
-        fs.rename = state.original
-        delete registry[key]
-      }, FAULT_KEY)
-    }
+        const path = process.getBuiltinModule('node:path')!
+        try {
+          return (
+            await fs.readFile(
+              path.join(process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT!, 'e2e-session-outcome-hits'),
+              'utf8'
+            )
+          )
+            .trim()
+            .split('\n').length
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+          throw error
+        }
+      }),
+    restore: () =>
+      application.evaluate(async () => {
+        const fs = process.getBuiltinModule('node:fs/promises')!
+        const path = process.getBuiltinModule('node:path')!
+        await fs.rm(
+          path.join(process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT!, 'e2e-session-outcome-fault.json'),
+          { force: true }
+        )
+      })
   }
 }
 

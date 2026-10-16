@@ -123,6 +123,36 @@ describe('same-backend desktop recovery', () => {
     await Promise.resolve()
     expect(next.close).toHaveBeenCalledOnce()
   })
+  it('cancels an unanswered control refresh and ignores its late reply', async () => {
+    const old = client()
+    const next = client()
+    const refresh = deferred<ReturnType<DesktopRuntimeClient['runtimeInfo']>>()
+    const refreshControl = vi.fn(() => refresh.promise)
+    Object.assign(next, {
+      runtimeInfo: () => ({ generation: 'test-generation', controlReason: 'operation-pending' }),
+      refreshControl
+    })
+    const activate = vi.fn()
+    const recovery = createDesktopRuntimeRecovery({
+      client: old,
+      connect: async () => next,
+      activate,
+      onState: vi.fn()
+    })
+    recovery.disconnect(old)
+    const result = recovery.reconnect()
+    await vi.waitFor(() => expect(refreshControl).toHaveBeenCalledOnce())
+    recovery.setClosing(true)
+    await result
+    expect(next.close).toHaveBeenCalledOnce()
+    expect(recovery.state()).toMatchObject({ phase: 'disconnected', closing: true })
+    Object.assign(next, {
+      runtimeInfo: () => ({ generation: 'test-generation', control: 'granted' })
+    })
+    refresh.resolve(next.runtimeInfo())
+    await Promise.resolve()
+    expect(activate).not.toHaveBeenCalled()
+  })
   it('cancels hung activation on quit and allows another attempt after canceled quit', async () => {
     const old = client()
     const next = client()

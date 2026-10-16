@@ -127,6 +127,7 @@ export function completeInstallationStartup(
 
 // This location is shared across config roots and is deliberately outside replacement resources.
 export { installationRootForEntry } from '../../../packages/open-science/installation-startup.cjs'
+import { reapStaleRegistrations } from '../../../packages/open-science/installation-startup.cjs'
 export function installationStateDirectory(location: InstallationLocation): string {
   // Resolve existing parents too: recovery must find the record when resources are missing.
   let root = resolve(location.installationRoot)
@@ -148,10 +149,10 @@ export function installationStateDirectory(location: InstallationLocation): stri
     key
   )
 }
-function acquireLock(path: string): () => void {
+function acquireLock(path: string, busyTimeoutMs = 0): () => void {
   const db = new DatabaseSync(path)
   try {
-    db.exec('PRAGMA busy_timeout = 0; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE')
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE`)
   } catch (cause) {
     db.close()
     throw new UpdateLifecycleError(
@@ -172,7 +173,9 @@ function acquireLock(path: string): () => void {
 function coordinated<T>(location: InstallationLocation, run: (directory: string) => T): T {
   const directory = installationStateDirectory(location)
   mkdirSync(directory, { recursive: true, mode: 0o700 })
-  const unlock = acquireLock(join(directory, 'coordinator.sqlite'))
+  // Concurrent CLI/backend starts briefly share this coordinator. Match the bootstrap's bounded
+  // wait; lifetime/executor lock probes must remain nonblocking so a live owner is never awaited.
+  const unlock = acquireLock(join(directory, 'coordinator.sqlite'), 1500)
   try {
     return run(directory)
   } finally {
@@ -291,6 +294,7 @@ export function registerInstallationRuntime(
   return coordinated(options, (directory) => {
     if (readRecord(directory))
       throw new UpdateLifecycleError('installation-busy', 'An installation update is in progress.')
+    reapStaleRegistrations(directory)
     const id = randomUUID()
     const helperToken = randomUUID()
     const unlock = acquireLock(join(directory, `${id}.sqlite`))
@@ -322,6 +326,7 @@ export function registerInstallationRuntime(
 }
 function occupants(directory: string): InstallationRuntime[] {
   const live: InstallationRuntime[] = []
+  reapStaleRegistrations(directory)
   for (const name of readdirSync(directory).filter((name) => /^[\da-f-]{36}\.json$/.test(name))) {
     let unlock: (() => void) | undefined
     try {
@@ -695,8 +700,9 @@ export async function inspectInstallationStartupAsync(
 ): Promise<InstallationStartupTicket | undefined> {
   const ticket = coordinated(location, readStartupTicket)
   if (!ticket) return undefined
+  // Match the writer's path spelling: native realpath expands Windows 8.3 names.
   if (
-    ticket.installationRoot !== (await realpath(location.installationRoot)) ||
+    ticket.installationRoot !== realpathSync(location.installationRoot) ||
     !(await verifyInstallationManifestAsync(location.installationRoot, ticket.manifest, signal))
   )
     throw new UpdateLifecycleError(

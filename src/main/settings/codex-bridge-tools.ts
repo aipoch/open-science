@@ -196,7 +196,7 @@ const LITERATURE_CORE_TOOLS: ResponsesBridgeNamespacedTool[] = [
       documentId: itemId.optional(),
       documentIds: z.array(itemId).min(1).max(3).optional(),
       query: z.string().trim().min(1).max(2_000).optional(),
-      cursor: z.string().trim().min(1).max(128).optional()
+      cursor: z.string().trim().min(1).max(2048).optional()
     })
   ),
   tool(

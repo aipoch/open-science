@@ -50,7 +50,8 @@ const macCanAutoUpdate = (isPackaged: boolean, version: string): boolean =>
 
 // Selects discovery/download machinery, not permission to replace an installation. Windows/Linux
 // and compatible macOS builds use electron-updater; other builds use the manifest download flow.
-// Production apply is separately gated on native acceptance and supervised external installation.
+// Applying is routed by the Desktop integration: certified channels use the supervised replacement,
+// the rest keep the legacy quitAndInstall behind the same runtime stop and occupancy checks.
 export const createUpdateStrategy = (
   platform: NodeJS.Platform = process.platform,
   opts: CreateStrategyOptions = {}

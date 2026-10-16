@@ -1,4 +1,4 @@
-import { waitForLifecycleSettlement } from './lifecycle-settlement'
+import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ActiveSessionInfo } from '../shared/storage'
@@ -16,6 +16,7 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('abort') }).strict(),
   z.object({ operation: z.literal('release') }).strict()
 ])
+const DISCONNECT_WAIT_MS = 10_000
 export type DesktopLifecycleRequest = z.infer<typeof desktopLifecycleRequestSchema>
 export type DesktopShutdownWork = {
   sessions: ActiveSessionInfo[]
@@ -26,17 +27,23 @@ export type DesktopShutdownWork = {
   fingerprint: string
 }
 
-export function createDesktopRuntimeLifecycle(deps: {
-  detectActiveSessions(): ActiveSessionInfo[]
-  hasActiveReviewerWork(): boolean
-  getActiveSettingsInstallId(): string | undefined
-  isMigrationInProgress(): boolean
-  cancelMigrationForQuit?(): Promise<void>
-  hasActivePackageTransfer(): boolean
-  holdSettingsInstallAdmission(): () => void
-  prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
-  abortQuitPreparation(): void
-}): { request(operation: DesktopLifecycleRequest): Promise<unknown>; disconnect(): Promise<void> } {
+export function createDesktopRuntimeLifecycle(
+  deps: {
+    detectActiveSessions(): ActiveSessionInfo[]
+    hasActiveReviewerWork(): boolean
+    getActiveSettingsInstallId(): string | undefined
+    isMigrationInProgress(): boolean
+    cancelMigrationForQuit?(): Promise<void>
+    hasActivePackageTransfer(): boolean
+    holdSettingsInstallAdmission(): () => void
+    prepareForQuit(): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
+    abortQuitPreparation(): void
+  },
+  options: { disconnectWaitMs?: number } = {}
+): {
+  request(operation: DesktopLifecycleRequest): Promise<unknown>
+  disconnect(): Promise<void>
+} {
   let releaseAdmission: (() => void) | undefined
   let preparing = false
   let prepared = false
@@ -56,8 +63,13 @@ export function createDesktopRuntimeLifecycle(deps: {
     }
   }
   const release = (): void => {
-    releaseAdmission?.()
+    // A timeout only ends the Desktop's wait. Keep installations fenced until the underlying
+    // cleanup settles, and capture this hold so late release cannot reopen a newer quit's hold.
+    const releaseCurrent = releaseAdmission
     releaseAdmission = undefined
+    if (!releaseCurrent) return
+    if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(releaseCurrent)
+    else releaseCurrent()
   }
   const abort = (): void => {
     if (prepared || preparing) deps.abortQuitPreparation()
@@ -67,8 +79,18 @@ export function createDesktopRuntimeLifecycle(deps: {
   return {
     disconnect: async () => {
       disconnected = true
-      await inFlight?.catch(() => undefined)
-      await waitForLifecycleSettlement()
+      // Cleanup is bounded: an operation that never settles must not keep the Desktop fenced out.
+      const wait = options.disconnectWaitMs ?? DISCONNECT_WAIT_MS
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight?.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, wait)
+          timer.unref?.()
+        })
+      ])
+      clearTimeout(timer)
+      await waitForLifecycleSettlement({ timeoutMs: wait })
       abort()
     },
     request: (operation) => {
@@ -107,9 +129,11 @@ export function createDesktopRuntimeLifecycle(deps: {
               )
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             preparing = true
+            // Preparation can close ACP admission and then reject. That attempt still needs an
+            // abort, just like a timeout or a completed preparation followed by a refused quit.
+            prepared = true
             try {
               const result = await deps.prepareForQuit()
-              prepared = true
               if (disconnected) throw new Error('Desktop disconnected during quit preparation.')
               return result
             } finally {

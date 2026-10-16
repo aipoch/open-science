@@ -5,6 +5,7 @@ import { ApplicationEventHub } from './application-events'
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 import { trackLifecycleSettlement } from './lifecycle-settlement'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 const cleanup: Array<() => unknown> = []
 afterEach(async () => {
@@ -19,7 +20,11 @@ async function fixture() {
     commands: { commandNames: () => [], invoke: vi.fn() },
     events: new ApplicationEventHub(),
     createLifecycle: () => lifecycle,
-    hostCommands: { commandNames: () => ['desktop:update-gate'], invoke: vi.fn(async () => null) }
+    controllerRetireDeadlineMs: 400,
+    hostCommands: {
+      commandNames: () => ['desktop:update-gate', 'desktop:update-abort'],
+      invoke: vi.fn(async () => null)
+    }
   })
   cleanup.push(host.close)
   const attach = async (
@@ -70,15 +75,31 @@ it('retains controller until a timed-out underlying teardown really settles', as
   const actual = new Promise<void>((resolve) => {
     finish = resolve
   })
+  cleanup.push(finish)
   lifecycle.request.mockImplementationOnce(async () => {
     trackLifecycleSettlement(actual)
     return null
   })
   const first = await attach(randomUUID())
   await first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
-  await expect(first.lifecycle({ operation: 'abort' })).rejects.toMatchObject({
+  await expect(first.lifecycle({ operation: 'abort' })).resolves.toBeNull()
+  await expect(first.lifecycle({ operation: 'release' })).resolves.toBeNull()
+  // Rolling back the current quit must not authorize new preparation or an update before the
+  // underlying teardown settles, nor allow a competing Desktop to release the owner's holds.
+  for (const operation of ['hold', 'prepare'] as const)
+    await expect(
+      first.lifecycle(
+        operation === 'prepare' ? { operation, fingerprint: 'a'.repeat(64) } : { operation }
+      )
+    ).rejects.toMatchObject({ code: 'command-unavailable' })
+  await expect(first.invokeHost('desktop:update-gate')).rejects.toMatchObject({
     code: 'command-unavailable'
   })
+  const competitor = await attach(randomUUID())
+  for (const operation of ['abort', 'release'] as const)
+    await expect(competitor.lifecycle({ operation })).rejects.toMatchObject({
+      code: 'command-unavailable'
+    })
   first.close()
   const held = await attach(randomUUID())
   expect(held.runtimeInfo().control).toBe('held')
@@ -88,6 +109,30 @@ it('retains controller until a timed-out underlying teardown really settles', as
   const next = await attach(randomUUID())
   expect(next.runtimeInfo().control).toBe('granted')
   await next.lifecycle({ operation: 'hold' })
+})
+
+it('does not overlap rollback with an active lifecycle request, even on another owner socket', async () => {
+  const { attach, lifecycle } = await fixture()
+  const preparation = Promise.withResolvers<null>()
+  lifecycle.request.mockImplementationOnce(() => preparation.promise)
+  const id = randomUUID()
+  const first = await attach(id)
+  const second = await attach(id)
+  const pending = first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
+  try {
+    await vi.waitFor(() => expect(lifecycle.request).toHaveBeenCalledOnce())
+    for (const client of [first, second])
+      for (const operation of ['abort', 'release'] as const)
+        await expect(client.lifecycle({ operation })).rejects.toMatchObject({
+          code: 'command-unavailable'
+        })
+    expect(lifecycle.request).toHaveBeenCalledOnce()
+  } finally {
+    preparation.resolve(null)
+    await pending
+  }
+  await second.lifecycle({ operation: 'abort' })
+  await first.lifecycle({ operation: 'release' })
 })
 
 it('delivers events to every attachment and retains controller documents after a spectator closes', async () => {
@@ -340,4 +385,99 @@ it('does not let a new socket abort a Runtime shutdown already accepted on anoth
     code: 'command-unavailable'
   })
   expect(abort).not.toHaveBeenCalled()
+})
+
+it('lets recovery commands through while a teardown is still settling', async () => {
+  const { attach, lifecycle } = await fixture()
+  let finish!: () => void
+  const actual = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  cleanup.push(finish)
+  lifecycle.request.mockImplementationOnce(async () => {
+    trackLifecycleSettlement(actual, { abandonAfterMs: 60_000 })
+    return null
+  })
+  const first = await attach(randomUUID())
+  await first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
+  await expect(first.invokeHost('desktop:update-abort')).resolves.toBeNull()
+  await expect(first.lifecycle({ operation: 'abort' })).resolves.toBeNull()
+  await expect(first.lifecycle({ operation: 'release' })).resolves.toBeNull()
+})
+
+it('releases the controller fence when disconnect cleanup throws', async () => {
+  const { attach, lifecycle } = await fixture()
+  lifecycle.disconnect.mockRejectedValueOnce(new Error('abort failed'))
+  const first = await attach(randomUUID())
+  first.close()
+  await vi.waitFor(() => expect(lifecycle.disconnect).toHaveBeenCalledOnce())
+  await vi.waitFor(async () => {
+    const next = await attach(randomUUID())
+    expect(next.runtimeInfo().control).toBe('granted')
+  })
+})
+
+it('releases the controller fence when a settlement never converges', async () => {
+  const { attach, lifecycle } = await fixture()
+  lifecycle.request.mockImplementationOnce(async () => {
+    trackLifecycleSettlement(new Promise<void>(() => {}), { abandonAfterMs: 150 })
+    return null
+  })
+  const first = await attach(randomUUID())
+  await first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) })
+  first.close()
+  await sleep(50)
+  const held = await attach(randomUUID())
+  expect(held.runtimeInfo().control).toBe('held')
+  await vi.waitFor(
+    async () => {
+      const next = await attach(randomUUID())
+      expect(next.runtimeInfo().control).toBe('granted')
+    },
+    { timeout: 3000 }
+  )
+  expect(lifecycle.disconnect).toHaveBeenCalledOnce()
+})
+
+it('releases the controller fence when a controller operation never settles', async () => {
+  const { attach, lifecycle } = await fixture()
+  lifecycle.request.mockImplementationOnce(() => new Promise<null>(() => {}))
+  const first = await attach(randomUUID())
+  void first.lifecycle({ operation: 'prepare', fingerprint: 'a'.repeat(64) }).catch(() => undefined)
+  await vi.waitFor(() => expect(lifecycle.request).toHaveBeenCalledOnce())
+  first.close()
+  await vi.waitFor(
+    async () => {
+      const next = await attach(randomUUID())
+      expect(next.runtimeInfo().control).toBe('granted')
+    },
+    { timeout: 3000 }
+  )
+})
+
+it('does not grant control of a runtime that is already stopping', async () => {
+  let stopping = false
+  const host = await startDesktopRuntimeTransport({
+    version: 'test',
+    launch: 'desktop',
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub(),
+    isStopping: () => stopping,
+    createLifecycle: () => ({ request: vi.fn(async () => null), disconnect: vi.fn() })
+  })
+  cleanup.push(host.close)
+  const connect = async (): Promise<DesktopRuntimeClient> => {
+    const client = await connectDesktopRuntime({
+      endpoint: host.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanup.push(client.close)
+    return client
+  }
+  expect((await connect()).runtimeInfo().control).toBe('granted')
+  stopping = true
+  const late = await connect()
+  expect(late.runtimeInfo()).toMatchObject({ control: 'held', controlReason: 'runtime-stopping' })
 })

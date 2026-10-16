@@ -531,6 +531,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
+  const viewSelectionVersion = useRef(0)
   const [showVariables, setShowVariables] = useState(false)
   const [showPrivateVariables, setShowPrivateVariables] = useState(false)
   const [namespaceFilter, setNamespaceFilter] = useState('')
@@ -566,11 +567,16 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
   const stateReloadQueued = useRef(false)
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
+  const lastRevealedRunRequest = useRef<string | undefined>(undefined)
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
   const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
 
   useEffect(() => {
+    if (latestNotebookRequest.current.key !== notebookRequestKey) {
+      lastRevealedRunRequest.current = undefined
+      viewSelectionVersion.current += 1
+    }
     latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
   }, [notebookRequest, notebookRequestKey])
 
@@ -797,13 +803,18 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   useEffect(() => {
     if (!focusedRun?.agentFrameId) return
+    const requestKey = JSON.stringify([focusedRun.runId, item.notebookRunFocusRequest ?? 0])
+    // A fresh state snapshot is not a new request to reveal the original Run.
+    if (lastRevealedRunRequest.current === requestKey) return
     const timer = window.setTimeout(() => {
+      lastRevealedRunRequest.current = requestKey
+      viewSelectionVersion.current += 1
       setFrameFilter(`frame:${focusedRun.agentFrameId}`)
       setActiveKind(resolveRunKernelKind(focusedRun))
       setActiveEnv(resolveRunEnvironment(focusedRun))
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [focusedRun, item.notebookRunFocusRequest])
+  }, [focusedRun, item.notebookRunFocusRequest, notebookRequestKey])
 
   useEffect(() => {
     if (!item.notebookRunId || !visibleRuns.some((run) => run.runId === item.notebookRunId)) return
@@ -1077,6 +1088,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     }
 
     const target = `${activeDataLanguage}:${activeEnvName}`
+    const submittedViewVersion = viewSelectionVersion.current
     setSubmittingTarget(target)
     setActionError(null)
 
@@ -1096,6 +1108,16 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         language: activeDataLanguage
       })
 
+      // Manual commands produce root-lane history. Reveal the result only if this view still owns
+      // the submission; failed admission and later navigation retain their original context.
+      if (
+        getDesktopRuntimeEpoch() === epoch &&
+        viewSelectionVersion.current === submittedViewVersion
+      ) {
+        const rootFrameId = session?.conversationGraph?.rootFrameId
+        if (rootFrameId) setFrameFilter(`frame:${rootFrameId}`)
+        setActiveKind(activeDataLanguage)
+      }
       await loadNotebookState()
     } catch (error) {
       setTerminalCode(code)
@@ -1432,7 +1454,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             </label>
             <Select
               value={effectiveFrameFilter ?? ''}
-              onValueChange={(value) => setFrameFilter(value as NotebookFrameFilterValue)}
+              onValueChange={(value) => {
+                viewSelectionVersion.current += 1
+                setFrameFilter(value as NotebookFrameFilterValue)
+              }}
             >
               <SelectTrigger
                 id={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
@@ -1472,6 +1497,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                   type="button"
                   data-testid="kernel-switcher-r"
                   onClick={() => {
+                    viewSelectionVersion.current += 1
                     setActiveKind('r')
                     onSelectLanguage('r')
                   }}
@@ -1490,6 +1516,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                   type="button"
                   data-testid={`kernel-switcher-${kind}`}
                   onClick={() => {
+                    viewSelectionVersion.current += 1
                     setShowVariables(false)
                     setActiveKind(kind)
                   }}
@@ -1591,7 +1618,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 key={envName}
                 type="button"
                 data-testid={`env-option-${envName}`}
-                onClick={() => setActiveEnv(envName)}
+                onClick={() => {
+                  viewSelectionVersion.current += 1
+                  setActiveEnv(envName)
+                }}
                 className={cn(
                   'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] transition-colors focus-visible:keyboard-focus focus-visible:-outline-offset-2',
                   effectiveActiveEnv === envName

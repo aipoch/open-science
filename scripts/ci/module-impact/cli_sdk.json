@@ -62,6 +62,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "cli/config-root.test.ts",
       "cli/index.test.ts",
       "cli/lifecycle.test.ts",
@@ -91,7 +92,8 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-formats.test.ts",
       "src/main/update/installation-artifact.test.ts",
-      "src/main/session-package/browser-import-sdk.integration.test.ts"
+      "src/main/session-package/browser-import-sdk.integration.test.ts",
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

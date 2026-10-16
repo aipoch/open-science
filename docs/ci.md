@@ -8,6 +8,12 @@ meet the [PR requirements](../CONTRIBUTING.md#pull-requests) and follow the
 
 ### Pull requests
 
+The independent **Impact registration** job runs a
+[fixed registration suite](testing.md#fast-impact-registration-gate) for every PR and merge group,
+regardless of the affected-test plan. It checks ownership, consumer/package evidence and platform
+selection with a parsing/test toolchain only, without building or running the application.
+The final PR Gate requires its success; no additional repository required-check name is needed.
+
 PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
@@ -80,12 +86,26 @@ skip a head that the last successful scheduled run already covered (shared `skip
 be published under the rolling `nightly` tag, and manual runs never count as coverage because
 the runs API cannot report which dispatch mode they selected. Manual runs always execute.
 Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
+Manual Nightly `windows-package` runs the native receipt-publication and submission-recovery gate
+before packaging, even though it skips portable verification. Use this mode to diagnose Windows
+package failures without publication; a passing dry-run does not certify stable-release signing.
 Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
 be discovered in queue or scheduled validation, and non-mainline Windows failures may first be
 discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one
 tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
 Nightly publication additionally requires the advisory runtime-certification and regression
-jobs of the source run to have succeeded.
+jobs of the source run to have succeeded, as well as all five standalone CLI archive legs and their
+complete-set check. `linux-cli`, `linux-arm64` and `windows-package` focused Nightly dispatches also
+repack and test the corresponding CLI archive but never prepare a publishable set.
+
+To recover after fixing a scheduled failure, run a full manual Nightly on `main`, then explicitly
+promote its run through **Nightly Publish**. `source_run_id` selects that completed run and `dry_run`
+defaults to true. The publisher checks source provenance, main ancestry, all publication gates,
+checksums and all five CLI artifacts before any release write. Run the dry-run first, then dispatch
+from `main` with `dry_run=false` to replace assets and advance the tag last. Branch dry-runs can test
+candidate gates; actual publication is main-only. Old desktop-only or partial diagnostic runs are
+not eligible. Metadata and CLI artifacts are retained for five days; rebuild after expiration.
+See [nightly recovery](../release-notes/README.md#recovering-a-stale-nightly).
 
 ## PR and issue labels
 
@@ -108,6 +128,11 @@ PRs and issues. Size labels and custom labels, including other `area:*` names, a
 Stable Releases include five standalone CLI archives alongside desktop installers. They reuse the
 certified backend and pinned Node bytes, with native signature, extracted-installation, source/version
 and complete-set checks before publication. See the [standalone runtime guide](standalone-runtime.md).
+Nightly also includes the five CLI archives with the desktop build's exact `-nightly.g<sha>` version,
+source revision and backend/Node payload. macOS nightly verifies valid ad-hoc or Developer ID signatures
+without requiring notarization. Windows nightly permits unsigned binaries but rejects invalid existing
+signatures; stable Release checks remain unchanged. Nightly does not publish CLI
+deb/rpm packages, npm packages or Homebrew updates.
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
 credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
 for a GitHub Release.
@@ -122,6 +147,40 @@ Automatic PRs use the affected Windows mainline groups;
 queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.
+
+## Focused macOS release diagnostics
+
+Use **Notarize macOS (dry-run)** (`notarize-dryrun.yml`) to diagnose the release path without
+publishing, changing tags or editing a GitHub Release. Set `source_run` to the original Release run
+ID and `architecture` to `arm64` or `x64`; this skips rebuilding and downloads that run's existing
+artifacts. Only same-repository Release pushes whose revision belongs to main history are accepted.
+The selected native runner, notarization tooling and final package smoke are shared with Release.
+
+Choose `operation=staple` after Apple has Accepted the original submission: it downloads the existing
+tickets, staples/validates the DMG and app inside the ZIP, then runs Gatekeeper and the real package
+smoke. It does not submit again. Use `operation=smoke` only for artifacts that already have tickets
+stapled; it still validates both tickets and runs Gatekeeper, without changing the source packages.
+`operation=notarize` submits once and waits; an empty `source_run` retains the signed-build path.
+Missing credentials fail a notarization dry run instead of reporting an untested success.
+
+Stapler uses a command-local sandbox to block UDP/443 and fall back to HTTPS over TCP; notarization
+submission and polling are unaffected. This workaround uses deprecated `sandbox-exec` and fails closed
+if unavailable. Reused-artifact dry runs report transport summaries and delete raw network logs.
+
+Only explicit `NSURLErrorDomain Code=-1005` transport failures receive up to three attempts with
+10/30-second backoff, independently for wait, staple and validate. Wait attempts share a 15-minute
+budget. Rejections, credential/signature errors, unknown Error 68 and process timeouts fail closed.
+Submit is never automatically retried because a lost response may hide a successful submission.
+Inspect its captured output/Apple history before submitting again. A full job rerun still submits;
+use the staple dry run to investigate an already Accepted package without doing that.
+
+Dry runs emit no release certification and replace artifacts only in their own run. A green diagnostic
+run does not authorize publication. macOS smoke installs the app from the DMG, unmounts the image,
+then verifies and launches the installed copy. Gatekeeper, ZIP, migration, fresh-install and reopen
+checks remain in place, with a 60-second startup deadline.
+
+Startup/shutdown failures are not retried. macOS reports phase timings, backend logs and owned-process
+stack samples; Linux records CLI daemon PID state before cleanup. Diagnostic tokens are redacted.
 
 ## Independent package tests
 
@@ -155,13 +214,22 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Derived consumer evidence
+
+The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
+selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
+Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
+missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+Older bases retain legacy rules; existing explicit contracts are not retired automatically.
+
 ## CI control-plane approval
 
-CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
-`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
-of editing individual usernames in the file. The team must be visible and have explicit repository
-write access. The main ruleset requires approval from one owner other than the PR author and
-dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
+CODEOWNERS itself have `@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership
+in GitHub instead of editing individual usernames in the file. The team must be visible and have
+explicit repository write access. The main ruleset requires approval from one owner other than the
+PR author and dismisses stale approvals after new commits. Ordinary package and host files have no
+CODEOWNERS entry.
 The `scripts/ci/module-impact.json` registration file and JSON records directly under
 `scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
 protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
@@ -324,3 +392,13 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
+
+### Runtime module evidence diagnostic
+
+Source Regression's manual `runtime-evidence` mode collects V8 coverage for five fixed test files.
+Locally, run `npm run pretest`, then `node scripts/ci/runtime-module-evidence.mjs`.
+Reports and logs go to `coverage/runtime-module-evidence/`; Actions retains them for seven days.
+
+Use a checkout-local dependency install: positive controls check actual source and built-package
+execution separately. Missing observations or failed controls fail the job. Zero hits do not justify
+removing a test; these diagnostics do not change test selection.

@@ -108,6 +108,15 @@ All five archives must pass version/source/integrity checks before the GitHub Re
 They are included in Release SHA256SUMS and build-provenance attestations. npm registry publication
 is deferred and requires no token for this archive release flow.
 
+The rolling `nightly` Release also provides all five CLI archives using the desktop nightly version
+(`x.y.z-nightly.g<sha>`). Download the archive and `CLI-SHA256SUMS.txt` from the same nightly update.
+These builds reuse that run's desktop backend/Node and pass native extracted-installation checks.
+macOS nightly remains ad-hoc signed and unnotarized, matching desktop nightly; stable signature
+requirements are unchanged. Windows nightly permits unsigned payloads while rejecting invalid existing
+signatures. Nightly currently distributes portable archives only, not CLI deb/rpm,
+npm or Homebrew packages. Extract each version into its own directory and stop the old runtime before
+switching; no new profile or credential format is introduced.
+
 For a local unsigned archive, build on its target OS/architecture:
 
 ```bash
@@ -356,6 +365,9 @@ versions manually after stopping every server that uses them. Full AppImage exec
 Linux release validation item.
 
 ## Historical compatibility requiring review
+
+The [release compatibility policy](compatibility.md) defines stable interfaces and the direction
+of data upgrades. The 1.0 transition retains the historical compatibility paths below.
 
 These are retained compatibility paths, not a request to migrate user data:
 

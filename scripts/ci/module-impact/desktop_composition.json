@@ -153,6 +153,8 @@
     "scripts/stage-node-runtime.test.ts",
     "build/node-runtime.json",
     "src/main/desktop-runtime-launcher.ts",
+    "src/main/legacy-service-termination.ts",
+    "src/main/legacy-service-termination.test.ts",
     "src/main/desktop-runtime-launcher.test.ts",
     "src/main/desktop-preview-proxy.ts",
     "src/main/desktop-runtime-launcher.integration.test.ts",
@@ -175,6 +177,7 @@
     "src/main/desktop-runtime-backpressure.integration.test.ts",
     "src/main/desktop-runtime-client-diagnostics.test.ts",
     "src/main/desktop-runtime-recovery.test.ts",
+    "src/main/desktop-runtime-recovery.integration.test.ts",
     "src/main/desktop-runtime-recovery.ts",
     "src/main/desktop-runtime-transport-diagnostics.test.ts",
     "src/main/application-command-composition-contract.ts",
@@ -356,6 +359,7 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-client-diagnostics.test.ts",
       "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/backend-startup-recovery.test.ts",
       "src/main/node-entry.test.ts",
@@ -367,7 +371,8 @@
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/main/runtime-network-node.test.ts"
+      "src/main/runtime-network-node.test.ts",
+      "src/main/legacy-service-termination.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -870,6 +875,7 @@
       "src/main/settings/claude-runtime-provisioner.test.ts",
       "src/main/settings/codex-auth.test.ts",
       "src/main/settings/codex-detect.test.ts",
+      "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",

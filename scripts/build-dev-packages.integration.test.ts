@@ -14,7 +14,8 @@ it('registers every buildable local package and its declared internal dependenci
     string,
     { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
   >()
-  for (const [name, version] of Object.entries(app.dependencies)) {
+  const localDependencies = { ...app.devDependencies, ...app.dependencies }
+  for (const [name, version] of Object.entries(localDependencies)) {
     if (typeof version !== 'string' || !version.startsWith('file:')) continue
     const path = resolve(root, version.slice(5))
     const manifest = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'))

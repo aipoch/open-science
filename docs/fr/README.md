@@ -51,7 +51,7 @@ AIPOCH Open-Science prend en charge la recherche computationnelle et intensive e
 
 Les sessions de recherche terminées peuvent également être exportées sous forme de paquets `.science` portables pour la revue, la transmission et l’archivage, avec les branches de conversation, versions de fichiers, enregistrements Notebook et preuves de vérification sélectionnés.
 
-> 💡 **[AIPOCH Open-Science v0.37.2 est disponible](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en octobre 2026)_. AIPOCH Open-Science v0.37.2 rend le travail plus résistant : le démarrage répare lui-même les défaillances du backend, des paramètres et du réseau ; une déconnexion du runtime ne bloque plus l'app — Quitter reste disponible et une reconnexion manuelle est proposée — et les grandes captures de session et de notebook sont transférées de façon fiable. L'extraction de structure PDF scientifique continue de s'améliorer, le CLI Linux est aussi distribué en paquets .deb et .rpm autonomes, et les sous-processus d'arrière-plan Windows n'ouvrent plus de fenêtre console. Voir les [notes de version](https://github.com/aipoch/open-science/releases/latest) pour tous les détails.
+> 💡 **AIPOCH Open-Science v1.0.0** _(mise à jour en octobre 2026)_. Cette étape réunit l’espace de recherche privilégiant le stockage local, les agents scientifiques, l’exécution Python/R dans le Notebook, les outils bibliographiques et les paquets de recherche portables `.science`. Consultez les [notes de version 1.0.0](../../release-notes/1.0.0/fr.md) pour les changements depuis v0.37.2 et les modifications de mise à niveau de la CLI. Les téléchargements correspondent toujours à la [dernière version publiée](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />
@@ -172,13 +172,33 @@ Les paquets importés sont en lecture seule. Ils n’exécutent pas de code et n
 
 ## Performances aux benchmarks
 
-### 🏆 N° 1 sur BiomniBench-DA Public 50
+### 🏆 AstaBench LitQA2-FullText-Search — 10/10 articles cibles retrouvés
 
-AIPOCH Open-Science a obtenu le meilleur score de classement dans la comparaison compilée BiomniBench-DA Public 50, avec **79.05** pour **gpt-5.6-sol (xhigh)**. Ce résultat combine un score du juge Gemini 3.1 Pro de **81.04** et un score du juge DeepSeek v4-pro de **77.06** selon une moyenne à pondération égale, plaçant AIPOCH Open-Science **n° 1** parmi les résultats Public 50 recueillis. Explorez le [jeu de données BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+AIPOCH Open-Science a obtenu **100% de recall@30** sur les dix requêtes de validation officielles avec **DeepSeek v4-flash (max)**, des spécialistes de la recherche bibliographique et des compétences. Chaque article cible figurait parmi les 30 premiers résultats. Ce score dépasse les trois résultats publics de validation cités dans le rapport, de **20 points de pourcentage** par rapport au meilleur résultat de référence de **80%**. Trois répétitions locales ont été rapportées, montrant la localisation des articles pour cet ensemble de questions scientifiques.
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="Comparaison BiomniBench-DA Public 50 montrant AIPOCH Open-Science en première position avec un score de 79.05" width="1200" />
-</p>
+![AIPOCH Open-Science obtient 100% de recall@30 et 10/10 articles cibles sur la validation AstaBench LitQA2 ; test et validation utilisent des questions différentes](../images/readme/astabench-litqa2.png)
+
+La figure comprend des résultats de test et de validation ; leur ordre est uniquement numérique. Recall@30 mesure la recherche de l'article cible, pas l'exactitude des réponses scientifiques.
+
+### 🏆 ASI-Bench B1–B4 — Meilleurs scores affichés dans les quatre comparaisons présentées
+
+AIPOCH Open-Science a obtenu **79.35, 56.11, 59.67 et 59.46** sur ASI-Bench B1, B2, B3 et B4 avec **GPT-6 (gpt-6-astra / xhigh)**, des spécialistes de domaine et des compétences : les valeurs affichées les plus élevées dans les comparaisons respectives retenues par les rapports. Les quatre conditions évaluent **l'exécution d'un plan complet, l'organisation d'un processus de travail, le choix autonome des méthodes et la recherche autonome avec des informations distrayantes**.
+
+Les références locales Codex utilisant le même modèle et le même niveau de raisonnement déclaré sont de 74.78, 56.09, 58.12 et 55.45, soit des écarts numériques de **+4.57, +0.02, +1.55 et +4.01 points**. Trois répétitions locales ont été rapportées pour B1/B2 ; B3/B4 sont chacun la moyenne de trois exécutions locales de 60 tâches.
+
+![AIPOCH Open-Science obtient 79.35, 56.11, 59.67 et 59.46 sur ASI-Bench B1–B4 ; résultats locaux et références publiques sont distingués](../images/readme/asi-bench-b1-b4.jpg)
+
+Les exécutions locales utilisent seed31415. Le score B1 d'AIPOCH couvre 59 tâches ; une a été exclue en raison du problème d'évaluation décrit dans le rapport. B3/B4 utilisent v0.32.0 et un juge de remplacement. Les références publiques diffèrent par les instances, les configurations et l'évaluation ; l'écart B2 de 0.02 point est uniquement numérique.
+
+### 🏆 Meilleur score dans la comparaison compilée BiomniBench-DA Public 50 — 79.05
+
+AIPOCH Open-Science a obtenu **79.05** avec **gpt-5.6-sol (xhigh)** lors d'une évaluation interne des 50 tâches désignées BiomniBench-DA Public 50, soit le meilleur score affiché dans la comparaison compilée. Il s'agit de la moyenne à pondération égale de **81.04** pour le juge Gemini 3.1 Pro et **77.06** pour le juge DeepSeek v4-pro, décrivant l'analyse de données biomédicales de cette configuration. Voir le [rapport d'évaluation](https://aipoch.com/blog/open-science-biomnibench-da).
+
+![AIPOCH Open-Science obtient une moyenne interne de 79.05 sur BiomniBench-DA Public 50 à partir des notes de 77.06 et 81.04 des deux juges](../images/readme/biomnibench-public50-leaderboard.png)
+
+La comparaison mélange différentes couvertures de juges et ne constitue pas un classement officiel sous des conditions d'évaluation uniformes.
+
+**Portée de l'évaluation :** Ces résultats locaux/internes sont déclarés par l'équipe. Arriver en tête des comparaisons présentées n'établit ni une première place officielle ni une amélioration statistiquement significative. Le [rapport détaillé (en anglais)](../benchmarks/README.md) précise les dates des sources, les configurations, la portée et le résultat distinct de PaperFinding sur 66 requêtes de validation.
 
 ## Capacités principales
 

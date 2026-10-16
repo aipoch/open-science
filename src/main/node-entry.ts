@@ -512,6 +512,7 @@ async function main(): Promise<void> {
           'desktop visibility update failed',
           errorLogFields(error)
         ),
+      isStopping: () => stopRequested,
       requestShutdown: () => {
         void stop()
       }
@@ -524,7 +525,8 @@ async function main(): Promise<void> {
         return web.ensureStarted(port, { attached: false })
       },
       desktop.endpoint,
-      runtimeStartupOptions
+      runtimeStartupOptions,
+      () => stopRequested
     )
     startupReporter.phase('database')
     const state = await databaseStartup.start()
