@@ -21,7 +21,7 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
-async function setup(options: { idleMs?: number } = {}) {
+async function setup(options: { idleMs?: number; receive?: () => Promise<boolean> } = {}) {
   const port = await findBrowserImportPort()
   const root = await mkdtemp(join(tmpdir(), 'browser-package-'))
   disposers.push(() => rm(root, { recursive: true, force: true }))
@@ -32,6 +32,7 @@ async function setup(options: { idleMs?: number } = {}) {
     receive: (path, consumed) => {
       received.push(path)
       releases.push(consumed)
+      return options.receive?.()
     },
     idleMs: options.idleMs
   })
@@ -106,6 +107,46 @@ describe('browser-held research package handoff', () => {
     await f.bridge.close()
     expect(await readdir(f.root)).toEqual([])
   })
+
+  it.each([true, false])(
+    'coordinates cancellation with pending queue admission (accepted: %s)',
+    async (accepted) => {
+      let finishEnqueue!: (accepted: boolean) => void
+      let entered!: () => void
+      const enqueueing = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const queued = new Promise<boolean>((resolve) => {
+        finishEnqueue = resolve
+      })
+      const f = await setup({
+        receive: () => {
+          entered()
+          return queued
+        }
+      })
+      await f.bridge.begin(launch(f.port))
+      await f.chunk('hello')
+      const completing = f.request('/complete', { method: 'POST' }).catch(() => null)
+      try {
+        await enqueueing
+        // Cancellation must not delete a source whose queue admission is still undecided.
+        expect((await f.request('', { method: 'DELETE' })).status).toBe(409)
+        expect(await readFile(f.received[0], 'utf8')).toBe('hello')
+        finishEnqueue(accepted)
+        expect((await completing)?.status).toBe(accepted ? 202 : 503)
+        if (accepted) {
+          expect((await f.request('', { method: 'DELETE' })).status).toBe(404)
+          expect(await readFile(f.received[0], 'utf8')).toBe('hello')
+          f.releases[0]()
+        }
+        await vi.waitFor(async () => expect(await readdir(f.root)).toEqual([]))
+      } finally {
+        finishEnqueue(accepted)
+        await completing
+      }
+    }
+  )
 
   it('rejects untrusted origins, invalid credentials, oversized chunks and corrupted bytes', async () => {
     const f = await setup()

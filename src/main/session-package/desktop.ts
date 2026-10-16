@@ -404,95 +404,100 @@ export class SessionPackageDesktop {
         )
       )
     } catch (error) {
-      if (error instanceof PackageSensitiveContentError && request && error.evidence) {
-        this.operations.setSensitiveContent([error.evidence])
-        try {
-          this.options.onSensitiveContentFailure?.(
-            request,
-            [error.evidence],
-            error.source ? [error.source] : []
-          )
-        } catch {
-          // Diagnostic capture must not change the package operation result.
-        }
-      }
-      createLogger('session-package').warn(
-        'Session package operation failed',
-        diagnosticErrorFields(error)
-      )
-      const detail = error instanceof Error ? error.message : ''
-      const translate = this.options.translate
-      if (detail === PACKAGE_REQUIRES_UPDATE)
-        throw new Error(
-          translate(
-            'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageSourceUnavailableError)
-        throw new Error(
-          translate(
-            'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageCapacityError)
-        throw new Error(
-          translate(
-            'Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.',
-            {
-              path: error.directory,
-              required: formatPackageBytes(error.requiredBytes),
-              available: formatPackageBytes(error.freeBytes),
-              shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
-            }
-          ),
-          { cause: error }
-        )
-      if (detail.startsWith('An excluded file also exists'))
-        throw new Error(
-          translate(
-            'An excluded file also exists in retained research evidence. Include that file to export this Session.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageSensitiveContentError) {
-        const rules = {
-          field: translate('Credential-like field value'),
-          assignment: translate('Credential-like assignment'),
-          url: translate('Credential-like URL'),
-          token: translate('Credential-like token')
-        }
-        throw new Error(
-          translate(
-            'Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.',
-            {
-              location: error.location,
-              rule: rules[error.rule]
-            }
-          ),
-          { cause: error }
-        )
-      }
-      if (detail.includes('Sensitive content detected'))
-        throw new Error(
-          translate('Sensitive content detected. Remove it before exporting the Session package.'),
-          { cause: error }
-        )
-      if (detail.startsWith('Wait for') || detail.includes('changed during export'))
-        throw new Error(
-          translate('Wait for all research activity to finish, then try exporting again.'),
-          { cause: error }
-        )
-      throw new Error(
-        translate(
-          'Could not complete the Session package operation. Check the package and available disk space, then try again.'
-        ),
-        { cause: error }
-      )
+      this.failOperation(error, request)
     } finally {
       this.busy = false
     }
+  }
+
+  // Preflight validation and staged operations share the same user-facing error conversion.
+  private failOperation(error: unknown, request?: SessionPackageRequest): never {
+    if (error instanceof PackageSensitiveContentError && request && error.evidence) {
+      this.operations.setSensitiveContent([error.evidence])
+      try {
+        this.options.onSensitiveContentFailure?.(
+          request,
+          [error.evidence],
+          error.source ? [error.source] : []
+        )
+      } catch {
+        // Diagnostic capture must not change the package operation result.
+      }
+    }
+    createLogger('session-package').warn(
+      'Session package operation failed',
+      diagnosticErrorFields(error)
+    )
+    const detail = error instanceof Error ? error.message : ''
+    const translate = this.options.translate
+    if (detail === PACKAGE_REQUIRES_UPDATE)
+      throw new Error(
+        translate(
+          'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageSourceUnavailableError)
+      throw new Error(
+        translate(
+          'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageCapacityError)
+      throw new Error(
+        translate(
+          'Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.',
+          {
+            path: error.directory,
+            required: formatPackageBytes(error.requiredBytes),
+            available: formatPackageBytes(error.freeBytes),
+            shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
+          }
+        ),
+        { cause: error }
+      )
+    if (detail.startsWith('An excluded file also exists'))
+      throw new Error(
+        translate(
+          'An excluded file also exists in retained research evidence. Include that file to export this Session.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageSensitiveContentError) {
+      const rules = {
+        field: translate('Credential-like field value'),
+        assignment: translate('Credential-like assignment'),
+        url: translate('Credential-like URL'),
+        token: translate('Credential-like token')
+      }
+      throw new Error(
+        translate(
+          'Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.',
+          {
+            location: error.location,
+            rule: rules[error.rule]
+          }
+        ),
+        { cause: error }
+      )
+    }
+    if (detail.includes('Sensitive content detected'))
+      throw new Error(
+        translate('Sensitive content detected. Remove it before exporting the Session package.'),
+        { cause: error }
+      )
+    if (detail.startsWith('Wait for') || detail.includes('changed during export'))
+      throw new Error(
+        translate('Wait for all research activity to finish, then try exporting again.'),
+        { cause: error }
+      )
+    throw new Error(
+      translate(
+        'Could not complete the Session package operation. Check the package and available disk space, then try again.'
+      ),
+      { cause: error }
+    )
   }
 
   fork(
@@ -704,7 +709,11 @@ export class SessionPackageDesktop {
             // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
-            await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+            try {
+              await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+            } catch (error) {
+              this.failOperation(error)
+            }
             signal.throwIfAborted()
           }
           if (sourcePath && !target.projectId && !target.projectName) {

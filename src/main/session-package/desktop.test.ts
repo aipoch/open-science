@@ -1587,9 +1587,13 @@ it.each(['committed', 'unconfirmed'] as const)(
   }
 )
 
-it.each(['en', 'zh-Hans'] as const)(
-  'asks the user to update before importing a future package (%s)',
-  async (locale) => {
+it.each([
+  ['en', false],
+  ['zh-Hans', false],
+  ['zh-Hans', true]
+] as const)(
+  'asks the user to update before importing a future package (%s, before target: %s)',
+  async (locale, validateBeforeTarget) => {
     const fixture = await createProvenanceTestFixture()
     fixtures.push(fixture)
     initDataRoot(fixture.storageRoot)
@@ -1617,7 +1621,13 @@ it.each(['en', 'zh-Hans'] as const)(
           ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
           : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
       await expect(
-        desktop.import(undefined, undefined, { projectName: 'Research' }, archive)
+        desktop.import(
+          undefined,
+          undefined,
+          validateBeforeTarget ? {} : { projectName: 'Research' },
+          archive,
+          validateBeforeTarget
+        )
       ).rejects.toThrow(message)
       expect(desktop.operations.snapshot).toMatchObject({ state: 'failed', error: message })
       expect(afterImport).not.toHaveBeenCalled()

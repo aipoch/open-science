@@ -274,6 +274,11 @@ export class BrowserPackageImport {
     }
     this.touch(t)
     if (request.method === 'DELETE' && url.pathname === '/v1/import' && !t.accepted) {
+      // Completion may already be handing the source to the queue; admission owns its lifetime.
+      if (t.busy && t.offset === t.request.size) {
+        reply(response, 409)
+        return
+      }
       reply(response, 204)
       await this.remove(t)
       return
