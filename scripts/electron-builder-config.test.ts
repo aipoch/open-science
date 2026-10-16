@@ -169,7 +169,7 @@ describe('electron-builder local evidence exclusion', () => {
     for (const file of [
       'out/main/index.js',
       'out/renderer/index.html',
-      'resources/pdf-translation-local/worker.mjs',
+      'node_modules/@aipoch/providers/resources/local-worker.mjs',
       'resources/notebook/python_loop.py',
       'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
       'node_modules/@aipoch/diagnostics/dist/node.js',

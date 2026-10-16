@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
 import { fetchProviderRequest } from '@aipoch/providers/transport'
 import { resolveProviderDraft } from './provider-draft-projection'
-import { listProviderModels } from './list-models'
+import { createProvider } from '@aipoch/providers/client'
 import { validateProvider } from './validate'
 
 describe('provider transport privacy', () => {
@@ -25,10 +25,12 @@ describe('provider transport privacy', () => {
       apiEndpoints: ['openai']
     })
     const validation = await validateProvider(target, { fetchImpl })
-    const catalog = await listProviderModels(
-      { url: `${baseUrl}/v1/models`, key: target.key },
-      { fetchImpl }
-    )
+    const catalog = await createProvider({
+      id: 'custom',
+      discovery: { url: `${baseUrl}/v1/models` },
+      key: target.key,
+      fetch: fetchImpl
+    }).listModels()
     expect(fetchImpl).not.toHaveBeenCalled()
     expect(validation.ok).toBe(false)
     expect(catalog.ok).toBe(false)

@@ -1,7 +1,5 @@
 export { OFFICIAL_VENDORS } from './providers/data'
 export {
-  getVendorModelIds,
-  getVendorModelContextWindow,
   isOfficialVendorId,
   getOfficialVendor,
   resolveVendorBaseUrl,
@@ -9,11 +7,8 @@ export {
   resolveVendorResponsesBaseUrl,
   resolveVendorApiKeyUrl,
   resolveVendorModelsUrl,
-  resolveVendorApiEndpoints,
   usesVendorAnthropicApiKeyHeader,
-  vendorHasRegions,
   isVendorModelMultimodal,
-  isVendorModelResponsesSupported,
   resolveVendorModelApiEndpoints
 } from './providers/lookup'
 export type {
@@ -30,3 +25,12 @@ export type {
   CustomReasoningEffortTransport,
   ReasoningCapability
 } from './protocols/types'
+
+export type {
+  ClassificationAdapter,
+  ClassificationModelDefinition
+} from './providers/classification'
+export { getProviderDefinition, getProviderModels } from './providers/definitions'
+export type { ProviderDefinition } from './providers/definitions'
+export type { ModelCapability, ModelIdentity, ModelDefinition } from './models/types'
+export { QWEN3_LOCAL_TEXT_GENERATION_MODEL } from './providers/local-model'

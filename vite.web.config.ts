@@ -26,6 +26,8 @@ export default defineConfig({
       '@aipoch/compute',
       '@aipoch/diagnostics',
       '@aipoch/providers',
+      '@aipoch/providers/errors',
+      '@aipoch/providers/transport',
       '@aipoch/skills/document',
       '@aipoch/notebook-analysis/contracts',
       '@aipoch/environment/contracts',

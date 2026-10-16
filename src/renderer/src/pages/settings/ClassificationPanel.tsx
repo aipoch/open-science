@@ -1,3 +1,4 @@
+import type { ClassificationAdapter } from '@aipoch/providers'
 import type { ClassificationView } from '../../lib/settings-navigation'
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3
  * component: model settings · genre: modern-minimal · theme: project system
@@ -40,7 +41,6 @@ import { ProviderTestResultCard } from './ProviderTestResultCard'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import type {
   ClassificationMutation,
-  ClassificationAdapter,
   ClassificationBinding,
   ClassificationSnapshot,
   ClassificationServiceView

@@ -52,6 +52,7 @@ files:
   # second, unused copy under app.asar.unpacked/resources/bin.
   - '!resources/bin{,/**/*}'
 asarUnpack:
+  - node_modules/@aipoch/providers/resources/**
   - node_modules/@aipoch/notebook-syntax/assets/**
   - node_modules/@aipoch/literature-citations/resources/**
   - resources/**

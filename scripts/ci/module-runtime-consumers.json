@@ -71,7 +71,14 @@
   "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
-  "resources/pdf-translation-local/worker.mjs": ["src/main/literature/pdf-translation/local.ts"],
+  "packages/providers/resources/local-worker.mjs": [
+    "packages/providers/src/runtimes/local-text.ts",
+    "packages/providers/src/local-runtime.test.ts"
+  ],
+  "packages/providers/resources/local-runtime.mjs": [
+    "packages/providers/resources/local-worker.mjs"
+  ],
+  "packages/providers/resources/local.mjs": ["packages/providers/resources/local-worker.mjs"],
   "packages/notebook-syntax/assets/tree-sitter-bash.LICENSE": [
     "packages/notebook-syntax/src/index.ts"
   ],

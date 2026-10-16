@@ -1,7 +1,5 @@
 export {
   anthropicMessagesBase,
-  anthropicMessagesUrl,
-  openAiResponsesUrl,
   normalizeAnthropicBaseUrl,
   appendChatCompletions,
   openAiCompletionsBase,
@@ -20,3 +18,20 @@ export type {
 } from './responses/adapter'
 export { ResponsesProtocolError, upstreamErrorMessage } from './responses/response'
 export type { ResponsesBridgeNamespacedTool } from './responses/types'
+
+export {
+  anthropicToResponses,
+  chatToResponses,
+  responsesToAnthropic,
+  responsesToChat
+} from './protocols/message-conversion'
+export { countAnthropicInputTokens } from './protocols/token-count'
+export { sanitizeXaiResponsesRequest } from './protocols/xai'
+export { prepareNativeResponsesRequest, NativeResponsesRequestError } from './responses/native'
+export type { NativeResponsesProjection } from './responses/native'
+
+export {
+  chatToAnthropic,
+  anthropicToChat,
+  encodeChatCompletionStream
+} from './protocols/chat-anthropic'

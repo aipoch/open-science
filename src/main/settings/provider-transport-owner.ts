@@ -46,7 +46,7 @@ import { ResponsesBridge, type ResponsesBridgeOptions } from './responses-bridge
 import type { ResponsesBridgeConnection, ResponsesBridgeTarget } from './responses-bridge-contract'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { xaiNativeResponsesTargetFields } from './xai-protocol'
+import { sanitizeXaiResponsesRequest } from '@aipoch/providers/protocol'
 type AnthropicProviderBridgePort = Pick<
   AnthropicProviderBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'
@@ -594,7 +594,12 @@ class ProviderTransportOwner {
         ...this.healthObservation(candidate),
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
-        ...xaiNativeResponsesTargetFields(candidate.provider.type, this.getXaiOAuthAccessToken),
+        ...(candidate.provider.type === 'xai-subscription'
+          ? {
+              resolveKey: this.getXaiOAuthAccessToken,
+              sanitizeRequest: sanitizeXaiResponsesRequest
+            }
+          : {}),
         model: candidate.effectiveModel ?? candidate.provider.model,
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }

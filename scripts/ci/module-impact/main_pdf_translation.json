@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "resources/pdf-translation-local/worker.mjs",
     "scripts/pdf-translation-corpus.test.ts",
     "src/main/literature/pdf-translation/agent-target.test.ts",
     "src/main/literature/pdf-translation/agent-target.ts",
@@ -17,7 +16,6 @@
     "src/main/literature/pdf-translation/index.ts",
     "src/main/literature/pdf-translation/ipc.test.ts",
     "src/main/literature/pdf-translation/ipc.ts",
-    "src/main/literature/pdf-translation/local-worker.integration.test.ts",
     "src/main/literature/pdf-translation/local.test.ts",
     "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/pdf-cache.test.ts",
@@ -118,7 +116,6 @@
       "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
-      "src/main/literature/pdf-translation/local-worker.integration.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",

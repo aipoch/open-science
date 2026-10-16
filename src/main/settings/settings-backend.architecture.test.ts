@@ -889,7 +889,7 @@ describe('Settings backend ownership architecture', () => {
       'packages/providers/src/responses/request.ts',
       'packages/providers/src/responses/response.ts',
       'packages/providers/src/responses/types.ts',
-      'packages/providers/src/text/generate.ts'
+      'packages/providers/src/models/text-generation.ts'
     ])
     expectBoundaryPaths(manifest, 'shared_application_contracts', [
       'src/shared/reasoning-effort.ts',
@@ -920,7 +920,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/crypto.test.ts',
         'src/main/settings/crypto.ts',
         'src/main/settings/list-models.test.ts',
-        'src/main/settings/list-models.ts',
         'src/main/settings/provider-accounts.test.ts',
         'src/main/settings/provider-auth-lifecycle.architecture.test.ts',
         'src/main/settings/provider-auth-lifecycle.test.ts',
@@ -942,7 +941,6 @@ describe('Settings backend ownership architecture', () => {
           'src/main/settings/claude-shared-auth.ts',
           'src/main/settings/codex-auth.ts',
           'src/main/settings/crypto.ts',
-          'src/main/settings/list-models.ts',
           'src/main/settings/provider-draft-projection.ts',
           'src/main/settings/provider-env.ts',
           'src/main/settings/provider-resource-limits.ts',
@@ -967,7 +965,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/anthropic-provider-bridge.ts',
         'src/main/settings/openai-provider-bridge.ts',
         'src/main/settings/xai-oauth-provider-bridge.ts',
-        'src/main/settings/xai-protocol.ts',
         'src/main/settings/provider-error-replay.ts',
         'src/main/settings/provider-loopback-http-host.ts',
         'src/main/settings/provider-transport-owner.ts',
@@ -999,7 +996,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/responses-response-adapter.architecture.test.ts',
         'src/main/settings/system-proxy.test.ts',
         'src/main/settings/xai-oauth-provider-bridge.test.ts',
-        'src/main/settings/xai-protocol.test.ts',
         'src/main/settings/backend-target.ts'
       ].filter((path) => !movedPaths.has(path))
     )
@@ -1020,7 +1016,6 @@ describe('Settings backend ownership architecture', () => {
           'src/main/settings/provider-runtime-health-owner.ts',
           'src/main/settings/system-proxy.ts',
           'src/main/settings/xai-oauth-provider-bridge.ts',
-          'src/main/settings/xai-protocol.ts',
           'src/main/settings/backend-target.ts'
         ].filter((path) => !movedPaths.has(path))
       )

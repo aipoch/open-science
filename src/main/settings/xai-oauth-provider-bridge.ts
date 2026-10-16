@@ -20,7 +20,7 @@ import {
   countAnthropicInputTokens,
   responsesToAnthropic,
   responsesToChat
-} from './xai-protocol'
+} from '@aipoch/providers/protocol'
 
 type Wire = 'anthropic' | 'openai'
 export type XaiOAuthBridgeTarget = Readonly<{ id: string; model: string }>
