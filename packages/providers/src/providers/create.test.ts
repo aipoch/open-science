@@ -57,7 +57,7 @@ it.each(['openrouter', 'opencode'])(
   }
 )
 
-it('includes classification-only and local models without inventing unsupported capabilities', () => {
+it('includes classification-only models and leaves local models unsupported', () => {
   expect(getProviderModels('typesafe', 'text-generation')).toEqual([])
   expect(getProviderModels('typesafe', 'classification')).toEqual([
     {
@@ -75,15 +75,8 @@ it('includes classification-only and local models without inventing unsupported 
       execution: 'remote'
     }
   ])
-  expect(getProviderModels('local', 'text-generation')).toEqual([
-    {
-      providerId: 'local',
-      modelId: 'qwen3-0.6b-q8',
-      label: 'Qwen3 0.6B q8',
-      capability: 'text-generation',
-      execution: 'local-worker'
-    }
-  ])
+  expect(getProviderDefinition('local')).toBeUndefined()
+  expect(getProviderModels('local', 'text-generation')).toEqual([])
   expect(getProviderModels('local', 'classification')).toEqual([])
   expect(getProviderModels('unknown', 'text-generation')).toEqual([])
   expect(getProviderDefinition('toString')).toBeUndefined()

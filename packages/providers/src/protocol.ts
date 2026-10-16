@@ -24,14 +24,12 @@ export {
   chatToResponses,
   responsesToAnthropic,
   responsesToChat
-} from './protocols/message-conversion'
-export { countAnthropicInputTokens } from './protocols/token-count'
-export { sanitizeXaiResponsesRequest } from './protocols/xai'
+} from './protocols/openai/responses/conversion'
+export { countAnthropicInputTokens } from './protocols/anthropic/tokens'
+export { sanitizeXaiResponsesRequest } from './protocols/xai/responses'
 export { prepareNativeResponsesRequest, NativeResponsesRequestError } from './responses/native'
 export type { NativeResponsesProjection } from './responses/native'
 
-export {
-  chatToAnthropic,
-  anthropicToChat,
-  encodeChatCompletionStream
-} from './protocols/chat-anthropic'
+export { chatToAnthropic, anthropicToChat } from './protocols/anthropic/chat'
+
+export { encodeChatCompletionStream } from './protocols/openai/chat/stream'

@@ -5,9 +5,9 @@ import {
   chatToResponses,
   responsesToAnthropic,
   responsesToChat
-} from './message-conversion'
-import { countAnthropicInputTokens } from './token-count'
-import { sanitizeXaiResponsesRequest } from './xai'
+} from './openai/responses/conversion'
+import { countAnthropicInputTokens } from './anthropic/tokens'
+import { sanitizeXaiResponsesRequest } from './xai/responses'
 
 describe('xAI protocol projection', () => {
   it('maps Anthropic messages and tools to Responses', () => {

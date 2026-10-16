@@ -33,4 +33,3 @@ export type {
 export { getProviderDefinition, getProviderModels } from './providers/definitions'
 export type { ProviderDefinition } from './providers/definitions'
 export type { ModelCapability, ModelIdentity, ModelDefinition } from './models/types'
-export { QWEN3_LOCAL_TEXT_GENERATION_MODEL } from './providers/local-model'

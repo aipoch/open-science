@@ -71,14 +71,6 @@
   "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
-  "packages/providers/resources/local-worker.mjs": [
-    "packages/providers/src/runtimes/local-text.ts",
-    "packages/providers/src/local-runtime.test.ts"
-  ],
-  "packages/providers/resources/local-runtime.mjs": [
-    "packages/providers/resources/local-worker.mjs"
-  ],
-  "packages/providers/resources/local.mjs": ["packages/providers/resources/local-worker.mjs"],
   "packages/notebook-syntax/assets/tree-sitter-bash.LICENSE": [
     "packages/notebook-syntax/src/index.ts"
   ],
@@ -191,5 +183,11 @@
   "packages/reproducibility/src/contracts.ts": ["scripts/electron-vite-config.test.ts"],
   "packages/reproducibility/src/comparison-contracts.ts": ["scripts/electron-vite-config.test.ts"],
   "packages/reproducibility/src/execution-context.ts": ["scripts/electron-vite-config.test.ts"],
-  "packages/resilient-download/test/transport.mjs": ["scripts/check-resilient-download-package.mjs"]
+  "packages/resilient-download/test/transport.mjs": [
+    "scripts/check-resilient-download-package.mjs"
+  ],
+  "resources/pdf-translation-local/worker.mjs": [
+    "src/main/literature/pdf-translation/local.ts",
+    "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+  ]
 }

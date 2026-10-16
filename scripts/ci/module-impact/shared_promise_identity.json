@@ -1987,7 +1987,8 @@
       "test/module-boundary-assertions.test.ts",
       "test/pdf-translation-native-verification.test.ts",
       "test/pdf-translation-preservation.test.ts",
-      "test/renderer-failure-gate.test.ts"
+      "test/renderer-failure-gate.test.ts",
+      "src/main/literature/pdf-translation/local-worker.integration.test.ts"
     ]
   },
   "fallbackCapability": "shared_contract",

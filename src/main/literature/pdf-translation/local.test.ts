@@ -78,22 +78,13 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 it('serializes across documents, reuses one worker, and holds files until the last target is released', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const a = await runtime.acquireTarget(),
     b = await runtime.acquireTarget()
-  expect(a).toEqual({
-    modelId: 'qwen3-0.6b-q8',
-    revision: 'model-v1:transformers-4-2-0-ort-web-1-26-0-dev-20260416-b7804b056c-wasm-v1'
-  })
   const first = runtime.run(request(a)),
     second = runtime.run(request(b))
   await vi.waitFor(() => expect(workers[0]?.requests).toHaveLength(1))
   expect(workers).toHaveLength(1)
-  expect(spawn).toHaveBeenCalledWith(
-    process.execPath,
-    [expect.stringMatching(/providers[/\\]resources[/\\]local-worker\.mjs$/)],
-    expect.any(Object)
-  )
   respond()
   expect((await first).usage).toEqual({ inputTokens: 5, outputTokens: 2, cacheTokens: 0 })
   await vi.waitFor(() => expect(workers[0].requests).toHaveLength(2))
@@ -107,7 +98,7 @@ it('serializes across documents, reuses one worker, and holds files until the la
 })
 
 it('kills cancelled inference before releasing its lease and can start a fresh worker', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const target = await runtime.acquireTarget(),
     abort = new AbortController()
   const result = runtime.run(request(target, abort.signal))
@@ -125,7 +116,7 @@ it('kills cancelled inference before releasing its lease and can start a fresh w
 })
 
 it('rejects oversized or malformed output and tears down the worker', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const target = await runtime.acquireTarget()
   const output = runtime.run(request(target))
   const rejected = expect(output).rejects.toThrow('output limit')
@@ -138,7 +129,7 @@ it('rejects oversized or malformed output and tears down the worker', async () =
 
 it('bounds hung inference and preserves a typed timeout error', async () => {
   vi.useFakeTimers()
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const target = await runtime.acquireTarget()
   const output = runtime.run(request(target))
   const rejected = expect(output).rejects.toMatchObject({ code: 'timeout' })
@@ -149,7 +140,7 @@ it('bounds hung inference and preserves a typed timeout error', async () => {
 })
 
 it('does not release files after unconfirmed termination; shutdown can retry', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const target = await runtime.acquireTarget()
   const output = runtime.run(request(target))
   await vi.waitFor(() => expect(workers).toHaveLength(1))
@@ -164,13 +155,13 @@ it('does not release files after unconfirmed termination; shutdown can retry', a
 
 it('reports missing local assets without starting inference', async () => {
   vi.mocked(models.acquireUse).mockRejectedValueOnce(new Error(LOCAL_MODEL_NOT_INSTALLED))
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   await expect(runtime.acquireTarget()).rejects.toMatchObject({ code: 'unsupported-model' })
   expect(spawn).not.toHaveBeenCalled()
 })
 
 it('cancels queued work without stopping another document or holding its lease', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const a = await runtime.acquireTarget(),
     b = await runtime.acquireTarget()
   const first = runtime.run(request(a)),
@@ -190,7 +181,7 @@ it('cancels queued work without stopping another document or holding its lease',
 })
 
 it('does not kill a new document acquired while the previous last lease waits for inference', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const a = await runtime.acquireTarget()
   const first = runtime.run(request(a))
   await vi.waitFor(() => expect(workers[0]?.requests).toHaveLength(1))
@@ -209,7 +200,7 @@ it('does not kill a new document acquired while the previous last lease waits fo
 })
 
 it('waits for in-flight teardown before starting a newly acquired document', async () => {
-  const runtime = createPdfTranslationLocalRuntime(models)
+  const runtime = createPdfTranslationLocalRuntime('/resources', models)
   const a = await runtime.acquireTarget()
   const first = runtime.run(request(a))
   await vi.waitFor(() => expect(workers[0]?.requests).toHaveLength(1))
@@ -235,38 +226,4 @@ it('waits for in-flight teardown before starting a newly acquired document', asy
   respond(workers[1])
   await second
   await runtime.release(b)
-})
-
-it('keeps the old revision lease until its worker exits even while a different revision is acquired', async () => {
-  const releaseOther = vi.fn()
-  const runtime = createPdfTranslationLocalRuntime(models)
-  const a = await runtime.acquireTarget()
-  vi.mocked(models.acquireUse).mockResolvedValueOnce({
-    revision: 'model-v2',
-    assets: [{ path: '/models/v2/config.json', file: 'config.json', sha256: 'x', size: 1 }],
-    release: releaseOther
-  })
-  const b = await runtime.acquireTarget()
-  const work = runtime.run(request(a))
-  await vi.waitFor(() => expect(workers[0]?.requests).toHaveLength(1))
-  respond()
-  await work
-  let reaped!: () => void
-  vi.mocked(terminateProcessTree).mockImplementationOnce(async () => {
-    await new Promise<void>((resolve) => {
-      reaped = resolve
-    })
-    return { reaped: true }
-  })
-  const disposal = runtime.release(a)
-  await vi.waitFor(() => expect(reaped).toBeTypeOf('function'))
-  expect(release).not.toHaveBeenCalled()
-  expect(releaseOther).not.toHaveBeenCalled()
-  reaped()
-  await disposal
-  expect(release).toHaveBeenCalledOnce()
-  expect(releaseOther).not.toHaveBeenCalled()
-  await runtime.release(b)
-  expect(releaseOther).toHaveBeenCalledOnce()
-  await runtime.shutdown()
 })

@@ -36,25 +36,19 @@ session integration consumers are preserved.
 
 ## Capability completion
 
-| Original behavior                                                                          | Package evidence                                                                                                                                                                               | Retained host evidence                                                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `settings/xai-protocol.test.ts`: all six request/output/tool/token cases                   | `src/protocols/compatibility.test.ts`, unchanged expectations                                                                                                                                  | xAI OAuth bridge, chat compatibility, provider transport and captured framework regressions; account-type selection stays in transport owner                                                                                   |
-| `settings/list-models.test.ts`: all nine parsing, authentication, status and bounds cases  | `src/discovery/models.test.ts`, unchanged expectations                                                                                                                                         | Original host path now checks explicit host resource/network injection and conditional account persistence; privacy and authenticated redirect contracts remain                                                                |
-| Three pure namespace flatten/collision/restore cases inside native Responses tests         | `src/responses/native.test.ts`; restore obtains its private map from a prepared request                                                                                                        | HTTP authorization/error mapping, scoped tool policy, stream arguments, artifact promotion, lifecycle and captured MCP image fixture remain in native Responses host tests                                                     |
-| Classification wire request/answer/usage logic embedded in settings                        | `src/models/classification.test.ts`: endpoint encoding, immutable definitions, generic labels, malformed answers, usage-before-failure, response bounds, cancellation and discard-before-retry | Existing classification settings matrix retains feature questions, distribution checks, credentials, stale decisions, retries and billed usage; those scenarios jointly exercise several host owners and are not blindly moved |
-| `pdf-translation/local-worker.integration.test.ts`: real WASM setup and unicode model path | `src/local-runtime.test.ts`, same generated identity model and actual worker import                                                                                                            | `pdf-translation/local.test.ts` retains queue, leases, cancellation, verified process exit and restart; now also asserts the injected installed worker path                                                                    |
-| Local model/tokenizer lifetime formerly implicit in worker loop                            | `src/local.test.ts`: reuse, one-time disposal, overlapping-call rejection, drain-before-disposal, input/output bounds and cancellation                                                         | Application model installation/removal, active revision and process ownership stay in local-model and translation host suites                                                                                                  |
+| Original behavior                                                                         | Package evidence                                                                                                                                                                               | Retained host evidence                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `settings/xai-protocol.test.ts`: all six request/output/tool/token cases                  | `src/protocols/compatibility.test.ts`, unchanged expectations                                                                                                                                  | xAI OAuth bridge, chat compatibility, provider transport and captured framework regressions; account-type selection stays in transport owner                                                                                   |
+| `settings/list-models.test.ts`: all nine parsing, authentication, status and bounds cases | `src/discovery/models.test.ts`, unchanged expectations                                                                                                                                         | Original host path now checks explicit host resource/network injection and conditional account persistence; privacy and authenticated redirect contracts remain                                                                |
+| Three pure namespace flatten/collision/restore cases inside native Responses tests        | `src/responses/native.test.ts`; restore obtains its private map from a prepared request                                                                                                        | HTTP authorization/error mapping, scoped tool policy, stream arguments, artifact promotion, lifecycle and captured MCP image fixture remain in native Responses host tests                                                     |
+| Classification wire request/answer/usage logic embedded in settings                       | `src/models/classification.test.ts`: endpoint encoding, immutable definitions, generic labels, malformed answers, usage-before-failure, response bounds, cancellation and discard-before-retry | Existing classification settings matrix retains feature questions, distribution checks, credentials, stale decisions, retries and billed usage; those scenarios jointly exercise several host owners and are not blindly moved |
 
-The tiny ONNX fixture is generated in a unique temporary directory by its package test. Captured framework
-image fixtures remain host-owned; no copy is added to the package. The single local worker source moves
-from host resources to package resources; the host launches the exported installed location. Pure moved
-units are removed from host consumer evidence, while host integration evidence and selection guards are
-retained and expanded. No test skips or concurrency overrides are added.
-
-Qwen's pinned asset metadata now has one owner in `src/providers/local-model.ts`. The host installer
-consumes that definition without changing the `models/pdf-translation` namespace or `active.json`
-receipt. Host local-runtime tests freeze the existing target model/revision identity as a compatibility
-contract. Table Transformer definitions remain with the existing local PDF model installer.
+Local inference is deferred from this extraction. The existing host worker resource, pinned model
+manifest, runtime and tests (`host:main/literature/pdf-translation/local.test.ts` and
+`local-worker.integration.test.ts`) are restored to their pre-extraction owners. The package-only
+local generator, runtime and lifecycle tests are withdrawn together with that unsupported implementation;
+they are not claimed as package coverage. Host behavior and baseline assertions remain intact.
+The generated ONNX fixture remains owned by the host integration test. No fixture is copied into this package.
 
 ## Bound model management
 
@@ -63,7 +57,7 @@ bound text model for each explicit target. Classification envelope/usage cases a
 `src/models/classification.test.ts` with the same approach. These helpers are not shipped public APIs.
 `src/providers/create.test.ts` adds the actual public entry contract: shared gateway definitions, separate
 capability lists, built-in classification endpoint resolution, opaque new model IDs, immutable configuration
-snapshots, credential isolation between accounts, local-worker metadata and unsupported capability rejection.
+snapshots, credential isolation between accounts, empty local-model queries and unsupported capability rejection.
 Host text/classification scenarios continue through the public factory and retain their full assertions.
 The clean consumer exercises both model interfaces and metadata using CJS/ESM types and actual execution.
 No fixture ownership, runtime resource or persistence format changes in this revision.
@@ -83,21 +77,16 @@ Upstream's `jev-preview` and `typesafe/jev-1.14` metadata are retained; no persi
   built-in defaults and region routing without a host endpoint resolver.
 - `src/models/classification.test.ts` retains low-level response ownership assertions using a private
   package helper. The public client no longer exports an exchange or requires read/cancel calls.
-- `src/runtimes/local-text.test.ts` owns worker framing, validation, serialization, reuse, revision
-  changes, timeout and disposal. `host:main/literature/pdf-translation/local.test.ts` retains every prior
-  lease/admission/shutdown scenario against the real package runtime and host-managed process hooks.
-  Worker paths are asserted as installed package resources instead of caller-supplied paths.
-- `src/protocols/chat-anthropic.test.ts` owns message/image/tool conversion and usage/termination cases.
+- `src/protocols/anthropic/chat.test.ts` owns message/image/tool conversion and usage/termination cases.
   Existing host compatibility and protocol regression tests retain actual HTTP, authentication and SSE
   contracts. The implementation was removed from the host; no duplicate conversion facade remains.
 - Host text generation retains credential admission and persisted target hashes. It no longer selects
   wire protocols or composes endpoint URLs. Host classification retains each attempt's budget, persisted
   usage and stale-setting checks. HTTP diagnostic status is a value, never a live response object.
 - The installed consumer now invokes a built-in model with only provider/model IDs and a prompt;
-  classification uses `classify`; local runtime uses model handles. Optional process supervision exposes
-  the worker entry only to its launch hook, not to ordinary model consumers.
+  classification uses `classify`; local models are unsupported.
 
-## Connection-bound discovery and directory disposal
+## Connection-bound discovery
 
 - The existing model-list parsing/authentication/bounds cases remain in `src/discovery/models.test.ts`.
   `src/providers/create.test.ts` adds built-in/region/auth resolution, explicit URL snapshots, per-call
@@ -105,20 +94,18 @@ Upstream's `jev-preview` and `typesafe/jev-1.14` metadata are retained; no persi
 - Host `settings/list-models.test.ts` retains network/resource injection and stale-account write checks,
   and covers OAuth credential reference snapshots, Grok filtering, and the curated API-key xAI picker.
   Host privacy/redirect tests invoke the public provider instance with the same rejection assertions.
-- Local runtime tests cover active and idle disposal while another directory is registered, failed
-  termination retry, and queued next-directory work. The host local test proves that its old file lease
-  remains held until the corresponding Worker termination is confirmed. Same-directory sharing and
-  queued cancellation assertions remain unchanged. No fixtures or existing assertions were removed.
 
-## Default runtime and discovery cancellation
+## Discovery cancellation
 
 - `src/discovery/models.test.ts` owns pre-cancelled requests, stalled response cancellation by caller
   and timeout, limit validation before network access, and explicit undefined defaults. Existing
   endpoint/authentication, response bounds and HTTP failure assertions remain intact.
-- `src/runtimes/local-text.test.ts` additionally exercises the public runtime with its default process
-  owner: failed spawn preserves its original error without waiting for exit, and failed termination
-  keeps disposal retryable until exit is confirmed. The other runtime tests retain injected process
-  supervision to isolate queue/framing behavior.
-- Clean tarball acceptance invokes the default public Node runtime against a missing model directory,
-  verifies the real Worker failure response and disposal, then retains the existing real tiny WASM
-  inference test. This validates launch/resources/cleanup, not complete Qwen inference quality.
+
+## Protocol directory organization
+
+All text codec cases remain in `src/models/text-generation.test.ts`. Conversion cases move intact to
+`src/protocols/anthropic/chat.test.ts`; the completed-stream case moves to
+`src/protocols/openai/chat/stream.test.ts` with the same assertions. The Messages/Chat/Responses
+matrix remains in `src/protocols/compatibility.test.ts`. Public function names and host integration
+contracts are unchanged. Local metadata assertions now explicitly require an empty list and no
+registered local provider, and the packed consumer checks `/local` is not exported.

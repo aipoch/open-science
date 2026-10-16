@@ -99,7 +99,9 @@
     "test/pdf-translation-native-verification.test.ts",
     "test/pdf-translation-native-verification.ts",
     "test/pdf-translation-preservation.test.ts",
-    "test/pdf-translation-preservation.ts"
+    "test/pdf-translation-preservation.ts",
+    "resources/pdf-translation-local/worker.mjs",
+    "src/main/literature/pdf-translation/local-worker.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/pdf-translation/application-commands.ts",
@@ -123,7 +125,8 @@
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/pdf-translation/writer.test.ts",
       "test/pdf-translation-native-verification.test.ts",
-      "test/pdf-translation-preservation.test.ts"
+      "test/pdf-translation-preservation.test.ts",
+      "src/main/literature/pdf-translation/local-worker.integration.test.ts"
     ],
     "contract": [
       "src/main/literature/pdf-translation/ipc.test.ts",

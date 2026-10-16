@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import type { TextCodec } from './text-types'
-import { normalizeOpenAiChatModelStepUsage } from './usage'
+import type { TextCodec } from '../../text-types'
+import { normalizeOpenAiChatModelStepUsage } from '../../usage'
 
 const responsesResponse = z.object({
   status: z.literal('completed'),

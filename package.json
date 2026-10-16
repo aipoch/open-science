@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "1.0.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -187,8 +187,7 @@
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
     "@aipoch/literature-reading": "file:packages/literature-reading",
-    "@aipoch/providers": "file:packages/providers",
-    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
+    "@aipoch/providers": "file:packages/providers"
   },
   "overrides": {
     "@huggingface/transformers": {

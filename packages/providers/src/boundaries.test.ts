@@ -21,8 +21,7 @@ const allowed: Record<string, string[]> = {
   transport: ['transport'],
   responses: ['responses', 'protocols', 'transport'],
   discovery: ['discovery', 'transport.ts'],
-  models: ['models', 'protocols', 'transport', 'errors.ts'],
-  runtimes: ['models', 'protocols', 'providers']
+  models: ['models', 'protocols', 'transport', 'errors.ts']
 }
 it('keeps internal responsibilities acyclic and independent of host source and facades', () => {
   const edges = new Map<string, string[]>()
