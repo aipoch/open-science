@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { LifecycleObserver, identityKey } from './process-lifecycle-observer.mjs'
+import { LifecycleObserver, identityKey } from './observer.mjs'
 
 // These commands intentionally fail for leak/orphan/timeout. The parent test verifies both the
 // nonzero exit and the pre-cleanup evidence, not merely that an exception was caught in-process.

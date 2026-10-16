@@ -6,19 +6,22 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { describe, expect, it, vi } from 'vitest'
-import { LifecycleObserver, identityKey } from './process-lifecycle-observer.mjs'
-import { runVerificationProcess } from '../../src/main/update/verification-process'
-import { DelegatedProcessOwnership } from '../../src/main/delegation/process-ownership'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../../src/main/process-tree'
-import { KernelProcessLifecycleOwner } from '../../src/main/notebook/kernel-process-lifecycle.windows-posix'
-import { ShellProcessOwnershipRegistry } from '../../src/main/notebook/shell-process-ownership.windows-posix'
-import { startOrAttachDesktopBackend } from '../../src/main/desktop-runtime-launcher'
-import { connectDesktopRuntime } from '../../src/main/desktop-runtime-client'
+import { LifecycleObserver, identityKey } from './observer.mjs'
+import { runVerificationProcess } from '../../../src/main/update/verification-process'
+import { DelegatedProcessOwnership } from '../../../src/main/delegation/process-ownership'
+import {
+  registerOwnedPosixProcessGroup,
+  terminateProcessTree
+} from '../../../src/main/process-tree'
+import { KernelProcessLifecycleOwner } from '../../../src/main/notebook/kernel-process-lifecycle.windows-posix'
+import { ShellProcessOwnershipRegistry } from '../../../src/main/notebook/shell-process-ownership.windows-posix'
+import { startOrAttachDesktopBackend } from '../../../src/main/desktop-runtime-launcher'
+import { connectDesktopRuntime } from '../../../src/main/desktop-runtime-client'
 import {
   ConnectorSettingsWorkflows,
   type ConnectorSettingsWorkflowStore,
   type ConnectorSettingsWorkflowEffects
-} from '../../src/main/settings/workflows/connectors'
+} from '../../../src/main/settings/workflows/connectors'
 
 // Only the dedicated runner supplies Python and requires every scenario's evidence. Normal portable
 // npm test does not acquire a new Python requirement or pretend these opt-in tests were executed.

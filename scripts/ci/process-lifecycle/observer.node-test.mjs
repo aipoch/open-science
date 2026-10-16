@@ -4,13 +4,8 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LifecycleObserver, isSameProcess, processTable } from './process-lifecycle-observer.mjs'
-import {
-  runObserved,
-  validateCoreEvidence,
-  validateDetectorTap,
-  CORE_SCENARIOS
-} from './run-process-lifecycle.mjs'
+import { LifecycleObserver, isSameProcess, processTable } from './observer.mjs'
+import { runObserved, validateCoreEvidence, validateDetectorTap, CORE_SCENARIOS } from './run.mjs'
 
 for (const kind of ['clean', 'borrowed', 'leak', 'orphan', 'timeout']) {
   test(`canary ${kind} checks before cleanup`, { timeout: 30000 }, async () => {
@@ -18,7 +13,7 @@ for (const kind of ['clean', 'borrowed', 'leak', 'orphan', 'timeout']) {
     try {
       const child = spawn(
         process.execPath,
-        [resolve('scripts/ci/process-lifecycle-canary.mjs'), kind],
+        [resolve('scripts/ci/process-lifecycle/canary.mjs'), kind],
         {
           env: { ...process.env, LIFECYCLE_OUTPUT: output },
           stdio: 'ignore'

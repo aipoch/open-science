@@ -14,14 +14,14 @@ export const isSameProcess = (left, right) =>
 export function harnessDigest() {
   const hash = createHash('sha256')
   for (const name of [
-    'lifecycle-process-table.py',
-    'process-lifecycle-observer.mjs',
-    'process-lifecycle-canary.mjs',
-    'process-lifecycle-observer.node-test.mjs',
-    'process-lifecycle.integration.test.ts',
-    'run-process-lifecycle.mjs'
+    'process-table.py',
+    'observer.mjs',
+    'canary.mjs',
+    'observer.node-test.mjs',
+    'lifecycle.integration.test.ts',
+    'run.mjs'
   ]) {
-    hash.update(name).update(readFileSync(resolve('scripts/ci', name)))
+    hash.update(name).update(readFileSync(resolve('scripts/ci/process-lifecycle', name)))
   }
   return hash.digest('hex')
 }
@@ -29,7 +29,7 @@ export function harnessDigest() {
 export async function processTable(request = { operation: 'snapshot' }) {
   const child = spawn(
     process.env.LIFECYCLE_PYTHON || 'python3',
-    [resolve('scripts/ci/lifecycle-process-table.py')],
+    [resolve('scripts/ci/process-lifecycle/process-table.py')],
     { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }
   )
   const chunks = []
