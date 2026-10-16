@@ -82,6 +82,7 @@ const requestByMethod = {
     reason: 'Download the requested public dataset.'
   },
   state: request,
+  inspectDataset: { ...request, path: 'table.csv', columns: ['value'], idColumn: 'id' },
   restart: { ...request, language: 'r', environment: 'default-r' },
   shutdown: request,
   inspectPackages: { ...request, language: 'python', packages: ['numpy'] },
@@ -107,6 +108,7 @@ describe('notebook local RPC adapter', () => {
       'executeShell',
       'requestNetworkAccess',
       'state',
+      'inspectDataset',
       'restart',
       'shutdown',
       'inspectPackages',
@@ -116,7 +118,7 @@ describe('notebook local RPC adapter', () => {
       'bindRuntime',
       'switchRuntime'
     ])
-    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(20)
+    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(21)
 
     for (const method of [
       'listPackages',

@@ -48,6 +48,7 @@ const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'ope
   bash_execute: 'legacy',
   request_network_access: 'inner_authorization',
   notebook_state: 'legacy',
+  inspect_dataset: 'legacy',
   list_notebook_runtimes: 'legacy',
   notebook_bind_runtime: 'legacy',
   notebook_switch_runtime: 'legacy',
@@ -161,8 +162,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // preserve linked-PDF identity, mounted-server checks and single-use authorization.
         'literature/mcp-server.ts':
           'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
+        // Reviewed: inspect_dataset retains legacy authorization and only reads session-scoped CSV/TSV.
         'notebook/mcp-server.ts':
-          'e2dc287c4bf562ed688bebedbadff44b9b8aa6498472f5fa37478d87bba73c60',
+          '3b3904baf816da74546d1d0191eae93d7b7bb10d3efc4c7caf1e88c5d8e5c90c',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'

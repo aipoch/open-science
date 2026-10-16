@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { projectPermissionGrantSnapshot } from './catalog'
 
 import {
   PRE_REGISTERED_PERMISSION_IDENTITIES,
@@ -6,14 +9,37 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 51-identity inventory including native web reading and search', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(51)
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'])(
+    'localizes the dataset permission label consumed by the renderer (%s)',
+    (locale) => {
+      const { grants } = projectPermissionGrantSnapshot([
+        {
+          id: 'dataset',
+          revision: 1,
+          scope: { kind: 'global' },
+          capability: { kind: 'mcp_tool', key: 'mcp:open-science-notebook/inspect_dataset' }
+        }
+      ])
+      expect(grants[0].connectorServerId).toBeUndefined()
+      expect(grants[0].capabilityLabel).toBe('Inspect dataset')
+      const catalog = JSON.parse(
+        readFileSync(join(__dirname, '../../shared/i18n/locales', `${locale}.json`), 'utf8')
+      )
+      expect(catalog.renderer[grants[0].capabilityLabel]).toEqual(expect.any(String))
+      expect(catalog.renderer[grants[0].capabilityLabel].trim()).not.toBe('')
+    }
+  )
+  it('contains the closed 52-identity inventory including dataset inspection', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(52)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([
       'builtin:web_fetch',
       'builtin:web_search'
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(32)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(33)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
+      'mcp:open-science-notebook/inspect_dataset'
+    )
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
       'mcp:open-science-notebook/request_network_access'
     )

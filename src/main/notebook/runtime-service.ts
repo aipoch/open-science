@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { inspectDataset, type InspectDatasetInput } from './dataset-inspection'
 import type { ReplayRunIndex } from '../../shared/replay'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
@@ -131,6 +132,7 @@ import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   NotebookRunRepository,
+  getNotebookDataRoot,
   getNotebookFileEvidenceLocation,
   getRuntimeRoot
 } from './repository'
@@ -173,7 +175,11 @@ import {
   assertNotebookCodeWithinLimit
 } from './content-limits'
 import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
-import { deleteNotebookProjectInputs, deleteNotebookSessionInputs } from './input-staging'
+import {
+  deleteNotebookProjectInputs,
+  deleteNotebookSessionInputs,
+  getNotebookInputRoot
+} from './input-staging'
 import {
   deleteNotebookProjectPromptInputs,
   deleteNotebookSessionPromptInputs
@@ -2238,6 +2244,26 @@ class NotebookRuntimeService {
         historyLimit
       )
     })
+  }
+
+  async inspectDataset(
+    request: NotebookSessionRequest & InspectDatasetInput,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown>> {
+    const projectId = resolveProjectId(request, resolveProjectId(this.options))
+    const lane = this.sessionLifecycle.laneForRequest(request)
+    // Derive scope without starting a kernel, creating a session, or trusting workspaceCwd.
+    return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) =>
+      inspectDataset(
+        request,
+        [
+          getNotebookDataRoot(this.options.dataRoot, projectId, request.sessionId, lane),
+          getNotebookInputRoot(this.options.dataRoot, projectId, request.sessionId)
+        ],
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        this.options.dataRoot
+      )
+    )
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {

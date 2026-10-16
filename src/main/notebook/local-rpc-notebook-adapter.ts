@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { inspectDatasetSchema, type InspectDatasetInput } from './dataset-inspection'
 
 import {
   notebookLanguageSchema,
@@ -146,6 +147,7 @@ const notebookLocalRpcRequestSchemas = {
     command: z.string().min(1).optional()
   }),
   state: notebookSessionRequestSchema,
+  inspectDataset: notebookSessionRequestSchema.extend(inspectDatasetSchema),
   restart: z.union([
     notebookSessionRequestSchema,
     notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),
@@ -256,6 +258,10 @@ type NotebookLocalRpcCapability = {
     signal?: AbortSignal
   ): Promise<unknown>
   state(request: NotebookSessionRequest): Promise<unknown>
+  inspectDataset(
+    request: NotebookSessionRequest & InspectDatasetInput,
+    signal?: AbortSignal
+  ): Promise<unknown>
   restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
@@ -293,6 +299,7 @@ const NOTEBOOK_LOCAL_RPC_METHODS = [
   'executeShell',
   'requestNetworkAccess',
   'state',
+  'inspectDataset',
   'restart',
   'shutdown',
   'inspectPackages',
@@ -409,6 +416,9 @@ const resolveNotebookLocalRpcHandler = (
         )
     case 'state':
       return (request) => capability.state(parseNotebookLocalRpcRequest('state', request))
+    case 'inspectDataset':
+      return (request, signal) =>
+        capability.inspectDataset(parseNotebookLocalRpcRequest('inspectDataset', request), signal)
     case 'restart':
       return (request) => capability.restart(parseNotebookLocalRpcRequest('restart', request))
     case 'shutdown':

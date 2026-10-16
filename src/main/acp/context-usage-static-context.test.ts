@@ -70,6 +70,8 @@ describe('contextUsageMcpSections', () => {
       // Shell runtime binding and recovery guidance adds ~31 tokens so retries preserve the selected
       // dialect and recovery prerequisite instead of guessing from the host platform.
       // Scoped recovery keeps selectors and tool behavior here; failure-specific advice is dynamic.
+      // Bounded CSV/TSV inspection adds ~284 tokens. The measured Windows maximum is 5080
+      // (4796 without this tool); retain the full schema and set its reviewed ceiling to 5100.
       for (const { frameworkId, codexBridgeAliases } of frameworks) {
         const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
           artifacts: false,
@@ -89,7 +91,7 @@ describe('contextUsageMcpSections', () => {
             tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${JSON.stringify(tools)}`),
             `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
           )
-          .toBeLessThanOrEqual(4_800)
+          .toBeLessThanOrEqual(5_100)
       }
     }
   )

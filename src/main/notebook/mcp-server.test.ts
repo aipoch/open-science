@@ -375,6 +375,7 @@ describe('notebook MCP server config', () => {
       'repl_execute',
       'bash_execute',
       'request_network_access',
+      'inspect_dataset',
       'notebook_state',
       'list_notebook_runtimes',
       'notebook_bind_runtime',
@@ -388,6 +389,30 @@ describe('notebook MCP server config', () => {
       'search_memories',
       'remember_memory'
     ])
+  })
+
+  it('exposes a bounded inspection contract and preserves structured report text', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'inspect_dataset')!
+    expect(tool.method).toBe('inspectDataset')
+    expect(
+      z.object(tool.inputSchema).safeParse({ path: 'table.parquet', format: 'parquet' }).success
+    ).toBe(false)
+    const schema = z.object(tool.inputSchema)
+    expect(schema.safeParse({ path: 'table.csv', maxRows: 0 }).success).toBe(false)
+    expect(schema.safeParse({ path: 'table.csv', maxRows: 10001 }).success).toBe(false)
+    expect(schema.safeParse({ path: 'table.csv', previewRows: 11 }).success).toBe(false)
+    expect(schema.parse({ path: 'table.tsv', maxRows: 20, columns: ['value'] })).toEqual({
+      path: 'table.tsv',
+      maxRows: 20,
+      columns: ['value']
+    })
+    const report = {
+      inspection: { scope: 'sample', rowsInspected: 20 },
+      dimensions: { rows: null, columns: 1 }
+    }
+    const content = buildNotebookToolContent(report, tool)
+    expect(content[0].type).toBe('text')
+    expect(JSON.parse((content[0] as { text: string }).text)).toEqual(report)
   })
 
   it('allows explicit network approval before a connection while preserving scoped grants', () => {

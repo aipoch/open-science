@@ -145,6 +145,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "目前的應用程式版本不支援此加密資料格式。請使用相容的應用程式版本或還原原始設定檔。現有憑證未被替換。"
   },
   "renderer": {
+    "Inspect dataset": "檢查資料集",
     "Select one or more options": "選擇一個或多個選項",
     "Your conversation is preserved. Try Resume again.": "您的會話已保留。請再次嘗試恢復。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能體未能及時回應。您的會話已保留。請再次嘗試恢復。",
