@@ -4459,7 +4459,11 @@ describe('file context after mutable path collections', () => {
       'meta = [file_meta(p) for p in paths]'
     ].join('\n')
     expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-      reads: ['outputs\\crosscheck.json', 'outputs\\observations.json', 'outputs\\regression.json'],
+      reads: [
+        analyzedPythonPath('outputs/crosscheck.json'),
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
       writes: [],
       readState: 'partial',
       writeState: 'partial',
@@ -4489,8 +4493,12 @@ describe('file context after mutable path collections', () => {
       'print(sys.version.split()[0])'
     ].join('\n')
     expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-      reads: ['outputs\\crosscheck.json', 'outputs\\observations.json', 'outputs\\regression.json'],
-      writes: ['outputs\\manifest.json'],
+      reads: [
+        analyzedPythonPath('outputs/crosscheck.json'),
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
+      writes: [analyzedPythonPath('outputs/manifest.json')],
       readState: 'partial',
       writeState: 'partial',
       externalState: 'partial'
@@ -4509,7 +4517,7 @@ describe('file context after mutable path collections', () => {
       'meta = [file_meta(p) for p in paths]'
     ].join('\n')
     expect((await analyzeNotebookSourceFileAccess('python', source)).reads).not.toContain(
-      'outputs\\never-created.json'
+      analyzedPythonPath('outputs/never-created.json')
     )
   })
 
@@ -4557,7 +4565,10 @@ describe('file context after mutable path collections', () => {
       '    json.dump({"files": entries}, fh)'
     ].join('\n')
     expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
-      reads: ['outputs\\observations.json', 'outputs\\regression.json'],
+      reads: [
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
       writes: ['outputs/manifest.json'],
       readState: 'partial',
       writeState: 'partial',
