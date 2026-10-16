@@ -399,14 +399,22 @@ const pythonDiagnosticValue = (
     if (node.type === 'JoinedStr' || node.type === 'FormattedValue') {
       return pyChildren(node).every((child) => inspect(child)) ? 'string' : undefined
     }
-    if (['Compare', 'BoolOp', 'UnaryOp'].includes(node.type))
+    if (node.type === 'Compare') {
+      const operands = [node.left, ...(node.comparators ?? [])].filter(isPyNode)
+      return operands.length > 0 && operands.every((child) => inspect(child)) ? 'value' : undefined
+    }
+    if (['BoolOp', 'UnaryOp'].includes(node.type))
       return pyChildren(node).every((child) => inspect(child)) ? 'value' : undefined
     if (node.type === 'BinOp') {
       if (node.children?.length)
         return node.children.every((child) => inspect(child)) ? 'value' : undefined
       const left = inspect(node.left)
       const right = inspect(node.right)
-      if (['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'].includes(node.op ?? '') && left && right)
+      if (
+        ['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'In', 'NotIn'].includes(node.op ?? '') &&
+        left &&
+        right
+      )
         return 'value'
       if (node.op === 'Add' && left === 'string' && right === 'string') return 'string'
       if (node.op === 'Div' && left === 'path' && right === 'string') return 'path'
@@ -6350,6 +6358,17 @@ class Analyzer extends NodeVisitor {
       node.func?.type === 'Attribute' &&
       node.func.attr === 'open' &&
       this.arithmeticResultType(node.func.value as PyNode) === 'pathlib.PurePath'
+    const observationalFilesystemCall = (() => {
+      if (!rawCallName) return false
+      const [root, ...members] = rawCallName.split('.')
+      const canonical = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
+        .filter(Boolean)
+        .join('.')
+      return (
+        canonical === 'os.walk' ||
+        ['os.path.join', 'os.path.basename', 'os.path.dirname', 'os.fspath'].includes(canonical)
+      )
+    })()
     if (rawCallName) {
       const [root, ...members] = rawCallName.split('.')
       const canonicalCallName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
@@ -6530,7 +6549,7 @@ class Analyzer extends NodeVisitor {
         !libraryEffect.callbackKeywords?.length &&
         !libraryEffect.callbackAllKeywords &&
         !libraryEffect.callbackContainerKeywords?.length
-      if (!builtin && !localContainer && !known) {
+      if (!builtin && !localContainer && !known && !observationalFilesystemCall) {
         this.unresolvedFunctionCall = true
       }
       if (
@@ -6926,6 +6945,7 @@ class Analyzer extends NodeVisitor {
         !literalReceiver &&
         !builtinContainerView &&
         !knownPathMethod &&
+        !observationalFilesystemCall &&
         !this.isReadOnlyArithmeticCall(node)
       ) {
         const possible = new Set(
