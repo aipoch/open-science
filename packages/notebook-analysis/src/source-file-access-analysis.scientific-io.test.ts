@@ -303,6 +303,19 @@ describe('Rsamtools BAM/index lineage', () => {
   })
 
   it.each([
+    ['scanFa', 'inputs/reference.fa', 'inputs/reference.fa.fai'],
+    ['scanTabix', 'inputs/regions.tsv.gz', 'inputs/regions.tsv.gz.tbi'],
+    ['scanBcfHeader', 'inputs/header.bcf.gz', 'inputs/header.bcf.gz.csi']
+  ])('retains a positional index for %s', async (reader, file, index) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      `Rsamtools::${reader}("${file}", "${index}")`
+    )
+    expect(result.reads).toEqual([file, index])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each([
     ['BcfFile', 'scanBcf', 'inputs/variants.bcf.gz', 'inputs/variants.csi'],
     ['FaFile', 'scanFa', 'inputs/reference.fa', 'inputs/reference.fa.fai'],
     ['TabixFile', 'scanTabix', 'inputs/regions.tsv.gz', 'inputs/regions.tsv.gz.tbi']
@@ -398,6 +411,23 @@ describe('Rsamtools BAM/index lineage', () => {
       readState: 'partial',
       externalState: 'partial'
     })
+  })
+
+  it('resolves named BamFileList arguments regardless of order', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::BamFileList(index = c("inputs/one.bam.bai", "inputs/two.bam.bai"), file = c("inputs/one.bam", "inputs/two.bam"))',
+        'Rsamtools::countBam(files)'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([
+      'inputs/one.bam',
+      'inputs/one.bam.bai',
+      'inputs/two.bam',
+      'inputs/two.bam.bai'
+    ])
+    expect(result.readState).toBe('partial')
   })
 
   it('replays a static BamFileList through mergeBam', async () => {

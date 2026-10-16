@@ -189,6 +189,7 @@ type PyNode = {
   orelse?: PyNode[]
   iter?: PyNode
   test?: PyNode
+  msg?: PyNode
   elt?: PyNode
   key?: PyNode
   keys?: Array<PyNode | null>
@@ -1673,7 +1674,9 @@ const convertStmt = (node: Node): PyNode | undefined => {
         )
       )
     case 'assert_statement': {
-      const expression = pythonSyntaxChildren(node)[0]
+      const expressions = pythonSyntaxChildren(node)
+      const expression = expressions[0]
+      const message = expressions[1]
       return locate(
         node,
         py(
@@ -1681,9 +1684,10 @@ const convertStmt = (node: Node): PyNode | undefined => {
           {
             test: expression
               ? convertExpr(expression, 'Load')
-              : py('Constant', { value: false, constKind: 'bool' }, [])
+              : py('Constant', { value: false, constKind: 'bool' }, []),
+            msg: message ? convertExpr(message, 'Load') : undefined
           },
-          ['test']
+          message ? ['test', 'msg'] : ['test']
         )
       )
     }
@@ -8484,6 +8488,7 @@ const analyzePythonFileAccessTree = (
       )
       const safeAssertions = fn.body.slice(4, -1).every((statement) => {
         if (statement?.type !== 'Assert' || !isPyNode(statement.test)) return false
+        if (statement.msg) return false
         return metadataExpressionSafe(
           statement.test,
           names,
@@ -12046,6 +12051,7 @@ const analyzePythonFileAccessTree = (
           ? body.every((statement) => {
               if (statement === metadataAssignment) return true
               if (statement.type === 'Assert' && isPyNode(statement.test)) {
+                if (statement.msg) return false
                 const test = statement.test
                 if (
                   test.type === 'Call' &&

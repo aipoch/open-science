@@ -9512,15 +9512,51 @@ const analyzeRFileAccessTree = (
     const assigned = new Set<string>()
     const effects: StableJsonHelperEffect['effects'] = []
     let writerSeen = false
+    const purePayloadCalls = new Set([
+      '[',
+      '[[',
+      '$',
+      '@',
+      'as.character',
+      'as.data.frame',
+      'as.numeric',
+      'c',
+      'data.frame',
+      'file.path',
+      'I',
+      'length',
+      'list',
+      'names',
+      'nrow',
+      'paste',
+      'paste0',
+      'structure',
+      'unname'
+    ])
     const staticOption = (node: RExpr): boolean =>
       ['character', 'atomic', 'null'].includes(node.kind)
     const opaquePayloadIsSafe = (node: RExpr): boolean => {
       if (!isCall(node) || node.operator === 'function') return true
+      if (['::', ':::'].includes(node.operator ?? '')) {
+        const reference = rQualifiedFunctionReference(node)
+        if (!reference) return false
+        const [pkg, name] = reference.split('::')
+        return (
+          (pkg === 'base' && purePayloadCalls.has(name ?? '')) ||
+          (pkg === 'datasets' && name === 'faithful')
+        )
+      }
       const name = rCalledName(node) ?? ''
+      const qualified = rQualifiedCall(node)
+      const payloadCallAllowed = qualified
+        ? (qualified.package === 'base' && purePayloadCalls.has(qualified.name)) ||
+          (qualified.package === 'datasets' && qualified.name === 'faithful')
+        : purePayloadCalls.has(name)
       if (
         ['<-', '=', '->', '<<-', '->>'].includes(name) ||
         (!rQualifiedCall(node) && shadowed.has(name)) ||
-        Boolean(rFileCallEffect(name, rQualifiedCall(node)?.package))
+        Boolean(rFileCallEffect(name, qualified?.package)) ||
+        !payloadCallAllowed
       )
         return false
       return node.args.every(opaquePayloadIsSafe)
@@ -10187,9 +10223,10 @@ const analyzeRFileAccessTree = (
     expr: Extract<RExpr, { kind: 'call' }>
   ): RsamtoolsBamListBinding | undefined => {
     if (rsamtoolsQualifiedName(expr) !== 'BamFileList') return undefined
-    const files = rStaticStringCollection(expr.args[0], bindings, collections)?.values
+    const filesArgument = connectionArgument(expr, ['file', 'index'], 'file')
+    const files = rStaticStringCollection(filesArgument, bindings, collections)?.values
     if (!files?.length) return undefined
-    const indexArgument = expr.args.find((_argument, index) => expr.names[index] === 'index')
+    const indexArgument = connectionArgument(expr, ['file', 'index'], 'index')
     const indexes = indexArgument
       ? rStaticStringCollection(indexArgument, bindings, collections)?.values
       : undefined
@@ -11123,18 +11160,29 @@ const analyzeRFileAccessTree = (
         const bamListBinding =
           (isSymbol(argument) ? rsamtoolsBamLists.get(argument.name) : undefined) ??
           (isCall(argument) ? rsamtoolsBamListBinding(argument) : undefined)
-        const indexPosition = rOptionArgumentIndex(expr.names, 'index')
-        const indexIsExplicit =
-          ['scanBam', 'countBam', 'idxstatsBam', 'pileup', 'testPairedEndBam', 'scanBcf'].includes(
-            rsamtoolsName
-          ) &&
-          indexPosition >= 0 &&
-          // The BamFile method owns its index; Rsamtools documents the
-          // explicit index argument for the character method only.
-          !((bamBinding || indexedBinding) && (isSymbol(argument) || isCall(argument)))
-        const directIndex = indexIsExplicit
-          ? rsamtoolsStaticPath(expr.args[indexPosition])
+        const indexedReaderNames = [
+          'scanBam',
+          'countBam',
+          'idxstatsBam',
+          'pileup',
+          'testPairedEndBam',
+          'scanBcf',
+          'scanBcfHeader',
+          'scanFa',
+          'scanFaIndex',
+          'countFa',
+          'scanTabix',
+          'countTabix',
+          'headerTabix',
+          'seqnamesTabix'
+        ]
+        const explicitIndexArgument = indexedReaderNames.includes(rsamtoolsName)
+          ? connectionArgument(expr, ['file', 'index', 'param'], 'index')
           : undefined
+        const indexIsExplicit =
+          explicitIndexArgument !== undefined &&
+          !(rsamtoolsName === 'pileup' && bamBinding && (isSymbol(argument) || isCall(argument)))
+        const directIndex = indexIsExplicit ? rsamtoolsStaticPath(explicitIndexArgument) : undefined
         if (bamListBinding?.length && ['countBam'].includes(rsamtoolsName)) {
           for (const file of bamListBinding) {
             addRead(file.bam)
@@ -11187,9 +11235,8 @@ const analyzeRFileAccessTree = (
           (isSymbol(fileArgument) ? rsamtoolsBamFiles.get(fileArgument.name) : undefined) ??
           (isCall(fileArgument) ? rsamtoolsBamBinding(fileArgument) : undefined)
         const filePath = binding?.bam ?? rsamtoolsStaticPath(fileArgument)
-        const indexPosition = rOptionArgumentIndex(expr.names, 'index')
-        const indexIsExplicit = indexPosition >= 0
         const indexArgument = connectionArgument(expr, parameters, 'index')
+        const indexIsExplicit = indexArgument !== undefined
         const indexPath = indexIsExplicit
           ? indexArgument && !isNull(indexArgument)
             ? rsamtoolsStaticPath(indexArgument)

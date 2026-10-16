@@ -281,11 +281,23 @@ describe('partial notebook reader inputs after cache reload', () => {
     [
       'does not replay a helper after rebinding',
       'emit <- function() { jsonlite::write_json(list(value=1), "outputs/result.json") }; emit <- function() NULL; emit()'
+    ],
+    [
+      'does not replay a writer helper with an opaque local payload call',
+      'emit <- function() { payload <- make_payload(); jsonlite::write_json(payload, "outputs/result.json") }; emit()'
     ]
   ])('%s', async (_label, source) => {
     expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
       reads: [],
       writes: []
+    })
+  })
+
+  it('retains file reads from Python assert messages', async () => {
+    const source = 'assert True, open("inputs/assert-message.txt").read()'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['inputs/assert-message.txt'],
+      readState: 'complete'
     })
   })
 
