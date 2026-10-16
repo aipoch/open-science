@@ -2,7 +2,7 @@ const fs = require('node:fs')
 const path = 'src/main/process-tree.ts'
 let source = fs.readFileSync(path, 'utf8')
 source = source.replace('hadSuspiciousMarkerAbsence = true', "console.error('RECOVERY suspicious absence', { pid, ppid: ppidMap.get(pid), processStart: startTimeMap.get(pid), spawnedAt }); hadSuspiciousMarkerAbsence = true")
-source = source.replace('hadRelevantPermissionDenied = true', "console.error('RECOVERY unreadable', { pid, code }); hadRelevantPermissionDenied = true")
+source = source.replace('hadRelevantPermissionDenied = true', "console.error('RECOVERY unreadable', { pid, code, processStart: startTimeMap.get(pid), spawnedAt, bootTime, stat: readFileSync(`/proc/${pid}/stat`, 'utf8') }); hadRelevantPermissionDenied = true")
 source = source.replace("if (!result.reaped) return 'blocked'", "if (!result.reaped) { console.error('RECOVERY group not reaped', leader, result); return 'blocked' }")
 source = source.replace("if (!confirmation.complete) return 'blocked'", "if (!confirmation.complete) { console.error('RECOVERY incomplete confirmation'); return 'blocked' }")
 source = source.replace("if (!snapshot.complete) return 'blocked'", "if (!snapshot.complete) { console.error('RECOVERY incomplete snapshot'); return 'blocked' }")
