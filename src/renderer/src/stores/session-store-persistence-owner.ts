@@ -293,6 +293,7 @@ export const toPersistedSession = (
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
     interactionState,
+    liveInteractionState,
     activePlanProjection,
     contentLoaded,
     activeMessageCount,
@@ -326,6 +327,7 @@ export const toPersistedSession = (
   void conversationGraphSyncBlocked
   void pendingContextReplayMessageId
   void interactionState
+  void liveInteractionState
   void activePlanProjection
   void contentLoaded
   void activeMessageCount
@@ -539,6 +541,7 @@ const withTransientSessionState = (
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
     interactionState: source.interactionState,
+    liveInteractionState: source.liveInteractionState,
     // Recompute durable Attention from the fresh save receipt so a successful
     // newer turn clears the previous turn's badge. Keep only the local graph-sync
     // problem from the source projection; it is intentionally renderer-scoped.
@@ -576,7 +579,8 @@ const projectDurablePlanAuthority = (
     ? current.status
     : resolveSessionInteractionStatus(
         { ...current, runtimeContext: durable.runtimeContext },
-        interactionState
+        interactionState,
+        current.liveInteractionState?.presentationOnly !== true
       )
   return {
     ...current,
@@ -1029,14 +1033,18 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'permission-authority') {
-        const permissionPending = session.runtimeContext?.permission?.state === 'pending'
+        const permissionPending =
+          (current.liveInteractionState?.presentationOnly !== true &&
+            current.liveInteractionState?.permission === true) ||
+          session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
           ...inferSessionInteractionState(current),
           permission: permissionPending
         }
         const status = resolveSessionInteractionStatus(
           { ...current, runtimeContext: session.runtimeContext },
-          interactionState
+          interactionState,
+          current.liveInteractionState?.presentationOnly !== true
         )
         const projected: ChatSession = {
           ...archive,
@@ -1073,7 +1081,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           activePlanProjection.revision > incomingRevision
         const interactionState = {
           ...inferSessionInteractionState(current),
-          permission: session.runtimeContext?.permission?.state === 'pending',
+          permission:
+            (current.liveInteractionState?.presentationOnly !== true &&
+              current.liveInteractionState?.permission === true) ||
+            session.runtimeContext?.permission?.state === 'pending',
           plan: projectionIsNewer
             ? activePlanProjection.approval === 'pending'
             : session.runtimeContext?.plan?.approval === 'pending'
@@ -1082,7 +1093,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           ? current.status
           : resolveSessionInteractionStatus(
               { ...current, runtimeContext: session.runtimeContext },
-              interactionState
+              interactionState,
+              current.liveInteractionState?.presentationOnly !== true
             )
         const projected: ChatSession = {
           ...archive,

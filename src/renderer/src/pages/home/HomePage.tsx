@@ -47,6 +47,10 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import {
+  useSessionPendingInteractions,
+  type SessionPendingInteractionFacts
+} from '@/hooks/useSessionPendingInteractions'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
@@ -123,9 +127,9 @@ const getRequiredEnvironmentFailures = (
 const getHomeSessionActivity = (
   session: ChatSession,
   hasNonTerminalCompute: boolean,
-  credentialPending: boolean
+  pendingInteractions: SessionPendingInteractionFacts = {}
 ): HomeSessionActivity | undefined => {
-  const actionability = projectPresentedSessionActionability(session, { credentialPending })
+  const actionability = projectPresentedSessionActionability(session, pendingInteractions)
   if (actionability.waitReason) return actionability.waitReason
   if (actionability.activity === 'running' || hasNonTerminalCompute) return 'running'
   return undefined
@@ -211,7 +215,7 @@ const HomePage = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
-  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const pendingInteractions = useSessionPendingInteractions()
   const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
   const environmentRepairPanel = getEnvironmentRepairPanel(requiredEnvironmentFailures)
 
@@ -306,23 +310,13 @@ const HomePage = ({
     return startedAtBySession
   }, [computeJobsById])
 
-  const credentialPendingSessionIds = useMemo(
-    () =>
-      new Set(
-        pendingCredentialRequests.flatMap((request) =>
-          request.sessionId ? [request.sessionId] : []
-        )
-      ),
-    [pendingCredentialRequests]
-  )
-
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
     const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
       const computeStartedAt = activeComputeStartedAtBySession.get(session.id)
       const activity = getHomeSessionActivity(
         session,
         computeStartedAt !== undefined,
-        credentialPendingSessionIds.has(session.id)
+        pendingInteractions.get(session.id)
       )
 
       if (activity) {
@@ -357,7 +351,7 @@ const HomePage = ({
     )
   }, [
     activeComputeStartedAtBySession,
-    credentialPendingSessionIds,
+    pendingInteractions,
     persistedSessions,
     unreadCompletedBySession
   ])
@@ -393,14 +387,14 @@ const HomePage = ({
             getHomeSessionActivity(
               session,
               activeComputeStartedAtBySession.has(session.id),
-              credentialPendingSessionIds.has(session.id)
+              pendingInteractions.get(session.id)
             ) === 'running'
         ).length,
         waitingCount: projectSessions.filter((session) => {
           const activity = getHomeSessionActivity(
             session,
             activeComputeStartedAtBySession.has(session.id),
-            credentialPendingSessionIds.has(session.id)
+            pendingInteractions.get(session.id)
           )
           return activity !== undefined && isSessionWaitReason(activity)
         }).length,
@@ -413,12 +407,7 @@ const HomePage = ({
         Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
         right.lastActivityAt - left.lastActivityAt
     )
-  }, [
-    activeComputeStartedAtBySession,
-    activeProjects,
-    credentialPendingSessionIds,
-    persistedSessions
-  ])
+  }, [activeComputeStartedAtBySession, activeProjects, pendingInteractions, persistedSessions])
 
   const recentSessions = useRecentSessions(
     persistedSessions,
@@ -517,7 +506,7 @@ const HomePage = ({
         getHomeSessionActivity(
           session,
           activeComputeStartedAtBySession.has(session.id),
-          credentialPendingSessionIds.has(session.id)
+          pendingInteractions.get(session.id)
         ) !== undefined
     )
 

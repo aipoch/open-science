@@ -629,8 +629,7 @@ describe('workspace runtime architecture', () => {
     for (const responsibility of [
       'lifecycleOwner.processRuntimeEvents',
       'processWorkspaceRuntimeEvents',
-      'syncWorkspaceElicitationState',
-      'syncWorkspacePermissionState',
+      'syncWorkspaceInteractionStateFromSnapshot',
       'syncWorkspaceContextUsage'
     ]) {
       expect(

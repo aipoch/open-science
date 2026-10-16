@@ -2554,6 +2554,35 @@ if (process.argv.includes('--version')) {
           reply = 'Compaction preview complete.'
         } else if (prompt.includes('Verify Runtime approval ')) {
           reply = await verifyRuntimeApproval(context, prompt)
+        } else if (prompt.includes('Verify risky code Home wait status.')) {
+          try {
+            const run = await withMcpClient(
+              context.params.sessionId,
+              'open-science-notebook',
+              async (client) =>
+                toolResult(
+                  'bash_execute',
+                  await client.callTool(
+                    {
+                      name: 'bash_execute',
+                      arguments: {
+                        // Inline code triggers production risk review, but approval only prints text.
+                        command: `node -e "console.log('risky-code-home-completed')"`
+                      }
+                    },
+                    undefined,
+                    { timeout: 120_000 }
+                  )
+                )
+            )
+            if (run.exitCode !== 0 || !run.stdout?.includes('risky-code-home-completed')) {
+              throw new Error(`Approved risky code did not complete: ${JSON.stringify(run)}`)
+            }
+            reply = 'Risky code approved and completed.'
+          } catch (error) {
+            if (!String(error).includes('Notebook execution declined')) throw error
+            reply = 'Risky code denied before execution.'
+          }
         } else if (prompt.includes(PROVIDER_BRIDGE_PROMPT)) {
           reply = verifyProviderBridge()
         } else if (

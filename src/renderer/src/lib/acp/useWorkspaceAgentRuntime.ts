@@ -65,10 +65,8 @@ import {
   refreshDelegatedWorkSessions,
   subscribeWorkspacePermissionLifecycle,
   syncWorkspaceContextUsage,
-  syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
   syncWorkspaceInteractionStateFromSnapshot,
-  syncWorkspacePermissionState,
   useWorkspaceRuntimeEventDrain,
   useWorkspaceRuntimeEventIngest
 } from './workspace-runtime-event-owner'
@@ -296,9 +294,8 @@ const useOwnedWorkspaceAgentRuntime = (
   ])
 
   useEffect(() => {
-    syncWorkspaceElicitationState(runtime.state.pendingElicitations ?? [])
-    syncWorkspacePermissionState(pendingPermissions)
-  }, [pendingPermissions, runtime.state.pendingElicitations])
+    syncWorkspaceInteractionStateFromSnapshot(runtime.state)
+  }, [restoredPermissionProjectionKey, runtime.state])
 
   useEffect(() => {
     syncWorkspaceContextUsage(runtime.state.sessionIds, runtime.state.contextUsageBySession)
