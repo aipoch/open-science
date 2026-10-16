@@ -11,7 +11,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, sep } from 'node:path'
+import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { familyVerificationPlan, isolatedPackageEnvironment } from './package-verification-plan.mjs'
 
@@ -21,10 +21,6 @@ if (!npmCli) throw new Error('Run through npm run check:providers-package.')
 const plan = familyVerificationPlan(['diagnostics', 'providers'])
 console.log('Providers verification:', JSON.stringify(plan))
 if (!plan.tests.includes('providers')) process.exit(0)
-const modelDirectoryIndex = process.argv.indexOf('--local-model-dir')
-const modelDirectory = modelDirectoryIndex < 0 ? undefined : process.argv[modelDirectoryIndex + 1]
-if (modelDirectoryIndex >= 0 && (!modelDirectory || !isAbsolute(modelDirectory)))
-  throw new Error('--local-model-dir requires an absolute path to the pinned Qwen model assets.')
 const work = mkdtempSync(join(tmpdir(), 'providers-package-'))
 const offline = process.argv.includes('--offline') ? ['--offline'] : []
 const env = isolatedPackageEnvironment()
@@ -44,7 +40,7 @@ try {
       'tsc.cjs',
       'README.md',
       'LICENSE',
-      ...(name === 'providers' ? ['test', 'test-ownership.md', 'resources'] : [])
+      ...(name === 'providers' ? ['test', 'test-ownership.md'] : [])
     ])
       cpSync(join(root, 'packages', name, file), join(source, file), { recursive: true })
     // npm install saves the archive spec locally; restore the publishable version declaration before pack.
@@ -74,10 +70,7 @@ try {
     )[0]
     tarballs[name] = join(work, packed.filename)
     for (const { path } of packed.files) {
-      assert.match(
-        path,
-        /^(?:dist\/|resources\/|README\.md$|test-ownership\.md$|LICENSE$|package\.json$)/
-      )
+      assert.match(path, /^(?:dist\/|README\.md$|test-ownership\.md$|LICENSE$|package\.json$)/)
       assert.ok(!/\.test\./.test(path), `Packed test: ${path}`)
       if (/\.(?:js|ts)$/.test(path)) {
         const text = readFileSync(join(source, path), 'utf8')
@@ -129,14 +122,13 @@ import * as protocol from '@aipoch/providers/protocol'
 import * as client from '@aipoch/providers/client'
 import * as errors from '@aipoch/providers/errors'
 import * as transport from '@aipoch/providers/transport'
-import * as local from '@aipoch/providers/local'
 const require = createRequire(import.meta.url)
-for (const [entry, esm] of Object.entries({ '': providers, '/protocol': protocol, '/client': client, '/errors':errors, '/transport':transport, '/local':local })) {
+for (const [entry, esm] of Object.entries({ '': providers, '/protocol': protocol, '/client': client, '/errors':errors, '/transport':transport })) {
   assert.ok(realpathSync(require.resolve('@aipoch/providers' + entry)).startsWith(realpathSync('.') + sep))
   const cjs = require('@aipoch/providers' + entry)
   for (const key of Object.keys(cjs)) assert.equal(cjs[key], (esm as Record<string, unknown>)[key])
 }
-for (const entry of ['/classification', '/providers', '/catalog', '/package.json', '/dist/client.js', '/src/provider-registry', '/provider-text-generation']) {
+for (const entry of ['/local', '/classification', '/providers', '/catalog', '/package.json', '/dist/client.js', '/src/provider-registry', '/provider-text-generation']) {
   assert.throws(() => require('@aipoch/providers' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
   await assert.rejects(import('@aipoch/providers' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
 }
@@ -187,7 +179,8 @@ const imageClassifier = client.createProvider({id:'openrouter',fetch:async(url,i
 assert.equal((await imageClassifier.classify({state:'figure',images:{asset:image},questions:{}})).model,'typesafe/jev-1.14')
 
 assert.equal(providers.getProviderModels('typesafe','classification')[0].modelId,'jev-latest')
-assert.equal(providers.getProviderModels('local','text-generation')[0].execution,'local-worker')
+assert.deepEqual(providers.getProviderModels('local','text-generation'),[])
+assert.equal(providers.getProviderDefinition('local'),undefined)
 assert.equal(providers.getProviderDefinition('openrouter')?.classification?.models[0].id,'typesafe/jev-1.13')
 assert.deepEqual(protocol.sanitizeXaiResponsesRequest({input:'hello',safety_identifier:'secret'}),{input:'hello'})
 assert.ok(protocol.countAnthropicInputTokens({messages:[{role:'user',content:'hello'}]})>0)
@@ -195,7 +188,6 @@ const namespace = protocol.prepareNativeResponsesRequest({tools:[{type:'namespac
 assert.deepEqual(namespace.restore({type:'function_call',name:'tools__run'}),{type:'function_call',namespace:'tools',name:'run'})
 const models=await client.createProvider({id:'deepseek',key:'discovery-token',fetch:async(url,init)=>{assert.equal(url,'https://api.deepseek.com/v1/models');assert.equal(new Headers(init?.headers).get('authorization'),'Bearer discovery-token');return Response.json({data:[{id:'m'}]})}}).listModels()
 assert.deepEqual(models.models,['m'])
-const emptyLocalRuntime = local.createLocalTextRuntime(); await emptyLocalRuntime.dispose()
 const cancelledDiscovery = await client.createProvider({id:'deepseek',fetch:async()=>{throw new Error('Cancelled discovery sent a request')}}).listModels({signal:AbortSignal.abort(new Error('cancelled'))})
 assert.deepEqual(cancelledDiscovery,{ok:false,message:'cancelled'})
 console.log('PASS installed providers CJS/ESM identities, exports, types, classification, discovery, native Responses, xAI and client')
@@ -207,12 +199,11 @@ console.log('PASS installed providers CJS/ESM identities, exports, types, classi
 import providers = require('@aipoch/providers')
 import protocol = require('@aipoch/providers/protocol')
 import client = require('@aipoch/providers/client')
-import local = require('@aipoch/providers/local')
 const image: client.ClassificationImage = {type:'image',format:'png',data_base64:'aW1hZ2U='}
 const classify: client.ClassificationInput = {state:'s',questions:{},images:{asset:image}}
 const classifier: client.ClassificationModel = client.createProvider({id:'typesafe'}).classificationModel('jev-latest')
 void classifier
-void classify; const localRuntime: local.LocalTextRuntime = local.createLocalTextRuntime(); void localRuntime.dispose()
+void classify
 const endpoint: providers.ChatApiEndpoint = 'openai'
 const config: client.ProviderConfiguration = {id:'custom',textGeneration:{protocol:endpoint,url:'https://example.test/v1/chat/completions'}}
 const usage: protocol.ProviderTokenUsage = {inputTokens:1,cacheTokens:0,outputTokens:2}
@@ -252,95 +243,6 @@ void model; void input; void config; void usage
   run(['consumer.mjs'], consumer)
   run(['consumer.cjs'], consumer)
   run(['browser-bundle.js'], consumer)
-  // Remote consumers remain usable without local inference peers. Install the explicitly
-  // documented local runtime only for the worker acceptance stage, after deleting source copies.
-  npm(
-    [
-      'install',
-      '--ignore-scripts',
-      '--no-audit',
-      '--no-fund',
-      '--omit=dev',
-      ...offline,
-      '@huggingface/transformers@4.2.0',
-      'onnxruntime-web@1.26.0-dev.20260416-b7804b056c'
-    ],
-    consumer
-  )
-  writeFileSync(
-    join(consumer, 'local-probe.mjs'),
-    `
-import assert from 'node:assert/strict'
-import { writeFile, unlink } from 'node:fs/promises'
-import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
-import { createLocalTextRuntime } from '@aipoch/providers/local'
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
-let workerPath
-const localRuntime = createLocalTextRuntime({process:{
- launch(path) {workerPath=path; return spawn(process.execPath,[path],{stdio:['pipe','pipe','pipe']})},
- async terminate(child) {if(child.exitCode!==null || child.signalCode!==null)return; const exited=once(child,'exit');child.kill('SIGKILL');await exited}
-}})
-try {
- const model=localRuntime.createModel({directory:resolve('missing-model')})
- await assert.rejects(model.generate({prompt:'hello'}),/inference failed/)
- await model.dispose()
-} finally {await localRuntime.dispose()}
-// Exercise the public default Node lifecycle as well as the managed-process hook above.
-const standalone = createLocalTextRuntime()
-try {
- const model = standalone.createModel({directory:resolve('missing-default-model')})
- await assert.rejects(model.generate({prompt:'hello'}),/inference failed/)
- await model.dispose()
-} finally {await standalone.dispose()}
-if (process.argv[2]) {
- const runtime = createLocalTextRuntime()
- const model = runtime.createModel({directory:process.argv[2]})
- const started = performance.now()
- try {
-  const input = {systemPrompt:'Translate into Chinese. Return only the translation.',prompt:'The sky is blue.'}
-  const first = await model.generate(input)
-  assert.match(first.text,/[\\u3400-\\u9fff]/u)
-  assert.notEqual(first.text,input.prompt)
-  assert.equal(first.stopReason,'end_turn')
-  assert.ok(first.usage.inputTokens > 0 && first.usage.outputTokens > 0)
-  const controller = new AbortController()
-  const pending = model.generate({prompt:'Write a long essay about scientific discovery.',signal:controller.signal})
-  const timer = setTimeout(()=>controller.abort(),25)
-  try {await assert.rejects(pending,{name:'AbortError'})} finally {clearTimeout(timer)}
-  const recovered = await model.generate(input)
-  assert.match(recovered.text,/[\\u3400-\\u9fff]/u)
-  assert.notEqual(recovered.text,input.prompt)
-  assert.equal(recovered.stopReason,'end_turn')
-  assert.ok(recovered.usage.inputTokens > 0 && recovered.usage.outputTokens > 0)
-  await model.dispose()
-  await assert.rejects(model.generate(input),/no longer available/)
-  console.log('PASS installed Qwen inference, cancellation, recovery and model disposal',JSON.stringify({first,recovered,elapsedMs:Math.round(performance.now()-started)}))
- } finally {await runtime.dispose()}
-}
-await import(pathToFileURL(workerPath).href)
-const ort=globalThis[Symbol.for('onnxruntime')]
-const file=resolve('模型 # identity.onnx')
-await writeFile(file,Buffer.from('CAg6RwoQCgF4EgF5IghJZGVudGl0eRIRcGFja2FnZWQtaWRlbnRpdHlaDwoBeBIKCggIARIECgIIA2IPCgF5EgoKCAgBEgQKAggDQgQKABAN','base64'))
-let session
-try {
- session=await ort.InferenceSession.create(file,{executionProviders:['wasm']})
- const input=new ort.Tensor('float32',new Float32Array([2,4,8]),[3])
- const output=await session.run({x:input})
- assert.deepEqual(Array.from(output.y.data),[2,4,8])
- output.y.dispose();input.dispose()
-} finally {await session?.release();await unlink(file)}
-console.log('PASS installed local worker real WASM inference, unicode paths and resource resolution')
-`
-  )
-  execFileSync(process.execPath, ['local-probe.mjs', ...(modelDirectory ? [modelDirectory] : [])], {
-    cwd: consumer,
-    env,
-    input: '',
-    timeout: modelDirectory ? 600_000 : 120_000,
-    stdio: ['pipe', 'inherit', 'inherit']
-  })
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

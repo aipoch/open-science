@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { TextCodec } from './text-types'
+import type { TextCodec } from '../text-types'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const tokenCount = z.number().int().nonnegative().safe()

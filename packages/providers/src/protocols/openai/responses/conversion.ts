@@ -1,4 +1,4 @@
-import { sanitizeXaiResponsesRequest } from './xai'
+import { sanitizeXaiResponsesRequest } from '../../xai/responses'
 type Json = Record<string, unknown>
 
 const object = (value: unknown): value is Json =>

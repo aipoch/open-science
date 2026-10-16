@@ -3,7 +3,7 @@ import { expect } from '@playwright/test'
 import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
-import { QWEN3_LOCAL_TEXT_GENERATION_MODEL } from '@aipoch/providers'
+import { PDF_TRANSLATION_MODEL_REVISIONS } from '../src/main/local-models/catalog'
 import { createProjectDbClient } from '../src/main/projects/prisma-client'
 import type {
   PdfTranslationBeginRequest,
@@ -25,7 +25,7 @@ test('runs local ONNX translation, cancellation and checkpoint recovery in built
   let page = await app.completeOnboarding()
   const work = await app.createTestDirectory('local-translation')
   const client = createProjectDbClient(join(dirname(work), 'storage'))
-  const revision = QWEN3_LOCAL_TEXT_GENERATION_MODEL.revisions[0]
+  const revision = PDF_TRANSLATION_MODEL_REVISIONS[0]
   const dataRoot = await page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
   const fixtureRelative = relative(dirname(work), dataRoot)
   expect(isAbsolute(fixtureRelative) || fixtureRelative.startsWith('..')).toBe(false)

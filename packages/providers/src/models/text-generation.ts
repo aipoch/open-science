@@ -2,9 +2,9 @@ import type { ModelIdentity } from './types'
 import { fetchProviderRequest } from '../transport/request'
 import { readBoundedResponseText, ResponseBodyLimitError } from '../transport/body'
 import { ProviderTextGenerationError, providerErrorDetails, providerHttpFailure } from '../errors'
-import { openaiTextCodec } from '../protocols/openai-chat'
-import { responsesTextCodec } from '../protocols/openai-responses'
-import { anthropicTextCodec } from '../protocols/anthropic-messages'
+import { openaiTextCodec } from '../protocols/openai/chat/text'
+import { responsesTextCodec } from '../protocols/openai/responses/text'
+import { anthropicTextCodec } from '../protocols/anthropic/text'
 import type {
   ProviderTextGenerationRequest,
   ProviderTextGenerationTarget,

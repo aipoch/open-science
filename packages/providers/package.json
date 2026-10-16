@@ -27,18 +27,13 @@
     "./transport": {
       "types": "./dist/transport.d.ts",
       "default": "./dist/transport.js"
-    },
-    "./local": {
-      "types": "./dist/local.d.ts",
-      "default": "./dist/local.js"
     }
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE",
-    "test-ownership.md",
-    "resources"
+    "test-ownership.md"
   ],
   "scripts": {
     "build": "node tsc.cjs -p tsconfig.json",
@@ -49,25 +44,11 @@
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
-    "@huggingface/transformers": "4.2.0",
-    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@aipoch/diagnostics": "0.1.0",
     "zod": "^4.6.5",
     "js-tiktoken": "^1.0.21"
-  },
-  "peerDependencies": {
-    "@huggingface/transformers": "4.2.0",
-    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
-  },
-  "peerDependenciesMeta": {
-    "@huggingface/transformers": {
-      "optional": true
-    },
-    "onnxruntime-web": {
-      "optional": true
-    }
   }
 }

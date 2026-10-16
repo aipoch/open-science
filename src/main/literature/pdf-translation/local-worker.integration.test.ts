@@ -1,8 +1,7 @@
-import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it } from 'vitest'
 
@@ -18,7 +17,7 @@ it('runs real WASM inference with the local translation worker configuration', a
         'base64'
       )
     )
-    const worker = pathToFileURL(resolve(__dirname, '../resources/local-worker.mjs')).href
+    const worker = pathToFileURL(resolve('resources/pdf-translation-local/worker.mjs')).href
     // EOF lets the actual worker finish its request loop. Its unmodified ONNX configuration
     // remains available in the child; no mocks or test-only wasmPaths overrides are used.
     const result = spawnSync(

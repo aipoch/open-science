@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import type { TextCodec } from './text-types'
-import { resolveChatReasoningTransport } from './reasoning'
-import { normalizeOpenAiChatModelStepUsage } from './usage'
+import type { TextCodec } from '../../text-types'
+import { resolveChatReasoningTransport } from '../../reasoning'
+import { normalizeOpenAiChatModelStepUsage } from '../../usage'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const chatResponse = z.object({

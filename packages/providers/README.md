@@ -1,7 +1,7 @@
 # @aipoch/providers
 
-Provider definitions, capability-specific model instances, wire protocols and isolated local inference.
-The host owns accounts, policy, persisted settings and process admission. The package owns provider/model
+Provider definitions, capability-specific model instances, wire protocols and bounded remote inference.
+The host owns accounts, policy, persisted settings and application lifecycle. The package owns provider/model
 semantics, bounded requests, response validation, usage decoding and its internal runtime state.
 
 ## Public entry points
@@ -11,7 +11,6 @@ semantics, bounded requests, response validation, usage decoding and its interna
 | `@aipoch/providers`           | Immutable definitions and model queries by capability                       | Browser or Node                                |
 | `@aipoch/providers/client`    | `createProvider`, text/classification models and connection-bound discovery | Node                                           |
 | `@aipoch/providers/protocol`  | Protocol conversion, native namespace projection, Responses replay adapter  | Node                                           |
-| `@aipoch/providers/local`     | Local model instances, queue and explicit disposal                          | Node                                           |
 | `@aipoch/providers/errors`    | Failure classification and credential redaction                             | Browser or Node                                |
 | `@aipoch/providers/transport` | URL security, redirect rejection and bounded response reads                 | URL helpers: browser or Node; body reads: Node |
 
@@ -19,7 +18,7 @@ Node 22.13+ is required. CommonJS `require`, ESM named imports and TypeScript de
 Private source/build paths are not exported. The pre-release unbound clients are replaced by model instances;
 there is no separate classification client entry or compatibility facade.
 
-Ordinary consumers use `/client` for remote model calls and `/local` for local execution; the root entry
+Ordinary consumers use `/client` for remote model calls; the root entry
 is optional metadata for model pickers. `/protocol` and `/transport` serve applications implementing
 chat gateways and protocol bridges. They are not required to construct or invoke a model. Internal
 vendor lookup helpers and unused endpoint builders are not public API.
@@ -105,9 +104,9 @@ rejection, including late cancellation. A caller explicitly scheduling a retry c
 precedence and always reads the bounded body. There are no implicit retries. Retry admission, budgets,
 allowed labels, distribution policy, revision checks and usage persistence remain caller responsibilities.
 
-Local Qwen appears in the same definition queries as a text model with `execution: 'local-worker'`. Its actual
-execution remains through `/local` in a dedicated process; `createProvider().textGenerationModel()` requires a remote
-endpoint and never silently starts a local runtime. The host retains installation, leases and process control.
+Local model support is deferred. No local provider, model manifest, runtime dependency or `/local`
+entry is exposed. Queries for local models return an empty list. Existing application-local inference
+remains owned by the host and is outside this package.
 
 ## Responses lifecycle
 
@@ -144,15 +143,35 @@ JSON conversion owns completed-response projection. All state is memory-only and
 
 ```text
 providers/   immutable provider definitions, capability queries, connection/model construction
-runtimes/    local worker communication, queue, model handles and confirmed disposal
 models/      common identity, bound text and classification invocation contracts and implementations
 protocols/   endpoint/reasoning/usage rules, text codecs and vendor compatibility
 transport/   HTTP security, bounded bytes and SSE framing
 responses/   conversion, stream assembly, replay and adapter lifecycle
 discovery/   bounded live model-list requests
-resources/   isolated local runtime, tokenizer/model lifecycle and JSONL worker
 errors.ts    browser-safe diagnostics
 ```
+
+Protocol files use protocol-family directories and responsibility names, following the namespace pattern in
+[LangChain Anthropic](https://github.com/langchain-ai/langchainjs/tree/main/libs/providers/langchain-anthropic/src).
+These directories describe compatible wire formats, not the account vendor: multiple providers can use them.
+
+```text
+protocols/
+  anthropic/
+    text.ts                 bounded text request/response codec
+    chat.ts                 Chat Completions ↔ Messages conversion
+    tokens.ts               Messages input token estimation
+  openai/
+    chat/text.ts            Chat Completions text codec
+    chat/stream.ts          completed chat response → SSE frames
+    responses/text.ts       Responses text codec
+    responses/conversion.ts Messages/Chat ↔ Responses conversion
+  xai/responses.ts          xAI Responses request restrictions
+```
+
+Shared endpoint, reasoning, usage and wire types remain directly under `protocols/`.
+`responses/` owns the stateful adapter; it is distinct from the pure codecs under `protocols/`.
+No internal directory is a public import path; `/protocol` keeps its existing exports.
 
 ```mermaid
 flowchart TB
@@ -167,16 +186,13 @@ flowchart TB
   H --> A[Responses adapter: replay and stream state]
   A --> W
   A --> N
-  H --> L[Local runtime: model handles, queue and disposal]
-  L --> K[Internal worker: model and tokenizer lifetime]
-  K --> R[Transformers / ONNX runtime]
 ```
 
 Definition modules reference model identity **types** only. Runtime provider construction depends on model
 implementations; models depend on protocols/transport and never import provider definitions or host source.
-The root metadata entry does not load runtime clients or ONNX. Internal dependency/cycle guards and the
+The root metadata entry does not load runtime clients. Internal dependency/cycle guards and the
 installed browser-entry bundle verify these boundaries. Credentials are per instance; HTTP response ownership
-is per call. The replay adapter and local model worker retain their separate explicit lifetimes.
+is per call. The replay adapter has an explicit lifetime.
 
 Application model defaults, discovery compatibility, reasoning preference slots, account eligibility,
 persisted target hashes, permissions and HTTP/session lifecycle remain in the host.
@@ -206,14 +222,13 @@ policy and OAuth filtering. The low-level URL/request function is internal.
 ## Build and verify
 
 In a standalone source checkout, install the declared `@aipoch/diagnostics` sibling release (or its tarball),
-then run `npm install`, `npm run build`, `npm run typecheck`, `npm test`, and `npm pack`. Local inference tests
-also use the declared Transformers/ONNX development dependencies; no model weights need downloading.
+then run `npm install`, `npm run build`, `npm run typecheck`, `npm test`, and `npm pack`.
 Vitest owns concurrency. Tests use independent inputs and ephemeral ports.
 
 The monorepo `npm run check:providers-package` installs clean source copies using only declared dependencies,
 builds/typechecks/tests, packs real tarballs, and installs them into a clean consumer. After deleting source
 copies and pruning dev dependencies it checks CJS/ESM identities, public types, private-path rejection,
-browser-safe definitions, text/classification execution, replay lifetime and installed local WASM resources.
+browser-safe definitions, text/classification execution, replay lifetime and unsupported local entry rejection.
 Upstream builds do not rerun upstream tests. See [test ownership](test-ownership.md) for assertion mapping.
 
 ## Concrete wire compatibility
@@ -223,56 +238,3 @@ completed-response projections. The cached JS token estimator owns one read-only
 native handle or mutable account state. `prepareNativeResponsesRequest(body)` returns the flattened
 request, `resolveTool(name)`, `toolCount` and a bound `restore(payload)` decoder. The alias map is private
 to that request. Callers authorize tools before conversion and retain application-specific MCP policy.
-
-## Local text generation
-
-`@aipoch/providers/local` exports `createLocalTextRuntime`. It starts a dedicated Node worker lazily;
-importing this entry or using remote clients does not load ONNX. No worker path or wire protocol is public.
-
-```ts
-import { createLocalTextRuntime } from '@aipoch/providers/local'
-
-const runtime = createLocalTextRuntime()
-try {
-  const model = runtime.createModel({ directory: '/approved/qwen3-0.6b-q8' })
-  const result = await model.generate({ prompt: 'Translate Cell into Chinese.' })
-  await model.dispose()
-} finally {
-  await runtime.dispose()
-}
-```
-
-Install the optional peers `@huggingface/transformers@4.2.0` and
-`onnxruntime-web@1.26.0-dev.20260416-b7804b056c` when using local inference. The caller supplies an absolute
-approved directory containing the pinned Qwen tokenizer/model assets; no weights are packed or downloaded.
-`QWEN3_LOCAL_TEXT_GENERATION_MODEL` describes the required revision and asset manifest. Runtime WASM
-resources load from installed dependencies independently of the repository and cwd.
-
-One runtime owns one worker and a queue shared by its model handles. Different directories cause a worker
-restart; active inference drains before a handle's disposal resolves. The last handle for the loaded
-directory stops its worker before disposal completes, even if handles for other directories remain. Cancellation and timeout terminate
-inference. Disposal rejects on unconfirmed process termination and may be retried; the application must
-retain file leases until disposal succeeds. `dispose()` on the runtime cancels active work, drains the
-queue and prevents new models. Bounds remain 4096 input tokens, 2048 generated tokens, 64 KiB prompt
-text and a maximum 1 MiB output. The default inference timeout is 180 seconds.
-
-Ordinary Node consumers need no process hooks. A failed spawn preserves its original error; disposal
-does not wait for an exit from a process that never started. Applications with managed process supervision can supply
-`process: { launch(workerPath), terminate(child) }`; launch must return a child with piped stdio, and
-terminate must resolve only after confirmed exit. This is where the host supplies its Node environment,
-process-tree registration and platform shutdown behavior. The package owns framing, parsing, queues and
-inference lifecycle. The host owns installation, approved directories, leases and app-wide admission.
-PDF table extraction remains in `@aipoch/pdf-structure`; no persisted receipts or paths migrate.
-
-`npm test` includes real CPU WASM inference using a tiny generated ONNX identity model; it downloads no
-weights. `npm run check:providers-package` from the repository additionally checks installed worker
-resources after deleting build-source copies and pruning consumer development dependencies. That
-check exercises both default Node process launch/disposal and the optional managed-process hooks.
-
-For full-model acceptance, prepare the pinned assets in an approved directory and run
-`npm run check:providers-package -- --local-model-dir /absolute/path/to/model`.
-This opt-in check performs real Qwen generation, cancellation, recovery and disposal through the
-installed tarball's default Node runtime, after removing build sources and pruning development
-dependencies. It downloads no weights and requires enough memory for the 0.6B quantized model.
-The separate host `e2e/pdf-translation-local.spec.ts` uses `OPEN_SCIENCE_PDF_LOCAL_MODEL_DIR` to verify
-Electron installation, translation, cancellation, checkpoint recovery, restart and removal.

@@ -8,5 +8,5 @@ export type ModelIdentity<C extends ModelCapability = ModelCapability> = Readonl
 export type ModelDefinition = ModelIdentity &
   Readonly<{
     label: string
-    execution: 'remote' | 'local-worker'
+    execution: 'remote'
   }>
