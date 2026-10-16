@@ -39,6 +39,8 @@ type NativeImportFile = {
   filename: string
   target?: import('../../shared/session-package').SessionPackageImportRequest
   originClientId?: string
+  onReleased?: () => void
+  validateBeforeTarget?: boolean
 }
 class PackageSourceUnavailableError extends Error {}
 
@@ -89,12 +91,31 @@ export class SessionPackageDesktop {
     )
   }
 
-  enqueueFile(path: string): void {
-    this.enqueueing = this.enqueueing
+  enqueueFile(
+    path: string,
+    onReleased?: () => void,
+    validateBeforeTarget = false
+  ): Promise<boolean> {
+    const releaseSource = onReleased
+    let released = false
+    onReleased = releaseSource
+      ? () => {
+          if (released) return
+          released = true
+          releaseSource()
+        }
+      : undefined
+    const enqueue = this.enqueueing
       .then(async () => {
-        if (this.shutdown.signal.aborted) return
+        if (this.shutdown.signal.aborted) {
+          onReleased?.()
+          return false
+        }
         const canonical = await realpath(path).catch(() => path)
-        if (this.shutdown.signal.aborted) return
+        if (this.shutdown.signal.aborted) {
+          onReleased?.()
+          return false
+        }
         if (
           this.activeFile?.path === canonical ||
           this.pendingFiles.some((file) => file.path === canonical)
@@ -103,29 +124,41 @@ export class SessionPackageDesktop {
             this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
           )
           this.operations.present()
-          return
+          return true
         }
         if (this.pendingFiles.length >= 16) {
+          onReleased?.()
           this.operations.setPendingImports(
             this.pendingFiles.map(({ id, filename }) => ({ id, filename })),
             true
           )
-          return
+          return false
         }
         const startImmediately = this.pendingFiles.length === 0 && !this.operations.active
-        this.pendingFiles.push({ id: randomUUID(), path: canonical, filename: basename(path) })
+        this.pendingFiles.push({
+          id: randomUUID(),
+          path: canonical,
+          filename: basename(path),
+          onReleased,
+          validateBeforeTarget
+        })
         this.operations.setPendingImports(
           this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
         )
         this.pumpOpenFiles(startImmediately)
         this.operations.present()
+        return true
       })
-      .catch((error) =>
+      .catch((error) => {
+        onReleased?.()
         createLogger('session-package').warn(
           'Could not receive package file',
           diagnosticErrorFields(error)
         )
-      )
+        return false
+      })
+    this.enqueueing = enqueue.then(() => undefined)
+    return enqueue
   }
 
   private pumpOpenFiles(force = false): void {
@@ -143,7 +176,16 @@ export class SessionPackageDesktop {
     this.operations.setPendingImports(
       this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
     )
-    void this.import(undefined, file.originClientId, file.target ?? {}, file.path)
+    void this.import(
+      undefined,
+      file.originClientId,
+      file.target ?? {},
+      file.path,
+      file.validateBeforeTarget
+    )
+      .then((result) => {
+        if (result) file.onReleased?.()
+      })
       .catch(() => undefined)
       .finally(() => {
         this.activeFile = undefined
@@ -185,6 +227,7 @@ export class SessionPackageDesktop {
           false
         )
       } else if (request.action === 'discard-import') {
+        this.pendingFiles.find((file) => file.id === request.requestId)?.onReleased?.()
         this.pendingFiles = this.pendingFiles.filter((file) => file.id !== request.requestId)
         this.operations.setPendingImports(
           this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
@@ -257,12 +300,15 @@ export class SessionPackageDesktop {
   }
 
   async close(): Promise<void> {
+    const sources = [...this.pendingFiles, this.lastImportFile, this.activeFile]
     this.pendingFiles = []
     this.lastImportFile = undefined
     this.operations.cancel()
     this.shutdown.abort(new Error('Session package desktop is closed.'))
     await this.operations.close()
     await this.operation
+    await this.enqueueing
+    for (const source of sources) source?.onReleased?.()
   }
 
   private async acceptCleanup<T>(work: () => Promise<T>): Promise<T> {
@@ -358,95 +404,100 @@ export class SessionPackageDesktop {
         )
       )
     } catch (error) {
-      if (error instanceof PackageSensitiveContentError && request && error.evidence) {
-        this.operations.setSensitiveContent([error.evidence])
-        try {
-          this.options.onSensitiveContentFailure?.(
-            request,
-            [error.evidence],
-            error.source ? [error.source] : []
-          )
-        } catch {
-          // Diagnostic capture must not change the package operation result.
-        }
-      }
-      createLogger('session-package').warn(
-        'Session package operation failed',
-        diagnosticErrorFields(error)
-      )
-      const detail = error instanceof Error ? error.message : ''
-      const translate = this.options.translate
-      if (detail === PACKAGE_REQUIRES_UPDATE)
-        throw new Error(
-          translate(
-            'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageSourceUnavailableError)
-        throw new Error(
-          translate(
-            'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageCapacityError)
-        throw new Error(
-          translate(
-            'Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.',
-            {
-              path: error.directory,
-              required: formatPackageBytes(error.requiredBytes),
-              available: formatPackageBytes(error.freeBytes),
-              shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
-            }
-          ),
-          { cause: error }
-        )
-      if (detail.startsWith('An excluded file also exists'))
-        throw new Error(
-          translate(
-            'An excluded file also exists in retained research evidence. Include that file to export this Session.'
-          ),
-          { cause: error }
-        )
-      if (error instanceof PackageSensitiveContentError) {
-        const rules = {
-          field: translate('Credential-like field value'),
-          assignment: translate('Credential-like assignment'),
-          url: translate('Credential-like URL'),
-          token: translate('Credential-like token')
-        }
-        throw new Error(
-          translate(
-            'Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.',
-            {
-              location: error.location,
-              rule: rules[error.rule]
-            }
-          ),
-          { cause: error }
-        )
-      }
-      if (detail.includes('Sensitive content detected'))
-        throw new Error(
-          translate('Sensitive content detected. Remove it before exporting the Session package.'),
-          { cause: error }
-        )
-      if (detail.startsWith('Wait for') || detail.includes('changed during export'))
-        throw new Error(
-          translate('Wait for all research activity to finish, then try exporting again.'),
-          { cause: error }
-        )
-      throw new Error(
-        translate(
-          'Could not complete the Session package operation. Check the package and available disk space, then try again.'
-        ),
-        { cause: error }
-      )
+      this.failOperation(error, request)
     } finally {
       this.busy = false
     }
+  }
+
+  // Preflight validation and staged operations share the same user-facing error conversion.
+  private failOperation(error: unknown, request?: SessionPackageRequest): never {
+    if (error instanceof PackageSensitiveContentError && request && error.evidence) {
+      this.operations.setSensitiveContent([error.evidence])
+      try {
+        this.options.onSensitiveContentFailure?.(
+          request,
+          [error.evidence],
+          error.source ? [error.source] : []
+        )
+      } catch {
+        // Diagnostic capture must not change the package operation result.
+      }
+    }
+    createLogger('session-package').warn(
+      'Session package operation failed',
+      diagnosticErrorFields(error)
+    )
+    const detail = error instanceof Error ? error.message : ''
+    const translate = this.options.translate
+    if (detail === PACKAGE_REQUIRES_UPDATE)
+      throw new Error(
+        translate(
+          'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageSourceUnavailableError)
+      throw new Error(
+        translate(
+          'The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageCapacityError)
+      throw new Error(
+        translate(
+          'Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.',
+          {
+            path: error.directory,
+            required: formatPackageBytes(error.requiredBytes),
+            available: formatPackageBytes(error.freeBytes),
+            shortfall: formatPackageBytes(error.requiredBytes - error.freeBytes)
+          }
+        ),
+        { cause: error }
+      )
+    if (detail.startsWith('An excluded file also exists'))
+      throw new Error(
+        translate(
+          'An excluded file also exists in retained research evidence. Include that file to export this Session.'
+        ),
+        { cause: error }
+      )
+    if (error instanceof PackageSensitiveContentError) {
+      const rules = {
+        field: translate('Credential-like field value'),
+        assignment: translate('Credential-like assignment'),
+        url: translate('Credential-like URL'),
+        token: translate('Credential-like token')
+      }
+      throw new Error(
+        translate(
+          'Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.',
+          {
+            location: error.location,
+            rule: rules[error.rule]
+          }
+        ),
+        { cause: error }
+      )
+    }
+    if (detail.includes('Sensitive content detected'))
+      throw new Error(
+        translate('Sensitive content detected. Remove it before exporting the Session package.'),
+        { cause: error }
+      )
+    if (detail.startsWith('Wait for') || detail.includes('changed during export'))
+      throw new Error(
+        translate('Wait for all research activity to finish, then try exporting again.'),
+        { cause: error }
+      )
+    throw new Error(
+      translate(
+        'Could not complete the Session package operation. Check the package and available disk space, then try again.'
+      ),
+      { cause: error }
+    )
   }
 
   fork(
@@ -617,17 +668,25 @@ export class SessionPackageDesktop {
     callerId?: string,
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
-    sourcePath?: string
+    sourcePath?: string,
+    validateBeforeTarget = false
   ): Promise<SessionPackageImportResult> {
     let operationSignal: AbortSignal | undefined
     const rememberSource = (path: string): void => {
       const id = this.operations.snapshot?.importRequestId ?? this.activeFile?.id ?? randomUUID()
+      if (this.lastImportFile?.path !== path) this.lastImportFile?.onReleased?.()
+      const onReleased =
+        this.activeFile?.path === path
+          ? this.activeFile.onReleased
+          : this.lastImportFile?.onReleased
       this.lastImportFile = {
         id,
         path,
         filename: basename(path),
         target: { ...target },
-        originClientId
+        originClientId,
+        onReleased,
+        validateBeforeTarget
       }
       this.operations.setImportSource(id, basename(path), target)
     }
@@ -645,6 +704,18 @@ export class SessionPackageDesktop {
           if (sourcePath) rememberSource(sourcePath)
           if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+          if (sourcePath && validateBeforeTarget) {
+            // Browser uploads are untrusted bytes: reuse archive inspection before target selection.
+            // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
+            this.options.assertCanStart?.()
+            this.operations.report({ phase: 'validating' })
+            try {
+              await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+            } catch (error) {
+              this.failOperation(error)
+            }
+            signal.throwIfAborted()
+          }
           if (sourcePath && !target.projectId && !target.projectName) {
             const selectedTarget = await this.operations.waitForImport({
               requestId: this.operations.snapshot?.importRequestId,

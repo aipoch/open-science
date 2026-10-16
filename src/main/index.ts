@@ -75,6 +75,7 @@ import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
+import { BrowserImportLaunchRelay } from './session-package/browser-import-protocol'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import {
   OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG,
@@ -102,6 +103,11 @@ const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const bootstrapLog = createLogger('desktop-bootstrap')
 const webServiceLog = createLogger('web-service')
+// macOS can deliver a launch URL before ready or any asynchronous backend initialization.
+const browserImports = new BrowserImportLaunchRelay()
+app.on('open-url', (event, url) => {
+  browserImports.receiveOpenUrl(event, url)
+})
 let startupDiagnostics: DiagnosticOperation | undefined
 let cleanupStartupClient: (() => Promise<void>) | undefined
 let bootstrapPhase = 'credential-preflight'
@@ -320,11 +326,13 @@ async function startDesktop(): Promise<void> {
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
   app.on('second-instance', (_event, argv, cwd) => {
+    browserImports.receiveArgv(argv)
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
     if (showMainWindow) showMainWindow()
     else secondInstancePending = true
   })
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  browserImports.receiveArgv(process.argv)
   let client: DesktopRuntimeClient | undefined = undefined
   const reportError = (error: unknown): void => {
     bootstrapLog.error('desktop operation failed', {
@@ -651,6 +659,19 @@ async function startDesktop(): Promise<void> {
             showMainWindow?.()
             void client!.invokeHost('desktop:open-package', [path]).catch(reportError)
           })
+          // The Node owner holds the receiver; only an authenticated desktop host enables discovery.
+          await client!
+            .invokeHost('desktop:browser-import-discovery', [
+              Number(process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT ?? 49151)
+            ])
+            .catch(() => webServiceLog.warn('Browser import discovery is unavailable.'))
+          browserImports.bind(
+            (url) => {
+              showMainWindow?.()
+              void client!.invokeHost('desktop:browser-import', [url]).catch(reportError)
+            },
+            () => showMainWindow?.()
+          )
         }
         state = next
         broadcast(DATABASE_STARTUP_CHANNELS.stateChanged, state)

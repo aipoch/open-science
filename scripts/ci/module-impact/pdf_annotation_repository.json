@@ -1077,7 +1077,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "test/config/electron.vite.config.test.ts",
       "cli/config-root.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": [

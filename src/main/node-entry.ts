@@ -419,6 +419,8 @@ async function main(): Promise<void> {
           'locale:snapshot',
           'desktop:tray-sessions',
           'desktop:open-package',
+          'desktop:browser-import',
+          'desktop:browser-import-discovery',
           'settings:get-settings',
           'storage:get-status',
           'sessions:list',
@@ -457,6 +459,16 @@ async function main(): Promise<void> {
             if (path !== null && (typeof path !== 'string' || path.length > 32768))
               throw new Error('Invalid Session package path.')
             runtime.openSessionPackageFile(path)
+            return null
+          }
+          if (channel === 'desktop:browser-import-discovery') {
+            await runtime.startBrowserPackageImportDiscovery(
+              invocation.args[0] as number | undefined
+            )
+            return null
+          }
+          if (channel === 'desktop:browser-import') {
+            await runtime.beginBrowserPackageImport(invocation.args[0])
             return null
           }
           if (

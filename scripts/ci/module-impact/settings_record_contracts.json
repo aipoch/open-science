@@ -793,7 +793,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
-      "src/main/desktop-runtime-launcher.test.ts"
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["compute_service", "settings_provider_accounts", "settings_service_facade"],

@@ -1,4 +1,6 @@
 import { desktopInteraction } from '../desktop-interaction'
+import { join } from 'node:path'
+import { BrowserPackageImport } from '../session-package/browser-import'
 import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
 import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
 import { createAcpRuntime } from '../acp/runtime-composition'
@@ -176,6 +178,7 @@ export function composeSessionPackageSurfaces({
 }): {
   conversationExportService: ReturnType<typeof createConversationExportService>
   sessionPackageDesktop: ReturnType<typeof createSessionPackageDesktop>
+  browserPackageImport: BrowserPackageImport
 } {
   const conversationExportService = createConversationExportService({
     translate,
@@ -224,10 +227,16 @@ export function composeSessionPackageSurfaces({
     isPackageHandoffHeld: () => packageHandoffHeld.current,
     onSensitiveContentFailure: rememberSensitiveContentFailure
   })
-  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
+  const browserPackageImport = new BrowserPackageImport({
+    root: join(resolveConfigRoot(), 'browser-package-imports'),
+    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed, true)
+  })
+  // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
+  sessionPackageDesktopLifecycle.isActive = () =>
+    browserPackageImport.active || sessionPackageDesktop.operations.active
   declareElectronAdapter('session-package-quit-guard', () =>
     desktopInteraction('Session package quit confirmation').installPackageQuitGuard(
-      () => sessionPackageDesktop.hasActiveTransfer(),
+      () => browserPackageImport.active || sessionPackageDesktop.hasActiveTransfer(),
       () => {
         desktopInteraction('Confirm desktop action').confirmSync({
           type: 'info',
@@ -241,7 +250,9 @@ export function composeSessionPackageSurfaces({
     )
   )
   sessionPackageDesktopLifecycle.close = async () => {
+    browserPackageImport.stop()
     await sessionPackageDesktop.close()
+    await browserPackageImport.close()
   }
-  return { conversationExportService, sessionPackageDesktop }
+  return { conversationExportService, sessionPackageDesktop, browserPackageImport }
 }

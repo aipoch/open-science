@@ -1,7 +1,7 @@
 import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
@@ -1233,6 +1233,17 @@ it('queues OS files without reading payloads before project selection and cancel
     expect(desktop.hasActiveTransfer()).toBe(false)
     expect(JSON.stringify(desktop.operations.snapshot)).not.toContain(fixture.storageRoot)
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    const discarded = vi.fn()
+    await desktop.enqueueFile(join(fixture.storageRoot, 'discard.science'), discarded)
+    const requestId = desktop.operations.snapshot!.pendingImports!.find(
+      (file) => file.filename === 'discard.science'
+    )!.id
+    desktop.respond({
+      action: 'discard-import',
+      operationId: desktop.operations.snapshot!.id,
+      requestId
+    })
+    expect(discarded).toHaveBeenCalledOnce()
     const initial = desktop.operations.snapshot!
     desktop.respond({ action: 'cancel', operationId: initial.id })
     await vi.waitFor(() =>
@@ -1267,8 +1278,12 @@ it('checks project admission before copying an OS file and keeps a failed reques
     storageRoot: fixture.storageRoot,
     getClient: async () => fixture.client
   })
-  const reserve = vi.fn(async () => {
-    throw new Error('Project was archived')
+  const reserve = vi
+    .fn(async () => () => undefined)
+    .mockRejectedValueOnce(new Error('Project was archived'))
+  vi.spyOn(service, 'importFrom').mockResolvedValue({
+    projectId: 'archived',
+    sessionId: 'imported'
   })
   const copy = vi.spyOn(fileIo, 'copyFileWithinBudget')
   const desktop = new SessionPackageDesktop({
@@ -1278,8 +1293,9 @@ it('checks project admission before copying an OS file and keeps a failed reques
     reserveImport: reserve,
     afterImport: async () => undefined
   })
+  const released = vi.fn()
   try {
-    desktop.enqueueFile(input)
+    desktop.enqueueFile(input, released)
     await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
     desktop.respond({
       action: 'select-project',
@@ -1298,8 +1314,10 @@ it('checks project admission before copying an OS file and keeps a failed reques
     await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(2))
     expect(desktop.operations.snapshot?.importTarget).toEqual({ projectId: 'archived' })
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
   } finally {
     await desktop.close()
+    expect(released).toHaveBeenCalledOnce()
     await service.close()
   }
 })
@@ -1569,9 +1587,13 @@ it.each(['committed', 'unconfirmed'] as const)(
   }
 )
 
-it.each(['en', 'zh-Hans'] as const)(
-  'asks the user to update before importing a future package (%s)',
-  async (locale) => {
+it.each([
+  ['en', false],
+  ['zh-Hans', false],
+  ['zh-Hans', true]
+] as const)(
+  'asks the user to update before importing a future package (%s, before target: %s)',
+  async (locale, validateBeforeTarget) => {
     const fixture = await createProvenanceTestFixture()
     fixtures.push(fixture)
     initDataRoot(fixture.storageRoot)
@@ -1599,7 +1621,13 @@ it.each(['en', 'zh-Hans'] as const)(
           ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
           : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
       await expect(
-        desktop.import(undefined, undefined, { projectName: 'Research' }, archive)
+        desktop.import(
+          undefined,
+          undefined,
+          validateBeforeTarget ? {} : { projectName: 'Research' },
+          archive,
+          validateBeforeTarget
+        )
       ).rejects.toThrow(message)
       expect(desktop.operations.snapshot).toMatchObject({ state: 'failed', error: message })
       expect(afterImport).not.toHaveBeenCalled()
@@ -1776,3 +1804,44 @@ it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as
 await (
   await import('../../../test/runtime-host')
 ).configureTestElectronHost(await import('electron'))
+
+it.each(['valid', 'invalid'] as const)(
+  'validates a %s browser package before asking for a destination',
+  async (kind) => {
+    const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
+    fixtures.push(fixture)
+    const source = join(fixture.storageRoot, 'browser.science')
+    await writeFile(
+      source,
+      kind === 'valid'
+        ? await readFile(join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'))
+        : Buffer.from('not a package')
+    )
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const inspect = vi.spyOn(service, 'inspect')
+    const desktop = new SessionPackageDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    try {
+      await desktop.enqueueFile(source, undefined, true)
+      await vi.waitFor(() =>
+        expect(desktop.operations.snapshot?.state).toBe(
+          kind === 'valid' ? 'awaiting-selection' : 'failed'
+        )
+      )
+      expect(inspect).toHaveBeenCalledWith(await realpath(source), expect.any(AbortSignal))
+      expect(await fixture.client.session.count()).toBe(0)
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)

@@ -134,6 +134,8 @@ export type IpcRegistrationOptions = {
 export type ApplicationRuntimeInterfaces = {
   fetchPreview: (request: Request) => Promise<Response>
   openSessionPackageFile: (path: string | null) => void
+  beginBrowserPackageImport: (url: unknown) => Promise<void>
+  startBrowserPackageImportDiscovery: (port?: number) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
     'localWeb' | 'remoteWeb' | 'task' | 'desktop'
@@ -820,6 +822,9 @@ export const createApplicationModules = async (
       if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
       else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
     },
+    beginBrowserPackageImport: (url) => sessionPackageSurfaces.browserPackageImport.begin(url),
+    startBrowserPackageImportDiscovery: (port) =>
+      sessionPackageSurfaces.browserPackageImport.startDiscovery(port),
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
@@ -892,6 +897,7 @@ export const createApplicationModules = async (
     inspectDesktopUpdate: handoff.inspectDesktopUpdate,
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
+      sessionPackageSurfaces.browserPackageImport.active ||
       sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,

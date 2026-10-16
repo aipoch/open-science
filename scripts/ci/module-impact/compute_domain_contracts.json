@@ -1009,7 +1009,8 @@
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

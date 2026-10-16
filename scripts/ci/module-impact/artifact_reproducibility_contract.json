@@ -475,7 +475,8 @@
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/desktop-runtime-controller.integration.test.ts"
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["session_persistence"],

@@ -1089,6 +1089,7 @@
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/channel-certification.test.ts",
       "src/main/update/blocked-tasks.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
       "src/main/system-boot-identity.windows.test.ts",

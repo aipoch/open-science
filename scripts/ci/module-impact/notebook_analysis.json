@@ -1212,7 +1212,8 @@
       "src/main/web-service/session-payload.integration.test.ts",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/main/desktop-runtime-controller.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [
