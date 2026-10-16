@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { inside } from './literature-pdf-table-geometry.mjs'
-
 const hasText = (cell) => Boolean(cell?.text?.trim())
 
 // Detector columns made only of a vertical separator should not survive as
@@ -11,7 +9,6 @@ export function removeEmptySeparatorColumns({
   cells,
   columns,
   columnRects,
-  items,
   repairs,
   preserveRecoveredRotatedColumns = false
 }) {
@@ -31,8 +28,13 @@ export function removeEmptySeparatorColumns({
       )
     )
       continue
-    const source = items?.some((item) => item.horizontal && inside(columnRects[column], item))
-    if (source) continue
+    // A glyph can geometrically overlap an empty detector column while being
+    // owned by a neighboring cell (crowded headers and superscripts do this
+    // frequently). Preserve a column only when a surviving cell in that exact
+    // slot owns source geometry; raw intersection with the column rectangle
+    // is not ownership evidence.
+    const sourceOwned = direct.some((cell) => (cell.sourceTokens?.length ?? 0) > 0)
+    if (sourceOwned) continue
     const populatedBefore = cells.some(
       (cell) => cell.column < column && cell.column + cell.colSpan === column && hasText(cell)
     )
