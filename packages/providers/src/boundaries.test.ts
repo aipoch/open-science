@@ -16,11 +16,13 @@ const files = (dir: string): string[] =>
     )
     .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
 const allowed: Record<string, string[]> = {
-  providers: ['providers', 'protocols'],
+  providers: ['providers', 'protocols', 'models', 'discovery'],
   protocols: ['protocols'],
   transport: ['transport'],
   responses: ['responses', 'protocols', 'transport'],
-  text: ['text', 'protocols', 'transport', 'errors.ts']
+  discovery: ['discovery', 'transport.ts'],
+  models: ['models', 'protocols', 'transport', 'errors.ts'],
+  runtimes: ['models', 'protocols', 'providers']
 }
 it('keeps internal responsibilities acyclic and independent of host source and facades', () => {
   const edges = new Map<string, string[]>()
@@ -34,7 +36,7 @@ it('keeps internal responsibilities acyclic and independent of host source and f
       if (!node.moduleSpecifier || !isStringLiteral(node.moduleSpecifier)) continue
       const spec = node.moduleSpecifier.text
       if (!spec.startsWith('.')) {
-        expect(spec).toMatch(/^(?:node:|zod$|@aipoch\/diagnostics(?:\/node)?$)/)
+        expect(spec).toMatch(/^(?:node:|js-tiktoken\/|zod$|@aipoch\/diagnostics(?:\/node)?$)/)
         continue
       }
       const target = resolve(dirname(file), spec + '.ts'),
@@ -42,6 +44,15 @@ it('keeps internal responsibilities acyclic and independent of host source and f
       expect(destination, local).not.toMatch(/^\.\./)
       if (allowed[owner])
         expect(allowed[owner], `${local} -> ${destination}`).toContain(destination.split('/')[0])
+      if (
+        owner === 'providers' &&
+        local !== 'providers/create.ts' &&
+        (destination.startsWith('models/') || destination.startsWith('discovery/'))
+      )
+        expect(
+          isImportDeclaration(node) && node.importClause?.isTypeOnly,
+          `${local} must not load model runtimes`
+        ).toBe(true)
       imports.push(target)
     }
     edges.set(file, imports)

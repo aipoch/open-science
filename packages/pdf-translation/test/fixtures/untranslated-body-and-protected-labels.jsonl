@@ -26,3 +26,9 @@
 {"name": "english-paraphrase-is-not-chinese", "language": "zh-Hans", "source": "The method was tested with repeated measurements.", "text": "Repeated measurements were used to evaluate the method.", "accepted": false, "corrected": "该方法通过重复测量进行了测试。"}
 {"name": "english-typography-edit-is-not-chinese", "language": "zh-Hant", "source": "The method is reliable; this result was confirmed.", "text": "The method is reliable. This result was confirmed.", "accepted": false, "corrected": "該方法可靠；這個結果已得到確認。"}
 {"name": "english-target-allows-dehyphenation", "language": "English", "source": "The method improves effective-ness in practice.", "text": "The method improves effectiveness in practice.", "accepted": true}
+{"name":"short-capitalized-sentence-echo","language":"Chinese","source":"The sky is blue.","text":"The sky is blue.","accepted":false,"corrected":"天空是蓝色的。"}
+{"name":"short-copular-sentence-echo","language":"Chinese","source":"Water is a liquid.","text":"Water is a liquid.","accepted":false,"corrected":"水是一种液体。"}
+{"name":"three-word-sentence-echo","language":"Chinese","source":"Water is liquid.","text":"Water is liquid.","accepted":false,"corrected":"水是液态的。"}
+{"name":"short-copular-sentence-translated","language":"Chinese","source":"Water is a liquid.","text":"水是一种液体。","accepted":true}
+{"name":"short-copular-english-target","language":"English","source":"Water is a liquid.","text":"Water is a liquid.","accepted":true}
+{"name":"short-title-case-name-protected","language":"Chinese","source":"Science Is Fun","text":"Science Is Fun","accepted":true}

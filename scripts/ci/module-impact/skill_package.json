@@ -815,7 +815,6 @@
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/settings/xai-oauth-provider-bridge.test.ts",
       "src/main/settings/xai-oauth.test.ts",
-      "src/main/settings/xai-protocol.test.ts",
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/side-chat/host-message-mcp-server.test.ts",

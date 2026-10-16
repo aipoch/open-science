@@ -13,9 +13,7 @@
     "src/main/settings/provider-loopback-http-host.test.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
-    "src/main/settings/skill-selector-routing.ts",
-    "src/main/settings/xai-protocol.test.ts",
-    "src/main/settings/xai-protocol.ts"
+    "src/main/settings/skill-selector-routing.ts"
   ],
   "interfacePaths": [
     "src/main/settings/chat-provider-compatibility.ts",
@@ -26,8 +24,7 @@
     "src/main/settings/provider-failure-observation.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
-    "src/main/settings/skill-selector-routing.ts",
-    "src/main/settings/xai-protocol.ts"
+    "src/main/settings/skill-selector-routing.ts"
   ],
   "testFiles": {
     "owner": [
@@ -35,8 +32,7 @@
       "src/main/settings/codebuddy-chat-request-adapter.test.ts",
       "src/main/settings/codex-transport-fallback-log.test.ts",
       "src/main/settings/provider-loopback-http-host.architecture.test.ts",
-      "src/main/settings/provider-loopback-http-host.test.ts",
-      "src/main/settings/xai-protocol.test.ts"
+      "src/main/settings/provider-loopback-http-host.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/claude-code.test.ts",

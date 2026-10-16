@@ -639,11 +639,26 @@ it('keeps provider units upstream of host adapters and selects real downstream c
   const graph = { status: 'not-used', testFiles: [] }
   for (const path of [
     'packages/providers/src/providers/lookup.ts',
+    'packages/providers/src/providers/create.ts',
+    'packages/providers/src/providers/connection.ts',
+    'packages/providers/src/protocols/chat-anthropic.ts',
+    'packages/providers/src/runtimes/local-text.ts',
+    'packages/providers/src/providers/definitions.ts',
+    'packages/providers/src/models/types.ts',
+    'packages/providers/src/models/classification.ts',
+    'packages/providers/src/discovery/models.ts',
+    'packages/providers/src/protocols/message-conversion.ts',
+    'packages/providers/src/protocols/xai.ts',
+    'packages/providers/src/protocols/token-count.ts',
+    'packages/providers/src/responses/native.ts',
+    'packages/providers/resources/local-worker.mjs',
+    'packages/providers/resources/local.mjs',
+    'packages/providers/src/local.ts',
     'packages/providers/src/responses/request.ts',
     'packages/providers/src/responses/adapter.ts',
     'packages/providers/src/responses/replay.ts',
     'packages/providers/src/transport/sse.ts',
-    'packages/providers/src/text/generate.ts',
+    'packages/providers/src/models/text-generation.ts',
     'packages/providers/src/providers.ts',
     'packages/providers/src/protocol.ts',
     'packages/providers/src/client.ts'
@@ -655,7 +670,14 @@ it('keeps provider units upstream of host adapters and selects real downstream c
       expect.arrayContaining([
         'packages/providers/src/providers/lookup.test.ts',
         'packages/providers/src/responses/conversion.test.ts',
-        'packages/providers/src/text/generate.test.ts',
+        'packages/providers/src/models/text-generation.test.ts',
+        'packages/providers/src/models/classification.test.ts',
+        'packages/providers/src/providers/create.test.ts',
+        'packages/providers/src/protocols/chat-anthropic.test.ts',
+        'packages/providers/src/runtimes/local-text.test.ts',
+        'packages/providers/src/local-runtime.test.ts',
+        'src/main/settings/classification-settings.test.ts',
+        'src/main/literature/pdf-translation/local.test.ts',
         'src/main/settings/responses-bridge.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/literature/pdf-translation/api-target.test.ts',
@@ -672,6 +694,18 @@ it('keeps provider units upstream of host adapters and selects real downstream c
   }
   for (const [path, test] of [
     ['src/main/settings/responses-bridge.ts', 'src/main/settings/responses-bridge.test.ts'],
+    [
+      'src/main/settings/classification-settings.ts',
+      'src/main/settings/classification-settings.test.ts'
+    ],
+    [
+      'src/main/settings/native-responses-compatibility.ts',
+      'src/main/settings/native-responses-compatibility.test.ts'
+    ],
+    [
+      'src/main/literature/pdf-translation/local.ts',
+      'src/main/literature/pdf-translation/local.test.ts'
+    ],
     [
       'src/main/literature/pdf-translation/text-generation.ts',
       'src/main/literature/pdf-translation/text-generation.test.ts'

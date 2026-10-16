@@ -36,6 +36,8 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/compute',
         '@aipoch/diagnostics',
         '@aipoch/providers',
+        '@aipoch/providers/errors',
+        '@aipoch/providers/transport',
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
         '@aipoch/environment/contracts',
@@ -56,7 +58,13 @@ describe('electron-vite renderer dependency optimization', () => {
       ]
     })
     expect(webConfig.optimizeDeps?.include).toContain('@aipoch/compute')
-    expect(webConfig.optimizeDeps?.include).toContain('@aipoch/providers')
+    expect(webConfig.optimizeDeps?.include).toEqual(
+      expect.arrayContaining([
+        '@aipoch/providers',
+        '@aipoch/providers/errors',
+        '@aipoch/providers/transport'
+      ])
+    )
     expect(resolvedConfig.renderer?.optimizeDeps).toBeUndefined()
     expect(dev.renderer?.build).toEqual(resolvedConfig.renderer?.build)
     expect(dev.renderer?.worker).toEqual(resolvedConfig.renderer?.worker)

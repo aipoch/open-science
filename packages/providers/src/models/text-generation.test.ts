@@ -4,7 +4,16 @@ import { providerTextGenerationFailure } from '../errors'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
-import { createTextGenerationClient } from './generate'
+import { createTextGenerationModel, type TextGenerationModel } from './text-generation'
+import type { ProviderTextGenerationRequest } from '../protocols/text-types'
+const textRunner = (
+  fetchImpl: typeof fetch
+): {
+  run(input: ProviderTextGenerationRequest): ReturnType<TextGenerationModel['generate']>
+} => ({
+  run: ({ target, ...input }: ProviderTextGenerationRequest) =>
+    createTextGenerationModel(target.vendorId ?? 'custom', target, fetchImpl).generate(input)
+})
 
 const protocolUrls = {
   openai: 'https://provider.example/v1/chat/completions',
@@ -44,7 +53,7 @@ describe('provider text generation service', () => {
               }
         )
       )
-      const runner = createTextGenerationClient(fetchImpl as typeof fetch)
+      const runner = textRunner(fetchImpl as typeof fetch)
       const result = await runner.run({
         ...request,
         target: { ...target, protocol: apiType, url: protocolUrls[apiType] }
@@ -70,13 +79,13 @@ describe('provider text generation service', () => {
     { choices: [{ message: { content: 'uncertain completion' } }] },
     null
   ])('rejects incomplete or non-text output', async (value) => {
-    const runner = createTextGenerationClient(vi.fn(async () => Response.json(value)))
+    const runner = textRunner(vi.fn(async () => Response.json(value)))
     await expect(runner.run(request)).rejects.toThrow(
       '[provider-text-generation:incomplete-output]'
     )
   })
   it('ignores separate reasoning fields and joins only answer text blocks', async () => {
-    const runner = createTextGenerationClient(
+    const runner = textRunner(
       vi.fn(async () =>
         Response.json({
           choices: [
@@ -101,7 +110,7 @@ describe('provider text generation service', () => {
   it.each(['openai', 'anthropic'] as const)(
     'rejects reasoning-only %s responses',
     async (apiType) => {
-      const runner = createTextGenerationClient(
+      const runner = textRunner(
         vi.fn(async () =>
           Response.json(
             apiType === 'openai'
@@ -135,7 +144,7 @@ describe('provider text generation service', () => {
     const fetchImpl = vi.fn(
       async () => new Response('private-key and private PDF text', { status: 429 })
     )
-    await expect(createTextGenerationClient(fetchImpl).run(request)).rejects.toThrow('HTTP 429')
+    await expect(textRunner(fetchImpl).run(request)).rejects.toThrow('HTTP 429')
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
   it('honors cancellation and rejects oversized responses', async () => {
@@ -145,10 +154,10 @@ describe('provider text generation service', () => {
       return Response.json(completion)
     })
     await expect(
-      createTextGenerationClient(fetchImpl).run({ ...request, signal: controller.signal })
+      textRunner(fetchImpl).run({ ...request, signal: controller.signal })
     ).rejects.toThrow()
     await expect(
-      createTextGenerationClient(vi.fn(async () => Response.json(completion))).run({
+      textRunner(vi.fn(async () => Response.json(completion))).run({
         ...request,
         outputLimitBytes: 10
       })
@@ -183,7 +192,7 @@ it.each(['openai', 'anthropic'] as const)(
       })
     )
     await expect(
-      createTextGenerationClient(fetchImpl).run({
+      textRunner(fetchImpl).run({
         ...request,
         onUsage,
         target: { ...target, protocol: apiType, url: protocolUrls[apiType] }
@@ -205,9 +214,7 @@ it('retains usage on HTTP errors but does not estimate absent or invalid reports
     { prompt_tokens: 30, completion_tokens: 12 }
   ]) {
     const onUsage = vi.fn()
-    const runner = createTextGenerationClient(
-      vi.fn(async () => Response.json({ usage }, { status: 500 }))
-    )
+    const runner = textRunner(vi.fn(async () => Response.json({ usage }, { status: 500 })))
     await expect(runner.run({ ...request, onUsage })).rejects.toThrow('HTTP 500')
     expect(onUsage).toHaveBeenCalledTimes(usage?.prompt_tokens === 30 ? 1 : 0)
   }
@@ -249,7 +256,7 @@ const responsesTarget = {
 it('uses stateless Responses final text and includes thinking in billed output exactly once', async () => {
   const onUsage = vi.fn()
   const fetchImpl = vi.fn(async () => Response.json(responsesCompletion))
-  const runner = createTextGenerationClient(fetchImpl)
+  const runner = textRunner(fetchImpl)
   await expect(
     runner.run({ ...request, target: { ...responsesTarget, reasoningEffort: 'low' }, onUsage })
   ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
@@ -293,7 +300,7 @@ it.each([
     const onUsage = vi.fn()
     const fetchImpl = vi.fn(async () => Response.json({ ...responsesCompletion, ...override }))
     await expect(
-      createTextGenerationClient(fetchImpl).run({
+      textRunner(fetchImpl).run({
         ...request,
         target: responsesTarget,
         onUsage
@@ -339,7 +346,7 @@ it.each([
   'uses the shared Chat thinking transport for $vendorId / $effort',
   async ({ vendorId, effort, fields }) => {
     const fetchImpl = vi.fn(async () => Response.json(completion))
-    await createTextGenerationClient(fetchImpl).run({
+    await textRunner(fetchImpl).run({
       ...request,
       target: { ...target, reasoningEffort: effort, vendorId }
     })
@@ -359,7 +366,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
       Response.json({ ...responsesCompletion, ...completion }, { status: 400 })
     )
     await expect(
-      createTextGenerationClient(fetchImpl).run({
+      textRunner(fetchImpl).run({
         ...request,
         onUsage,
         target: {
@@ -383,7 +390,7 @@ it('does not send an already-cancelled request', async () => {
   const fetchImpl = vi.fn(async () => Response.json(responsesCompletion))
   const signal = AbortSignal.abort()
   await expect(
-    createTextGenerationClient(fetchImpl).run({
+    textRunner(fetchImpl).run({
       ...request,
       target: responsesTarget,
       signal
@@ -393,7 +400,7 @@ it('does not send an already-cancelled request', async () => {
 })
 
 it('classifies a response-body abort without caller cancellation as a redacted network failure', async () => {
-  const runner = createTextGenerationClient(
+  const runner = textRunner(
     vi.fn(
       async () =>
         new Response(
@@ -419,7 +426,7 @@ it('classifies a response-body abort without caller cancellation as a redacted n
 it('preserves caller cancellation during response-body reading without classifying it as network failure', async () => {
   const controller = new AbortController()
   const reason = new DOMException('This operation was aborted', 'AbortError')
-  const runner = createTextGenerationClient(
+  const runner = textRunner(
     vi.fn(
       async () =>
         new Response(
@@ -477,7 +484,7 @@ it.each([
     })
   )
   await expect(
-    createTextGenerationClient(fetchImpl).run({
+    textRunner(fetchImpl).run({
       ...request,
       target: {
         ...target,
@@ -499,7 +506,7 @@ it.each([
 it('uses a custom gateway’s explicitly configured thinking transport without guessing from its model name', async () => {
   for (const reasoningEffortTransport of ['minimax', 'deepseek', 'reasoning-effort'] as const) {
     const fetchImpl = vi.fn(async () => Response.json(completion))
-    await createTextGenerationClient(fetchImpl).run({
+    await textRunner(fetchImpl).run({
       ...request,
       target: { ...target, reasoningEffort: 'none', reasoningEffortTransport }
     })
@@ -545,7 +552,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
     })
     try {
       const { port } = server.address() as AddressInfo
-      const runner = createTextGenerationClient(fetch)
+      const runner = textRunner(fetch)
       await expect(
         runner.run({
           ...request,
@@ -588,7 +595,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
               content: [{ type: 'text', text: '细胞' }],
               usage: { input_tokens: 100, output_tokens: 12 }
             }
-    const runner = createTextGenerationClient(
+    const runner = textRunner(
       vi.fn(async () => {
         controller.abort()
         return Response.json(payload)
@@ -599,7 +606,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
     ).rejects.toThrow()
     expect(onUsage).toHaveBeenCalledOnce()
     await expect(
-      createTextGenerationClient(vi.fn(async () => Response.json(payload))).run({
+      textRunner(vi.fn(async () => Response.json(payload))).run({
         ...request,
         target: apiTarget,
         outputLimitBytes: 10
@@ -633,7 +640,7 @@ it.each(
         { status }
       )
     )
-    const error = await createTextGenerationClient(fetchImpl)
+    const error = await textRunner(fetchImpl)
       .run(request)
       .catch((error: Error) => error)
     expect(error).toBeInstanceOf(Error)
@@ -649,7 +656,7 @@ it('preserves network diagnostics without leaking the configured credential', as
   const fetchImpl = vi.fn(async () => {
     throw new Error('ECONNRESET private-key')
   })
-  const error = await createTextGenerationClient(fetchImpl)
+  const error = await textRunner(fetchImpl)
     .run(request)
     .catch((error: Error) => error)
   expect(providerTextGenerationFailure(error)).toEqual({ kind: 'network' })
@@ -670,7 +677,7 @@ it.each([
   'rejects invalid or overflowing Anthropic usage while retaining valid answer text: %j',
   async (usage) => {
     const onUsage = vi.fn()
-    const service = createTextGenerationClient(async () =>
+    const service = textRunner(async () =>
       Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'answer' }], usage })
     )
     await expect(

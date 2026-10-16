@@ -1,5 +1,6 @@
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
-import type { ClassificationAdapter, ClassificationBinding } from '../../shared/classification'
+import type { ClassificationAdapter } from '@aipoch/providers'
+import type { ClassificationBinding } from '../../shared/classification'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'

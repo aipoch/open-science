@@ -1,7 +1,4 @@
-import { Tiktoken } from 'js-tiktoken/lite'
-import o200kBase from 'js-tiktoken/ranks/o200k_base'
-import type { ProviderType } from '../../shared/settings'
-
+import { sanitizeXaiResponsesRequest } from './xai'
 type Json = Record<string, unknown>
 
 const object = (value: unknown): value is Json =>
@@ -42,38 +39,6 @@ const contentParts = (content: unknown): unknown => {
     return part
   })
 }
-
-export const sanitizeXaiResponsesRequest = (body: Json): Json => {
-  // Unsupported request metadata is top-level. Schemas and tool output are opaque business data.
-  const sanitized = Object.fromEntries(
-    Object.entries(body).filter(
-      ([key, value]) =>
-        value !== null &&
-        key !== 'prompt_cache_retention' &&
-        key !== 'safety_identifier' &&
-        key !== 'external_web_access'
-    )
-  )
-  if (Array.isArray(sanitized.additional_tools)) {
-    sanitized.tools = [
-      ...(Array.isArray(sanitized.tools) ? sanitized.tools : []),
-      ...sanitized.additional_tools
-    ]
-    delete sanitized.additional_tools
-  }
-  return sanitized
-}
-
-export const xaiNativeResponsesTargetFields = (
-  providerType: ProviderType,
-  resolveKey: ((forceRefresh?: boolean) => Promise<string>) | undefined
-): {
-  resolveKey?: (forceRefresh?: boolean) => Promise<string>
-  sanitizeRequest?: typeof sanitizeXaiResponsesRequest
-} =>
-  providerType === 'xai-subscription'
-    ? { resolveKey, sanitizeRequest: sanitizeXaiResponsesRequest }
-    : {}
 
 export const anthropicToResponses = (body: Json, model: string): Json => {
   const instructions = textOf(body.system)
@@ -349,12 +314,4 @@ export const responsesToChat = (response: Json, model: string): Json => {
         : {})
     }
   }
-}
-
-let tokenizer: Tiktoken | undefined
-export const countAnthropicInputTokens = (body: Json): number => {
-  tokenizer ??= new Tiktoken(o200kBase)
-  return tokenizer.encode(
-    JSON.stringify({ system: body.system, messages: body.messages, tools: body.tools })
-  ).length
 }

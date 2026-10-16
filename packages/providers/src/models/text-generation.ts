@@ -1,10 +1,15 @@
+import type { ModelIdentity } from './types'
 import { fetchProviderRequest } from '../transport/request'
 import { readBoundedResponseText, ResponseBodyLimitError } from '../transport/body'
 import { ProviderTextGenerationError, providerErrorDetails, providerHttpFailure } from '../errors'
 import { openaiTextCodec } from '../protocols/openai-chat'
 import { responsesTextCodec } from '../protocols/openai-responses'
 import { anthropicTextCodec } from '../protocols/anthropic-messages'
-import type { ProviderTextGenerationRequest, TextCodec } from '../protocols/text-types'
+import type {
+  ProviderTextGenerationRequest,
+  ProviderTextGenerationTarget,
+  TextCodec
+} from '../protocols/text-types'
 
 const codecs = {
   openai: openaiTextCodec,
@@ -14,13 +19,34 @@ const codecs = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-export function createTextGenerationClient(fetchImpl: typeof fetch = globalThis.fetch): {
-  run(input: ProviderTextGenerationRequest): Promise<{ text: string; stopReason: 'end_turn' }>
-} {
-  return {
-    async run(input) {
+export type TextGenerationInput = Readonly<
+  { prompt: string } & Partial<Omit<ProviderTextGenerationRequest, 'target' | 'prompt'>>
+>
+export type TextGenerationModel = ModelIdentity<'text-generation'> &
+  Readonly<{
+    generate(input: TextGenerationInput): Promise<{ text: string; stopReason: 'end_turn' }>
+  }>
+
+export function createTextGenerationModel(
+  providerId: string,
+  configuration: ProviderTextGenerationTarget,
+  fetchImpl: typeof fetch
+): TextGenerationModel {
+  const target = Object.freeze({ ...configuration })
+  return Object.freeze({
+    providerId,
+    modelId: target.model,
+    capability: 'text-generation' as const,
+    async generate(request: TextGenerationInput) {
+      const input = {
+        ...request,
+        target,
+        systemPrompt: request.systemPrompt ?? '',
+        signal: request.signal ?? new AbortController().signal,
+        maxOutputTokens: request.maxOutputTokens ?? 4096,
+        outputLimitBytes: request.outputLimitBytes ?? 1024 * 1024
+      }
       input.signal.throwIfAborted()
-      const target = input.target
       const codec = codecs[target.protocol]
       if (!codec || !target.model || !target.url)
         throw new ProviderTextGenerationError(
@@ -41,7 +67,11 @@ export function createTextGenerationClient(fetchImpl: typeof fetch = globalThis.
         ...(target.protocol === 'anthropic'
           ? {
               'anthropic-version': '2023-06-01',
-              ...(target.key ? { 'x-api-key': target.key } : {})
+              ...(target.key
+                ? target.anthropicApiKeyHeader === false
+                  ? { authorization: 'Bearer ' + target.key }
+                  : { 'x-api-key': target.key }
+                : {})
             }
           : target.key
             ? { authorization: 'Bearer ' + target.key }
@@ -104,7 +134,7 @@ export function createTextGenerationClient(fetchImpl: typeof fetch = globalThis.
           'The model did not return a complete text response.'
         )
       }
-      return { text: text.trim(), stopReason: 'end_turn' }
+      return { text: text.trim(), stopReason: 'end_turn' as const }
     }
-  }
+  })
 }

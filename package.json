@@ -190,7 +190,8 @@
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
     "@aipoch/literature-reading": "file:packages/literature-reading",
-    "@aipoch/providers": "file:packages/providers"
+    "@aipoch/providers": "file:packages/providers",
+    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
   },
   "overrides": {
     "@huggingface/transformers": {

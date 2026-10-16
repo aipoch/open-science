@@ -1,7 +1,10 @@
-import { ANTHROPIC_VERSION } from './validate'
-import { readBoundedResponseText, fetchProviderRequest } from '@aipoch/providers/transport'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import type { OfficialVendorId } from '@aipoch/providers'
+const ANTHROPIC_VERSION = '2023-06-01'
+import { readBoundedResponseText, fetchProviderRequest } from '../transport'
+const DEFAULT_LIMITS = {
+  modelListResponseBytes: 2 * 1024 * 1024,
+  fetchedModels: 2000,
+  modelIdCharacters: 512
+}
 
 // Fetches a provider's live model list from its dedicated model-list URL (from the registry). Both the
 // Anthropic and OpenAI model-list shapes are `{ data: [{ id }] }`, so one parser covers the compatible
@@ -20,14 +23,16 @@ export type ListModelsResult = {
 export type ListModelsTarget = {
   // Full model-list endpoint URL (e.g. https://api.deepseek.com/v1/models).
   url: string
-  vendorId?: OfficialVendorId
+  vendorId?: string
   key?: string
 }
 
-export type ListModelsDeps = {
-  fetchImpl?: typeof fetch
+export type ListModelsOptions = {
+  signal?: AbortSignal
   timeoutMs?: number
+  limits?: Partial<typeof DEFAULT_LIMITS>
 }
+type ListModelsDeps = ListModelsOptions & { fetchImpl?: typeof fetch }
 
 // Extracts non-empty string model ids from a `{ data: [{ id }] }` payload.
 export const parseModelIds = (body: unknown): string[] => {
@@ -48,8 +53,26 @@ export const parseModelIds = (body: unknown): string[] => {
 // caller can fall back to the bundled catalog and surface a message.
 export const listProviderModels = async (
   target: ListModelsTarget,
-  { fetchImpl = fetch, timeoutMs = DEFAULT_LIST_TIMEOUT_MS }: ListModelsDeps = {}
+  {
+    fetchImpl = fetch,
+    timeoutMs = DEFAULT_LIST_TIMEOUT_MS,
+    limits: overrides,
+    signal: callerSignal
+  }: ListModelsDeps = {}
 ): Promise<ListModelsResult> => {
+  const limits = {
+    modelListResponseBytes:
+      overrides?.modelListResponseBytes ?? DEFAULT_LIMITS.modelListResponseBytes,
+    fetchedModels: overrides?.fetchedModels ?? DEFAULT_LIMITS.fetchedModels,
+    modelIdCharacters: overrides?.modelIdCharacters ?? DEFAULT_LIMITS.modelIdCharacters
+  }
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 2_147_483_647 ||
+    Object.values(limits).some((value) => !Number.isSafeInteger(value) || value < 1)
+  )
+    return { ok: false, message: 'Invalid model-list resource limits.' }
   let url: string
 
   try {
@@ -66,16 +89,22 @@ export const listProviderModels = async (
   }
 
   const controller = new AbortController()
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, controller.signal])
+    : controller.signal
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
+    signal.throwIfAborted()
     const response = await fetchProviderRequest(fetchImpl, url, {
       method: 'GET',
       headers,
-      signal: controller.signal
+      signal
     })
 
     if (response.status < 200 || response.status >= 300) {
+      // Error payloads are unused. Release even a streaming body before returning ownership.
+      await response.body?.cancel().catch(() => undefined)
       return {
         ok: false,
         status: response.status,
@@ -86,27 +115,27 @@ export const listProviderModels = async (
     const body = JSON.parse(
       await readBoundedResponseText(
         response,
-        PROVIDER_RESOURCE_LIMITS.modelListResponseBytes,
-        'Model list response'
+        limits.modelListResponseBytes,
+        'Model list response',
+        undefined,
+        signal
       )
     ) as unknown
     const models = parseModelIds(body)
 
-    if (models.length > PROVIDER_RESOURCE_LIMITS.fetchedModels) {
+    if (models.length > limits.fetchedModels) {
       return {
         ok: false,
         status: response.status,
-        message: `The vendor returned more than ${PROVIDER_RESOURCE_LIMITS.fetchedModels} models.`
+        message: `The vendor returned more than ${limits.fetchedModels} models.`
       }
     }
 
-    if (
-      models.some((model) => Array.from(model).length > PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
-    ) {
+    if (models.some((model) => Array.from(model).length > limits.modelIdCharacters)) {
       return {
         ok: false,
         status: response.status,
-        message: `The vendor returned a model ID longer than ${PROVIDER_RESOURCE_LIMITS.modelIdCharacters} characters.`
+        message: `The vendor returned a model ID longer than ${limits.modelIdCharacters} characters.`
       }
     }
 

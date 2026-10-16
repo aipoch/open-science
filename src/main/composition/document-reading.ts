@@ -1,6 +1,5 @@
 import { netFetchStandard } from '../network-fetch'
 import { realpath } from 'node:fs/promises'
-import { join } from 'node:path'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { isPathInsideWorkspace } from '../acp/workspace-path'
@@ -24,7 +23,7 @@ import { PdfTranslationOwner } from '../literature/pdf-translation/index'
 import { createPdfTranslationLocalRuntime } from '../literature/pdf-translation/local'
 import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
-import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
+import { QWEN3_LOCAL_TEXT_GENERATION_MODEL } from '@aipoch/providers'
 import { createLocalModelApi } from '../local-models/owner'
 import { runtimeMetadata } from '../runtime-metadata'
 import { ProviderTextGenerationService } from '../literature/pdf-translation/text-generation'
@@ -178,7 +177,7 @@ export async function composeDocumentReading({
   }))
   const localTranslationModels = createLocalModelOwner({
     namespace: 'pdf-translation',
-    revisions: PDF_TRANSLATION_MODEL_REVISIONS
+    revisions: QWEN3_LOCAL_TEXT_GENERATION_MODEL.revisions
   })
   await modules.add({ localTranslationModels }, ({ localTranslationModels: owner }) => ({
     name: 'local-translation-models',
@@ -226,14 +225,7 @@ export async function composeDocumentReading({
       captureTarget: (model) => capturePdfTranslationAgentTarget(settingsService, model),
       captureApiTarget: (model) => capturePdfTranslationApiTarget(settingsService, model),
       apiRunner: new ProviderTextGenerationService(netFetchStandard),
-      localRunner: createPdfTranslationLocalRuntime(
-        join(
-          runtimeMetadata().applicationPath.replace(/app\.asar$/, 'app.asar.unpacked'),
-          'resources',
-          'pdf-translation-local'
-        ),
-        localTranslationModels
-      ),
+      localRunner: createPdfTranslationLocalRuntime(localTranslationModels),
       runner: new RestrictedInferenceRunner({
         appVersion: runtimeMetadata().version,
         configRoot: resolveConfigRoot(),

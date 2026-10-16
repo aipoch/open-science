@@ -35,8 +35,8 @@
     "packages/providers/src/responses/stream-state.ts",
     "packages/providers/src/responses/stream.ts",
     "packages/providers/src/responses/types.ts",
-    "packages/providers/src/text/generate.test.ts",
-    "packages/providers/src/text/generate.ts",
+    "packages/providers/src/models/text-generation.test.ts",
+    "packages/providers/src/models/text-generation.ts",
     "packages/providers/src/transport.ts",
     "packages/providers/src/transport/body.ts",
     "packages/providers/src/transport/request.ts",
@@ -47,14 +47,42 @@
     "packages/providers/test/provider-error-diagnostics.jsonl",
     "packages/providers/test/stream-harness.ts",
     "packages/providers/tsc.cjs",
-    "packages/providers/vitest.config.ts"
+    "packages/providers/vitest.config.ts",
+    "packages/providers/resources/local-worker.mjs",
+    "packages/providers/resources/local.mjs",
+    "packages/providers/resources/local-runtime.mjs",
+    "packages/providers/src/local.test.ts",
+    "packages/providers/src/local.ts",
+    "packages/providers/src/local-runtime.test.ts",
+    "packages/providers/src/models/classification.ts",
+    "packages/providers/src/models/classification.test.ts",
+    "packages/providers/src/providers/classification.ts",
+    "packages/providers/src/discovery/models.test.ts",
+    "packages/providers/src/discovery/models.ts",
+    "packages/providers/src/responses/native.test.ts",
+    "packages/providers/src/responses/native.ts",
+    "packages/providers/src/protocols/compatibility.test.ts",
+    "packages/providers/src/protocols/message-conversion.ts",
+    "packages/providers/src/protocols/token-count.ts",
+    "packages/providers/src/protocols/xai.ts",
+    "packages/providers/src/providers/local-model.ts",
+    "packages/providers/src/providers/create.ts",
+    "packages/providers/src/providers/definitions.ts",
+    "packages/providers/src/models/types.ts",
+    "packages/providers/src/providers/create.test.ts",
+    "packages/providers/src/providers/connection.ts",
+    "packages/providers/src/protocols/chat-anthropic.ts",
+    "packages/providers/src/protocols/chat-anthropic.test.ts",
+    "packages/providers/src/runtimes/local-text.ts",
+    "packages/providers/src/runtimes/local-text.test.ts"
   ],
   "interfacePaths": [
     "packages/providers/src/providers.ts",
     "packages/providers/src/protocol.ts",
     "packages/providers/src/client.ts",
     "packages/providers/src/errors.ts",
-    "packages/providers/src/transport.ts"
+    "packages/providers/src/transport.ts",
+    "packages/providers/src/local.ts"
   ],
   "consumerModules": [
     "acp_runtime",
@@ -99,8 +127,17 @@
       "packages/providers/src/responses/request.test.ts",
       "packages/providers/src/responses/response.architecture.test.ts",
       "packages/providers/src/responses/response.test.ts",
-      "packages/providers/src/text/generate.test.ts",
-      "packages/providers/src/transport/sse.test.ts"
+      "packages/providers/src/models/text-generation.test.ts",
+      "packages/providers/src/transport/sse.test.ts",
+      "packages/providers/src/local.test.ts",
+      "packages/providers/src/local-runtime.test.ts",
+      "packages/providers/src/models/classification.test.ts",
+      "packages/providers/src/discovery/models.test.ts",
+      "packages/providers/src/responses/native.test.ts",
+      "packages/providers/src/protocols/compatibility.test.ts",
+      "packages/providers/src/providers/create.test.ts",
+      "packages/providers/src/protocols/chat-anthropic.test.ts",
+      "packages/providers/src/runtimes/local-text.test.ts"
     ],
     "contract": [
       "src/main/settings/responses-request-adapter.architecture.test.ts",
@@ -1087,7 +1124,6 @@
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/transport-validation.test.ts",
       "src/main/settings/xai-oauth.test.ts",
-      "src/main/settings/xai-protocol.test.ts",
       "src/main/side-chat/host-message-mcp-server.test.ts",
       "src/main/side-chat/main-prompt-relay.test.ts",
       "src/main/skills/mcp-server.test.ts",
@@ -1338,13 +1374,10 @@
       "src/shared/session-persistence/turn-anchor.test.ts",
       "src/shared/session-persistence/turn-outcome-codec.test.ts",
       "src/shared/session-persistence/turn-outcome.test.ts",
-      "src/shared/settings.test.ts"
+      "src/shared/settings.test.ts",
+      "src/main/literature/pdf-translation/local.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

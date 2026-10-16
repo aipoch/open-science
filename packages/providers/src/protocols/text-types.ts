@@ -8,6 +8,7 @@ export type ProviderTextGenerationTarget = Readonly<{
   model: string
   key?: string
   vendorId?: string
+  anthropicApiKeyHeader?: boolean
   reasoningEffort?: ModelReasoningEffort | 'default'
   reasoningEffortTransport?: CustomReasoningEffortTransport
   maxOutputTokens?: number

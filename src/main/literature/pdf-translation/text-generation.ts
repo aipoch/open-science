@@ -1,17 +1,12 @@
 import { createHash } from 'node:crypto'
-import { createTextGenerationClient, ProviderTextGenerationError } from '@aipoch/providers/client'
+import { createProvider, ProviderTextGenerationError } from '@aipoch/providers/client'
 import type {
   ChatApiEndpoint,
   OfficialVendorId,
   ResolvedReasoningEffort,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
-import {
-  anthropicMessagesUrl,
-  openAiChatCompletionsUrl,
-  openAiResponsesUrl,
-  type ProviderTokenUsage
-} from '@aipoch/providers/protocol'
+import type { ProviderTokenUsage } from '@aipoch/providers/client'
 import { customProviderRequiresKey } from '../../../shared/provider-url-policy'
 
 export type ProviderTextGenerationConfiguration = Readonly<{
@@ -65,16 +60,14 @@ export class ProviderTextGenerationService {
     const provider = target.provider
     const hasKey = typeof provider.key === 'string' && provider.key.length > 0
     const hasModel = typeof target.model === 'string' && target.model.length > 0
-    const hasOpenAi =
-      provider.apiEndpoints?.includes('openai') && openAiChatCompletionsUrl(provider)
-    const hasResponses =
-      provider.apiEndpoints?.includes('responses') && openAiResponsesUrl(provider)
-    const hasAnthropic = provider.apiEndpoints?.includes('anthropic') && provider.baseUrl
     return (
       (provider.type === 'custom' || provider.type === 'official') &&
       (hasKey || (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl))) &&
       hasModel &&
-      Boolean(hasOpenAi || hasAnthropic || hasResponses)
+      createProvider({
+        id: provider.vendorId ?? 'custom',
+        textGeneration: provider
+      }).supportsTextGeneration(target.model!)
     )
   }
 
@@ -85,30 +78,17 @@ export class ProviderTextGenerationService {
     if (!this.supportsTarget(input.target))
       throw new ProviderTextGenerationError('unsupported-target', 'Text generation is unavailable.')
     const provider = input.target.provider
-    const protocol =
-      provider.apiEndpoints?.includes('openai') && openAiChatCompletionsUrl(provider)
-        ? 'openai'
-        : provider.apiEndpoints?.includes('anthropic') && provider.baseUrl
-          ? 'anthropic'
-          : 'responses'
-    const url =
-      protocol === 'openai'
-        ? openAiChatCompletionsUrl(provider)!
-        : protocol === 'responses'
-          ? openAiResponsesUrl(provider)!
-          : anthropicMessagesUrl(provider.baseUrl!)
-    return createTextGenerationClient(this.fetchImpl).run({
-      ...input,
-      target: {
-        protocol,
-        url,
-        model: input.target.model!,
-        key: provider.key,
-        vendorId: provider.vendorId,
+    const model = createProvider({
+      id: provider.vendorId ?? 'custom',
+      key: provider.key,
+      fetch: this.fetchImpl,
+      textGeneration: {
+        ...provider,
         reasoningEffortTransport: provider.reasoningEffortTransport,
         reasoningEffort: input.target.reasoningEffort,
         maxOutputTokens: provider.maxOutputTokens
       }
-    })
+    }).textGenerationModel(input.target.model!)
+    return model.generate(input)
   }
 }

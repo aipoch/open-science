@@ -13,7 +13,11 @@ import {
 import { ResponsesBridge } from './responses-bridge'
 
 import { createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { anthropicToResponses, chatToResponses, sanitizeXaiResponsesRequest } from './xai-protocol'
+import {
+  anthropicToResponses,
+  chatToResponses,
+  sanitizeXaiResponsesRequest
+} from '@aipoch/providers/protocol'
 
 type Json = Record<string, unknown>
 const bridges: { close(): Promise<void> }[] = []

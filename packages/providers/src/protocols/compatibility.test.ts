@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   anthropicToResponses,
   chatToResponses,
-  countAnthropicInputTokens,
   responsesToAnthropic,
-  responsesToChat,
-  sanitizeXaiResponsesRequest
-} from './xai-protocol'
+  responsesToChat
+} from './message-conversion'
+import { countAnthropicInputTokens } from './token-count'
+import { sanitizeXaiResponsesRequest } from './xai'
 
 describe('xAI protocol projection', () => {
   it('maps Anthropic messages and tools to Responses', () => {
