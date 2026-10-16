@@ -323,6 +323,7 @@ export const PdfThumbnail = ({
     }
   }, [requestKey, isNearViewport, hasCurrentError])
   // Off-screen tiles retain only an encoded thumbnail and do not keep a PDF document alive.
+  // usePreviewResourceKey subscribes to recovery; defer the replacement lease until connected.
   const shouldRender =
     desktopRuntimeWritable() && isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
 

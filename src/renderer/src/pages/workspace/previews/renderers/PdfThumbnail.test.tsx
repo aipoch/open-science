@@ -117,6 +117,47 @@ describe('PdfThumbnail', () => {
     }
   })
 
+  it('invalidates pending work on recovery and reacquires after reconnecting', async () => {
+    const connected = useDesktopRuntimeRecoveryStore.getState()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let rejectAcquire!: (error: Error) => void
+    vi.mocked(window.api.previewResources.acquire).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectAcquire = reject
+      })
+    )
+    try {
+      await act(async () => {
+        root.render(
+          <PdfThumbnail source="local" path="/audit/reconnect.pdf" name="reconnect.pdf" />
+        )
+        await flushMicrotasks()
+      })
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({
+          phase: 'reconciling',
+          epoch: connected.epoch + 1
+        })
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        rejectAcquire(new Error('Desktop is recovering.'))
+        await flushMicrotasks()
+      })
+      expect(consoleError).not.toHaveBeenCalled()
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        await flushMicrotasks()
+      })
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('img')).not.toBeNull()
+    } finally {
+      await act(async () => useDesktopRuntimeRecoveryStore.setState(connected))
+    }
+  })
+
   it.each([false, true])(
     'reports acquisition failures only while subscribed (unmounted=%s)',
     async (unmounted) => {

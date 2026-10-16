@@ -26,6 +26,7 @@ import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resol
 import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
 import { createLocalModelApi } from '../local-models/owner'
 import { runtimeMetadata } from '../runtime-metadata'
+import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import { ProviderTextGenerationService } from '../settings/provider-text-generation'
 import type { SettingsService } from '../settings/service'
 
@@ -244,6 +245,8 @@ export async function composeDocumentReading({
     return {
       name: 'pdf-translation',
       capability: owner,
+      // Cancellation drains Agent processes and usage writes before the database closes.
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       start: () => owner.sweepStaleProfiles(),
       dispose: () => owner.shutdown()
     }
