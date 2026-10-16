@@ -1116,9 +1116,14 @@ const scanForOwnedDescendants = async (
             ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
           }
           // Extract starttime (field 22, 1-indexed)
-          const fields = stat.split(')')
-          if (fields.length >= 2) {
-            const afterComm = fields[1].trim().split(/\s+/)
+          // comm may itself contain ')' (for example systemd's '(sd-pam)'). Only the final
+          // delimiter ends field 2, as in parseLinuxProcStat above.
+          const commandEnd = stat.lastIndexOf(')')
+          if (commandEnd >= 0) {
+            const afterComm = stat
+              .slice(commandEnd + 1)
+              .trim()
+              .split(/\s+/)
             if (afterComm.length >= 20 && bootTime !== undefined) {
               const starttimeJiffies = parseInt(afterComm[19], 10) // 0-indexed field 21
               const clockTick = 100 // USER_HZ, typically 100 on Linux
