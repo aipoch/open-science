@@ -43,19 +43,19 @@ jobs:
               platform: macos,
               os: macos-latest,
               python: python3,
-              python_path: .scratch/lifecycle-python/bin/python
+              python_path: ./.scratch/lifecycle-python/bin/python
             }
           - {
               platform: linux,
               os: ubuntu-latest,
               python: python3,
-              python_path: .scratch/lifecycle-python/bin/python
+              python_path: ./.scratch/lifecycle-python/bin/python
             }
           - {
               platform: windows,
               os: windows-latest,
               python: python,
-              python_path: .scratch/lifecycle-python/Scripts/python.exe
+              python_path: ./.scratch/lifecycle-python/Scripts/python.exe
             }
     env:
       CI: 'true'
