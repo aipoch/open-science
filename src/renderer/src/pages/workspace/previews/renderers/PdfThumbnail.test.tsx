@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -95,6 +96,55 @@ describe('PdfThumbnail', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
+
+  it('waits for desktop recovery before acquiring a thumbnail', async () => {
+    const connected = useDesktopRuntimeRecoveryStore.getState()
+    try {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: connected.epoch + 1 })
+      await act(async () => {
+        root.render(<PdfThumbnail source="local" path="/audit/recovery.pdf" name="recovery.pdf" />)
+        await flushMicrotasks()
+      })
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        await flushMicrotasks()
+      })
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      expect(container.querySelector('img')).not.toBeNull()
+    } finally {
+      await act(async () => useDesktopRuntimeRecoveryStore.setState(connected))
+    }
+  })
+
+  it.each([false, true])(
+    'reports acquisition failures only while subscribed (unmounted=%s)',
+    async (unmounted) => {
+      let rejectAcquire!: (error: Error) => void
+      vi.mocked(window.api.previewResources.acquire).mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectAcquire = reject
+        })
+      )
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      await act(async () => {
+        root.render(
+          <PdfThumbnail source="local" path={`/audit/late-${unmounted}.pdf`} name="late.pdf" />
+        )
+        await flushMicrotasks()
+      })
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      if (unmounted) await act(async () => root.render(null))
+      const error = new Error('Desktop is recovering. This operation was not submitted.')
+      await act(async () => {
+        rejectAcquire(error)
+        await flushMicrotasks()
+      })
+      expect(consoleError).toHaveBeenCalledTimes(unmounted ? 0 : 1)
+      if (!unmounted)
+        expect(consoleError).toHaveBeenCalledWith('Failed to render PDF thumbnail', error)
+    }
+  )
 
   it.each([false, true])(
     'retries a thumbnail once after re-entry (persistent failure=%s)',

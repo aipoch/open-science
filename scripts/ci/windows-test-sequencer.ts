@@ -43,7 +43,7 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/specialist/',
     'src/main/agents/'
   ],
-  // 6: Agent and compute runtimes (18 minutes), plus other renderer tests (6 minutes).
+  // 6: Agent runtimes and other renderer tests.
   // First match wins: the more specific renderer pages prefix above stays in group 4.
   [
     'src/main/acp/',
@@ -52,11 +52,11 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/side-chat/',
     'src/main/session-plan/',
     'src/main/background-result-delivery/',
-    'src/main/compute/',
     'src/renderer/'
   ],
-  // 7: Notebook runtime and sandbox.
+  // 7: Run 38798893873 left this group at 18 minutes while compute used 31 in shard 6.
   [
+    'src/main/compute/',
     'src/main/notebook/',
     'packages/notebook-syntax/',
     'packages/notebook-code-risk/',

@@ -1,3 +1,4 @@
+import { desktopRuntimeWritable } from '../../../../stores/desktop-runtime-recovery-store'
 import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import { useEffect, useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
@@ -322,7 +323,8 @@ export const PdfThumbnail = ({
     }
   }, [requestKey, isNearViewport, hasCurrentError])
   // Off-screen tiles retain only an encoded thumbnail and do not keep a PDF document alive.
-  const shouldRender = isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
+  const shouldRender =
+    desktopRuntimeWritable() && isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
 
   useEffect(() => {
     if (!shouldRender) return
@@ -347,7 +349,7 @@ export const PdfThumbnail = ({
         setResult({ requestKey, status: 'ready' })
       })
       .catch((error: unknown) => {
-        if (isAbortError(error)) return
+        if (!subscribed || isAbortError(error)) return
         if (!isUnavailableFileError(error)) console.error('Failed to render PDF thumbnail', error)
         if (subscribed) setResult({ requestKey, status: 'error' })
       })

@@ -413,7 +413,8 @@ test.describe('Preview scroll isolation', () => {
         .poll(() => scroller.evaluate((node) => node.scrollHeight - node.clientHeight))
         .toBeGreaterThan(100)
       const before = await scroller.evaluate((node) => node.scrollTop)
-      await scroller.hover({ position: { x: 100, y: 100 } })
+      // Keep the wheel target clear of the floating PDF annotation toolbar.
+      await scroller.hover()
       await page.mouse.wheel(0, 250)
       await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before)
       await page.keyboard.press('Tab')

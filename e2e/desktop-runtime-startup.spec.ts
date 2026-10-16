@@ -122,7 +122,7 @@ test('installation manifests capture physical ASAR bytes in Electron and reject 
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('legacy service recheck hands the startup window to a usable Desktop', async ({}) => {
+test('unverified legacy stop preserves its owner and retries into a usable Desktop', async ({}) => {
   test.skip(
     process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
@@ -133,6 +133,9 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
   await mkdir(config)
   const env = { ...launchEnvironment(config), OPEN_SCIENCE_USER_DATA: profile }
   let app: ElectronApplication | undefined
+  const legacy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore'
+  })
   const requests: string[] = []
   const generation = randomUUID(),
     token = randomUUID()
@@ -142,8 +145,12 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
       response.writeHead(401).end()
       return
     }
+    if (request.method !== 'GET' || request.url !== '/owner') {
+      response.writeHead(503).end()
+      return
+    }
     response.setHeader('content-type', 'application/json')
-    response.end(JSON.stringify({ generation, pid: process.pid }))
+    response.end(JSON.stringify({ generation, pid: legacy.pid }))
   })
   try {
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
@@ -166,7 +173,7 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
       JSON.stringify({
         schemaVersion: 1,
         generation,
-        pid: process.pid,
+        pid: legacy.pid,
         host: 'node',
         port: address.port,
         desktop: {
@@ -177,21 +184,32 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
         }
       })
     )
+    expect(legacy.pid).toBeGreaterThan(0)
     const originalOwner = await readFile(join(config, 'runtime-owner.json'), 'utf8')
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
+    await expect(
+      page.getByRole('button', { name: 'Close it and continue', exact: true })
+    ).toBeVisible({
       timeout: 30000
     })
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
-    expect(requests.every((request) => request === 'GET /owner')).toBe(true)
+    await page.getByRole('button', { name: 'Close it and continue', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeEnabled()
+    expect(requests).toContain('POST /web/start?port=0')
+    expect(
+      requests.every((request) => ['GET /owner', 'POST /web/start?port=0'].includes(request))
+    ).toBe(true)
     expect(await readFile(join(config, 'runtime-owner.json'), 'utf8')).toBe(originalOwner)
+    expect(legacy.exitCode).toBeNull()
+    expect(legacy.signalCode).toBeNull()
+    const exited = once(legacy, 'exit')
+    legacy.kill('SIGTERM')
+    await exited
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
     const replacement = app.waitForEvent('window')
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    await page.getByRole('button', { name: 'Try again', exact: true }).click()
     const workspace = await replacement
     await expect
       .poll(() => workspace.evaluate(() => window.api?.runtimeStartup?.getState()), {
@@ -209,6 +227,11 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
       )
     ).toBe(true)
   } finally {
+    if (legacy.exitCode === null && legacy.signalCode === null) {
+      const exited = once(legacy, 'exit')
+      legacy.kill('SIGTERM')
+      await exited
+    }
     if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
     if (app) {
       const desktop = app.process()
@@ -220,7 +243,7 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}, testInfo) => {
+test('guides legacy shutdown through failure, retry and opening the saved project', async ({}, testInfo) => {
   test.skip(
     process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
@@ -291,37 +314,29 @@ async function main() {
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
     const continueButton = page.getByRole('button', {
-      name: '继续',
+      name: '关闭并继续',
       exact: true
     })
     await expect(continueButton).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('real-startup.png'), animations: 'disabled' })
-    await continueButton.click()
-    await page.screenshot({ path: testInfo.outputPath('real-confirm.png'), animations: 'disabled' })
-    await page.getByRole('button', { name: '取消', exact: true }).click()
-    await page.screenshot({
-      path: testInfo.outputPath('real-cancelled.png'),
-      animations: 'disabled'
-    })
     await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
     expect(service.exitCode).toBeNull()
     await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
     await expect
       .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
       .toBe('1')
-    await expect(continueButton).toBeEnabled()
+    const retryButton = page.getByRole('button', { name: '重试', exact: true })
+    await expect(retryButton).toBeEnabled()
     await expect(
-      page.getByText('无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。', { exact: true })
+      page.getByText('你的项目是安全的。请重试，或保存报告以便我们协助。', { exact: true })
     ).toBeVisible()
     await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
     await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
     const replacement = app.waitForEvent('window')
-    await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
+    await retryButton.click()
     await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
     await page.screenshot({
       path: testInfo.outputPath('real-stopping.png'),

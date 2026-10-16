@@ -21,7 +21,7 @@ describe('Windows module-based test sharding', () => {
     ['src/main/artifacts/provenance-repository.test.ts', 5],
     ['src/main/reviewer/reviewer-orchestrator.test.ts', 5],
     ['src/main/acp/context-usage-static-context.test.ts', 6],
-    ['src/main/compute/compute-service.test.ts', 6],
+    ['src/main/compute/compute-service.test.ts', 7],
     ['src/main/delegation/opencode-runtime-preparation.test.ts', 6],
     ['src/main/notebook/runtime-service.test.ts', 7],
     ['packages/notebook-syntax/src/index.test.ts', 7],

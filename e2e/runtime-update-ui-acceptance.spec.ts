@@ -542,7 +542,12 @@ test('captures all runtime update states in isolated Electron (presentation-only
     expect(calls.some((call) => call.action === 'update:recover')).toBe(true)
     await writeFile(join(output, 'views.json'), JSON.stringify(views, null, 2))
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
-    expect(capturedStates.filter((id) => /^S\d\d$/.test(id))).toHaveLength(34)
+    // S19 (legacy-host) was retired when legacy services gained the guided-stop flow.
+    expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
+      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
+        (id) => id !== 'S19'
+      )
+    )
   } finally {
     if (application)
       await closeElectronApplicationForCleanup(

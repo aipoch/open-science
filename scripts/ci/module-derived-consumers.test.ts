@@ -19,6 +19,7 @@ import {
   runDerivedConsumersCli
 } from './generate-module-derived-consumers.mjs'
 import { createModuleTestPlan, createAffectedTestPlan } from './module-test-impact.mjs'
+import { checkModuleConsumerCoverage } from './check-module-consumer-coverage.mjs'
 import { additiveModuleImpact } from './module-impact-inputs.mjs'
 
 const owner = 'src/main/owner.ts'
@@ -335,3 +336,36 @@ it('does not treat target-branch introduction as a deletion by an older candidat
   const head = f.commit()
   expect(() => checkDerivedConsumerRevisions(newerBase, head, f.root)).not.toThrow()
 }, 30_000)
+
+it('preserves fail-closed checks in the standalone whole-repository guard', () => {
+  expect(() => checkModuleConsumerCoverage(source(), manifest())).not.toThrow()
+  expect(() =>
+    checkModuleConsumerCoverage(
+      source({ [derivedConsumersPath]: JSON.stringify({ schemaVersion: 1, modules: {} }) }),
+      manifest()
+    )
+  ).toThrow('Stale derived consumer index')
+  expect(() =>
+    checkModuleConsumerCoverage(
+      source({
+        [consumer]: "import './owner.test'",
+        [ownerTest]: 'export const fixture = 1',
+        [derivedConsumersPath]: JSON.stringify({ schemaVersion: 1, modules: {} })
+      }),
+      manifest()
+    )
+  ).toThrow('exports shared test contracts')
+  const packages = manifest()
+  packages.modules.skill_package = packages.modules.owner
+  delete packages.modules.owner
+  packages.modules.skill_package.testFiles.consumer.push(consumer)
+  expect(() =>
+    checkModuleConsumerCoverage(
+      source({
+        [consumer]: 'export const unrelated = true',
+        [derivedConsumersPath]: JSON.stringify({ schemaVersion: 1, modules: {} })
+      }),
+      packages
+    )
+  ).toThrow('consumer evidence must have a dependency path')
+})
