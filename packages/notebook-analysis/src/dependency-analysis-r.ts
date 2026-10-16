@@ -9286,6 +9286,405 @@ const analyzeRFileAccessTree = (
         : []
     })
   )
+  type StableJsonHelperEffect = {
+    effects: Array<{ kind: 'read' | 'write'; path: string }>
+  }
+  const stableJsonHelpers = new Map<string, RExpr>()
+  // Same-cell paths survive only transparent assignments/path construction.
+  // Do not reuse a stale outer binding across an opaque call or export it.
+  const stableJsonPaths = new Map<string, string>()
+  const jsonHelperBaseCall = (value: RExpr, shadowed: ReadonlySet<string>): boolean => {
+    if (!isCall(value) || value.staticBuiltinShadowed) return false
+    const qualified = rQualifiedCall(value)
+    return qualified
+      ? qualified.package === 'base' &&
+          isCall(value.callee) &&
+          value.callee.operator === '::' &&
+          !value.callee.staticBuiltinShadowed &&
+          !shadowed.has('::')
+      : !shadowed.has(rCalledName(value) ?? '')
+  }
+  const jsonHelperPath = (
+    value: RExpr | undefined,
+    paths: ReadonlyMap<string, string>,
+    shadowed: ReadonlySet<string>
+  ): string | undefined => {
+    if (isCharacter(value)) return rStaticString(value, paths, new Map())
+    if (isSymbol(value))
+      return value.name && !/^\.\./u.test(value.name)
+        ? rStaticString(value, paths, new Map())
+        : undefined
+    if (
+      !value ||
+      !isCall(value) ||
+      rCalledName(value) !== 'file.path' ||
+      !jsonHelperBaseCall(value, shadowed) ||
+      !rReliableCollectionExpression(value, shadowed) ||
+      !value.args.every((argument) => jsonHelperPath(argument, paths, shadowed) !== undefined)
+    )
+      return undefined
+    return rStaticString(value, paths, new Map())
+  }
+  const stableJsonHelperSummary = (
+    value: RExpr,
+    firstReadOnly = false
+  ): StableJsonHelperEffect | undefined => {
+    const shadowed = new Set(shadowedQuotationNames)
+    if (
+      !isCall(value) ||
+      value.operator !== 'function' ||
+      value.staticBuiltinShadowed ||
+      ['function', '{', '<-', '=', '::'].some((name) => shadowed.has(name))
+    )
+      return undefined
+    const [formals, body] = value.args
+    if (
+      formals?.kind !== 'formals' ||
+      formals.names.length !== 0 ||
+      formals.values.some((defaultValue) => defaultValue !== null) ||
+      !body
+    )
+      return undefined
+    const statements = isCall(body) && body.operator === '{' ? body.args : [body]
+    const effects: StableJsonHelperEffect['effects'] = []
+    const paths = new Map(stableJsonPaths)
+    const assigned = new Set<string>()
+    const simpleValue = (node: RExpr): boolean => {
+      if (isSymbol(node)) return Boolean(node.name) && !/^\.\./u.test(node.name)
+      if (!isCall(node)) return ['character', 'atomic', 'null'].includes(node.kind)
+      if (!jsonHelperBaseCall(node, shadowed)) return false
+      // Even base-qualified names/nrow/$ can dispatch user methods that replace
+      // outer or caller-frame paths. A partial summary must not retain stale paths.
+      return ['list', 'invisible'].includes(rCalledName(node) ?? '') && node.args.every(simpleValue)
+    }
+    const firstReadPrefixLength = (() => {
+      if (!firstReadOnly || statements.length < 2) return 1
+      const first = statements[0]
+      if (!isCall(first) || !['<-', '='].includes(first.operator ?? '')) return 1
+      const [target, right] = first.args
+      return isSymbol(target) && jsonHelperPath(right, paths, shadowed) !== undefined ? 2 : 1
+    })()
+    for (const statement of firstReadOnly
+      ? statements.slice(0, firstReadPrefixLength)
+      : statements) {
+      if (!isCall(statement) || statement.operator === 'function') return undefined
+      const nestedOperator = rCalledName(statement)
+      if (
+        [
+          'if',
+          'for',
+          'while',
+          'repeat',
+          'switch',
+          'tryCatch',
+          'try',
+          'return',
+          'break',
+          'next',
+          'stop',
+          'quit',
+          'on.exit'
+        ].includes(nestedOperator ?? '')
+      )
+        return undefined
+      const assignment = ['<-', '='].includes(statement.operator ?? '')
+      if (['<<-', '->', '->>'].includes(statement.operator ?? '')) return undefined
+      const target = assignment ? statement.args[0] : undefined
+      if (assignment) {
+        if (
+          !isSymbol(target) ||
+          statement.args.length !== 2 ||
+          statement.names.some(Boolean) ||
+          statement.staticBuiltinShadowed ||
+          assigned.has(target.name) ||
+          ['::', ':::', 'jsonlite', 'function', '{', '<-', '='].includes(target.name)
+        )
+          return undefined
+        assigned.add(target.name)
+      }
+      const candidate = assignment ? statement.args[1]! : statement
+      const localPath = jsonHelperPath(candidate, paths, shadowed)
+      if (isSymbol(target)) {
+        paths.delete(target.name)
+        shadowed.add(target.name)
+        if (localPath !== undefined) {
+          paths.set(target.name, localPath)
+          continue
+        }
+      }
+      if (!isCall(candidate)) {
+        if (simpleValue(candidate)) continue
+        return undefined
+      }
+      const qualified = rQualifiedCall(candidate)
+      if (
+        !qualified ||
+        qualified.package !== 'jsonlite' ||
+        !['fromJSON', 'read_json', 'write_json'].includes(qualified.name) ||
+        !isCall(candidate.callee) ||
+        candidate.callee.operator !== '::' ||
+        candidate.staticBuiltinShadowed ||
+        candidate.callee.staticBuiltinShadowed
+      ) {
+        if (simpleValue(candidate)) continue
+        return undefined
+      }
+      if (
+        new Set(candidate.names.filter(Boolean)).size !== candidate.names.filter(Boolean).length ||
+        candidate.args.some((argument) => rWriterArgumentHasEffects(argument, shadowed)) ||
+        !candidate.args.every(
+          (argument) =>
+            jsonHelperPath(argument, paths, shadowed) !== undefined || simpleValue(argument)
+        )
+      )
+        return undefined
+      const effect = rFileCallEffect(qualified.name, qualified.package)
+      if (!effect || (effect.kind !== 'read' && effect.kind !== 'write')) return undefined
+      const readEffect = effect
+      const file = rFileCallArgument(candidate, readEffect)
+      const qualifiedName = qualified.name
+      const firstReadArgumentsSafe = (() => {
+        if (!firstReadOnly) return true
+        if (readEffect.kind !== 'read') return false
+        if (
+          !file ||
+          (!isCharacter(file) && (!isSymbol(file) || !paths.has(file.name))) ||
+          candidate.args.length > 2
+        )
+          return false
+        const expectedFileName = qualifiedName === 'fromJSON' ? 'txt' : 'path'
+        const namedFileIndex = candidate.names.findIndex((name) => name === expectedFileName)
+        const fileIndex = namedFileIndex >= 0 ? namedFileIndex : 0
+        if (
+          fileIndex >= candidate.args.length ||
+          Boolean(candidate.names[fileIndex] && candidate.names[fileIndex] !== expectedFileName)
+        )
+          return false
+        return candidate.args.every(
+          (_argument, index) =>
+            index === fileIndex ||
+            (candidate.names[index] === 'simplifyVector' &&
+              candidate.args[index]?.kind === 'atomic' &&
+              candidate.args[index]?.logical !== undefined)
+        )
+      })()
+      // An opaque tail cannot undo the first literal read, but it grants no
+      // authority for later I/O or invocations. Do not replay argument promises.
+      if (!firstReadArgumentsSafe) return undefined
+      const path = jsonHelperPath(file, paths, shadowed)
+      if (!path || isExternalNotebookPath(path)) return undefined
+      if (qualifiedName === 'fromJSON') {
+        try {
+          JSON.parse(path.replaceAll('\\"', '"'))
+          return undefined
+        } catch {
+          // A non-JSON literal is conservatively treated as a possible path.
+        }
+      }
+      effects.push({ kind: readEffect.kind, path })
+    }
+    return effects.length > 0 ? { effects } : undefined
+  }
+  // A writer helper may construct its payload from arbitrary in-memory values.
+  // That payload is deliberately opaque: only a directly certified static
+  // jsonlite::write_json path is published.  Keep this fallback narrower than
+  // the full helper replay so dynamic payload code cannot grant authority over
+  // reads, aliases, or later calls.
+  const stableJsonWriterSummary = (value: RExpr): StableJsonHelperEffect | undefined => {
+    const shadowed = new Set(shadowedQuotationNames)
+    if (
+      !isCall(value) ||
+      value.operator !== 'function' ||
+      value.staticBuiltinShadowed ||
+      ['function', '{', '<-', '=', '::'].some((name) => shadowed.has(name))
+    )
+      return undefined
+    const [formals, body] = value.args
+    if (
+      formals?.kind !== 'formals' ||
+      formals.names.length !== 0 ||
+      formals.values.some((defaultValue) => defaultValue !== null) ||
+      !body
+    )
+      return undefined
+    const statements = isCall(body) && body.operator === '{' ? body.args : [body]
+    const paths = new Map(stableJsonPaths)
+    const assigned = new Set<string>()
+    const effects: StableJsonHelperEffect['effects'] = []
+    let writerSeen = false
+    const staticOption = (node: RExpr): boolean =>
+      ['character', 'atomic', 'null'].includes(node.kind)
+    const opaquePayloadIsSafe = (node: RExpr): boolean => {
+      if (!isCall(node) || node.operator === 'function') return true
+      const name = rCalledName(node) ?? ''
+      if (
+        ['<-', '=', '->', '<<-', '->>'].includes(name) ||
+        (!rQualifiedCall(node) && shadowed.has(name)) ||
+        Boolean(rFileCallEffect(name, rQualifiedCall(node)?.package))
+      )
+        return false
+      return node.args.every(opaquePayloadIsSafe)
+    }
+    const isWriter = (node: RExpr): boolean => {
+      if (
+        !isCall(node) ||
+        !isCall(node.callee) ||
+        node.staticBuiltinShadowed ||
+        node.callee.staticBuiltinShadowed
+      )
+        return false
+      const qualified = rQualifiedCall(node)
+      return (
+        qualified?.package === 'jsonlite' &&
+        qualified.name === 'write_json' &&
+        node.callee.operator === '::' &&
+        !shadowed.has('::') &&
+        !shadowed.has('jsonlite')
+      )
+    }
+    for (const statement of statements) {
+      if (!isCall(statement) || statement.operator === 'function') return undefined
+      const nestedOperator = rCalledName(statement)
+      if (
+        [
+          'if',
+          'for',
+          'while',
+          'repeat',
+          'switch',
+          'tryCatch',
+          'try',
+          'return',
+          'break',
+          'next',
+          'stop',
+          'quit',
+          'on.exit'
+        ].includes(nestedOperator ?? '')
+      )
+        return undefined
+      if (['<<-', '->', '->>'].includes(statement.operator ?? '')) return undefined
+      if (['<-', '='].includes(statement.operator ?? '')) {
+        if (writerSeen) return undefined
+        const [target, right] = statement.args
+        if (
+          !isSymbol(target) ||
+          statement.args.length !== 2 ||
+          statement.names.some(Boolean) ||
+          statement.staticBuiltinShadowed ||
+          assigned.has(target.name) ||
+          ['::', ':::', 'jsonlite', 'function', '{', '<-', '='].includes(target.name)
+        )
+          return undefined
+        if (!opaquePayloadIsSafe(right)) return undefined
+        assigned.add(target.name)
+        paths.delete(target.name)
+        const localPath = jsonHelperPath(right, paths, shadowed)
+        if (localPath !== undefined) paths.set(target.name, localPath)
+        continue
+      }
+      if (isWriter(statement)) {
+        if (
+          new Set(statement.names.filter(Boolean)).size !== statement.names.filter(Boolean).length
+        )
+          return undefined
+        const pathIndex = rOptionArgumentIndex(statement.names, 'path')
+        const resolvedPathIndex = pathIndex >= 0 ? pathIndex : 1
+        const payloadIndex = rOptionArgumentIndex(statement.names, 'x')
+        const resolvedPayloadIndex = payloadIndex >= 0 ? payloadIndex : 0
+        if (
+          resolvedPathIndex >= statement.args.length ||
+          resolvedPayloadIndex >= statement.args.length ||
+          resolvedPathIndex === resolvedPayloadIndex ||
+          (pathIndex < 0 && Boolean(statement.names[resolvedPathIndex])) ||
+          (payloadIndex < 0 && Boolean(statement.names[resolvedPayloadIndex]))
+        )
+          return undefined
+        const path = jsonHelperPath(statement.args[resolvedPathIndex], paths, shadowed)
+        if (!path || isExternalNotebookPath(path)) return undefined
+        if (!opaquePayloadIsSafe(statement.args[resolvedPayloadIndex]!)) return undefined
+        for (let index = 0; index < statement.args.length; index += 1) {
+          if (index === resolvedPathIndex || index === resolvedPayloadIndex) continue
+          if (!statement.names[index] || !staticOption(statement.args[index]!)) return undefined
+        }
+        effects.push({ kind: 'write', path })
+        writerSeen = true
+        continue
+      }
+      if (
+        writerSeen &&
+        nestedOperator === 'invisible' &&
+        statement.args.every(
+          (argument) =>
+            ['character', 'atomic', 'null'].includes(argument.kind) || isSymbol(argument)
+        )
+      )
+        continue
+      return undefined
+    }
+    return effects.length > 0 ? { effects } : undefined
+  }
+  const jsonHelperSafeSyntax = new WeakSet<object>()
+  const markJsonHelperSafeSyntax = (value: RExpr): void => {
+    if (!isCall(value)) return
+    for (const argument of value.args) {
+      if (isCall(argument)) {
+        if (['$', '[', '[[', '~'].includes(argument.operator ?? ''))
+          jsonHelperSafeSyntax.add(argument)
+        markJsonHelperSafeSyntax(argument)
+      }
+    }
+  }
+  const jsonHelperAuthorityPreservingCall = (value: RExpr): boolean => {
+    if (!isCall(value) || value.staticBuiltinShadowed) return false
+    const name = rCalledName(value)
+    if (['$', '[', '[[', '~'].includes(value.operator ?? '')) {
+      return jsonHelperSafeSyntax.has(value) && !shadowedQuotationNames.has(value.operator ?? '')
+    }
+    const qualified = rQualifiedCall(value)
+    if (qualified) {
+      if (
+        !isCall(value.callee) ||
+        value.callee.operator !== '::' ||
+        value.callee.staticBuiltinShadowed ||
+        shadowedQuotationNames.has('::')
+      )
+        return false
+      const allowed =
+        qualified.package === 'stats'
+          ? new Set(['lm', 'coef', 'cor'])
+          : qualified.package === 'base'
+            ? new Set([
+                'all',
+                'all.equal',
+                'as.numeric',
+                'class',
+                'dim',
+                'environment',
+                'file.exists',
+                'file.size',
+                'format',
+                'is.finite',
+                'isTRUE',
+                'length',
+                'names',
+                'nrow',
+                'paste',
+                'range',
+                'sprintf',
+                'stopifnot',
+                'summary',
+                'typeof',
+                'unname'
+              ])
+            : undefined
+      return allowed?.has(qualified.name) ?? false
+    }
+    return (
+      ['as.numeric', 'data', 'environment', 'isTRUE', 'nrow', 'unname'].includes(name ?? '') &&
+      !shadowedQuotationNames.has(name ?? '')
+    )
+  }
   // These candidates retain one known read, not a complete helper effect. They are
   // established in statement order and never exported into the wrapper context.
   const firstReadParameters = (
@@ -9297,6 +9696,7 @@ const analyzeRFileAccessTree = (
         pathExpression?: Extract<RExpr, { kind: 'call' }>
         compressed?: true
         readLines?: true
+        writes?: string[]
       }
     | undefined => {
     if (!isCall(value) || value.operator !== 'function' || value.staticBuiltinShadowed)
@@ -9438,12 +9838,59 @@ const analyzeRFileAccessTree = (
       )
     )
       return undefined
+    // A stable reader helper may also contain a fixed writer after the read.
+    // Retain only destinations that are statically local and literal; this is
+    // an output candidate, not a complete proof that every branch executes.
+    const writes = new Set<string>()
+    const hasEagerNamespaceRebind = (node: RExpr): boolean => {
+      if (!isCall(node)) return false
+      // A nested function captures its own namespace bindings and is not eager.
+      if (node.operator === 'function') return false
+      const target = node.args[node.operator === '->' || node.operator === '->>' ? 1 : 0]
+      if (
+        ['<-', '=', '<<-', '->', '->>'].includes(node.operator ?? '') &&
+        isSymbol(target) &&
+        ['::', ':::'].includes(target.name)
+      )
+        return true
+      return node.args.some(hasEagerNamespaceRebind)
+    }
+    const namespaceRebound = body.args.slice(1).some(hasEagerNamespaceRebind)
+    const collectStaticWrites = (node: RExpr): void => {
+      if (!isCall(node)) return
+      // Only eager statements in the helper body can establish this narrow
+      // candidate. Do not descend through control-flow, arbitrary calls, or
+      // promises: those expressions may skip or defer the writer entirely.
+      if (node.operator === 'function') return
+      if (node.operator === '{') {
+        node.args.forEach(collectStaticWrites)
+        return
+      }
+      const name = rCalledName(node)
+      const qualified = rQualifiedCall(node)
+      const effect = name ? rFileCallEffect(name, qualified?.package) : undefined
+      if (effect?.kind !== 'write') return
+      // A qualified writer is reliable only when its namespace operator is the
+      // builtin form. Bare calls and a locally rebound `::` remain opaque.
+      if (
+        namespaceRebound ||
+        !qualified ||
+        !['::', ':::'].includes(isCall(node.callee) ? (node.callee.operator ?? '') : '') ||
+        node.staticBuiltinShadowed ||
+        (isCall(node.callee) && node.callee.staticBuiltinShadowed)
+      )
+        return
+      const destination = rStaticString(rFileCallArgument(node, effect), new Map(), new Map())
+      if (destination && !isExternalNotebookPath(destination)) writes.add(destination)
+    }
+    if (body.args[1]) collectStaticWrites(body.args[1])
     return {
       names: formals.names,
       file,
       ...(pathExpression ? { pathExpression } : {}),
       ...(compressed ? { compressed: true as const } : {}),
-      ...(readLines ? { readLines: true as const } : {})
+      ...(readLines ? { readLines: true as const } : {}),
+      ...(writes.size ? { writes: [...writes] } : {})
     }
   }
   const firstReadCandidates = new Map<string, NonNullable<ReturnType<typeof firstReadParameters>>>()
@@ -9597,6 +10044,18 @@ const analyzeRFileAccessTree = (
   const inMemoryInputs = new Set<string>()
   type FileConnection = { path: string; mode: string | undefined }
   const fileConnections = new Map<string, FileConnection>()
+  type RsamtoolsBamBinding = { bam: string; index?: string }
+  // Rsamtools keeps the index beside a BamFile object.  Retain this binding
+  // only for a stable, same-cell qualified constructor; aliases and dynamic
+  // objects remain unresolved rather than being treated as file paths.
+  const rsamtoolsBamFiles = new Map<string, RsamtoolsBamBinding>()
+  type RsamtoolsBamListBinding = RsamtoolsBamBinding[]
+  const rsamtoolsBamLists = new Map<string, RsamtoolsBamListBinding>()
+  type RsamtoolsIndexedBinding = { file: string; index?: string; gzindex?: string }
+  const rsamtoolsIndexedFiles = new Map<string, RsamtoolsIndexedBinding>()
+  // Keep same-cell static PileupFiles references so applyPileups can replay
+  // their BAM inputs without publishing reference objects across cells.
+  const rsamtoolsPileupFiles = new Map<string, string[]>()
   const writeScopes = new Map<string, NotebookSourceFileWriteScope>()
   let unresolvedReads = false
   let unresolvedWrites = false
@@ -9707,8 +10166,110 @@ const analyzeRFileAccessTree = (
   const fileConnectionPath = (expr: RExpr | null | undefined): string | undefined =>
     fileConnection(expr)?.path
 
+  const rsamtoolsQualifiedName = (expr: RExpr | null | undefined): string | undefined => {
+    if (!isCall(expr) || expr.staticBuiltinShadowed) return undefined
+    const qualified = rQualifiedCall(expr)
+    return qualified?.package === 'Rsamtools' ? qualified.name : undefined
+  }
+  const rsamtoolsStaticPath = (expr: RExpr | null | undefined): string | undefined =>
+    fileConnectionPath(expr) ?? rStaticString(expr, bindings, collections)
+  const rsamtoolsBamBinding = (
+    expr: Extract<RExpr, { kind: 'call' }>
+  ): RsamtoolsBamBinding | undefined => {
+    if (rsamtoolsQualifiedName(expr) !== 'BamFile') return undefined
+    const file = rsamtoolsStaticPath(connectionArgument(expr, ['file', 'index', 'mode'], 'file'))
+    if (!file) return undefined
+    const indexArgument = connectionArgument(expr, ['file', 'index', 'mode'], 'index')
+    const index = rsamtoolsStaticPath(indexArgument)
+    return { bam: file, ...(index ? { index } : {}) }
+  }
+  const rsamtoolsBamListBinding = (
+    expr: Extract<RExpr, { kind: 'call' }>
+  ): RsamtoolsBamListBinding | undefined => {
+    if (rsamtoolsQualifiedName(expr) !== 'BamFileList') return undefined
+    const files = rStaticStringCollection(expr.args[0], bindings, collections)?.values
+    if (!files?.length) return undefined
+    const indexArgument = expr.args.find((_argument, index) => expr.names[index] === 'index')
+    const indexes = indexArgument
+      ? rStaticStringCollection(indexArgument, bindings, collections)?.values
+      : undefined
+    if (indexArgument && indexes === undefined) return undefined
+    if (indexes && indexes.length !== 0 && indexes.length !== files.length) return undefined
+    return files.map((bam, index) => ({
+      bam,
+      ...(indexes?.length ? { index: indexes[index] } : {})
+    }))
+  }
+  const rsamtoolsIndexedBinding = (
+    expr: Extract<RExpr, { kind: 'call' }>
+  ): RsamtoolsIndexedBinding | undefined => {
+    const name = rsamtoolsQualifiedName(expr)
+    if (!name || !['BcfFile', 'FaFile', 'TabixFile'].includes(name)) return undefined
+    const parameters = ['file', 'index', 'gzindex', 'mode', 'yieldSize']
+    const file = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'file'))
+    if (!file) return undefined
+    const index = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'index'))
+    const gzindex =
+      name === 'FaFile'
+        ? rsamtoolsStaticPath(connectionArgument(expr, parameters, 'gzindex'))
+        : undefined
+    return {
+      file,
+      ...(index ? { index } : {}),
+      ...(gzindex ? { gzindex } : {})
+    }
+  }
+  const rsamtoolsBamArgument = (expr: Extract<RExpr, { kind: 'call' }>): RExpr | undefined =>
+    connectionArgument(expr, ['file', 'param'], 'file') ?? expr.args[0]
+  const rsamtoolsPileupFileArgument = (expr: Extract<RExpr, { kind: 'call' }>): RExpr | undefined =>
+    connectionArgument(expr, ['files', 'param'], 'files') ?? expr.args[0]
+  const rsamtoolsPileupBinding = (expr: Extract<RExpr, { kind: 'call' }>): string[] | undefined => {
+    if (rsamtoolsQualifiedName(expr) !== 'PileupFiles') return undefined
+    return rStaticStringCollection(
+      rsamtoolsPileupFileArgument(expr),
+      bindings,
+      collections
+    )?.values.slice()
+  }
+
   const visit = (expr: RExpr, valueUsed = true): void => {
     if (!isCall(expr)) return
+    const preservesJsonHelperAuthority = jsonHelperAuthorityPreservingCall(expr)
+    if (preservesJsonHelperAuthority) markJsonHelperSafeSyntax(expr)
+    const jsonHelper = isSymbol(expr.callee) ? stableJsonHelpers.get(expr.callee.name) : undefined
+    const jsonSummary =
+      jsonHelper && expr.args.length === 0 && conditionalDepth === 0
+        ? (stableJsonHelperSummary(jsonHelper) ??
+          stableJsonWriterSummary(jsonHelper) ??
+          stableJsonHelperSummary(jsonHelper, true))
+        : undefined
+    if (
+      !['{', '<-', '='].includes(expr.operator ?? '') ||
+      expr.staticBuiltinShadowed ||
+      shadowedQuotationNames.has(expr.operator ?? '')
+    ) {
+      // Only a pure path constructor can intervene without consuming authority.
+      if (
+        jsonSummary === undefined &&
+        !preservesJsonHelperAuthority &&
+        jsonHelperPath(expr, stableJsonPaths, shadowedQuotationNames) === undefined
+      ) {
+        stableJsonHelpers.clear()
+        stableJsonPaths.clear()
+      }
+    }
+    if (jsonSummary) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      for (const effect of jsonSummary.effects) {
+        if (effect.kind === 'read') {
+          if (!definitelyWritten.has(effect.path)) reads.add(effect.path)
+        } else {
+          // A helper candidate never proves that the output was replaced.
+          writes.add(effect.path)
+        }
+      }
+    }
     // Builtin for evaluates its sequence before rebinding the loop target. A
     // replacement can leave that promise unforced, so it must consume candidates.
     const builtinFor =
@@ -9733,6 +10294,12 @@ const analyzeRFileAccessTree = (
         unresolvedReads = true
         if (path && !definitelyWritten.has(path)) reads.add(path)
         if (path && isExternalNotebookPath(path)) unsupportedExternalState = true
+        if (path) {
+          for (const write of candidate.writes ?? []) {
+            if (!definitelyWritten.has(write)) writes.add(write)
+            if (isExternalNotebookPath(write)) unsupportedExternalState = true
+          }
+        }
       }
       firstReadNamespaceUncertain = true
       if (alias && conditionalDepth === 0) {
@@ -9913,6 +10480,10 @@ const analyzeRFileAccessTree = (
         collections.delete(variable.name)
         namedCollectionKeys.delete(variable.name)
         fileConnections.delete(variable.name)
+        rsamtoolsBamFiles.delete(variable.name)
+        rsamtoolsBamLists.delete(variable.name)
+        rsamtoolsIndexedFiles.delete(variable.name)
+        rsamtoolsPileupFiles.delete(variable.name)
         inMemoryInputs.delete(variable.name)
         if (activeWrappers.has(variable.name) || shadowedWrapperDependencies.has(variable.name))
           invalidateWrapper(variable.name)
@@ -9926,6 +10497,10 @@ const analyzeRFileAccessTree = (
         // Elements replace any connection or in-memory input previously held by
         // the target; the sequence above still observes its original value.
         fileConnections.delete(variable.name)
+        rsamtoolsBamFiles.delete(variable.name)
+        rsamtoolsBamLists.delete(variable.name)
+        rsamtoolsIndexedFiles.delete(variable.name)
+        rsamtoolsPileupFiles.delete(variable.name)
         inMemoryInputs.delete(variable.name)
         invalidateWrapper(variable.name)
         shadowedWrapperDependencies.add(variable.name)
@@ -9942,6 +10517,10 @@ const analyzeRFileAccessTree = (
           staticLoopIterations += 1
           // The previous body can recreate handle metadata on this target.
           fileConnections.delete(variable.name)
+          rsamtoolsBamFiles.delete(variable.name)
+          rsamtoolsBamLists.delete(variable.name)
+          rsamtoolsIndexedFiles.delete(variable.name)
+          rsamtoolsPileupFiles.delete(variable.name)
           inMemoryInputs.delete(variable.name)
           bindings.set(variable.name, value)
           collections.delete(variable.name)
@@ -9956,12 +10535,20 @@ const analyzeRFileAccessTree = (
           namedCollectionKeys.delete(variable.name)
           inMemoryInputs.delete(variable.name)
           fileConnections.delete(variable.name)
+          rsamtoolsBamFiles.delete(variable.name)
+          rsamtoolsBamLists.delete(variable.name)
+          rsamtoolsIndexedFiles.delete(variable.name)
+          rsamtoolsPileupFiles.delete(variable.name)
         }
       } else if (body) {
         if (isSymbol(variable)) {
           bindings.delete(variable.name)
           collections.delete(variable.name)
           namedCollectionKeys.delete(variable.name)
+          rsamtoolsBamFiles.delete(variable.name)
+          rsamtoolsBamLists.delete(variable.name)
+          rsamtoolsIndexedFiles.delete(variable.name)
+          rsamtoolsPileupFiles.delete(variable.name)
         }
         conditionalDepth += 1
         visit(body)
@@ -9988,6 +10575,21 @@ const analyzeRFileAccessTree = (
       const rightward = expr.operator === '->' || expr.operator === '->>'
       const left = rightward ? expr.args[1] : expr.args[0]
       const right = rightward ? expr.args[0] : expr.args[1]
+      const jsonPath =
+        conditionalDepth === 0 &&
+        ['<-', '='].includes(expr.operator ?? '') &&
+        !expr.staticBuiltinShadowed
+          ? jsonHelperPath(right, stableJsonPaths, shadowedQuotationNames)
+          : undefined
+      if (isSymbol(left)) {
+        if (stableJsonPaths.has(left.name)) stableJsonHelpers.clear()
+        stableJsonPaths.delete(left.name)
+        if (!(isCall(right) && isSymbol(right.callee) && right.callee.name === left.name))
+          stableJsonHelpers.delete(left.name)
+      } else {
+        stableJsonHelpers.clear()
+        stableJsonPaths.clear()
+      }
       let replacedWrapperName: string | undefined
       if (isCall(left)) {
         wrapperAliases.clear()
@@ -10004,10 +10606,18 @@ const analyzeRFileAccessTree = (
           namedCollectionKeys.delete(receiver.name)
           inMemoryInputs.delete(receiver.name)
           fileConnections.delete(receiver.name)
+          rsamtoolsBamFiles.delete(receiver.name)
+          rsamtoolsBamLists.delete(receiver.name)
+          rsamtoolsIndexedFiles.delete(receiver.name)
+          rsamtoolsPileupFiles.delete(receiver.name)
         }
       }
       if (isSymbol(left)) {
         replacedWrapperName = left.name
+        rsamtoolsBamFiles.delete(left.name)
+        rsamtoolsBamLists.delete(left.name)
+        rsamtoolsIndexedFiles.delete(left.name)
+        rsamtoolsPileupFiles.delete(left.name)
         if (firstReadPrimitives.has(left.name)) {
           wrapperAliases.clear()
           firstReadCandidates.clear()
@@ -10043,6 +10653,12 @@ const analyzeRFileAccessTree = (
             (namedValues ? { values: namedValues } : undefined))
           : undefined
         const connectionPath = fileConnection(right)
+        const rsamtoolsBinding =
+          conditionalDepth === 0 && ['<-', '='].includes(expr.operator ?? '')
+            ? isCall(right)
+              ? rsamtoolsBamBinding(right)
+              : undefined
+            : undefined
         const namedKeys =
           (reliableCollectionExpression(right) ? rLiteralNamedKeys(right) : undefined) ??
           (isSymbol(right) ? namedCollectionKeys.get(right.name) : undefined) ??
@@ -10080,6 +10696,28 @@ const analyzeRFileAccessTree = (
           inMemoryInputs.delete(left.name)
           fileConnections.delete(left.name)
         }
+        if (rsamtoolsBinding) rsamtoolsBamFiles.set(left.name, rsamtoolsBinding)
+        const rsamtoolsBamListBindingValue =
+          conditionalDepth === 0 && ['<-', '='].includes(expr.operator ?? '') && isCall(right)
+            ? rsamtoolsBamListBinding(right)
+            : undefined
+        if (rsamtoolsBamListBindingValue) {
+          rsamtoolsBamLists.set(left.name, rsamtoolsBamListBindingValue)
+        }
+        const rsamtoolsPileupBindingValue =
+          conditionalDepth === 0 && ['<-', '='].includes(expr.operator ?? '') && isCall(right)
+            ? rsamtoolsPileupBinding(right)
+            : undefined
+        if (rsamtoolsPileupBindingValue?.length) {
+          rsamtoolsPileupFiles.set(left.name, rsamtoolsPileupBindingValue)
+        }
+        const rsamtoolsIndexedBindingValue =
+          conditionalDepth === 0 && ['<-', '='].includes(expr.operator ?? '') && isCall(right)
+            ? rsamtoolsIndexedBinding(right)
+            : undefined
+        if (rsamtoolsIndexedBindingValue) {
+          rsamtoolsIndexedFiles.set(left.name, rsamtoolsIndexedBindingValue)
+        }
       }
       const aliasedWrapper =
         topLevelExpressions.has(expr) &&
@@ -10093,6 +10731,18 @@ const analyzeRFileAccessTree = (
           : undefined
       const aliasParameters = aliasedWrapper && aliasableWrapperParameters.get(aliasedWrapper)
       if (!(isCall(right) && right.operator === 'function')) visit(right)
+      if (isSymbol(left)) {
+        if (jsonPath !== undefined) stableJsonPaths.set(left.name, jsonPath)
+        if (
+          topLevelExpressions.has(expr) &&
+          conditionalDepth === 0 &&
+          ['<-', '='].includes(expr.operator ?? '') &&
+          !expr.staticBuiltinShadowed &&
+          isCall(right) &&
+          right.operator === 'function'
+        )
+          stableJsonHelpers.set(left.name, right)
+      }
       // RHS calls observe the old function before the assignment replaces it.
       if (replacedWrapperName) {
         invalidateWrapper(replacedWrapperName)
@@ -10133,6 +10783,18 @@ const analyzeRFileAccessTree = (
     const name = rCalledName(expr)
     const qualified = rQualifiedCall(expr)
     const serialization = rSerializationCallName(expr)
+    if (name === 'rm' && !qualified) {
+      // A removed BAM handle cannot authorize a later scanBam call.  Only
+      // delete direct symbol bindings; dynamic list evaluation remains opaque.
+      for (const argument of expr.args) {
+        if (isSymbol(argument)) {
+          rsamtoolsBamFiles.delete(argument.name)
+          rsamtoolsBamLists.delete(argument.name)
+          rsamtoolsIndexedFiles.delete(argument.name)
+          rsamtoolsPileupFiles.delete(argument.name)
+        }
+      }
+    }
     if (serialization) {
       const parameters =
         serialization === 'serialize'
@@ -10321,6 +10983,305 @@ const analyzeRFileAccessTree = (
             ? undefined
             : R_FILE_CALL_EFFECTS.get(name)))
       : undefined
+    const rsamtoolsName =
+      qualified?.package === 'Rsamtools' &&
+      [
+        'BamFile',
+        'BamFileList',
+        'BcfFile',
+        'FaFile',
+        'TabixFile',
+        'scanBam',
+        'scanBamHeader',
+        'countBam',
+        'idxstatsBam',
+        'quickBamFlagSummary',
+        'pileup',
+        'readPileup',
+        'testPairedEndBam',
+        'scanBcf',
+        'scanBcfHeader',
+        'scanFa',
+        'scanFaIndex',
+        'countFa',
+        'scanTabix',
+        'countTabix',
+        'headerTabix',
+        'seqnamesTabix',
+        'PileupFiles',
+        'applyPileups',
+        'indexBam',
+        'asBam',
+        'filterBam',
+        'sortBam',
+        'mergeBam'
+      ].includes(qualified.name)
+        ? qualified.name
+        : undefined
+    if (rsamtoolsName) {
+      const addRead = (path: string | undefined): void => {
+        if (path && !definitelyWritten.has(path)) reads.add(path)
+      }
+      if (['BcfFile', 'FaFile', 'TabixFile'].includes(rsamtoolsName)) {
+        // Constructors create references; only a later reader/open operation
+        // proves that the referenced scientific file was actually accessed.
+        if (!rsamtoolsIndexedBinding(expr)) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        }
+      } else if (rsamtoolsName === 'BamFileList') {
+        // BamFileList creates references; only a later list-aware reader can
+        // prove that its BAM and explicit index paths were consumed.
+        if (!rsamtoolsBamListBinding(expr)) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        }
+      } else if (rsamtoolsName === 'PileupFiles') {
+        // PileupFiles creates references; only a later applyPileups/open call
+        // proves that the referenced BAMs were actually read.
+        const files = rsamtoolsPileupBinding(expr)
+        if (!files?.length) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        }
+      } else if (rsamtoolsName === 'applyPileups') {
+        const filesArgument = rsamtoolsPileupFileArgument(expr)
+        const files =
+          (isSymbol(filesArgument) ? rsamtoolsPileupFiles.get(filesArgument.name) : undefined) ??
+          (isCall(filesArgument) ? rsamtoolsPileupBinding(filesArgument) : undefined)
+        if (!files?.length) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        } else {
+          for (const file of files) addRead(file)
+          // The callback and ApplyPileupsParam can still alter runtime access.
+          unresolvedReads = true
+        }
+      } else if (rsamtoolsName === 'readPileup') {
+        const fileArgument = connectionArgument(expr, ['file'], 'file') ?? expr.args[0]
+        const filePath = rsamtoolsStaticPath(fileArgument)
+        if (!filePath) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        } else {
+          addRead(filePath)
+          unresolvedReads = true
+        }
+      } else if (rsamtoolsName === 'BamFile') {
+        const binding = rsamtoolsBamBinding(expr)
+        if (!binding) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        } else {
+          addRead(binding.bam)
+          addRead(binding.index)
+          // BamFile may consult package metadata and companion files at runtime.
+          unresolvedReads = true
+        }
+      } else if (
+        [
+          'scanBam',
+          'scanBamHeader',
+          'countBam',
+          'idxstatsBam',
+          'quickBamFlagSummary',
+          'pileup',
+          'testPairedEndBam',
+          'scanBcf',
+          'scanBcfHeader',
+          'scanFa',
+          'scanFaIndex',
+          'countFa',
+          'scanTabix',
+          'countTabix',
+          'headerTabix',
+          'seqnamesTabix'
+        ].includes(rsamtoolsName)
+      ) {
+        const argument = rsamtoolsBamArgument(expr)
+        const bamBinding =
+          (isSymbol(argument) ? rsamtoolsBamFiles.get(argument.name) : undefined) ??
+          (isCall(argument) ? rsamtoolsBamBinding(argument) : undefined)
+        const indexedBinding = [
+          'scanBcf',
+          'scanBcfHeader',
+          'scanFa',
+          'scanFaIndex',
+          'countFa',
+          'scanTabix',
+          'countTabix',
+          'headerTabix',
+          'seqnamesTabix'
+        ].includes(rsamtoolsName)
+          ? ((isSymbol(argument) ? rsamtoolsIndexedFiles.get(argument.name) : undefined) ??
+            (isCall(argument) ? rsamtoolsIndexedBinding(argument) : undefined))
+          : undefined
+        // Character methods accept direct file paths and, for the indexed
+        // readers, an optional explicit index. Keep only statically provable
+        // paths; default/remote index lookup stays partial and is not synthesized.
+        const directBam = bamBinding?.bam ?? indexedBinding?.file ?? rsamtoolsStaticPath(argument)
+        const bamListBinding =
+          (isSymbol(argument) ? rsamtoolsBamLists.get(argument.name) : undefined) ??
+          (isCall(argument) ? rsamtoolsBamListBinding(argument) : undefined)
+        const indexPosition = rOptionArgumentIndex(expr.names, 'index')
+        const indexIsExplicit =
+          ['scanBam', 'countBam', 'idxstatsBam', 'pileup', 'testPairedEndBam', 'scanBcf'].includes(
+            rsamtoolsName
+          ) &&
+          indexPosition >= 0 &&
+          // The BamFile method owns its index; Rsamtools documents the
+          // explicit index argument for the character method only.
+          !((bamBinding || indexedBinding) && (isSymbol(argument) || isCall(argument)))
+        const directIndex = indexIsExplicit
+          ? rsamtoolsStaticPath(expr.args[indexPosition])
+          : undefined
+        if (bamListBinding?.length && ['countBam'].includes(rsamtoolsName)) {
+          for (const file of bamListBinding) {
+            addRead(file.bam)
+            addRead(file.index)
+          }
+          unresolvedReads = true
+        } else if (!directBam) {
+          unresolvedReads = true
+          unsupportedExternalState = true
+        } else {
+          addRead(directBam)
+          // An explicit index (including NULL) overrides the index carried by
+          // a BamFile binding. A dynamic override remains unknown rather than
+          // reusing a stale companion path from the object.
+          addRead(indexIsExplicit ? directIndex : (bamBinding?.index ?? indexedBinding?.index))
+          if (!indexIsExplicit && indexedBinding?.gzindex) addRead(indexedBinding.gzindex)
+          unresolvedReads = true
+        }
+      } else if (rsamtoolsName === 'asBam') {
+        // asBam documents destination as a prefix and writes the corresponding
+        // .bam file.  Keep the source and deterministic primary output, but do
+        // not synthesize the optional companion index created by
+        // indexDestination=TRUE; that side effect remains partial.
+        const parameters = ['file', 'destination', 'overwrite', 'indexDestination']
+        const fileArgument = connectionArgument(expr, parameters, 'file')
+        const binding =
+          (isSymbol(fileArgument) ? rsamtoolsBamFiles.get(fileArgument.name) : undefined) ??
+          (isCall(fileArgument) ? rsamtoolsBamBinding(fileArgument) : undefined)
+        const filePath = binding?.bam ?? rsamtoolsStaticPath(fileArgument)
+        const destination = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'destination'))
+        if (!filePath || !destination) {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else {
+          addRead(filePath)
+          const output = `${destination}.bam`
+          writes.add(output)
+          if (conditionalDepth === 0) definitelyWritten.add(output)
+          unresolvedReads = true
+          unresolvedWrites = true
+        }
+      } else if (rsamtoolsName === 'filterBam') {
+        // filterBam's destination is the concrete output path.  Keep the
+        // source and explicit index when they are statically recoverable, but
+        // leave callback filtering and optional index creation partial.
+        const parameters = ['file', 'destination', 'index']
+        const fileArgument = connectionArgument(expr, parameters, 'file')
+        const binding =
+          (isSymbol(fileArgument) ? rsamtoolsBamFiles.get(fileArgument.name) : undefined) ??
+          (isCall(fileArgument) ? rsamtoolsBamBinding(fileArgument) : undefined)
+        const filePath = binding?.bam ?? rsamtoolsStaticPath(fileArgument)
+        const indexPosition = rOptionArgumentIndex(expr.names, 'index')
+        const indexIsExplicit = indexPosition >= 0
+        const indexArgument = connectionArgument(expr, parameters, 'index')
+        const indexPath = indexIsExplicit
+          ? indexArgument && !isNull(indexArgument)
+            ? rsamtoolsStaticPath(indexArgument)
+            : undefined
+          : binding?.index
+        const destination = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'destination'))
+        if (!filePath || !destination) {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else {
+          addRead(filePath)
+          addRead(indexPath)
+          writes.add(destination)
+          if (conditionalDepth === 0) definitelyWritten.add(destination)
+          unresolvedReads = true
+          unresolvedWrites = true
+        }
+      } else if (rsamtoolsName === 'sortBam') {
+        // sortBam documents destination as a prefix and creates the
+        // corresponding .bam file. Keep that deterministic suffix, while
+        // leaving sorting, indexing, and runtime side effects partial.
+        const parameters = ['file', 'destination', 'byQname', 'maxMemory', 'byTag', 'nThreads']
+        const fileArgument = connectionArgument(expr, parameters, 'file')
+        const binding =
+          (isSymbol(fileArgument) ? rsamtoolsBamFiles.get(fileArgument.name) : undefined) ??
+          (isCall(fileArgument) ? rsamtoolsBamBinding(fileArgument) : undefined)
+        const filePath = binding?.bam ?? rsamtoolsStaticPath(fileArgument)
+        const destination = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'destination'))
+        if (!filePath || !destination) {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else {
+          addRead(filePath)
+          const output = `${destination}.bam`
+          writes.add(output)
+          if (conditionalDepth === 0) definitelyWritten.add(output)
+          unresolvedReads = true
+          unresolvedWrites = true
+        }
+      } else if (rsamtoolsName === 'mergeBam') {
+        // mergeBam accepts a character vector or static BamFileList of input
+        // BAMs and writes the supplied destination. Dynamic vectors remain
+        // opaque.
+        const parameters = ['files', 'destination']
+        const filesArgument = connectionArgument(expr, parameters, 'files')
+        const files = rStaticStringCollection(filesArgument, bindings, collections)?.values
+        const bamListBinding =
+          (isSymbol(filesArgument) ? rsamtoolsBamLists.get(filesArgument.name) : undefined) ??
+          (isCall(filesArgument) ? rsamtoolsBamListBinding(filesArgument) : undefined)
+        const destination = rsamtoolsStaticPath(connectionArgument(expr, parameters, 'destination'))
+        if ((!files?.length && !bamListBinding?.length) || !destination) {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else {
+          if (bamListBinding?.length) {
+            for (const file of bamListBinding) {
+              addRead(file.bam)
+              addRead(file.index)
+            }
+          } else {
+            for (const file of files ?? []) addRead(file)
+          }
+          writes.add(destination)
+          if (conditionalDepth === 0) definitelyWritten.add(destination)
+          unresolvedReads = true
+          unresolvedWrites = true
+        }
+      } else {
+        const parameters = ['file', 'index', 'overwrite', 'verbose']
+        const fileArgument = connectionArgument(expr, parameters, 'file')
+        const filePath = rsamtoolsStaticPath(fileArgument)
+        const indexArgument = connectionArgument(expr, parameters, 'index')
+        const indexPath = rsamtoolsStaticPath(indexArgument)
+        if (!filePath || (indexArgument && indexPath === undefined && !isNull(indexArgument))) {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        } else {
+          addRead(filePath)
+          const output = indexPath || `${filePath}.bai`
+          writes.add(output)
+          if (conditionalDepth === 0) definitelyWritten.add(output)
+          // The index format and overwrite behavior are runtime-dependent.
+          unresolvedWrites = true
+        }
+      }
+      expr.args.forEach((argument) => visit(argument))
+      return
+    }
     if (
       call &&
       name &&
