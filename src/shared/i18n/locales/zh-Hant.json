@@ -166,6 +166,7 @@
     "Search PDC studies and versions by name or identifier.": "依名稱或識別碼搜尋 PDC 研究及版本。",
     "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",
     "Map PDC aliquots to samples, cases and external references.": "將 PDC 等分試樣對應至樣本、病例和外部參照。",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "取得 PDC 病例的人口統計資訊、診斷和樣本參照。",
     "Discover PDC study files and quantitative reports without downloading files.": "探索 PDC 研究檔案和定量報告，不下載檔案。",
     "Query linkage disequilibrium between two variants in a specified population.": "查詢指定族群中兩個變異之間的連鎖不平衡。",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "尋找指定族群中具有高連鎖不平衡的鄰近變異。",

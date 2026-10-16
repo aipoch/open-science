@@ -166,6 +166,7 @@
     "Search PDC studies and versions by name or identifier.": "名前または識別子で PDC の研究とバージョンを検索。",
     "Retrieve PDC study metadata and available versions.": "PDC 研究のメタデータと利用可能なバージョンを取得。",
     "Map PDC aliquots to samples, cases and external references.": "PDC の分注試料をサンプル、症例、外部参照に対応付け。",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "PDCの症例の人口統計情報、診断、サンプル参照を取得します。",
     "Discover PDC study files and quantitative reports without downloading files.": "ファイルをダウンロードせずに PDC の研究ファイルと定量レポートを検索。",
     "Query linkage disequilibrium between two variants in a specified population.": "指定した集団における2つのバリアント間の連鎖不平衡を照会します。",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "指定した集団で強い連鎖不平衡を示す近傍バリアントを検索します。",

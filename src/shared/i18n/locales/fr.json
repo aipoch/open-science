@@ -168,6 +168,7 @@
     "Search PDC studies and versions by name or identifier.": "Rechercher des études et versions PDC par nom ou identifiant.",
     "Retrieve PDC study metadata and available versions.": "Récupérer les métadonnées et les versions disponibles des études PDC.",
     "Map PDC aliquots to samples, cases and external references.": "Associer les aliquotes PDC aux échantillons, aux cas et aux références externes.",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "Récupérer les données démographiques, les diagnostics et les références des échantillons des cas PDC.",
     "Discover PDC study files and quantitative reports without downloading files.": "Rechercher des fichiers d’études et des rapports quantitatifs PDC sans télécharger de fichiers.",
     "Query linkage disequilibrium between two variants in a specified population.": "Consulter le déséquilibre de liaison entre deux variants dans une population donnée.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "Rechercher des variants proches présentant un fort déséquilibre de liaison dans une population donnée.",

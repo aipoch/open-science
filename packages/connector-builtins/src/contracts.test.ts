@@ -204,6 +204,7 @@ describe('registry + catalog', () => {
       'pdc_search_studies',
       'pdc_get_study',
       'pdc_list_biospecimens',
+      'pdc_list_clinical',
       'pdc_list_files'
     ])
     const meta = CONNECTOR_CATALOG.find((item) => item.id === 'pdc')!
@@ -215,6 +216,7 @@ describe('registry + catalog', () => {
       'pdc_search_studies',
       'pdc_get_study',
       'pdc_list_biospecimens',
+      'pdc_list_clinical',
       'pdc_list_files',
       'latest version',
       'local',
