@@ -37,17 +37,13 @@ it('runs the three-platform fixed collection daily without an unchanged-SHA bypa
   expect(text).not.toMatch(/skip-unchanged|continue-on-error|contents: write|perf:runtime/)
   expect(workflow.permissions).toEqual({ contents: 'read' })
   const run = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Run lifecycle checks')!
-  expect(run.run).toContain('node scripts/ci/run-process-lifecycle.mjs')
+  expect(run.run).toContain('node scripts/ci/process-lifecycle/run.mjs')
   expect(run.if).toContain("github.event_name != 'workflow_dispatch'")
 })
 
 it('validates only lifecycle PR changes at the exact head and retains manual platform selection', () => {
   expect(workflow.on.pull_request).toEqual({
-    paths: [
-      '.github/workflows/process-lifecycle.yml',
-      'scripts/ci/*process-lifecycle*',
-      'scripts/ci/lifecycle-process-table.py'
-    ]
+    paths: ['.github/workflows/process-lifecycle.yml', 'scripts/ci/process-lifecycle/**']
   })
   const checkout = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Checkout')!
   expect(checkout.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}')

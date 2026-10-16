@@ -6,7 +6,7 @@ import { mkdir, readdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { resolve, join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { LifecycleObserver, isSameProcess, harnessDigest } from './process-lifecycle-observer.mjs'
+import { LifecycleObserver, isSameProcess, harnessDigest } from './observer.mjs'
 
 export const CORE_SCENARIOS = [
   'verification-normal',
@@ -170,7 +170,7 @@ async function main() {
         '--test',
         '--test-reporter=tap',
         `--test-reporter-destination=${tapPath}`,
-        'scripts/ci/process-lifecycle-observer.node-test.mjs'
+        'scripts/ci/process-lifecycle/observer.node-test.mjs'
       ],
       'detector',
       environment,
@@ -200,7 +200,7 @@ async function main() {
             npmCli,
             'test',
             '--',
-            'scripts/ci/process-lifecycle.integration.test.ts',
+            'scripts/ci/process-lifecycle/lifecycle.integration.test.ts',
             '--reporter=default',
             '--reporter=json',
             `--outputFile=${resultPath}`

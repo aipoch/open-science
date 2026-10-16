@@ -1211,7 +1211,7 @@
       "src/main/update/deb-gate-recovery.test.ts",
       "src/main/update/installation-protection.test.ts",
       "src/main/update/installation-artifact.test.ts",
-      "scripts/ci/process-lifecycle.integration.test.ts"
+      "scripts/ci/process-lifecycle/lifecycle.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
