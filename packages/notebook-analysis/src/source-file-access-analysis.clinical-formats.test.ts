@@ -659,6 +659,28 @@ adata.obs.to_csv(OUT / "cell_summary.csv")`
     ).toMatchObject({ reads: ['inputs/regions.bed.gz', 'inputs/regions.csi'], writes: [] })
   })
 
+  it('captures explicit pysam FastaFile indexes without synthesizing defaults', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import pysam\nhandle = pysam.FastaFile("inputs/reference.fa.gz", filepath_index="inputs/reference.fa.gz.fai", filepath_index_compressed="inputs/reference.fa.gz.gzi")'
+      )
+    ).toMatchObject({
+      reads: ['inputs/reference.fa.gz', 'inputs/reference.fa.gz.fai', 'inputs/reference.fa.gz.gzi'],
+      writes: [],
+      readState: 'partial'
+    })
+  })
+
+  it.each(['FastxFile', 'FastqFile'])('captures a direct pysam %s stream input', async (reader) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        `import pysam\nhandle = pysam.${reader}("inputs/reads.fastq.gz")`
+      )
+    ).toMatchObject({ reads: ['inputs/reads.fastq.gz'], writes: [], readState: 'partial' })
+  })
+
   it('retains a known pyreadstat input when the filename is dynamic', async () => {
     expect(
       await analyzeNotebookSourceFileAccess(
