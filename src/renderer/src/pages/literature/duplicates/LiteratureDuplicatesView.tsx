@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type {
   LiteratureCatalogReceipt,
@@ -49,6 +50,8 @@ export const LiteratureDuplicatesView = ({
   onReview,
   onMerged
 }: Props): React.JSX.Element | null => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [offset, setOffset] = useState(0)
   const [refresh, setRefresh] = useState(0)
@@ -91,7 +94,7 @@ export const LiteratureDuplicatesView = ({
       if (!active) setReviewing(undefined)
       const force = refreshed.current !== refresh
       refreshed.current = refresh
-      void window.api.literature
+      void hostApi.literature
         .search({
           scope: 'duplicates',
           offset: active ? offset : 0,
@@ -128,7 +131,7 @@ export const LiteratureDuplicatesView = ({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [active, offset, refresh, revision, onCount, requestKey])
+  }, [active, offset, refresh, revision, onCount, requestKey, hostApi.literature])
 
   useEffect(() => {
     reviewRequest.current += 1
@@ -145,7 +148,7 @@ export const LiteratureDuplicatesView = ({
     setError(false)
     try {
       const items = await Promise.all(
-        group.itemIds.slice(0, 20).map((id) => window.api.literature.get(id))
+        group.itemIds.slice(0, 20).map((id) => hostApi.literature.get(id))
       )
       if (request !== reviewRequest.current) return
       if (

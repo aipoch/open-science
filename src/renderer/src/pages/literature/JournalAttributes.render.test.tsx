@@ -1,15 +1,19 @@
+import { testJournalStore } from '../../../../../test/renderer/literature'
 // @vitest-environment jsdom
 import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from './JournalAttributes'
-import {
-  setJournalSourceYear,
-  useJournalDatasets,
-  useJournalSourceYears
-} from './journals/journal-attribute-store'
+import { useJournalDatasets, useJournalSourceYears } from './journals/journal-attribute-store'
 
 afterEach(() => {
   cleanup()
@@ -391,7 +395,7 @@ it('clears old values immediately and ignores in-flight values after changing so
   Object.defineProperty(window, 'api', { configurable: true, value: { literature: { journals } } })
   render(<JournalAttributes item={item} detail />)
   await waitFor(() => expect(pending).toHaveLength(1))
-  act(() => setJournalSourceYear('Fictional source', 2031))
+  act(() => testJournalStore.setJournalSourceYear('Fictional source', 2031))
   await act(async () =>
     pending[0].finish({
       matches: [
@@ -432,7 +436,7 @@ it('clears old values immediately and ignores in-flight values after changing so
     })
   )
   expect(await screen.findByText('12')).toBeTruthy()
-  act(() => setJournalSourceYear('Fictional source', null))
+  act(() => testJournalStore.setJournalSourceYear('Fictional source', null))
   expect(screen.queryByText('12')).toBeNull()
   await waitFor(() => expect(pending).toHaveLength(3))
   expect(pending[2].request.sourceYears).toEqual({ 'Fictional source': null })
@@ -444,11 +448,11 @@ it('synchronizes source choices from other windows without restoring removed ove
     return <output data-testid="source-years">{JSON.stringify(useJournalSourceYears())}</output>
   }
   render(<Choices />)
-  act(() => setJournalSourceYear('First source', 2031))
+  act(() => testJournalStore.setJournalSourceYear('First source', 2031))
   expect(screen.getByTestId('source-years').textContent).toContain('2031')
   // Another window restores the default before its storage event arrives here.
   localStorage.setItem('open-science:journal-source-years', '{}')
-  act(() => setJournalSourceYear('Second source', null))
+  act(() => testJournalStore.setJournalSourceYear('Second source', null))
   expect(JSON.parse(localStorage.getItem('open-science:journal-source-years')!)).toEqual({
     'Second source': null
   })

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-// App-owned assets only. Recompute so a dev worker/font update cannot reuse an older PDF.
+// Package-owned assets only. Recompute so a dev worker/font update cannot reuse an older PDF.
 export async function pdfTranslationCacheRevision(
   resources: string,
   appVersion: string

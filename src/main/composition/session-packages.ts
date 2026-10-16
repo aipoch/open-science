@@ -1,3 +1,4 @@
+import { createLiteraturePackageSource } from '../literature/package-source'
 import { desktopInteraction } from '../desktop-interaction'
 import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
 import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
@@ -72,6 +73,9 @@ export async function composeSessionPackages({
   } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      literatureSource: createLiteraturePackageSource(() =>
+        getProjectDbClient(resolveConfigRoot())
+      ),
       getDefaultPermissionProfile: async () =>
         getDefaultPermissionProfile(await settingsRepository.getSettings()),
       onSessionPublished: async (publication) => {

@@ -4,7 +4,7 @@ import {
   literatureItemInputSchema,
   type LiteratureItemInput
 } from '@aipoch/literature-library/item'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 

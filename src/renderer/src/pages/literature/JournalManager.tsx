@@ -1,3 +1,4 @@
+import { useLiteratureHost } from './renderer-host'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,11 +42,7 @@ import { JournalImportMapping } from './journals/JournalImportMapping'
 import { JournalImportReview } from './journals/JournalImportReview'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { LiteratureImportDialogFrame } from './imports/LiteratureImportDialogFrame'
-import {
-  refreshJournalAttributes,
-  setJournalSourceYear,
-  useJournalSourceYears
-} from './journals/journal-attribute-store'
+import { useJournalSourceYears, useJournalStore } from './journals/journal-attribute-store'
 import { downloadJournalTemplate } from './journals/journal-template'
 import { useJournalDatasetActions } from './journals/useJournalDatasetActions'
 import { useJournalEditing } from './journals/useJournalEditing'
@@ -65,6 +62,10 @@ export const JournalManager = memo(function JournalManager({
   embedded?: boolean
   active?: boolean
 }): React.JSX.Element {
+  const { setJournalSourceYear, refreshJournalAttributes } = useJournalStore()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const uploadDescriptionId = useId()
   const visibilityId = useId()
@@ -106,7 +107,7 @@ export const JournalManager = memo(function JournalManager({
 
   const mounted = useRef(true)
   const fileInput = useRef<HTMLInputElement>(null)
-  const api = window.api.literature.journals
+  const api = hostApi.literature.journals
   const kinds = {
     text: t('Text'),
     number: t('Number'),
@@ -341,7 +342,7 @@ export const JournalManager = memo(function JournalManager({
       setCatalogTick((tick) => tick + 1)
       setEntriesTick((tick) => tick + 1)
     }
-    const unsubscribe = window.api.literature.onChanged?.((event) => {
+    const unsubscribe = hostApi.literature.onChanged?.((event) => {
       if (!event?.itemIds?.length && !event?.collectionIds?.length && !event?.candidateIds?.length)
         changed()
     })
@@ -822,7 +823,7 @@ export const JournalManager = memo(function JournalManager({
               <Button
                 variant="outline"
                 disabled={busy || Boolean(entryDraft)}
-                onClick={() => void downloadJournalTemplate(fail)}
+                onClick={() => void downloadJournalTemplate(hostApi, fail)}
               >
                 <Download className="size-4" aria-hidden="true" />
                 {t('Download template')}
@@ -937,7 +938,7 @@ export const JournalManager = memo(function JournalManager({
                 <Button
                   variant="outline"
                   disabled={busy || Boolean(entryDraft)}
-                  onClick={() => void downloadJournalTemplate(fail)}
+                  onClick={() => void downloadJournalTemplate(hostApi, fail)}
                 >
                   <Download className="size-4" aria-hidden="true" />
                   {t('Download template')}

@@ -1,4 +1,4 @@
-import { JournalAttributes } from '@/pages/literature/JournalAttributes'
+import { JournalAttributes } from '@/pages/literature/public/components'
 import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
 import { createBookmarkPreviewItem } from '@/pages/workspace/annotations/annotation-reveal'
 import {

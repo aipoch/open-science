@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import {
   createLiteratureMetadata,
   type LiteratureMetadata,
@@ -22,6 +23,8 @@ export function useLiteratureMetadata(
     | 'save'
     | 'complete'
   > {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const messages = {
     reload: t('The reference was saved, but could not be reloaded.'),
@@ -44,12 +47,12 @@ export function useLiteratureMetadata(
   const owner = useMemo(
     () =>
       createLiteratureMetadata(controller, {
-        transact: (command) => window.api.literature.transact(command),
-        completeMetadata: (request) => window.api.literature.completeMetadata(request),
+        transact: (command) => hostApi.literature.transact(command),
+        completeMetadata: (request) => hostApi.literature.completeMetadata(request),
         onItemChange: callbacks.notify,
         messages: callbacks.messages
       }),
-    [controller, callbacks]
+    [controller, callbacks.notify, callbacks.messages, hostApi.literature]
   )
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
   useLayoutEffect(() => owner.start(), [owner])

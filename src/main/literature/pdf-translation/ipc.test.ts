@@ -31,8 +31,8 @@ describe('PDF translation IPC', () => {
         sweepStaleProfiles: async () => {}
       }
     })
-    const confirm = vi
-      .spyOn(PdfTranslationPdfCache.prototype, 'confirm')
+    const record = vi
+      .spyOn(PdfTranslationPdfCache.prototype, 'recordLayout')
       .mockResolvedValue(undefined)
     registerPdfTranslationIpc(owner)
     const invoke = (channel: string, value: unknown): Promise<unknown> => {
@@ -125,7 +125,6 @@ describe('PDF translation IPC', () => {
     const remove = vi.spyOn(owner, 'deleteEdition').mockResolvedValue(undefined)
     await expect(invoke('pdf-translation:delete-edition', selection)).resolves.toBeUndefined()
     expect(remove).toHaveBeenCalledWith(selection, caller.lease)
-    const record = vi.spyOn(owner, 'recordLayout').mockResolvedValue(undefined)
     const layout = {
       source: workspaceSource,
       checkpointKey: '00000000-0000-4000-8000-000000000000',
@@ -134,13 +133,9 @@ describe('PDF translation IPC', () => {
     }
     await expect(invoke('pdf-translation:record-layout', layout)).resolves.toBeUndefined()
     expect(record).toHaveBeenCalledWith(layout, caller.lease)
-    expect(confirm).toHaveBeenCalledWith(layout, caller.lease)
-    expect(record.mock.invocationCallOrder[0]).toBeLessThan(confirm.mock.invocationCallOrder[0])
-    confirm.mockClear()
     record.mockRejectedValueOnce(new Error('Source is unavailable'))
     await expect(invoke('pdf-translation:record-layout', layout)).rejects.toThrow('unavailable')
-    expect(confirm).not.toHaveBeenCalled()
-    confirm.mockRestore()
+    record.mockRestore()
     registry.dispose()
   })
 })

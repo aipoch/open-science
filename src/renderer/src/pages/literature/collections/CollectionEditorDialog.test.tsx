@@ -1,7 +1,14 @@
 import { formatSmartRule, parseSmartRule } from './smart-rule-fields'
 // @vitest-environment jsdom
 import { LITERATURE_COLLECTION_REVISION_CONFLICT } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../../test/renderer/literature'
 import { createRef } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { CollectionEditorDialog, type CollectionEditorDialogHandle } from './CollectionEditorDialog'

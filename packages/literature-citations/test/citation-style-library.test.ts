@@ -246,3 +246,41 @@ it.each([
   })
   await expect(readdir(stylesDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
 })
+
+it('owns list/import/preview/delete and refreshes every formatter sharing a library', async () => {
+  const { library } = await createLibrary()
+  const formatter = new LiteratureCitationFormatter(library)
+  const another = new LiteratureCitationFormatter(library)
+  await Promise.all([formatter.formatStyleExample('apa'), another.formatStyleExample('apa')])
+  const imported = await formatter.citationStyles({ kind: 'import', content: independentStyle() })
+  const styleId = imported.changedStyleId!
+  expect(imported.styles.some((style) => style.id === styleId)).toBe(true)
+  expect(await formatter.citationStyles({ kind: 'preview', styleId })).toMatchObject({
+    preview: { styleId, reference: 'Genome Editing in Human Cells' }
+  })
+  expect((await another.formatStyleExample(styleId)).reference).toBe(
+    'Genome Editing in Human Cells'
+  )
+  const deleted = await formatter.citationStyles({ kind: 'delete', styleId })
+  expect(deleted.changedStyleId).toBe(styleId)
+  expect(deleted.styles.some((style) => style.id === styleId)).toBe(false)
+  await expect(another.formatStyleExample(styleId)).rejects.toThrow()
+  await expect(
+    formatter.citationStyles({ kind: 'import', content: '<invalid/>' })
+  ).rejects.toThrow()
+  expect(
+    (await formatter.citationStyles({ kind: 'list' })).styles.some((style) => style.id === 'apa')
+  ).toBe(true)
+  await expect(formatter.formatStyleExample('apa')).resolves.toHaveProperty('reference')
+})
+
+it('refreshes a warm formatter when reimporting bytes already published by another library instance', async () => {
+  const { library, stylesDirectory } = await createLibrary()
+  const formatter = new LiteratureCitationFormatter(library)
+  await formatter.formatStyleExample('apa')
+  const content = independentStyle('Published elsewhere')
+  const id = await new LiteratureCitationStyleLibrary(stylesDirectory).import(content)
+  await expect(formatter.formatStyleExample(id)).rejects.toThrow()
+  expect((await formatter.citationStyles({ kind: 'import', content })).changedStyleId).toBe(id)
+  expect((await formatter.formatStyleExample(id)).reference).toBe('Genome Editing in Human Cells')
+})

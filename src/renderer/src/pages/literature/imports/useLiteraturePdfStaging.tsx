@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +16,8 @@ export function useLiteraturePdfStaging(): {
   clear: () => void
   notice: React.JSX.Element | null
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [pdfUpload, setPdfUpload] = useState<{
     progress: UploadTransferProgress
@@ -34,7 +37,7 @@ export function useLiteraturePdfStaging(): {
     const controller = new AbortController()
     pdfUploadRef.current = { controller, transferId }
     if (!uploadPageMountedRef.current) controller.abort()
-    return stageComposerFile(file, window.api.uploads, {
+    return stageComposerFile(file, hostApi.uploads, {
       transferId,
       name: file.name,
       signal: controller.signal,
@@ -54,7 +57,7 @@ export function useLiteraturePdfStaging(): {
   const cancelPdfUpload = (): void => {
     const operationId = pdfNativeImportRef.current
     if (operationId) {
-      void window.api.literature.cancelPdfImport({ operationId }).catch(() => undefined)
+      void hostApi.literature.cancelPdfImport({ operationId }).catch(() => undefined)
       setPdfUpload((current) => (current ? { ...current, phase: 'cancelling' } : current))
     }
     const controller = pdfUploadRef.current?.controller
@@ -62,32 +65,30 @@ export function useLiteraturePdfStaging(): {
       return
     controller.abort()
     setPdfUpload({ ...pdfUpload, phase: 'cancelling' })
-    void window.api.uploads
+    void hostApi.uploads
       .abortTransfer({ transferId: pdfUpload.progress.transferId })
       .catch(() => undefined)
   }
   useEffect(() => {
-    const subscribe = window.api.pdfAnnotations?.onImportProgress
+    const subscribe = hostApi.pdfAnnotations?.onImportProgress
     if (!subscribe) return
     return subscribe((progress) => {
       if (progress.operationId === pdfNativeImportRef.current) setPdfNativeProgress(progress)
     })
-  }, [])
+  }, [hostApi.pdfAnnotations?.onImportProgress])
   useEffect(() => {
     uploadPageMountedRef.current = true
     return () => {
       uploadPageMountedRef.current = false
       const operationId = pdfNativeImportRef.current
       if (operationId)
-        void window.api.literature.cancelPdfImport({ operationId }).catch(() => undefined)
+        void hostApi.literature.cancelPdfImport({ operationId }).catch(() => undefined)
       const upload = pdfUploadRef.current
       if (!upload) return
       upload.controller.abort()
-      void window.api.uploads
-        .abortTransfer({ transferId: upload.transferId })
-        .catch(() => undefined)
+      void hostApi.uploads.abortTransfer({ transferId: upload.transferId }).catch(() => undefined)
     }
-  }, [])
+  }, [hostApi.literature, hostApi.uploads])
   const pdfUploadNotice =
     pdfUpload || pdfNativeProgress ? (
       <div className="shrink-0 space-y-2 border-b border-border px-5 py-3">

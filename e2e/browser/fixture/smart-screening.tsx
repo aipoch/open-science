@@ -1,6 +1,8 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { initI18n, prepareI18nLocale } from '@/i18n'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { LiteratureLibraryPage } from '@/pages/literature/public/page'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
@@ -261,31 +263,37 @@ if (parameters.has('autoplay')) {
 void Promise.resolve(prepareI18nLocale(chinese ? 'zh-Hans' : 'en')).then(() => {
   initI18n(chinese ? 'zh-Hans' : 'en')
   createRoot(document.getElementById('root')!).render(
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <div className="min-h-0 flex-1">
-        <LiteratureLibraryPage />
-      </div>
-      <div className="relative z-50 flex shrink-0 flex-wrap items-center gap-4 border-t bg-background p-3 text-xs text-muted-foreground">
-        <span>
-          {chinese
-            ? `模拟筛选演示 · 每秒 ${demoRate} 篇 · 不调用模型`
-            : `Synthetic screening fixture · ${demoRate} papers/s · no model calls`}
-        </span>
-        <button onClick={() => advance()}>{chinese ? '完成下一篇' : 'Complete next paper'}</button>
-        <button onClick={() => advance(papers.length)}>
-          {chinese ? '完成剩余论文' : 'Complete remaining papers'}
-        </button>
-        <button
-          onClick={() => {
-            if (timer) {
-              clearInterval(timer)
-              timer = undefined
-            } else timer = setInterval(demoTick, 1000 / demoRate)
-          }}
-        >
-          {chinese ? '播放 / 暂停自动演示' : 'Toggle automatic demo'}
-        </button>
-      </div>
-    </div>
+    <LiteratureRendererProvider host={literatureRendererHost}>
+      {
+        <div className="flex h-screen flex-col bg-background text-foreground">
+          <div className="min-h-0 flex-1">
+            <LiteratureLibraryPage />
+          </div>
+          <div className="relative z-50 flex shrink-0 flex-wrap items-center gap-4 border-t bg-background p-3 text-xs text-muted-foreground">
+            <span>
+              {chinese
+                ? `模拟筛选演示 · 每秒 ${demoRate} 篇 · 不调用模型`
+                : `Synthetic screening fixture · ${demoRate} papers/s · no model calls`}
+            </span>
+            <button onClick={() => advance()}>
+              {chinese ? '完成下一篇' : 'Complete next paper'}
+            </button>
+            <button onClick={() => advance(papers.length)}>
+              {chinese ? '完成剩余论文' : 'Complete remaining papers'}
+            </button>
+            <button
+              onClick={() => {
+                if (timer) {
+                  clearInterval(timer)
+                  timer = undefined
+                } else timer = setInterval(demoTick, 1000 / demoRate)
+              }}
+            >
+              {chinese ? '播放 / 暂停自动演示' : 'Toggle automatic demo'}
+            </button>
+          </div>
+        </div>
+      }
+    </LiteratureRendererProvider>
   )
 })

@@ -1,7 +1,13 @@
 import { ReplayReviewRecord } from './ReplayReviewRecord'
 import type { ReviewWithChecks } from '../../../../../shared/reviewer'
 // @vitest-environment jsdom
-import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+  waitFor
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PersistedToolActivity } from '../../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../../shared/notebook'

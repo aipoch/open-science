@@ -18,10 +18,64 @@ layout, output generation, checkpoints, usage recording and generated-PDF cachin
 Import only these capability entries. Internal file paths are not API. Each entry has generated
 TypeScript declarations. Required interface changes migrate in-repository consumers together.
 
+## Standalone backends
+
+Supply only the backend you use: `captureTarget` + `runner` for Agent translation,
+`captureApiTarget` + `apiRunner` for direct API translation, or `localRunner` for a local model.
+No Agent runner, profile cleanup or application settings are required for API-only or local-only use.
+`begin` rejects an unavailable route with `PdfTranslationError.code === 'unsupported-model'`
+before admitting work. An omitted `targetId` still selects Agent translation for compatibility.
+Shutdown drains work and closes the configured runners; usage recovery/flush applies to every route.
+
+```ts
+import { PdfTranslationOwner } from '@aipoch/pdf-translation'
+
+const owner = new PdfTranslationOwner({
+  usage, // Transactional usage sink owned by this consumer.
+  captureApiTarget: async () => ({ providerId: 'my-provider', model: 'my-model' }),
+  apiRunner: {
+    supportsTarget: () => true,
+    run: ({ prompt, systemPrompt, signal }) => translate({ prompt, systemPrompt, signal })
+  }
+})
+try {
+  const operation = await owner.begin(
+    {
+      targetId: 'api',
+      resourceRequestKey: 'document:1',
+      fingerprint: sourceFingerprint,
+      language: '中文',
+      glossary: [],
+      sources: ['Cell growth is measured.']
+    },
+    callerLease
+  )
+  const translated = await owner.translate(
+    {
+      operationId: operation.operationId,
+      sourceIndex: 0,
+      source: 'Cell growth is measured.'
+    },
+    callerLease
+  )
+} finally {
+  await owner.shutdown()
+}
+```
+
+`translate` above is the consumer's inference implementation; it returns `{ text, stopReason, usage? }`.
+The consumer supplies a stable source fingerprint and a caller lease whose signal is aborted on
+cancellation. The packed consumer test is a complete executable example using deterministic
+inference, and exercises both single-backend configurations through the public package name.
+
 ## Ownership and integration
 
 Create one translation owner per service. It owns job state, cancellation, checkpoint progression
-and recovery; the writer owns its workers. Shut down the owners before releasing their host
+and recovery; the writer owns its workers. `PdfTranslationPdfCache.recordLayout` persists the report
+through its owner before confirming cache publication; callers must not assemble that ordering.
+`confirm` remains a low-level operation for consumers that already own durable report persistence.
+Use `pdfTranslationWorkerPath()` when a platform needs to remap a packaged worker path (for example,
+Electron ASAR unpacking); do not construct package-internal filenames. Shut down the owners before releasing their host
 capabilities. A caller lease invalidated by reload or disconnect stops that caller's operation.
 Package tests exercise success, failure, cancellation, retries and cleanup.
 
@@ -39,8 +93,20 @@ in the host. Do not place domain decisions in these adapters.
 The storage implementation owns translation checkpoint and usage rules. Callers supply opaque
 source IDs, source authorization and a transactional repository. Its transaction includes source
 validation/registration and checkpoint writes; compare-and-swap conflicts and cancellation roll
-back all mutations. The package contains no SQL, application table names or source taxonomy.
-The host adapter translates existing database payloads and source contracts without a migration.
+back all mutations. Consumers may implement the storage-neutral `TranslationDatabase` port or use
+`createSqliteTranslationTransaction` from `/storage`. The SQLite adapter owns the version-1
+`PdfTranslation` / `PdfTranslationBlock` representation, JSON projections, revision sentinel and
+incremental CAS writes. The host supplies a transaction-bound executor for parameterized statements
+and source authority; it does not inspect checkpoint JSON or coordinate revisions. The executor
+returns `sizeBytes` as bigint and `updatedAt` as Date or epoch milliseconds. Statement Date arguments
+must be bound using that same timestamp representation. SQLite foreign keys must be enabled.
+
+`PDF_TRANSLATION_SQLITE_SCHEMA_VERSION` identifies that relational contract. The package's
+`test/sqlite-storage.test.ts` is an executable consumer with standalone DDL and Node SQLite; no
+Prisma or host schema is loaded. The host continues to own schema provisioning/migrations and may
+supply an identity-only `TranslationPayloadCodec` to preserve historical source fields. It must
+leave every other field unchanged so projections remain valid. Existing payloads retain checkpoint
+version 1; this extraction introduces no data migration.
 Structural results come through the declared `@aipoch/pdf-structure/result` dependency.
 
 ## Build and verification

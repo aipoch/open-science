@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SmartCollectionDraftPreview } from './SmartCollectionDraftPreview'
 import { formatSmartRule } from './smart-rule-fields'

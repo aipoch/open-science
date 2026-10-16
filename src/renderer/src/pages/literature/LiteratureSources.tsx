@@ -1,3 +1,4 @@
+import { useLiteratureHost } from './renderer-host'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -58,6 +59,8 @@ const SourceRecord = ({ source }: { source: LiteratureSourceRecordView }): React
 }
 
 const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -69,7 +72,7 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    void window.api.literature.sources(itemId).then(
+    void hostApi.literature.sources(itemId).then(
       (records) => {
         if (!cancelled) {
           setSources(records)
@@ -83,7 +86,7 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
     return () => {
       cancelled = true
     }
-  }, [itemId, open, attempt])
+  }, [itemId, open, attempt, hostApi.literature])
 
   return (
     <details

@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { webcrypto } from 'node:crypto'
 import { waitFor } from '@testing-library/react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSessionStore, type ChatSession } from '@/stores/session-store'

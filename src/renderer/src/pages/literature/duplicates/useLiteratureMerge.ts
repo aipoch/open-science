@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type {
   LiteratureCollectionView,
   LiteratureItemView
@@ -44,6 +45,8 @@ export function useLiteratureMerge({
   selectedItems: LiteratureItemView[]
   mergeSelectedItems: () => Promise<void>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeError, setMergeError] = useState<string>()
@@ -63,7 +66,7 @@ export function useLiteratureMerge({
     setMergeError(undefined)
     setError(undefined)
     try {
-      await window.api.literature.transact({
+      await hostApi.literature.transact({
         kind: 'merge-items',
         survivorId: survivor.id,
         duplicateIds: duplicates.map((item) => item.id),

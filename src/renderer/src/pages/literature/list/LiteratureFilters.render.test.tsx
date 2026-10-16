@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor
+} from '../../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureFilters } from './LiteratureFilters'
 import { useLiteratureYearFilter } from './useLiteratureYearFilter'

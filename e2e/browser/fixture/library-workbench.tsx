@@ -1,3 +1,5 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceLiteratureToolCard } from '@/pages/workspace/WorkspaceLiteratureToolCard'
@@ -352,5 +354,9 @@ export function Fixture(): React.JSX.Element {
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
-  createRoot(document.getElementById('root')!).render(<Fixture />)
+  createRoot(document.getElementById('root')!).render(
+    <LiteratureRendererProvider host={literatureRendererHost}>
+      {<Fixture />}
+    </LiteratureRendererProvider>
+  )
 })

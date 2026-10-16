@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { PdfTranslationOwner } from '@aipoch/pdf-translation'
 import { PdfTranslationWriter } from '@aipoch/pdf-translation/writer'
 import { pdfTranslationWorkerPath } from '@aipoch/pdf-translation/resources'
 import { stat } from 'node:fs/promises'
@@ -54,3 +56,88 @@ await assert.rejects(import('@aipoch/pdf-translation/dist/writer.js'), {
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 })
 console.log('Packed translation worker, WASM/font output, text roundtrip and cancellation passed.')
+
+// Exercise the root workflow with one backend at a time, without an Agent or host code.
+for (const mode of ['api', 'local']) {
+  const lifetime = new AbortController()
+  const lease = {
+    leaseId: mode,
+    generation: 1,
+    signal: lifetime.signal,
+    isCurrent: () => !lifetime.signal.aborted
+  }
+  const completions = []
+  let recovered = 0,
+    flushed = 0,
+    released = 0,
+    stopped = 0
+  const usage = {
+    start: async () => async (completion) => {
+      completions.push(completion)
+    },
+    recover: async () => {
+      recovered++
+    },
+    flush: async () => {
+      flushed++
+    }
+  }
+  const run = async ({ signal }) => {
+    signal.throwIfAborted()
+    return {
+      text: '测量细胞生长。',
+      stopReason: 'end_turn',
+      usage: { inputTokens: 5, outputTokens: 4, cacheTokens: 0 }
+    }
+  }
+  const owner = new PdfTranslationOwner({
+    usage,
+    ...(mode === 'api'
+      ? {
+          captureApiTarget: async () => ({ providerId: 'consumer', model: 'translator' }),
+          apiRunner: { supportsTarget: () => true, run }
+        }
+      : {
+          localRunner: {
+            acquireTarget: async () => ({ modelId: 'consumer', revision: '1' }),
+            run,
+            release: async () => {
+              released++
+            },
+            shutdown: async () => {
+              stopped++
+            }
+          }
+        })
+  })
+  try {
+    await owner.sweepStaleProfiles()
+    const source = 'Cell growth is measured.'
+    const input = {
+      resourceRequestKey: mode,
+      fingerprint: 'consumer',
+      language: '中文',
+      glossary: [],
+      sources: [source]
+    }
+    await assert.rejects(owner.begin(input, lease), { code: 'unsupported-model' })
+    const { operationId } = await owner.begin({ ...input, targetId: mode }, lease)
+    assert.equal(
+      await owner.translate({ operationId, sourceIndex: 0, source }, lease),
+      '测量细胞生长。'
+    )
+    lifetime.abort()
+    await assert.rejects(owner.translate({ operationId, sourceIndex: 0, source }, lease))
+  } finally {
+    await owner.shutdown()
+  }
+  assert.equal(recovered, 1)
+  assert.equal(flushed, 1)
+  assert.equal(completions.length, 1)
+  assert.equal(completions[0].status, 'completed')
+  assert.equal(released, mode === 'local' ? 1 : 0)
+  assert.equal(stopped, mode === 'local' ? 1 : 0)
+}
+console.log(
+  'Packed API-only and local-only translation workflows, leases, usage and shutdown passed.'
+)

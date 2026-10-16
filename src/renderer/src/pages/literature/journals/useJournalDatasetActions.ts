@@ -1,3 +1,4 @@
+import { useLiteratureHost, type LiteratureRendererApi } from '../renderer-host'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -6,7 +7,7 @@ import {
   type JournalResult
 } from '@aipoch/journal-catalog/contracts'
 
-import { refreshJournalAttributes } from './journal-attribute-store'
+import { useJournalStore } from './journal-attribute-store'
 import { exportJournalBundle } from '@aipoch/journal-catalog/files'
 import { useJournalEditing } from './useJournalEditing'
 
@@ -34,7 +35,7 @@ export function useJournalDatasetActions({
   setBusy: React.Dispatch<React.SetStateAction<boolean>>
   setError: React.Dispatch<React.SetStateAction<string>>
   catalogGeneration: React.RefObject<number>
-  api: typeof window.api.literature.journals
+  api: LiteratureRendererApi['literature']['journals']
   setDatasets: React.Dispatch<React.SetStateAction<JournalDataset[]>>
   setSelected: React.Dispatch<React.SetStateAction<string>>
   setFieldDraft: ReturnType<typeof useJournalEditing>['setFieldDraft']
@@ -53,6 +54,10 @@ export function useJournalDatasetActions({
   reviewRemoval: () => Promise<void>
   exportBundle: () => Promise<void>
 } {
+  const { refreshJournalAttributes } = useJournalStore()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [removal, setRemoval] = useState<JournalResult['removal']>()
@@ -118,7 +123,7 @@ export function useJournalDatasetActions({
         dataset,
         () => cancelledRef.current || !mounted.current
       )
-      await window.api.saveBlobFile({
+      await hostApi.saveBlobFile({
         suggestedName: `${journalDatasetLabel(dataset).replace(/[\\/:*?"<>|]/g, '-')}.journal.json`,
         mimeType: 'application/json',
         data: bytes.buffer

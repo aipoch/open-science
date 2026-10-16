@@ -3,7 +3,7 @@ import {
   desktopRuntimeWritable,
   useDesktopRuntimeRecoveryStore
 } from '../../../stores/desktop-runtime-recovery-store'
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'

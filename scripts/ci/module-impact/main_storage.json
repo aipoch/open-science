@@ -32,7 +32,8 @@
     "src/main/storage/electron-profile.test.ts",
     "src/main/storage/electron-profile.ts",
     "src/main/storage/initialize-location.ts",
-    "src/main/storage/migration-target-race.test.ts"
+    "src/main/storage/migration-target-race.test.ts",
+    "src/main/storage/prisma-content-references.ts"
   ],
   "interfacePaths": [
     "src/main/storage/wsl-npm-migration.ts",
@@ -58,7 +59,8 @@
     "src/main/storage/data-root-selection.ts",
     "src/main/storage/electron-profile.ts",
     "src/main/storage/initialize-location.ts",
-    "src/main/storage/location-evidence.ts"
+    "src/main/storage/location-evidence.ts",
+    "src/main/storage/prisma-content-references.ts"
   ],
   "consumerModules": [],
   "testFiles": {

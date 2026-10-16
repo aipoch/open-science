@@ -1,5 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Test fixtures retain inferred mock types. */
-import { LibraryTransaction, normalizeIdentifier, normalizedIdentifiers } from '../src/index.js'
+import {
+  LibraryImporter,
+  LibraryTransaction,
+  normalizeIdentifier,
+  normalizedIdentifiers,
+  type LibraryImportStore
+} from '../src/index.js'
 import { literatureItemInputSchema, type LiteratureCatalogCommand } from '../src/contracts.js'
 import { describe, expect, it, vi } from 'vitest'
 import { memoryLibrary as createMemoryLibrary } from './memory-store.js'
@@ -18,6 +24,48 @@ const candidate = (doi = '10.1234/paper') => ({
 })
 const imported = async (db: ReturnType<typeof memoryLibrary>) =>
   (await db.run((tx) => tx.importItems([paper()]))).itemIds[0]!
+describe('import-only storage', () => {
+  it('previews, deduplicates and supplements without project, screening or Inbox capabilities', async () => {
+    const db = memoryLibrary()
+    const store: LibraryImportStore = {
+      importIdentityRecords: db.store.importIdentityRecords,
+      collection: db.store.collection,
+      lastCollectionOrder: db.store.lastCollectionOrder,
+      linkCollection: db.store.linkCollection,
+      createItem: db.store.createItem,
+      restoreItem: db.store.restoreItem,
+      item: db.store.item,
+      replaceMetadata: db.store.replaceMetadata
+    }
+    const importer = new LibraryImporter(store)
+    const inputs = [paper(), paper()]
+    const preview = await importer.inspectImportItems(inputs, [])
+    expect(preview.map(({ status }) => status)).toEqual(['warning', 'existing'])
+    const receipt = await db.run(() => importer.importItems(inputs))
+    expect(receipt).toMatchObject({ createdCount: 1, reusedCount: 1 })
+    await db.run(() =>
+      importer.importItems([{ ...paper(), abstract: 'New abstract' }], undefined, 'fill-missing')
+    )
+    expect(db.state.items.get(receipt.itemIds[0])?.item.abstract).toBe('New abstract')
+    expect(db.state.projects).toEqual(new Set(['project']))
+    expect(db.state.candidates.size).toBe(0)
+    expect(db.state.invalidated).toEqual([])
+  })
+
+  it('retains the transaction rollback requirement for a partially written import', async () => {
+    const db = memoryLibrary()
+    const store = { ...db.store, createItem: vi.fn(db.store.createItem) }
+    store.createItem
+      .mockImplementationOnce(db.store.createItem)
+      .mockRejectedValueOnce(new Error('disk full'))
+    const importer = new LibraryImporter(store)
+    await expect(
+      db.run(() => importer.importItems([paper(), paper('10.1234/another')]))
+    ).rejects.toThrow('disk full')
+    expect(db.state.items.size).toBe(0)
+  })
+})
+
 describe('independent library transactions', () => {
   it('removes text joined to a DOI without requiring a host provider', () =>
     expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/example'))

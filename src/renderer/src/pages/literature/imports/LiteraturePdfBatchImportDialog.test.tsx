@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../../test/renderer/literature'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LiteraturePdfBatchImportDialog } from './LiteraturePdfBatchImportDialog'
@@ -54,8 +62,8 @@ const start = async (): Promise<void> => {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.extract.mockImplementation(async (_file, draft) => draft)
-  mocks.complete.mockImplementation(async (draft) => draft)
+  mocks.extract.mockImplementation(async (_api, _file, draft) => draft)
+  mocks.complete.mockImplementation(async (_api, draft) => draft)
   mocks.stage.mockResolvedValue(attachment)
   let id = 0
   transact.mockImplementation(async (command) => ({

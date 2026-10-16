@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import {
   BookOpenText,
   ChevronDown,
@@ -25,7 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useNavigationStore } from '@/stores/navigation-store'
+
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
@@ -111,6 +112,8 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
   ratingLabels: readonly string[]
   actions: React.RefObject<LiteratureRowActions>
 }): React.JSX.Element {
+  const { useNavigationStore } = useLiteratureHost()
+
   const { t } = useTranslation()
   const attachmentVersion = entry.attachments.find((attachment) => attachment.versions[0])
     ?.versions[0]

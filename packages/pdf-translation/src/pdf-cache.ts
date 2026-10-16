@@ -112,7 +112,7 @@ export class PdfTranslationPdfCache {
       writes?: TranslationWriteAdmission
       root: () => string
       revision: () => Promise<string>
-      owner: Pick<PdfTranslationOwner, 'readCheckpoint'>
+      owner: Pick<PdfTranslationOwner, 'readCheckpoint' | 'recordLayout'>
       writer: Pick<PdfTranslationWriter, 'generateDetailed' | 'cancel' | 'valid'>
     }
   ) {}
@@ -324,6 +324,15 @@ export class PdfTranslationPdfCache {
     for (const pending of this.pending.values())
       if (pending.requestId === id && pending.caller === caller) this.drop(pending.token)
     this.options.writer.cancel(id, caller)
+  }
+
+  /** Persist the report before publishing its derived PDF. Failed writes never populate the cache. */
+  async recordLayout(
+    input: PdfTranslationRecordLayoutRequest,
+    caller: ApplicationCallerLease
+  ): Promise<void> {
+    await this.options.owner.recordLayout(input, caller)
+    await this.confirm(input, caller)
   }
 
   async confirm(

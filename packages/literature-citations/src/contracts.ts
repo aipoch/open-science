@@ -193,6 +193,26 @@ const literatureCitationStyleViewSchema = z
   })
   .strict()
 
+const literatureCitationStylesRequestSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('list') }).strict(),
+  z
+    .object({ kind: z.literal('import'), content: z.string().min(1).max(LITERATURE_CSL_MAX_BYTES) })
+    .strict(),
+  z.object({ kind: z.literal('delete'), styleId: nonEmptyTextSchema }).strict(),
+  z.object({ kind: z.literal('preview'), styleId: nonEmptyTextSchema }).strict()
+])
+
+const literatureCitationStylesResultSchema = z
+  .object({
+    styles: z.array(literatureCitationStyleViewSchema),
+    changedStyleId: nonEmptyTextSchema.optional(),
+    preview: literatureCitationStylePreviewSchema
+      .extend({ styleId: nonEmptyTextSchema })
+      .strict()
+      .optional()
+  })
+  .strict()
+
 type LiteratureItemType = z.infer<typeof bibliographicRecordSchema>['itemType']
 
 type LiteratureIdentityScheme = (typeof LITERATURE_IDENTITY_SCHEMES)[number]
@@ -232,6 +252,9 @@ function normalizeLiteratureIdentifierPreferences<T extends LiteratureIdentifier
     isPrimary: identifier.isPrimary && preferred.get(identifier.scheme) === identifier
   }))
 }
+
+type LiteratureCitationStylesRequest = z.infer<typeof literatureCitationStylesRequestSchema>
+type LiteratureCitationStylesResult = z.infer<typeof literatureCitationStylesResultSchema>
 
 type LiteratureCitationStyle = string
 
@@ -279,6 +302,8 @@ export {
   literatureOrganizationCreatorSchema,
   literatureCreatorInputSchema,
   literatureIdentifierInputSchema,
+  literatureCitationStylesRequestSchema,
+  literatureCitationStylesResultSchema,
   literatureCitationStylePreviewSchema,
   literatureCitationStyleViewSchema,
   preferredLiteratureIdentifier,
@@ -291,6 +316,8 @@ export type {
   LiteratureIdentityScheme,
   LiteratureCreatorInput,
   LiteratureIdentifierInput,
+  LiteratureCitationStylesRequest,
+  LiteratureCitationStylesResult,
   LiteratureCitationStyle,
   LiteratureCitationLocale,
   LiteratureCitationStyleView,

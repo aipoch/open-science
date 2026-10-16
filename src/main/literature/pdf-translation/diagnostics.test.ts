@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -80,9 +80,7 @@ it('persists safe translation reasons and PDF fallback measurements in the diagn
       resourceRequestKey: 'diagnostic-pdf',
       signal: caller.lease.signal
     })
-    const output = await new PdfTranslationWriter(() =>
-      resolve('packages/pdf-translation/resources/worker.mjs')
-    ).generateDetailed(
+    const output = await new PdfTranslationWriter().generateDetailed(
       {
         id: 'diagnostic-pdf',
         data: bytes,
@@ -200,9 +198,7 @@ it('returns every native layout failure while keeping diagnostic logs sampled', 
         fragments: [{ pageNumber: index + 1, rect: { x: 0.1, y: 0.29, width: 0.65, height: 0.06 } }]
       }
     })
-    const result = await new PdfTranslationWriter(() =>
-      resolve('packages/pdf-translation/resources/worker.mjs')
-    ).generateDetailed(
+    const result = await new PdfTranslationWriter().generateDetailed(
       {
         id: 'all-layout-reports',
         data: await pdf.save(),

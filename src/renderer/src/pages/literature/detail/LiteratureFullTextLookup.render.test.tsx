@@ -4,7 +4,15 @@ import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { type LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '../../../../../../test/renderer/literature'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 

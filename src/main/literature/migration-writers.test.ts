@@ -303,3 +303,117 @@ it('routes stored metadata sources through the validated application boundary', 
 })
 
 await configureTestElectronHost(await import('electron'))
+
+it('uninstalls command admission, drains admitted work, and preserves stored styles for reinstall', async () => {
+  const library = new LiteratureCitationStyleLibrary(
+    join(await directory(), 'literature', 'citation-styles')
+  )
+  const styleId = await library.import(style)
+  const router = createApplicationCommandRouter()
+  let release!: () => void
+  let entered!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const owner = {
+    citationStyles: async (
+      _request: Parameters<
+        Parameters<typeof registerLiteratureApplicationCommands>[1]['citationStyles']
+      >[0]
+    ) => {
+      expect(_request.kind).toBe('list')
+      entered()
+      await waiting
+      return { styles: await library.list() }
+    }
+  } as Parameters<typeof registerLiteratureApplicationCommands>[1]
+  const first = registerLiteratureApplicationCommands(router.registrar, owner)
+  const pending = router.dispatcher.invoke(
+    literatureApplicationCommands.citationStyles,
+    invocation([{ kind: 'list' }])
+  )
+  await started
+  first.uninstall()
+  await expect(
+    router.dispatcher.invoke(
+      literatureApplicationCommands.citationStyles,
+      invocation([{ kind: 'list' }])
+    )
+  ).rejects.toThrow('Unknown application command')
+  let drained = false
+  const draining = first.whenIdle().then(() => {
+    drained = true
+  })
+  await Promise.resolve()
+  expect(drained).toBe(false)
+  release()
+  await pending
+  await draining
+  const second = registerLiteratureApplicationCommands(router.registrar, owner)
+  try {
+    first.uninstall()
+    const result = await router.dispatcher.invoke(
+      literatureApplicationCommands.citationStyles,
+      invocation([{ kind: 'list' }])
+    )
+    expect(result.styles.some(({ id }) => id === styleId)).toBe(true)
+  } finally {
+    second.uninstall()
+  }
+})
+
+it('cancels an admitted PDF import on uninstall and drains its rollback before teardown', async () => {
+  const router = createApplicationCommandRouter()
+  let started!: () => void
+  const entered = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let signal: AbortSignal | undefined
+  let rolledBack = false
+  const owner: Pick<Parameters<typeof registerLiteratureApplicationCommands>[1], 'importPdf'> = {
+    importPdf: async (_request, currentSignal) => {
+      signal = currentSignal
+      started()
+      try {
+        await new Promise<void>((_resolve, reject) =>
+          currentSignal!.addEventListener('abort', () => reject(currentSignal!.reason), {
+            once: true
+          })
+        )
+        throw new Error('Unexpected completed import')
+      } finally {
+        rolledBack = true
+      }
+    }
+  }
+  const installation = registerLiteratureApplicationCommands(
+    router.registrar,
+    owner as Parameters<typeof registerLiteratureApplicationCommands>[1]
+  )
+  const pending = router.dispatcher.invoke(
+    literatureApplicationCommands.importPdf,
+    invocation([
+      {
+        itemId: 'item',
+        attachment: {
+          id: 'upload',
+          sessionId: 'session',
+          name: 'paper.pdf',
+          originalName: 'paper.pdf',
+          path: '/managed/paper.pdf',
+          size: 10
+        }
+      }
+    ])
+  )
+  const rejection = expect(pending).rejects.toThrow('uninstalled')
+  await entered
+  installation.uninstall()
+  await installation.whenIdle()
+  await rejection
+  expect(signal?.aborted).toBe(true)
+  expect(rolledBack).toBe(true)
+})

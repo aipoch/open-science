@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useEffect, useRef, useState } from 'react'
 
 type Progress = { collectionId: string; done: number; total: number; stopping: boolean }
@@ -39,6 +40,8 @@ export function useSmartDecisionBatch(): {
     decision: 'include' | 'exclude' | 'automatic'
   ) => Promise<Result>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const [progress, setProgress] = useState<Progress>()
   const controller = useRef<AbortController | undefined>(undefined)
   const active = useRef<string | undefined>(undefined)
@@ -69,7 +72,7 @@ export function useSmartDecisionBatch(): {
         return await saveSmartDecisionChunks(
           ids,
           async (itemIds) => {
-            const receipt = await window.api.literature.transact({
+            const receipt = await hostApi.literature.transact({
               kind: 'smart-collection',
               collectionId,
               action: 'override',

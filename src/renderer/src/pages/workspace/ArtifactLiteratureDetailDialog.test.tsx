@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 

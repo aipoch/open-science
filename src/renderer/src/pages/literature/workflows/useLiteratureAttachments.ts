@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { useRef, useState } from 'react'
@@ -24,6 +25,8 @@ export function useLiteratureAttachments({
   isDraggingPdf: boolean
   pdfDropZoneProps: ReturnType<typeof useFileDropZone>['dropZoneProps']
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [isAddingPdf, setIsAddingPdf] = useState(false)
   const addingPdfRef = useRef(false)
@@ -38,11 +41,11 @@ export function useLiteratureAttachments({
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
     try {
       staged = await pdfStaging.stagePdf(file, transferId)
-      await window.api.uploads.claimLocalFile?.({ transferId })
+      await hostApi.uploads.claimLocalFile?.({ transferId })
       pdfStaging.finishPdfStaging()
       const operationId = crypto.randomUUID()
       pdfStaging.trackNativeImport(operationId)
-      const receipt = await window.api.literature.importPdf({
+      const receipt = await hostApi.literature.importPdf({
         itemId: current.id,
         attachment: staged,
         operationId
@@ -61,8 +64,7 @@ export function useLiteratureAttachments({
             : pdfImportErrorMessage(error, t)
         )
     } finally {
-      if (staged)
-        await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
+      if (staged) await hostApi.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
       pdfStaging.clear()
       addingPdfRef.current = false
       setIsAddingPdf(false)

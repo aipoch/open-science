@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import {
   AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
   AUTOMATIC_CLASSIFICATION_DAY_LIMIT
@@ -34,7 +35,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
-import { useSettingsStore } from '@/stores/settings-store'
+
 import type { SmartCollectionView, SmartScope } from '@aipoch/literature-screening/contracts'
 
 const catalog = {
@@ -113,6 +114,10 @@ export function SmartCollectionPanel({
   exportDisabled?: boolean
   searchActions?: React.ReactNode
 }): React.JSX.Element {
+  const { useSettingsStore } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const progressStatusId = useId()
   const settingsOpen = useSettingsStore((state) => state.isSettingsOpen)
@@ -149,7 +154,7 @@ export function SmartCollectionPanel({
   const load = useCallback(
     async () =>
       (
-        await window.api.literature.transact({
+        await hostApi.literature.transact({
           kind: 'smart-collection',
           offset: 0,
           collectionId,
@@ -157,7 +162,7 @@ export function SmartCollectionPanel({
           summaryOnly: true
         })
       ).smart,
-    [collectionId]
+    [collectionId, hostApi.literature]
   )
   useEffect(() => {
     let live = true
@@ -219,7 +224,7 @@ export function SmartCollectionPanel({
       setUpdateRunId(undefined)
     }
     try {
-      const receipt = await window.api.literature.transact({
+      const receipt = await hostApi.literature.transact({
         kind: 'smart-collection',
         offset: 0,
         collectionId,

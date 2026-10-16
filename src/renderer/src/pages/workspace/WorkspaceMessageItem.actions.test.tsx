@@ -3,7 +3,7 @@
 // clipboard, edit swaps the bubble for a multi-line editor, and confirming resends the prompt —
 // with a warning first when several later turns would be deleted.
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from '../../../../../test/renderer/literature'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

@@ -1,7 +1,9 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { initI18n } from '@/i18n'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { LiteratureLibraryPage } from '@/pages/literature/public/page'
 import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
 import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
@@ -305,15 +307,17 @@ export const NewConversationPdfPreview = (): React.JSX.Element => {
   )
 }
 createRoot(document.getElementById('root')!).render(
-  previewCase === 'new-conversation' ? (
-    <WorkspaceComposerDraftsProvider>
-      <NewConversationPdfPreview />
-    </WorkspaceComposerDraftsProvider>
-  ) : previewCase === 'area-selection' ? (
-    <AreaSelectionPreview />
-  ) : previewCase === 'search' ? (
-    <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />
-  ) : (
-    <LiteratureLibraryPage />
-  )
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {previewCase === 'new-conversation' ? (
+      <WorkspaceComposerDraftsProvider>
+        <NewConversationPdfPreview />
+      </WorkspaceComposerDraftsProvider>
+    ) : previewCase === 'area-selection' ? (
+      <AreaSelectionPreview />
+    ) : previewCase === 'search' ? (
+      <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />
+    ) : (
+      <LiteratureLibraryPage />
+    )}
+  </LiteratureRendererProvider>
 )

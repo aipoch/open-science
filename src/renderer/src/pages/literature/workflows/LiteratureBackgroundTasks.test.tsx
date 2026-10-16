@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { setI18nLocale } from '@/i18n'
 import { useLocaleStore } from '@/stores/locale-store'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '../../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { LiteratureJobSummary } from '@aipoch/literature-discovery/jobs'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'

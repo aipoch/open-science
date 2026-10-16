@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook } from '../../../../../test/renderer/literature'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLiteratureChanges } from './useLiteratureChanges'
 

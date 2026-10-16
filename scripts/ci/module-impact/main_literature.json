@@ -61,7 +61,8 @@
     "src/main/literature/discovery-adapters.ts",
     "src/main/literature/screening-adapter.ts",
     "src/main/literature/screening-store.ts",
-    "src/main/literature/discovery-contract.ts"
+    "src/main/literature/discovery-contract.ts",
+    "src/main/literature/package-source.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -85,7 +86,8 @@
     "src/main/literature/journal-attributes.ts",
     "src/main/literature/discovery-adapters.ts",
     "src/main/literature/screening-adapter.ts",
-    "src/main/literature/screening-store.ts"
+    "src/main/literature/screening-store.ts",
+    "src/main/literature/package-source.ts"
   ],
   "consumerModules": [],
   "testFiles": {
