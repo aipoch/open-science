@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
+import lifecycleConfig from './vitest.config'
 
 const text = readFileSync('.github/workflows/process-lifecycle.yml', 'utf8')
 const workflow = load(text) as {
@@ -24,6 +26,29 @@ const workflow = load(text) as {
     }
   >
 }
+
+it('discovers the native suite only through its dedicated configuration', () => {
+  const discover = (args: string[]): string[] => {
+    const result = spawnSync(
+      process.execPath,
+      ['node_modules/vitest/vitest.mjs', 'list', '--filesOnly', '--json', ...args],
+      { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 }
+    )
+    expect(result.status, result.stderr).toBe(0)
+    return JSON.parse(result.stdout).map((file: { file: string }) =>
+      file.file.replaceAll('\\', '/')
+    )
+  }
+  const suite = 'scripts/ci/process-lifecycle/lifecycle.suite.ts'
+  expect(discover(['--config', 'scripts/ci/process-lifecycle/vitest.config.ts'])).toEqual([
+    expect.stringContaining(suite)
+  ])
+  const portable = discover([])
+  expect(portable.some((file) => file.endsWith(suite))).toBe(false)
+  expect(portable.some((file) => file.endsWith('process-lifecycle/workflow.test.ts'))).toBe(true)
+  expect(lifecycleConfig.test.allowOnly).toBe(false)
+  expect(lifecycleConfig.test.passWithNoTests).toBe(false)
+}, 60000)
 
 it('runs the three-platform fixed collection daily without an unchanged-SHA bypass', () => {
   expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch'])

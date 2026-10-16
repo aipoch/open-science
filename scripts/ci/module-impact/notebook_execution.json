@@ -828,8 +828,7 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts",
-      "scripts/ci/process-lifecycle/lifecycle.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

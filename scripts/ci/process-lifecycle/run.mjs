@@ -200,7 +200,8 @@ async function main() {
             npmCli,
             'test',
             '--',
-            'scripts/ci/process-lifecycle/lifecycle.integration.test.ts',
+            '--config',
+            'scripts/ci/process-lifecycle/vitest.config.ts',
             '--reporter=default',
             '--reporter=json',
             `--outputFile=${resultPath}`
