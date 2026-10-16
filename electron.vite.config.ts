@@ -36,7 +36,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|resilient-download|skills|specialists)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|providers|durable-files|resilient-download|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },
@@ -62,6 +62,9 @@ export default defineConfig(({ command }) => ({
               '@aipoch/connector-mcp-client/oauth-redirect',
               '@aipoch/compute',
               '@aipoch/diagnostics',
+              '@aipoch/providers',
+              '@aipoch/providers/errors',
+              '@aipoch/providers/transport',
               '@aipoch/skills/document',
               '@aipoch/notebook-analysis/contracts',
               '@aipoch/environment/contracts',
@@ -119,7 +122,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|durable-files|resilient-download|skills|specialists)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|providers|durable-files|resilient-download|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },

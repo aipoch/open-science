@@ -258,7 +258,6 @@
     "packages/pdf-translation/test/fixtures/partially-contained-author-link-runs.jsonl",
     "packages/pdf-translation/test/fixtures/prose-column-table-boundaries.jsonl",
     "packages/pdf-translation/test/fixtures/prose-does-not-bridge-equation-operands.jsonl",
-    "packages/pdf-translation/test/fixtures/provider-error-diagnostics.jsonl",
     "packages/pdf-translation/test/fixtures/question-title-wrap-native.jsonl",
     "packages/pdf-translation/test/fixtures/quoted-label-native-body.jsonl",
     "packages/pdf-translation/test/fixtures/radical-native-row-ownership.jsonl",

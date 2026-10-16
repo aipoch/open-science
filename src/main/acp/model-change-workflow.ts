@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, SessionConfigOption } from '@agentclientprotocol/sdk'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { AgentModelChangeTarget } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'

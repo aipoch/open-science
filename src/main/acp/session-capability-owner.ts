@@ -45,7 +45,7 @@ import {
   type ShellRuntimeAgentContract
 } from '../notebook/shell-runtime'
 import { createCodexBridgeMcpTools, namespaceFor } from '../settings/codex-bridge-tools'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
 
 const log = createLogger('acp')
 

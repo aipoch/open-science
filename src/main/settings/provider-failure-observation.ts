@@ -1,4 +1,4 @@
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
+import type { ChatApiEndpoint } from '@aipoch/providers'
 
 export type ProviderFailureObservation = Readonly<{
   category: 'auth' | 'model-not-found'

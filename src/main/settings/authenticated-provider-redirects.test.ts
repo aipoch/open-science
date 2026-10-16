@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 
 import { describe, expect, it } from 'vitest'
 
-import { listProviderModels } from './list-models'
+import { createProvider } from '@aipoch/providers/client'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { ResponsesBridge } from './responses-bridge'
 import { validateProvider } from './validate'
@@ -92,10 +92,11 @@ describe('authenticated provider redirect policy', () => {
     const sourceUrl = await listen(source)
 
     try {
-      const result = await listProviderModels({
-        url: `${sourceUrl}/v1/models`,
+      const result = await createProvider({
+        id: 'custom',
+        discovery: { url: `${sourceUrl}/v1/models` },
         key: 'model-list-secret'
-      })
+      }).listModels()
 
       expect(redirected).toEqual([])
       expect(result).toMatchObject({ ok: false, status: 307 })

@@ -5,7 +5,7 @@ import {
   type ConfiguredModelCatalogEntry,
   type ConfiguredModelInventoryEntry
 } from './configured-model-catalog'
-import { customProviderRequiresKey } from './provider-base-url'
+import { customProviderRequiresKey } from './provider-url-policy'
 import {
   isCodexSubscriptionProviderId,
   providerValidationFailed,

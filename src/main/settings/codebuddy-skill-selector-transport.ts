@@ -1,6 +1,6 @@
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import { openAiCompletionsBase } from './base-url'
+import { openAiCompletionsBase } from '@aipoch/providers/protocol'
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import type { ResponsesBridge, ResponsesBridgeOptions } from './responses-bridge'
 import type { ResponsesBridgeTarget } from './responses-bridge-contract'

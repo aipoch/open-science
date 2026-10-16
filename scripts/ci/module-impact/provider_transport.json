@@ -1,7 +1,5 @@
 {
   "ownerPaths": [
-    "src/main/settings/base-url.test.ts",
-    "src/main/settings/base-url.ts",
     "src/main/settings/chat-provider-compatibility.test.ts",
     "src/main/settings/chat-provider-compatibility.ts",
     "src/main/settings/chat-skill-selector.ts",
@@ -10,41 +8,31 @@
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.test.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
-    "src/main/settings/openai-chat-usage.ts",
     "src/main/settings/provider-failure-observation.ts",
-    "src/main/settings/provider-fetch.ts",
     "src/main/settings/provider-loopback-http-host.architecture.test.ts",
     "src/main/settings/provider-loopback-http-host.test.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
-    "src/main/settings/skill-selector-routing.ts",
-    "src/main/settings/xai-protocol.test.ts",
-    "src/main/settings/xai-protocol.ts"
+    "src/main/settings/skill-selector-routing.ts"
   ],
   "interfacePaths": [
-    "src/main/settings/base-url.ts",
     "src/main/settings/chat-provider-compatibility.ts",
     "src/main/settings/chat-skill-selector.ts",
     "src/main/settings/codebuddy-chat-request-adapter.ts",
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
-    "src/main/settings/openai-chat-usage.ts",
     "src/main/settings/provider-failure-observation.ts",
-    "src/main/settings/provider-fetch.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
-    "src/main/settings/skill-selector-routing.ts",
-    "src/main/settings/xai-protocol.ts"
+    "src/main/settings/skill-selector-routing.ts"
   ],
   "testFiles": {
     "owner": [
-      "src/main/settings/base-url.test.ts",
       "src/main/settings/chat-provider-compatibility.test.ts",
       "src/main/settings/codebuddy-chat-request-adapter.test.ts",
       "src/main/settings/codex-transport-fallback-log.test.ts",
       "src/main/settings/provider-loopback-http-host.architecture.test.ts",
-      "src/main/settings/provider-loopback-http-host.test.ts",
-      "src/main/settings/xai-protocol.test.ts"
+      "src/main/settings/provider-loopback-http-host.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/claude-code.test.ts",
@@ -621,7 +609,6 @@
       "src/main/settings/provider-protocol-regressions.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/main/settings/provider-runtime-projection.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/settings/provider-transport-owner.architecture.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/record-codec.test.ts",
@@ -632,9 +619,7 @@
       "src/main/settings/responses-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
       "src/main/settings/responses-request-adapter.architecture.test.ts",
-      "src/main/settings/responses-request-adapter.test.ts",
       "src/main/settings/responses-response-adapter.architecture.test.ts",
-      "src/main/settings/responses-response-adapter.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",

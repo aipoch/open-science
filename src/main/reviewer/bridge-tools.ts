@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-bridge'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
+
 import {
   reviewerArtifactReadInputSchema,
   submitFindingsBridgeInputSchema

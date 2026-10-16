@@ -13,11 +13,15 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
-import { anthropicMessagesBase, openAiCompletionsBase } from '../settings/base-url'
+import type { ModelReasoningEffort } from '@aipoch/providers'
+import {
+  anthropicMessagesBase,
+  openAiCompletionsBase,
+  resolveChatReasoningTransport
+} from '@aipoch/providers/protocol'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
-import { resolveChatReasoningTransport } from '../settings/reasoning-transport'
+
 import type {
   AgentFramework,
   AgentModelCatalogEntry,

@@ -4,8 +4,8 @@ import type {
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import { usesVendorAnthropicApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
+
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentModelCatalogEntry,
@@ -23,8 +23,9 @@ import type { BackendRoutePlan } from './backend-route-planner'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
+  openAiCompletionsBase,
+  type ResponsesBridgeNamespacedTool
+} from '@aipoch/providers/protocol'
 import {
   ChatProviderCompatibilityBridge,
   type ChatProviderCompatibilityTarget
@@ -40,15 +41,12 @@ import {
 } from './native-responses-compatibility'
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import type { ProviderRuntimeTarget } from './provider-accounts'
-import {
-  ResponsesBridge,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeOptions
-} from './responses-bridge'
+
+import { ResponsesBridge, type ResponsesBridgeOptions } from './responses-bridge'
 import type { ResponsesBridgeConnection, ResponsesBridgeTarget } from './responses-bridge-contract'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { xaiNativeResponsesTargetFields } from './xai-protocol'
+import { sanitizeXaiResponsesRequest } from '@aipoch/providers/protocol'
 type AnthropicProviderBridgePort = Pick<
   AnthropicProviderBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'
@@ -596,7 +594,12 @@ class ProviderTransportOwner {
         ...this.healthObservation(candidate),
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
-        ...xaiNativeResponsesTargetFields(candidate.provider.type, this.getXaiOAuthAccessToken),
+        ...(candidate.provider.type === 'xai-subscription'
+          ? {
+              resolveKey: this.getXaiOAuthAccessToken,
+              sanitizeRequest: sanitizeXaiResponsesRequest
+            }
+          : {}),
         model: candidate.effectiveModel ?? candidate.provider.model,
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }

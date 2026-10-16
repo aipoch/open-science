@@ -2,12 +2,12 @@ import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/
 import { createLogger } from '@aipoch/diagnostics/node'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import { isOfficialVendorId } from '../../shared/provider-registry'
+import { type ChatApiEndpoint, isOfficialVendorId } from '@aipoch/providers'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
+
 import type {
   ClaudeInfo,
   ProviderType,

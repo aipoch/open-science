@@ -6,7 +6,7 @@ import type {
   DelegatedWorkResolvedAgent,
   ResolvedSubagentModelSnapshot
 } from '../delegated-work-contract'
-import type { ResolvedReasoningEffort } from '../reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { AgentFrameworkId } from '../settings'
 import {
   AGENT_FRAMEWORK_IDS,

@@ -12,7 +12,6 @@
     "src/main/settings/claude-shared-auth.test.ts",
     "src/main/settings/claude-shared-auth.ts",
     "src/main/settings/list-models.test.ts",
-    "src/main/settings/list-models.ts",
     "src/main/settings/provider-accounts.test.ts",
     "src/main/settings/provider-auth-lifecycle.architecture.test.ts",
     "src/main/settings/provider-auth-lifecycle.test.ts",
@@ -21,9 +20,7 @@
     "src/main/settings/validate.test.ts",
     "src/main/settings/validate.ts",
     "src/main/settings/xai-oauth.test.ts",
-    "src/main/settings/xai-provider-account-owner.test.ts",
-    "src/main/settings/provider-text-generation.ts",
-    "src/main/settings/provider-text-generation.test.ts"
+    "src/main/settings/xai-provider-account-owner.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/provider-accounts.ts",
@@ -31,12 +28,10 @@
     "src/main/settings/claude-shared-auth.ts",
     "src/main/settings/codex-auth.ts",
     "src/main/settings/crypto.ts",
-    "src/main/settings/list-models.ts",
     "src/main/settings/provider-draft-projection.ts",
     "src/main/settings/provider-env.ts",
     "src/main/settings/provider-runtime-projection.ts",
-    "src/main/settings/validate.ts",
-    "src/main/settings/provider-text-generation.ts"
+    "src/main/settings/validate.ts"
   ],
   "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
   "testFiles": {
@@ -57,7 +52,6 @@
     "contract": [
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
-      "src/shared/provider-registry.test.ts",
       "src/shared/provider-reasoning-effort.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -443,7 +437,6 @@
       "src/main/settings/responses-bridge.skill-loading.test.ts",
       "src/main/settings/responses-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
-      "src/main/settings/responses-response-adapter.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/settings/session-details-model-owner.test.ts",
@@ -555,7 +548,6 @@
       "src/main/literature/pdf-translation/index.test.ts",
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",

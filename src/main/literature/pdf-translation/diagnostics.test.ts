@@ -7,7 +7,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import { initLogger, flushLogs } from '@aipoch/diagnostics/node'
 import { PdfTranslationOwner } from './index'
-import { ProviderTextGenerationError } from '../../settings/provider-text-generation'
+import { ProviderTextGenerationError } from '@aipoch/providers/client'
 import { PdfTranslationWriter } from './writer'
 import { extractPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 vi.mock('electron', () => ({ net: {} }))

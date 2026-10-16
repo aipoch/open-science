@@ -1,3 +1,6 @@
+import { Readable } from 'node:stream'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
+import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { observeProviderFailure } from './provider-failure-observation'
@@ -17,15 +20,22 @@ export type {
 } from './responses-bridge-contract'
 
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
-import { appendChatCompletions } from './base-url'
+import {
+  createResponsesAdapter,
+  appendChatCompletions,
+  type ResponsesBridgeNamespacedTool,
+  ResponsesProtocolError,
+  upstreamErrorMessage
+} from '@aipoch/providers/protocol'
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-  readBoundedResponseText,
-  ResponseBodyLimitError
-} from './bounded-response'
+  ResponseBodyLimitError,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
+
 import { selectChatSkills } from './chat-skill-selector'
 import {
   DeterministicProviderErrorReplay,
@@ -33,23 +43,12 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
+
 import {
   writeProviderLoopbackJson as json,
   ProviderLoopbackHttpHost,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import type {
-  ResponsesBridgeNamespacedTool,
-  ResponsesReplyReasoning
-} from './responses-protocol-types'
-import { responsesToChatRequest } from './responses-request-adapter'
-import {
-  completionToResponse,
-  ResponsesProtocolError,
-  streamChatToResponses,
-  upstreamErrorMessage
-} from './responses-response-adapter'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -68,8 +67,6 @@ export type ResponsesBridgeOptions = {
 }
 
 type BridgeFetch = typeof fetch
-const DEFAULT_REASONING_CACHE_MAX_ENTRIES = 4_096
-const DEFAULT_REASONING_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
 const PLAN_GENERATE_BRIDGE_ALIAS = modelFacingAppMcpToolName(
   'codex',
   'open-science-plan',
@@ -87,14 +84,7 @@ const chatUrl = (value: string): string => appendChatCompletions(value)
 export class ResponsesBridge {
   private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
   private target: ResponsesBridgeTarget
-  // Cache both text and tool output identities, scoped by Codex's provider Session id. Items from
-  // one upstream reply share an object so replay can restore its assistant message without guessing.
-  private readonly reasoningByPromptCacheKey = new Map<
-    string,
-    Map<string, ResponsesReplyReasoning>
-  >()
-  private reasoningCacheEntryCount = 0
-  private reasoningCacheCharacterCount = 0
+  private readonly adapter: ReturnType<typeof createResponsesAdapter>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
@@ -115,6 +105,11 @@ export class ResponsesBridge {
     private readonly options: ResponsesBridgeOptions = {}
   ) {
     this.target = target
+    this.adapter = createResponsesAdapter({
+      maxResponseBytes: options.maxResponseBytes,
+      reasoningCacheMaxEntries: options.reasoningCacheMaxEntries,
+      reasoningCacheMaxCharacters: options.reasoningCacheMaxCharacters
+    })
     this.host = new ProviderLoopbackHttpHost({
       diagnosticName: 'responses',
       credentialMode: 'bearer',
@@ -187,7 +182,7 @@ export class ResponsesBridge {
       this.target.key !== target.key
     this.target = target
     if (changed) {
-      this.clearReasoningCache()
+      this.adapter.clear()
       this.deterministicErrors.clear()
     }
   }
@@ -258,7 +253,7 @@ export class ResponsesBridge {
   }
 
   async close(): Promise<void> {
-    this.clearReasoningCache()
+    this.adapter.clear()
     this.deterministicErrors.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
@@ -270,121 +265,6 @@ export class ResponsesBridge {
     this.sessionMcpNamespaces.clear()
     this.sessionMcpTools.clear()
     await this.host.close()
-  }
-
-  private clearReasoningCache(): void {
-    this.reasoningByPromptCacheKey.clear()
-    this.reasoningCacheEntryCount = 0
-    this.reasoningCacheCharacterCount = 0
-  }
-
-  private reasoningForRequest(
-    promptCacheKey: string | undefined
-  ): Map<string, ResponsesReplyReasoning> | undefined {
-    if (!promptCacheKey) return undefined
-    return this.reasoningByPromptCacheKey.get(promptCacheKey)
-  }
-
-  private reconcileReasoningForRequest(promptCacheKey: string | undefined, input: unknown): void {
-    if (!promptCacheKey) return
-    const reasoningByItemId = this.reasoningByPromptCacheKey.get(promptCacheKey)
-    if (!reasoningByItemId) return
-
-    const retainedItemIds = new Set<string>()
-    if (Array.isArray(input)) {
-      for (const item of input) {
-        if (!item || typeof item !== 'object' || !('type' in item)) continue
-        if (item.type === 'function_call') {
-          const callId = 'call_id' in item ? item.call_id : 'id' in item ? item.id : undefined
-          if (callId !== undefined && callId !== null) {
-            retainedItemIds.add(JSON.stringify(['function_call', String(callId)]))
-          }
-        } else if (
-          item.type === 'message' &&
-          'role' in item &&
-          item.role === 'assistant' &&
-          'id' in item &&
-          typeof item.id === 'string'
-        ) {
-          retainedItemIds.add(JSON.stringify(['message', item.id]))
-        }
-      }
-    }
-
-    for (const [callId, reasoning] of reasoningByItemId) {
-      if (retainedItemIds.has(callId)) continue
-      reasoningByItemId.delete(callId)
-      this.reasoningCacheEntryCount -= 1
-      this.reasoningCacheCharacterCount -= reasoning.text.length
-    }
-    if (reasoningByItemId.size === 0) {
-      this.reasoningByPromptCacheKey.delete(promptCacheKey)
-      return
-    }
-
-    // Refresh this Session's insertion order so overflow evicts the least recently used scope.
-    this.reasoningByPromptCacheKey.delete(promptCacheKey)
-    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByItemId)
-  }
-
-  // Records this turn's reasoning against its Session-scoped text and tool ids so the next request can
-  // pass it back to thinking-mode providers. Missing prompt_cache_key fails closed: without a stable
-  // Session boundary, cached reasoning cannot be replayed safely.
-  private cacheReasoning(
-    promptCacheKey: string | undefined,
-    reasoning: string,
-    callIds: string[],
-    messageId?: string
-  ): void {
-    if (!promptCacheKey || !reasoning || (callIds.length === 0 && !messageId)) return
-    let reasoningByItemId = this.reasoningByPromptCacheKey.get(promptCacheKey)
-    if (!reasoningByItemId) {
-      reasoningByItemId = new Map()
-    } else {
-      this.reasoningByPromptCacheKey.delete(promptCacheKey)
-    }
-    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByItemId)
-
-    const replyReasoning: ResponsesReplyReasoning = { text: reasoning }
-    const itemIds = callIds.map((callId) => JSON.stringify(['function_call', callId]))
-    if (messageId) itemIds.push(JSON.stringify(['message', messageId]))
-    for (const itemId of itemIds) {
-      const previous = reasoningByItemId.get(itemId)
-      if (previous !== undefined) {
-        this.reasoningCacheCharacterCount -= previous.text.length
-      } else {
-        this.reasoningCacheEntryCount += 1
-      }
-      reasoningByItemId.set(itemId, replyReasoning)
-      this.reasoningCacheCharacterCount += reasoning.length
-    }
-    this.enforceReasoningCacheLimits()
-  }
-
-  private enforceReasoningCacheLimits(): void {
-    const maxEntries = Math.max(
-      1,
-      Math.floor(this.options.reasoningCacheMaxEntries ?? DEFAULT_REASONING_CACHE_MAX_ENTRIES)
-    )
-    const maxCharacters = Math.max(
-      1,
-      Math.floor(this.options.reasoningCacheMaxCharacters ?? DEFAULT_REASONING_CACHE_MAX_CHARACTERS)
-    )
-    while (
-      this.reasoningByPromptCacheKey.size > 0 &&
-      (this.reasoningCacheEntryCount > maxEntries ||
-        this.reasoningCacheCharacterCount > maxCharacters)
-    ) {
-      const oldestPromptCacheKey = this.reasoningByPromptCacheKey.keys().next().value
-      if (typeof oldestPromptCacheKey !== 'string') break
-      const oldest = this.reasoningByPromptCacheKey.get(oldestPromptCacheKey)
-      this.reasoningByPromptCacheKey.delete(oldestPromptCacheKey)
-      if (!oldest) continue
-      for (const reasoning of oldest.values()) {
-        this.reasoningCacheEntryCount -= 1
-        this.reasoningCacheCharacterCount -= reasoning.text.length
-      }
-    }
   }
 
   private async handle(
@@ -475,18 +355,31 @@ export class ResponsesBridge {
       reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
         ? { ...body, tools: [], tool_choice: 'auto' }
         : body
-    const reasoningByItemId = this.reasoningForRequest(promptCacheKey)
-    const chatRequest = responsesToChatRequest(
-      scopedBody,
-      target.model,
-      reasoningByItemId,
-      namespacedTools,
-      {
+    // These tools belong to the host's MCP resource policy, not the wire converter.
+    const hostFilteredBody = {
+      ...scopedBody,
+      tools: Array.isArray(scopedBody.tools)
+        ? scopedBody.tools.filter(
+            (tool: JsonObject) =>
+              tool?.type !== 'function' ||
+              !['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource'].includes(
+                String(tool.name)
+              )
+          )
+        : scopedBody.tools
+    }
+    const turn = this.adapter.prepare({
+      body: hostFilteredBody,
+      scope: promptCacheKey,
+      model: target.model,
+      tools: namespacedTools,
+      reasoning: {
         reasoningEffortOverride: target.reasoningEffort,
         vendorId: target.vendorId,
         reasoningEffortTransport: target.reasoningEffortTransport
       }
-    )
+    })
+    const chatRequest = turn.request
     const chatRequestBody = JSON.stringify(chatRequest)
     // Go requires conversation affinity. The Responses-to-Chat translation removes
     // prompt_cache_key, so carry the existing Codex identity across the HTTP boundary.
@@ -511,7 +404,6 @@ export class ResponsesBridge {
       chatRequestBody,
       typeof goSession === 'string' ? goSession : ''
     )
-    this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
     // model, not the upstream) and whether Codex's advertised tools survived translation into Chat
@@ -610,45 +502,12 @@ export class ResponsesBridge {
       })
       return
     }
-    if (chatRequest.stream) {
-      const { reasoning, callIds, messageId } = await streamChatToResponses(
-        upstream,
-        response,
-        String(body.model ?? ''),
-        namespacedTools,
-        this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
-      )
-      this.cacheReasoning(promptCacheKey, reasoning, callIds, messageId)
-      return
-    }
-    const completion = JSON.parse(
-      await readBoundedResponseText(
-        upstream,
-        this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
-        'Chat Completions upstream response'
-      )
-    ) as JsonObject
-    const message = (completion.choices?.[0]?.message ?? {}) as JsonObject
-    const result = completionToResponse(completion, namespacedTools)
-    const outputItems = Array.isArray(result.output) ? (result.output as JsonObject[]) : []
-    const toolCalls = outputItems.filter((item) => item.type === 'function_call')
-    this.cacheReasoning(
-      promptCacheKey,
-      typeof message.reasoning_content === 'string' ? message.reasoning_content : '',
-      toolCalls.map((item) => String(item.call_id)),
-      outputItems.find((item) => item.type === 'message')?.id
-    )
-    log.info('bridge turn completed (json)', {
-      model: chatRequest.model,
-      textItems: outputItems.filter((item) => item.type === 'message').length,
-      toolCalls: toolCalls.length,
-      toolNames: toolCalls.map((item) => item.name)
-    })
-    response.writeHead(200, { 'content-type': 'application/json' })
-    response.end(JSON.stringify(result))
+    const converted = await turn.convert(upstream)
+    response.writeHead(converted.status, Object.fromEntries(converted.headers))
+    if (converted.body)
+      await pipeline(Readable.fromWeb(converted.body as NodeReadableStream<Uint8Array>), response)
+    else response.end()
   }
 }
 
-export type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
-export { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
-export { chatUrl, completionToResponse, upstreamErrorMessage }
+export { chatUrl }

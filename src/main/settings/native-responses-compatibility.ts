@@ -1,3 +1,8 @@
+import {
+  prepareNativeResponsesRequest,
+  NativeResponsesRequestError,
+  type NativeResponsesProjection
+} from '@aipoch/providers/protocol'
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import {
@@ -8,15 +13,20 @@ import {
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 import {
+  normalizeOpenAiChatModelStepUsage,
+  type ResponsesBridgeNamespacedTool
+} from '@aipoch/providers/protocol'
+import {
   consumeBoundedResponseBody,
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
   DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
   readBoundedResponseBytes,
   readBoundedResponseText,
-  ResponseBodyLimitError
-} from './bounded-response'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+  ResponseBodyLimitError,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
+
 import {
   DeterministicProviderErrorReplay,
   isDeterministicProviderErrorStatus,
@@ -25,14 +35,14 @@ import {
   providerRequestHeadersFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from './provider-fetch'
+
 import {
   writeProviderLoopbackJson as json,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import type { ResponsesBridgeNamespacedTool } from './responses-bridge'
+
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
@@ -71,13 +81,6 @@ type NativeResponsesCompatibilityOptions = {
   skillSelectorTimeoutMs?: number
   streamIdleTimeoutMs?: number
 }
-
-export type NativeResponsesToolIdentity = {
-  namespace: string
-  name: string
-}
-
-export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity>
 
 type NativeFetch = typeof fetch
 
@@ -201,135 +204,15 @@ const promoteArtifactDeveloperInstructions = (body: JsonObject): JsonObject => {
   }
 }
 
-const isArtifactTool = (value: unknown, aliases: NativeResponsesToolAliases): boolean => {
+const isArtifactTool = (value: unknown, aliases: NativeResponsesProjection): boolean => {
   if (!isObject(value) || typeof value.name !== 'string') return false
   const identity =
     typeof value.namespace === 'string'
       ? { namespace: value.namespace, name: value.name }
-      : aliases.get(value.name)
+      : aliases.resolveTool(value.name)
   return (
     identity?.namespace === 'mcp__open_science_artifacts' && identity.name === 'write_artifact_file'
   )
-}
-
-const namespaceAlias = (namespace: string, name: string): string => `${namespace}__${name}`
-
-const combinedDescription = (namespaceDescription: unknown, toolDescription: unknown): string =>
-  [namespaceDescription, toolDescription]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .map((value) => value.trim())
-    .join('\n\n')
-
-const flattenHistoryItem = (item: unknown): unknown => {
-  if (!isObject(item)) return item
-  if (
-    (item.type !== 'function_call' && item.type !== 'custom_tool_call') ||
-    typeof item.namespace !== 'string' ||
-    typeof item.name !== 'string'
-  ) {
-    return item
-  }
-
-  const { namespace, ...withoutNamespace } = item
-  return { ...withoutNamespace, name: namespaceAlias(namespace, item.name) }
-}
-
-const flattenToolChoice = (toolChoice: unknown): unknown => {
-  if (
-    !isObject(toolChoice) ||
-    typeof toolChoice.namespace !== 'string' ||
-    typeof toolChoice.name !== 'string'
-  ) {
-    return toolChoice
-  }
-
-  const { namespace, ...withoutNamespace } = toolChoice
-  return { ...withoutNamespace, name: namespaceAlias(namespace, toolChoice.name) }
-}
-
-export const flattenNativeResponsesRequest = (
-  body: JsonObject
-): { request: JsonObject; aliases: NativeResponsesToolAliases } => {
-  if (body.tools !== undefined && !Array.isArray(body.tools)) {
-    throw new ProviderLoopbackRequestError('native Responses tools must be an array')
-  }
-
-  const tools = (body.tools ?? []) as unknown[]
-  const aliases: NativeResponsesToolAliases = new Map()
-  const occupiedNames = new Set(
-    tools.flatMap((tool) =>
-      isObject(tool) && tool.type !== 'namespace' && typeof tool.name === 'string'
-        ? [tool.name]
-        : []
-    )
-  )
-  const flattenedTools = tools.flatMap((tool) => {
-    if (!isObject(tool) || tool.type !== 'namespace') return [tool]
-    if (typeof tool.name !== 'string' || !Array.isArray(tool.tools)) {
-      throw new ProviderLoopbackRequestError(
-        'native Responses namespace tools require a name and child tools'
-      )
-    }
-
-    return tool.tools.map((child) => {
-      if (!isObject(child) || child.type !== 'function' || typeof child.name !== 'string') {
-        throw new ProviderLoopbackRequestError(
-          'native Responses namespace children must be function tools'
-        )
-      }
-      const alias = namespaceAlias(tool.name, child.name)
-      if (occupiedNames.has(alias) || aliases.has(alias)) {
-        throw new ProviderLoopbackRequestError(`duplicate native Responses tool alias: ${alias}`)
-      }
-      occupiedNames.add(alias)
-      aliases.set(alias, { namespace: tool.name, name: child.name })
-      const description = combinedDescription(tool.description, child.description)
-      return {
-        ...child,
-        name: alias,
-        ...(description ? { description } : {})
-      }
-    })
-  })
-
-  return {
-    request: {
-      ...body,
-      ...(body.tools === undefined ? {} : { tools: flattenedTools }),
-      ...(body.tool_choice === undefined
-        ? {}
-        : { tool_choice: flattenToolChoice(body.tool_choice) }),
-      ...(Array.isArray(body.input) ? { input: body.input.map(flattenHistoryItem) } : {})
-    },
-    aliases
-  }
-}
-
-export const restoreNativeResponsesPayload = (
-  value: unknown,
-  aliases: NativeResponsesToolAliases
-): unknown => {
-  if (Array.isArray(value)) return value.map((item) => restoreNativeResponsesPayload(item, aliases))
-  if (!isObject(value)) return value
-
-  const restored = Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      restoreNativeResponsesPayload(child, aliases)
-    ])
-  ) as JsonObject
-  if (
-    (restored.type === 'function_call' || restored.type === 'custom_tool_call') &&
-    restored.namespace === undefined &&
-    typeof restored.name === 'string'
-  ) {
-    const identity = aliases.get(restored.name)
-    if (identity) {
-      restored.name = identity.name
-      restored.namespace = identity.namespace
-    }
-  }
-  return restored
 }
 
 const responsesUrl = (baseUrl: string): string =>
@@ -387,7 +270,7 @@ const copyResponseHeaders = (upstream: Response): Record<string, string> => {
 }
 
 const streamSummaryObserver = (
-  aliases: NativeResponsesToolAliases
+  aliases: NativeResponsesProjection
 ): Readonly<{
   observe: (value: unknown) => void
   summary: () => NativeResponsesStreamSummary | undefined
@@ -619,7 +502,7 @@ const streamedFunctionArguments = (
 
 const rewriteSseEvent = (
   lines: readonly string[],
-  aliases: NativeResponsesToolAliases,
+  aliases: NativeResponsesProjection,
   observe: (value: unknown) => void,
   recoverArguments: (value: unknown) => (() => void) | undefined,
   maxEventBytes: number,
@@ -641,7 +524,7 @@ const rewriteSseEvent = (
     const undoRecovery = recoverArguments(payload)
     const firstDataIndex = lines.findIndex((line) => line.startsWith('data:'))
     const serialize = (): string => {
-      const restored = JSON.stringify(restoreNativeResponsesPayload(payload, aliases))
+      const restored = JSON.stringify(aliases.restore(payload))
       return lines
         .map((line, index) => {
           if (!line.startsWith('data:')) return line
@@ -670,7 +553,7 @@ const rewriteSseEvent = (
 const streamResponse = async (
   upstream: Response,
   response: ServerResponse,
-  aliases: NativeResponsesToolAliases,
+  aliases: NativeResponsesProjection,
   onActivity: () => void,
   limits: Readonly<{ responseBytes: number; eventBytes: number; lineBytes: number }>
 ): Promise<NativeResponsesStreamSummary | undefined> => {
@@ -812,7 +695,9 @@ export class NativeResponsesCompatibilityProxy {
           response.destroy()
           return
         }
-        const requestError = error instanceof ProviderLoopbackRequestError
+        const requestError =
+          error instanceof ProviderLoopbackRequestError ||
+          error instanceof NativeResponsesRequestError
         json(response, requestError ? 400 : 502, {
           error: {
             type: requestError ? 'invalid_request_error' : 'api_error',
@@ -1069,7 +954,8 @@ export class NativeResponsesCompatibilityProxy {
             }
           : body
       const routedBody = target.model ? { ...scopedBody, model: target.model } : scopedBody
-      const { request: flattenedRequest, aliases } = flattenNativeResponsesRequest(routedBody)
+      const aliases = prepareNativeResponsesRequest(routedBody)
+      const flattenedRequest = aliases.request
       const compatibilityRequest =
         Array.isArray(flattenedRequest.tools) &&
         flattenedRequest.tools.some((tool: unknown) => isArtifactTool(tool, aliases))
@@ -1139,8 +1025,10 @@ export class NativeResponsesCompatibilityProxy {
           (item) => isObject(item) && item.type === 'function_call_output'
         ).length,
         promptCacheKeyPresent: promptCacheKey !== undefined,
-        namespaceToolCount: aliases.size,
-        literatureToolPresent: aliases.has('mcp__open_science_literature__read_document'),
+        namespaceToolCount: aliases.toolCount,
+        literatureToolPresent: Boolean(
+          aliases.resolveTool('mcp__open_science_literature__read_document')
+        ),
         stream: body.stream === true,
         reviewerScoped,
         toolLessScoped
@@ -1208,12 +1096,7 @@ export class NativeResponsesCompatibilityProxy {
         if (boundedBody.complete && responseType === 'json') {
           try {
             rawBody = Buffer.from(
-              JSON.stringify(
-                restoreNativeResponsesPayload(
-                  JSON.parse(boundedBody.body.toString('utf8')),
-                  aliases
-                )
-              )
+              JSON.stringify(aliases.restore(JSON.parse(boundedBody.body.toString('utf8'))))
             )
           } catch {
             bodyIsReplayable = false
@@ -1268,7 +1151,7 @@ export class NativeResponsesCompatibilityProxy {
         })
       } else if (responseType === 'json') {
         armStreamIdleTimeout()
-        const payload = restoreNativeResponsesPayload(
+        const payload = aliases.restore(
           JSON.parse(
             await readBoundedResponseText(
               upstream,
@@ -1276,8 +1159,7 @@ export class NativeResponsesCompatibilityProxy {
               'Native Responses upstream JSON response',
               armStreamIdleTimeout
             )
-          ),
-          aliases
+          )
         )
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
         response.end(JSON.stringify(payload))

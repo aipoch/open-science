@@ -56,7 +56,7 @@ import {
   type AcpRuntimeEvent,
   type AcpStateSnapshot
 } from '../../shared/acp'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from './session-capability-owner'

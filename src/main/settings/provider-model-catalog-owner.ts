@@ -3,9 +3,9 @@ import type {
   RefreshProviderModelsResult
 } from '../../shared/settings'
 import { isXaiSubscriptionProvider } from '../../shared/settings'
-import { resolveVendorModelsUrl } from '../../shared/provider-registry'
 import { netFetchStandard } from '../network-fetch'
-import { listProviderModels } from './list-models'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { createProvider } from '@aipoch/providers/client'
 import type { ResolvedProvider } from './provider-env'
 import type { SettingsRepository } from './repository'
 import type { XaiAccessCredential } from './xai-oauth'
@@ -24,13 +24,24 @@ export class ProviderModelCatalogOwner {
       (provider) => provider.id === request.providerId
     )
     if (!stored) return { ok: false, category: 'unknown', message: 'Provider not found.' }
-    const modelsUrl =
-      stored.type === 'official' && stored.vendorId
-        ? resolveVendorModelsUrl(stored.vendorId, stored.region)
+    // Account eligibility and OAuth remain host policy; endpoint/auth dialect belong to the SDK.
+    const providerId =
+      stored.type === 'official'
+        ? stored.vendorId
         : isXaiSubscriptionProvider(stored.type)
-          ? 'https://api.x.ai/v1/models'
+          ? 'xai'
           : undefined
-    if (!modelsUrl) {
+    const connection = {
+      id: providerId ?? 'custom',
+      region: stored.region,
+      fetch: netFetchStandard
+    }
+    // The API-key xAI chat picker uses curated suggestions; OAuth refresh filters grok IDs below.
+    if (
+      !providerId ||
+      (stored.type === 'official' && providerId === 'xai') ||
+      !createProvider(connection).supportsModelDiscovery
+    ) {
       return {
         ok: false,
         category: 'unknown',
@@ -53,14 +64,9 @@ export class ProviderModelCatalogOwner {
         }
       }
     }
-    const result = await listProviderModels(
-      {
-        url: modelsUrl,
-        key,
-        ...(stored.type === 'official' && stored.vendorId ? { vendorId: stored.vendorId } : {})
-      },
-      { fetchImpl: netFetchStandard }
-    )
+    const result = await createProvider({ ...connection, key }).listModels({
+      limits: PROVIDER_RESOURCE_LIMITS
+    })
     if (!result.ok || !result.models) {
       return {
         ok: false,

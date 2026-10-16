@@ -66,7 +66,6 @@
       "src/main/session-package/diagnostics.test.ts",
       "src/main/session-package/recovery-diagnostics.test.ts",
       "src/shared/tool-detail-sanitizer.test.ts",
-      "src/shared/provider-text-generation-failure.test.ts",
       "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
       "src/main/session-diagnostics/detail.test.ts",
       "src/main/session-diagnostics/collector.test.ts",

@@ -20,7 +20,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
-import * as providerRegistry from '../../../../shared/provider-registry'
+import * as bridgePolicy from '../../../../shared/provider-bridge-policy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -231,7 +231,7 @@ describe('ComposerModelPicker', () => {
   it('localizes the provider reason when every model is bridge-unsupported', async () => {
     // The bundled catalog currently has no bridge exclusions. Control its existing policy boundary
     // to exercise the picker branch without changing production state or the catalog model.
-    vi.spyOn(providerRegistry, 'isModelBridgeSupported').mockReturnValue(false)
+    vi.spyOn(bridgePolicy, 'isModelBridgeSupported').mockReturnValue(false)
     await i18next.changeLanguage('zh-Hans')
     useSettingsStore.setState({
       ...codexFramework,

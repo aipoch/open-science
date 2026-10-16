@@ -8,16 +8,14 @@
     "src/main/settings/managed-opencode.test.ts",
     "src/main/settings/managed-opencode.ts",
     "src/main/settings/process-tree.test.ts",
-    "src/main/settings/process-tree.ts",
-    "src/main/settings/reasoning-transport.ts"
+    "src/main/settings/process-tree.ts"
   ],
   "interfacePaths": [
     "src/main/settings/codex-paths.ts",
     "src/main/settings/managed-claude.ts",
     "src/main/settings/managed-codex.ts",
     "src/main/settings/managed-opencode.ts",
-    "src/main/settings/process-tree.ts",
-    "src/main/settings/reasoning-transport.ts"
+    "src/main/settings/process-tree.ts"
   ],
   "testFiles": {
     "owner": [
@@ -504,7 +502,6 @@
       "src/main/settings/provider-protocol-regressions.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/main/settings/provider-runtime-projection.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/record-codec.test.ts",
       "src/main/settings/repository.test.ts",
@@ -513,7 +510,6 @@
       "src/main/settings/responses-bridge.skill-loading.test.ts",
       "src/main/settings/responses-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
-      "src/main/settings/responses-request-adapter.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",

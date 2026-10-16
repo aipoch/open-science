@@ -3,7 +3,9 @@ import { join } from 'node:path'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
-import type { ReasoningEffortProfile, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
+
 import {
   buildActiveModelIncompatibleMessage,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,

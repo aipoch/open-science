@@ -9,7 +9,7 @@ import type {
   ClaudeSubscriptionProviderId,
   ProviderView
 } from '../../../../shared/settings'
-import { defaultVendorModel } from '../../../../shared/provider-registry'
+import { defaultVendorModel } from '../../../../shared/provider-model-policy'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement

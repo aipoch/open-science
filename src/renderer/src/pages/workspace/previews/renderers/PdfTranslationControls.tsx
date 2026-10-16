@@ -41,7 +41,7 @@ import { Collapsible } from 'radix-ui'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { configuredModelKey } from '../../../../../../shared/configured-model-catalog'
-import type { ChatApiEndpoint } from '../../../../../../shared/model-preference-contract'
+import type { ChatApiEndpoint } from '@aipoch/providers'
 import {
   pdfTranslationAgentModels,
   pdfTranslationApiModels

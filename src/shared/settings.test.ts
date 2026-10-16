@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { isModelBridgeSupported } from './provider-registry'
+import { isModelBridgeSupported } from './provider-bridge-policy'
 import {
   canonicalSessionProviderId,
   canUseClaudeProviderTransport,

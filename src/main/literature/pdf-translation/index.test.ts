@@ -7,9 +7,9 @@ import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import {
   ProviderTextGenerationService,
-  ProviderTextGenerationError,
   type ProviderTextGenerationRequest
-} from '../../settings/provider-text-generation'
+} from './text-generation'
+import { ProviderTextGenerationError } from '@aipoch/providers/client'
 vi.mock('electron', () => ({ net: {} }))
 
 const input = {
@@ -291,6 +291,7 @@ it.each([
     captureTarget: h.captureTarget,
     runner: h.runner,
     apiRunner,
+    // @ts-expect-error Exercise the runtime boundary with an invalid subscription target.
     captureApiTarget: async () => ({ providerId: 'subscription', model: 'model', provider })
   })
   await expect(owner.begin({ ...input, targetId: 'api' }, h.caller.lease)).rejects.toThrow(
@@ -408,7 +409,7 @@ it('admits direct API independently of ACP and refuses cross-mode resume', async
 
 it('keeps legacy default identities but fences explicit thinking and transport changes on retry', async () => {
   const h = setup()
-  const target: import('../../settings/provider-text-generation').ProviderTextGenerationTarget = {
+  const target: import('./text-generation').ProviderTextGenerationTarget = {
     providerId: 'provider',
     model: 'model',
     provider: {

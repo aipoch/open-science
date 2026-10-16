@@ -10,7 +10,7 @@ import {
   isCodexSubscriptionProviderId,
   resolveCodexSubscriptionType
 } from '../../shared/settings'
-import { customProviderRequiresKey } from '../../shared/provider-base-url'
+import { customProviderRequiresKey } from '../../shared/provider-url-policy'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   clearAppOwnedCodexAuthentication,

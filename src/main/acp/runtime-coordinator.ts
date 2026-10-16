@@ -30,7 +30,7 @@ import type {
 } from '../../shared/acp'
 import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelChangeTarget } from '../agent-framework'

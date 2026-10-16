@@ -10,17 +10,15 @@ import {
 } from '../../../shared/pdf-translation'
 import { type PdfTranslationBeginResult } from '@aipoch/pdf-translation/contracts'
 import { isPdfTranslationApiProvider } from '../../../shared/pdf-translation-models'
-import {
-  providerErrorDetails,
-  providerTextGenerationFailure
-} from '../../../shared/provider-text-generation-failure'
+import { providerErrorDetails } from '../../../shared/provider-error'
+import { providerTextGenerationFailure } from '@aipoch/providers/errors'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import {
-  ProviderTextGenerationError,
   providerTextGenerationTargetKey,
   type ProviderTextGenerationTarget
-} from '../../settings/provider-text-generation'
+} from './text-generation'
+import { ProviderTextGenerationError } from '@aipoch/providers/client'
 import { runDataRootStartupRecovery, withDataRootWrite } from '../../storage/migration-state'
 const log = createLogger('pdf-translation')
 type PackageOptions = PdfTranslationOptions<

@@ -3,14 +3,15 @@ import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'n
 
 import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
+  ChatApiEndpoint,
+  OfficialVendorId,
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
   ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+} from '@aipoch/providers'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
+
 import type { AgentFrameworkId, CodexSubscriptionTransport } from '../../shared/settings'
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { ResolvedProvider } from '../settings/provider-env'
@@ -20,7 +21,7 @@ import type {
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge-contract'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
 // and persisted settings share it). Adding one means implementing AgentFramework.

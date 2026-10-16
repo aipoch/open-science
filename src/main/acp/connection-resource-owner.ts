@@ -2,7 +2,7 @@ import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { terminateProcessTree } from '../process-tree'
 

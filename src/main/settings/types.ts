@@ -1,19 +1,22 @@
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
-import type { ClassificationAdapter, ClassificationBinding } from '../../shared/classification'
+import type { ClassificationAdapter } from '@aipoch/providers'
+import type { ClassificationBinding } from '../../shared/classification'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ChatApiEndpoint, ReasoningEffort } from '../../shared/model-preference-contract'
+import type {
+  ChatApiEndpoint,
+  OfficialVendorId,
+  CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from '../../shared/reasoning-effort'
+
 import type {
   AppIconVariant,
   ClaudeInfo,

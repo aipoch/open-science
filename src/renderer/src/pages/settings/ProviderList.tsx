@@ -16,8 +16,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
-import { defaultVendorModel, getOfficialVendor } from '../../../../shared/provider-registry'
+import { type ChatApiEndpoint, getOfficialVendor } from '@aipoch/providers'
+import { defaultVendorModel } from '../../../../shared/provider-model-policy'
+
 import type {
   AgentFrameworkId,
   ClaudeSubscriptionProviderId,

@@ -752,7 +752,6 @@
       "src/main/settings/provider-protocol-regressions.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/main/settings/provider-runtime-projection.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/record-codec.test.ts",
       "src/main/settings/repository.test.ts",

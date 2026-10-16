@@ -1,22 +1,26 @@
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
 import {
-  resolveProviderEffectiveModel,
-  resolveProviderReasoningEffortProfile
-} from '../../shared/provider-reasoning-effort'
-import {
-  defaultVendorModel,
-  getOfficialVendorModelIds,
-  isModelBridgeSupported,
+  type ChatApiEndpoint,
   isVendorModelMultimodal,
-  resolveCustomModelContextWindow,
-  resolveModelContextWindow,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorOpenAiBaseUrl,
   resolveVendorResponsesBaseUrl
-} from '../../shared/provider-registry'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  getOfficialVendorModelIds,
+  resolveCustomModelContextWindow,
+  resolveModelContextWindow
+} from '../../shared/provider-model-policy'
+import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
+import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../shared/provider-reasoning-effort'
+
 import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
 import type { ProviderView } from '../../shared/settings'
 import {

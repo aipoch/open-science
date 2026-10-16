@@ -1,10 +1,11 @@
-import type { ChatApiEndpoint } from './model-preference-contract'
-import type { OfficialVendorId } from './provider-registry'
 import {
-  isModelBridgeSupported,
+  type ChatApiEndpoint,
+  type OfficialVendorId,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
-} from './provider-registry'
+} from '@aipoch/providers'
+import { isModelBridgeSupported } from './provider-bridge-policy'
+
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,

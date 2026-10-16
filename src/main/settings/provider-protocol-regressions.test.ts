@@ -1,17 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatProviderCompatibilityBridge } from './chat-provider-compatibility'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import {
+  normalizeOpenAiChatModelStepUsage,
+  createResponsesAdapter
+} from '@aipoch/providers/protocol'
 import {
   CAPTURED_TOOL_IMAGE_PNG_BASE64,
   CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE,
   CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE
 } from './provider-tool-image-wire.test-fixtures'
 import { ResponsesBridge } from './responses-bridge'
-import { responsesToChatRequest } from './responses-request-adapter'
-import { streamChatToResponses } from './responses-response-adapter'
+
 import { createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { anthropicToResponses, chatToResponses, sanitizeXaiResponsesRequest } from './xai-protocol'
+import {
+  anthropicToResponses,
+  chatToResponses,
+  sanitizeXaiResponsesRequest
+} from '@aipoch/providers/protocol'
 
 type Json = Record<string, unknown>
 const bridges: { close(): Promise<void> }[] = []
@@ -247,19 +253,10 @@ describe('provider protocol report regressions', () => {
     const body = await response.text()
     const calls = sse(body).flatMap((chunk) => chunk.choices?.[0]?.delta?.tool_calls ?? [])
     expect.soft(calls.map((call) => call.index)).toEqual([0, 1])
-    let converted = ''
-    await streamChatToResponses(
-      new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
-      {
-        writeHead: vi.fn(),
-        write: (chunk) => {
-          converted += chunk
-          return true
-        },
-        end: vi.fn()
-      },
-      'test-model'
-    )
+    const adapter = createResponsesAdapter()
+    const turn = adapter.prepare({ body: { model: 'test-model', input: '', stream: true } })
+    const converted = await (await turn.convert(new Response(body))).text()
+    adapter.dispose()
     expect(
       sse(converted)
         .at(-1)
@@ -428,50 +425,6 @@ describe('provider protocol report regressions', () => {
 })
 
 describe('provider protocol regression edge contracts', () => {
-  it('R01 keeps parallel Codex results together and associates images without mutating replay', () => {
-    const image = {
-      type: 'input_image',
-      image_url: 'https://example.test/image.png',
-      detail: 'high'
-    }
-    const body = {
-      input: [
-        { type: 'function_call', call_id: 'call_parallel_alpha', name: 'first', arguments: '{}' },
-        { type: 'function_call', call_id: 'call_parallel_beta', name: 'second', arguments: '{}' },
-        {
-          type: 'function_call_output',
-          call_id: 'call_parallel_alpha',
-          output: [{ type: 'input_text', text: 'first result' }, image]
-        },
-        {
-          type: 'function_call_output',
-          call_id: 'call_parallel_beta',
-          output: [{ type: 'input_text', text: 'second result' }, image]
-        },
-        { type: 'message', role: 'assistant', content: 'I see both images.' }
-      ]
-    }
-    const original = structuredClone(body)
-    const result = responsesToChatRequest(body, 'test')
-    expect(result.messages.slice(0, 3)).toMatchObject([
-      {
-        role: 'assistant',
-        tool_calls: [{ id: 'call_parallel_alpha' }, { id: 'call_parallel_beta' }]
-      },
-      { role: 'tool', tool_call_id: 'call_parallel_alpha', content: 'first result' },
-      { role: 'tool', tool_call_id: 'call_parallel_beta', content: 'second result' }
-    ])
-    const media = result.messages.slice(3, -1)
-    expect(imageParts(media)).toEqual([
-      { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } },
-      { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } }
-    ])
-    expect(JSON.stringify(media)).toContain('call_parallel_alpha')
-    expect(JSON.stringify(media)).toContain('call_parallel_beta')
-    expect(body).toEqual(original)
-    expect(responsesToChatRequest(body, 'test')).toEqual(result)
-  })
-
   it('R01 preserves URL images in Claude tool results and their call association', () => {
     const result = anthropicToResponses(
       {
