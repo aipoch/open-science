@@ -1,0 +1,25 @@
+{
+  "entrypoint": "scripts/ci/notebook-analysis-native/vitest.config.ts",
+  "command": "npm run test:notebook-analysis-native",
+  "workflow": ".github/workflows/runtime-certification.yml",
+  "activation": {
+    "RUN_KERNEL": "1"
+  },
+  "requiredEnvironment": [
+    "OPEN_SCIENCE_TEST_PYTHON",
+    "OPEN_SCIENCE_TEST_R_COMMAND",
+    "OPEN_SCIENCE_TEST_R_ENV"
+  ],
+  "coveredModules": ["notebook_analysis_engine"],
+  "evidence": "Compares analysis read/write and replay projections with actual Python/R file access, generated plots and repeated output hashes; imports alone do not establish module coverage.",
+  "testFiles": [
+    "scripts/ci/notebook-analysis-native/dependency-analysis.chord.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.circlize.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.filesystem-diagnostics.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.iteration-snapshots.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.r-directory.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.r-file-map-runtime.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.r-pipelines.suite.ts",
+    "scripts/ci/notebook-analysis-native/dependency-analysis.structured-results.suite.ts"
+  ]
+}

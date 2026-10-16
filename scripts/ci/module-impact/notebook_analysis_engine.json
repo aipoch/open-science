@@ -46,7 +46,6 @@
     "packages/notebook-analysis/src/dependency-analysis.r-callbacks.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-composition.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-deseq2.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-file-map-runtime.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-file-map.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-graphics.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-hdf5array.test.ts",
@@ -208,14 +207,7 @@
     "packages/notebook-analysis/src/reported-r-exploration-chord.fixture.R",
     "packages/notebook-analysis/src/reported-r-package-replay.fixture.R",
     "packages/notebook-analysis/src/reported-r-theme-plots.fixture.ts",
-    "packages/notebook-analysis/src/reported-venn-device.fixture.json",
-    "packages/notebook-analysis/src/dependency-analysis.structured-results.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.filesystem-diagnostics.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-directory.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.iteration-snapshots.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
+    "packages/notebook-analysis/src/reported-venn-device.fixture.json"
   ],
   "interfacePaths": [
     "packages/notebook-analysis/src/analysis-test-support.ts",
@@ -294,7 +286,6 @@
       "packages/notebook-analysis/src/dependency-analysis.r-callbacks.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-composition.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-deseq2.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-file-map-runtime.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-file-map.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-graphics.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-hdf5array.test.ts",
@@ -372,14 +363,7 @@
       "packages/notebook-analysis/src/dependency-analysis.venn-device.test.ts",
       "packages/notebook-analysis/src/dependency-projection.r-packages.test.ts",
       "packages/notebook-analysis/src/input-path-analysis.test.ts",
-      "packages/notebook-analysis/src/input-resource-analysis.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.structured-results.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.filesystem-diagnostics.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-directory.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.iteration-snapshots.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
+      "packages/notebook-analysis/src/input-resource-analysis.test.ts"
     ],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
