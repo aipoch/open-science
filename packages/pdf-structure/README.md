@@ -81,3 +81,14 @@ Result-schema and worker-decoding matrices belong to this package's `test/` dire
 geometry, source provenance, decoding budgets and historical optional fields. Host tests retain
 representative result/thumbnail cache round trips, source authority, model leases and process
 supervision. Do not duplicate every decoder case through the host cache or lifecycle owner.
+
+Cells may carry optional `sourceSegments` instead of `sourceItems`. Each segment identifies the
+original PDF.js item by page, index and exact full text, with a UTF-16 half-open `[start, end)`
+range and its measured region (`rect` in worker output, normalized `region` in decoded results).
+Ranges cannot split surrogate pairs, overlap or replace an existing conflicting source identity.
+The two source fields are mutually exclusive within a cell; all its regions must be accounted for.
+Before consuming a shared parent item, the reader checks every claimed range together against the
+original text and native bounds, including complete non-whitespace coverage and spatial order.
+Repeated text is identified by offsets, never by guessing which substring occurrence was intended.
+If optional source metadata exceeds existing budgets, both fields are omitted together for the job.
+Verified ownership supports source-only preservation; it does not make a table cell translatable.
