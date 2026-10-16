@@ -802,7 +802,7 @@ describe('process tree reap notification', () => {
   })
 })
 
-describe('Linux cold recovery procfs birth-time filtering', () => {
+describe('Linux cold recovery marker scan', () => {
   const leader = { pid: 1000, birthToken: 'linux-proc-starttime:100' }
   const spawnedAt = 500_000
 
@@ -846,6 +846,20 @@ describe('Linux cold recovery procfs birth-time filtering', () => {
       )
     }
   )
+
+  it.each(['PATH=/bin\0', 'OPEN_SCIENCE_PROCESS_TREE_ID=another-owner\0'])(
+    'accepts a complete scan despite a newer unrelated process with %s',
+    async (environment) => {
+      prepare('observer', 60_000, environment)
+      await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe('gone')
+      expect(process.kill).toHaveBeenCalledExactlyOnceWith(-1000, 0)
+    }
+  )
+
+  it('accepts a complete marker scan without a receipt spawn time', async () => {
+    prepare('observer', 60_000, 'PATH=/bin\0')
+    await expect(proveRecordedPosixLeaderGone(leader, 'owner')).resolves.toBe('gone')
+  })
 
   it('retains an unreadable candidate when the receipt has no spawn time', async () => {
     prepare('(sd-pam)', 10_000, Object.assign(new Error('denied'), { code: 'EACCES' }))
