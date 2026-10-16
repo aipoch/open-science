@@ -1,3 +1,4 @@
+export type BrowserImportReadinessMode = 'attempts' | 'wait-for-launch'
 export type BrowserImportPhase = 'waiting-for-receiver' | 'transferring'
 export type BrowserImportProgress = { sentBytes: number; totalBytes: number }
 export type BrowserImportFailureCode =
@@ -42,11 +43,16 @@ export type BrowserImportTransfer = {
     onPhase?: (phase: BrowserImportPhase) => void
     /** Acknowledged bytes only; first callback follows the first successful chunk acknowledgment. */
     onProgress?: (progress: BrowserImportProgress) => void
-    /** Overall abortable readiness budget, separate from file transfer; defaults to two minutes. */
+    /** Default attempts preserves the 1–5 attempt limit. wait-for-launch retries until the
+     * overall deadline or cancellation; it observes only this transfer's authenticated handshake. */
+    readinessMode?: BrowserImportReadinessMode
+    /** Readiness only; defaults to 120,000 ms. Capped at 120,000 ms in wait-for-launch,
+     * 300,000 ms in attempts mode. Timeout permits another send() on the same live transfer. */
     readyTimeoutMs?: number
-    /** 1–5 attempts, always separated by 1,000 ms; defaults to 5 (about 14 seconds with default attempt timeouts). */
+    /** 1–5 attempts with 1,000 ms gaps; defaults to 5. Ignored in wait-for-launch mode. */
     readinessAttempts?: number
-    /** Includes response body reads; defaults to 2,000 ms, maximum 30,000 ms. */
+    /** Includes response body reads; defaults to 2,000 ms. Accepts up to 30,000 ms,
+     * clamped to 2,000 ms in wait-for-launch mode. Failed attempts have 1,000 ms gaps. */
     attemptTimeoutMs?: number
   }): Promise<{ received: true }>
 }

@@ -24,7 +24,7 @@ ship a desktop build containing this contract when offering the pure-launch acti
 
 The example expects these existing DOM elements (all buttons are `type="button"`):
 `continueButton` ("Download and continue"), `openButton` ("Open Open-Science"),
-`probeButton` ("Check again"), `retryButton` ("Open and retry transfer"),
+`probeButton` ("Check again"), `reconnectButton` ("Retry connection"), `retryButton` ("Open and retry transfer"),
 `restartButton` ("Start a new transfer"), `cancelButton` ("Cancel"), `status`, and a visible
 `downloadLink` to `/open-science/download`. Keep the page open. A product can show the recovery
 buttons only when relevant; do not remove the open/recheck path when discovery fails.
@@ -42,10 +42,18 @@ let transfer
 let active // Only one operation owns an AbortController at a time.
 
 function render() {
-  for (const button of [continueButton, openButton, probeButton, retryButton, restartButton]) {
+  for (const button of [
+    continueButton,
+    openButton,
+    probeButton,
+    reconnectButton,
+    retryButton,
+    restartButton
+  ]) {
     button.disabled = !!active
   }
   continueButton.disabled ||= !!blob
+  reconnectButton.disabled ||= !transfer
   retryButton.disabled ||= !blob
   restartButton.disabled ||= !blob
   cancelButton.disabled = !active
@@ -74,7 +82,7 @@ async function run(work, cancelTransfer = false) {
         case 'timeout':
         case 'readiness-exhausted':
           status.textContent =
-            'The receiver is not ready. Allow browser permissions, open the app, and retry. If the transfer expired, start a new transfer.'
+            'The receiver is not ready. Finish opening Open-Science, then click Retry connection. If the transfer expired, start a new transfer.'
           break
         case 'incompatible':
           transfer = undefined
@@ -123,9 +131,9 @@ function openTransfer() {
 async function send(signal) {
   await transfer.send({
     signal,
-    readinessAttempts: 5,
+    readinessMode: 'wait-for-launch',
     attemptTimeoutMs: 2000,
-    readyTimeoutMs: 15000,
+    readyTimeoutMs: 120000,
     onPhase: (phase) => {
       status.textContent =
         phase === 'waiting-for-receiver'
@@ -162,6 +170,8 @@ openButton.onclick = () =>
     await probe(signal) // One bounded check; Check again is available if startup takes longer.
   })
 probeButton.onclick = () => void run(probe)
+// After a timeout, reconnect the same transfer without navigating or downloading again.
+reconnectButton.onclick = () => void run(send, true)
 
 function retry(fresh) {
   return run(async (signal) => {
@@ -213,21 +223,36 @@ browser-held Blob/File; it performs no network request. `filename` defaults to a
 `origin` defaults to the page origin and must match it. It returns `{ readonly url, send }`.
 `send()` accepts:
 
-| Option              | Contract                                                                                           |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| `readinessAttempts` | Integer 1–5; default 5. Stops on the first verified response.                                      |
-| `attemptTimeoutMs`  | Default 2,000 ms, maximum 30,000 ms; includes headers and body reads.                              |
-| `readyTimeoutMs`    | Overall readiness budget; default 120,000 ms, capped at 300,000 ms.                                |
-| `signal`            | Cancels waiting or transfer; rejection preserves the caller's abort reason.                        |
-| `onPhase`           | Optional callback with `waiting-for-receiver` or `transferring`.                                   |
-| `onProgress`        | Optional callback with `{ sentBytes, totalBytes }`, after each authenticated chunk acknowledgment. |
+| Option              | Contract                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readinessMode`     | `attempts` (default) or explicit `wait-for-launch`.                                                                                                                       |
+| `readinessAttempts` | Integer 1–5, default 5 in `attempts` mode. Ignored in `wait-for-launch`.                                                                                                  |
+| `attemptTimeoutMs`  | Default 2,000 ms; accepts positive values up to 30,000 ms. In `wait-for-launch`, values above 2,000 ms are clamped to 2,000 ms. Includes headers and response body reads. |
+| `readyTimeoutMs`    | Default 120,000 ms. Capped at 120,000 ms in `wait-for-launch`, 300,000 ms in `attempts`. Smaller positive budgets are supported.                                          |
+| `signal`            | Cancels waiting or transfer; rejection preserves the caller's abort reason.                                                                                               |
+| `onPhase`           | Optional callback with `waiting-for-receiver` or `transferring`.                                                                                                          |
+| `onProgress`        | Optional callback with `{ sentBytes, totalBytes }`, after each authenticated chunk acknowledgment.                                                                        |
 
-Failed attempts are separated by 1,000 ms. Five stalled default attempts plus four gaps can take
-about **14 seconds** (timer scheduling/browser suspension can add delay). The overall readiness
-budget may stop an attempt or gap earlier; increasing it does not increase the attempt count.
-These budgets stop at readiness and **do not limit the subsequent whole file transfer**. Transport
-requests have their own timeout. Browser permission prompts can outlast readiness; retry after
-responding to them.
+Default `attempts` mode is unchanged: five stalled two-second attempts and four one-second gaps
+can take about **14 seconds**. Increasing `readyTimeoutMs` alone does not increase that attempt
+count. Opt into `wait-for-launch` when a user may need more time to respond to the browser's
+external-protocol prompt. It retries until this transfer's identity proof succeeds, the caller
+cancels, an identity/compatibility error occurs, or the total readiness budget expires. It is not
+cut off after five requests. Every failed request is followed by a 1,000 ms gap, unless the overall
+budget or cancellation stops that gap. All readiness timers are cleared on completion or failure.
+
+The browser's **Open application** permission prompt exposes no display, accept or cancel callback
+to an ordinary webpage. The SDK does not infer acceptance from focus, visibility or elapsed time.
+Only the current transfer's secret-bound handshake proves readiness. A generic `available` probe
+is insufficient. Display waiting copy until that handshake succeeds; a timeout means only that
+verified readiness was not reached in budget, not that the user rejected the prompt.
+
+The overall budget covers request headers, response body reads and retry gaps. Browser suspension
+can delay timer delivery; a late proof is rejected against the readiness deadline. These budgets
+stop at readiness and **do not limit subsequent whole-file transfer**. Each transport request still
+has its own timeout. Waiting never opens the protocol automatically: launch once from a click,
+then wait. After timeout, call `send()` again with the **same transfer** and a fresh, non-aborted
+signal to reconnect without another navigation or download. Each call gets a new readiness budget.
 
 `onPhase('waiting-for-receiver')` fires before the readiness request.
 `onPhase('transferring')` fires only after receiver identity verification, before encrypting/sending
@@ -238,14 +263,14 @@ let a website avoid guessing from elapsed time. Callbacks should not throw.
 
 `BrowserImportError` extends `Error`, has `name === 'BrowserImportError'` and a stable `code`:
 
-| Code                  | Meaning / recovery                                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `unsupported-browser` | Required browser capability is absent; pure launch requires a navigation API only.                                                    |
-| `launch-failed`       | Synchronous navigation threw. Silent browser/OS refusal cannot be detected.                                                           |
-| `readiness-exhausted` | All readiness attempts failed; open the app, allow permissions and retry.                                                             |
-| `timeout`             | Overall readiness deadline elapsed; retry after the app becomes reachable.                                                            |
-| `incompatible`        | Receiver readiness response/identity cannot be verified; no file bytes are sent.                                                      |
-| `transfer-failed`     | An operation after verified readiness failed, including network or acknowledgment validation; retry/resume or prepare a new transfer. |
+| Code                  | Meaning / recovery                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-browser` | Required browser capability is absent; pure launch requires a navigation API only.                                                             |
+| `launch-failed`       | Synchronous navigation threw. Silent browser/OS refusal cannot be detected.                                                                    |
+| `readiness-exhausted` | Attempt mode exhausted its count; retry the same transfer when the receiver becomes reachable.                                                 |
+| `timeout`             | Readiness deadline elapsed (including launch-wait expiry); the same transfer may be retried without relaunch.                                  |
+| `incompatible`        | Readiness response/identity cannot be verified; no bytes sent. Stop, discard the transfer and prepare a new one after correcting the receiver. |
+| `transfer-failed`     | An operation after verified readiness failed, including network or acknowledgment validation; retry/resume or prepare a new transfer.          |
 
 Discovery returns status objects for operational failures. Invalid arguments and concurrent
 `send()` calls throw ordinary `Error`s; caller cancellation rejects with `signal.reason`, not a
@@ -253,11 +278,28 @@ wrapped SDK error. Do not parse error message text. A lost completion response c
 file was queued: retry the same live transfer to recover its receipt before starting a fresh one,
 which could result in another import. Cancellation after receipt cannot undo the desktop queue.
 
-These additions are source compatible: existing import URLs and `send({ onProgress })` continue to
-work, while `launchOpenScience`, `BrowserImportPhase`, `onPhase` and two error codes are additive.
-Consumers with exhaustive code switches must handle the new codes. Fetch the `.mjs`, `.d.ts` and
-license from the same verified source commit when vendoring; use the commit supplied with this
-change, not an older website vendor pin. No npm publication is implied by a source commit.
+Transfer recovery rules:
+
+- `timeout` / `readiness-exhausted`: retain the Blob and transfer. Reconnect using `send()` alone;
+  no implicit launch, download, or cancellation request occurs on timeout.
+- `transfer-failed`: reuse the same live receiver to resume from its authenticated offset or recover
+  a lost completion receipt. If it is no longer reachable, retain the Blob and explicitly prepare
+  and launch a new transfer. Network errors cannot reliably distinguish expiry from blocked access.
+- `incompatible`: do not keep polling an unverified identity. Correct the receiver/app version,
+  then prepare and launch a new transfer from the retained Blob.
+- Caller cancellation: waiting requests/gaps stop immediately. Before identity verification the SDK
+  sends no DELETE to an untrusted port; an abandoned receiver expires normally. After verification
+  it attempts authenticated cleanup (up to two seconds). Discard the cancelled transfer and create
+  a new one from the retained Blob; the SDK does not automatically recreate/relaunch it or enforce
+  a permanent object tombstone. An already-aborted signal rejects again before network activity.
+- Concurrent `send()` calls on one transfer are rejected. Sequential calls with a cached receipt
+  return `{ received: true }` without another upload; this is not a new import. A new transfer may
+  create a separate queued import, so reconnect first when a completion acknowledgment was lost.
+
+`readinessMode` and `BrowserImportReadinessMode` are additive. Existing calls retain the five-attempt
+behavior and existing phase/error codes. The wait mode works with the existing version 1 receiver;
+no new desktop handshake or general availability dependency is introduced. Fetch `.mjs`, `.d.ts`
+and the license from the same verified source commit when vendoring. No npm publication is implied.
 
 ### Receipt, validation and repeated imports
 
@@ -362,7 +404,7 @@ sh .dev-isolate/science-protocol-import/run.sh npm run dev
 
 The wrapper sets `OPEN_SCIENCE_USER_DATA` and `OPEN_SCIENCE_CONFIG_ROOT` under
 `.dev-isolate/science-protocol-import`, enables `OPEN_SCIENCE_ALLOW_MULTI_INSTANCE=1`, and uses
-isolated discovery port `49150`. Websites testing that profile must pass `{ port: 49150 }` to
+discovery port `49151` (the SDK default). Websites may omit `port` in
 `checkBrowserImportAvailability`; this does not change the transfer port range.
 
 Focused automated verification uses the same wrapper:

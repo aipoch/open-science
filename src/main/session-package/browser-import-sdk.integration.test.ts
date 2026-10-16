@@ -46,6 +46,7 @@ it('transfers a browser-held Blob over authenticated HTTP without any remote dow
     const events: string[] = []
     expect(
       await transfer.send({
+        readinessMode: 'wait-for-launch',
         onPhase: (phase) => events.push(phase),
         onProgress: ({ sentBytes }) => {
           events.push('progress')
