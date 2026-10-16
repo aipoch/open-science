@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,8 @@ import { Parser } from 'web-tree-sitter'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from './analysis-test-support'
-import { NotebookDependencyAnalyzer } from './analysis-test-support'
+import { NotebookDependencyAnalyzer, projectNotebookDependencies } from './analysis-test-support'
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
@@ -108,6 +110,97 @@ const fileContext = async (
     kernelEpochId: currentKernelEpochId
   })
 }
+
+describe('directory observations and analyzer revision review regressions', () => {
+  it.each([
+    'import os\nentries = list(os.walk("inputs"))',
+    'from os import walk\nentries = list(walk("inputs"))',
+    'import os\ndef listing():\n    return list(os.walk("inputs"))\nentries = listing()',
+    'import os\ndef listing():\n    return list(os.walk("inputs", onerror=handler))\nentries = listing()'
+  ])('retains uncertainty for data-producing directory walks: %s', async (source) => {
+    const result = await analyzePythonNotebookSource(source)
+    const fileAccess = await analyzeNotebookSourceFileAccess('python', source)
+    const projection = projectNotebookDependencies([
+      {
+        run: {
+          runId: 'walk-run',
+          cellId: 'walk-cell',
+          kernelKind: 'python',
+          kernelEpochId: 'epoch-1',
+          environment: 'default-python',
+          script: source,
+          status: 'completed',
+          workingFiles: []
+        },
+        facts: result.facts,
+        fileAccess
+      }
+    ])
+    expect(projection.stalenessByRunId['walk-run'].state).toBe('unknown')
+    expect(fileAccess).toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('preserves the console-only directory diagnostic boundary', async () => {
+    const source = 'import os\nfor root, dirs, files in os.walk("inputs"):\n    print(root, files)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('reanalyzes facts cached under the earlier compact analyzer revision', async () => {
+    const script = 'path = "inputs/current.json"'
+    const parse = vi.spyOn(Parser.prototype, 'parse')
+    const context = await fileContext(
+      'python',
+      [script],
+      [],
+      true,
+      (json) => {
+        const cache = JSON.parse(json)
+        const previousRevision = 'scientific-lineage-hardening-20261013'
+        cache.analyzerRevision = previousRevision
+        cache.runs['run-0'].checksum = createHash('sha256')
+          .update(
+            JSON.stringify([
+              1,
+              previousRevision,
+              'python',
+              'default-python',
+              'epoch-1',
+              null,
+              null,
+              null,
+              null,
+              script,
+              null,
+              null,
+              null
+            ])
+          )
+          .digest('hex')
+        cache.runs['run-0'].fileContext.staticStrings = [
+          { name: 'path', value: 'inputs/stale.json' }
+        ]
+        return JSON.stringify(cache)
+      },
+      'epoch-1',
+      undefined,
+      () => parse.mockClear()
+    )
+    expect(parse).toHaveBeenCalled()
+    expect(context?.staticStrings).toContainEqual({ name: 'path', value: 'inputs/current.json' })
+    expect(context?.staticStrings).not.toContainEqual({ name: 'path', value: 'inputs/stale.json' })
+  })
+})
 
 describe('partial notebook reader inputs after cache reload', () => {
   it.each(['path', 'base::gzfile(path)', 'base::gzfile(open="rb",description=path)'])(

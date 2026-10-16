@@ -10203,7 +10203,13 @@ const analyzeRFileAccessTree = (
     fileConnection(expr)?.path
 
   const rsamtoolsQualifiedName = (expr: RExpr | null | undefined): string | undefined => {
-    if (!isCall(expr) || expr.staticBuiltinShadowed) return undefined
+    if (
+      !isCall(expr) ||
+      expr.staticBuiltinShadowed ||
+      (isCall(expr.callee) && expr.callee.staticBuiltinShadowed) ||
+      rFileCallLookupDependencies(expr).some((name) => shadowedQuotationNames.has(name))
+    )
+      return undefined
     const qualified = rQualifiedCall(expr)
     return qualified?.package === 'Rsamtools' ? qualified.name : undefined
   }
@@ -10820,7 +10826,12 @@ const analyzeRFileAccessTree = (
     const name = rCalledName(expr)
     const qualified = rQualifiedCall(expr)
     const serialization = rSerializationCallName(expr)
-    if (name === 'rm' && !qualified) {
+    if (
+      ['rm', 'remove'].includes(name ?? '') &&
+      (!qualified || qualified.package === 'base') &&
+      !expr.staticBuiltinShadowed &&
+      !rFileCallLookupDependencies(expr).some((name) => shadowedQuotationNames.has(name))
+    ) {
       // A removed BAM handle cannot authorize a later scanBam call.  Only
       // delete direct symbol bindings; dynamic list evaluation remains opaque.
       for (const argument of expr.args) {
@@ -11056,6 +11067,14 @@ const analyzeRFileAccessTree = (
         ? qualified.name
         : undefined
     if (rsamtoolsName) {
+      if (rsamtoolsQualifiedName(expr) !== rsamtoolsName) {
+        // A replacement namespace operator need not resolve the named package
+        // function or force its arguments. It cannot certify any file path.
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        return
+      }
       const addRead = (path: string | undefined): void => {
         if (path && !definitelyWritten.has(path)) reads.add(path)
       }
@@ -11110,9 +11129,8 @@ const analyzeRFileAccessTree = (
           unresolvedReads = true
           unsupportedExternalState = true
         } else {
-          addRead(binding.bam)
-          addRead(binding.index)
-          // BamFile may consult package metadata and companion files at runtime.
+          // A BamFile is an unopened reference. Default index discovery may
+          // observe existence, but only a later reader proves content access.
           unresolvedReads = true
         }
       } else if (
@@ -11179,9 +11197,7 @@ const analyzeRFileAccessTree = (
         const explicitIndexArgument = indexedReaderNames.includes(rsamtoolsName)
           ? connectionArgument(expr, ['file', 'index', 'param'], 'index')
           : undefined
-        const indexIsExplicit =
-          explicitIndexArgument !== undefined &&
-          !(rsamtoolsName === 'pileup' && bamBinding && (isSymbol(argument) || isCall(argument)))
+        const indexIsExplicit = explicitIndexArgument !== undefined && !bamBinding
         const directIndex = indexIsExplicit ? rsamtoolsStaticPath(explicitIndexArgument) : undefined
         if (bamListBinding?.length && ['countBam'].includes(rsamtoolsName)) {
           for (const file of bamListBinding) {
@@ -11194,9 +11210,8 @@ const analyzeRFileAccessTree = (
           unsupportedExternalState = true
         } else {
           addRead(directBam)
-          // An explicit index (including NULL) overrides the index carried by
-          // a BamFile binding. A dynamic override remains unknown rather than
-          // reusing a stale companion path from the object.
+          // BamFile methods ignore their index argument and open the stored
+          // index. Direct path methods can instead supply an explicit index.
           addRead(indexIsExplicit ? directIndex : (bamBinding?.index ?? indexedBinding?.index))
           if (!indexIsExplicit && indexedBinding?.gzindex) addRead(indexedBinding.gzindex)
           unresolvedReads = true
@@ -11236,7 +11251,7 @@ const analyzeRFileAccessTree = (
           (isCall(fileArgument) ? rsamtoolsBamBinding(fileArgument) : undefined)
         const filePath = binding?.bam ?? rsamtoolsStaticPath(fileArgument)
         const indexArgument = connectionArgument(expr, parameters, 'index')
-        const indexIsExplicit = indexArgument !== undefined
+        const indexIsExplicit = indexArgument !== undefined && !binding
         const indexPath = indexIsExplicit
           ? indexArgument && !isNull(indexArgument)
             ? rsamtoolsStaticPath(indexArgument)

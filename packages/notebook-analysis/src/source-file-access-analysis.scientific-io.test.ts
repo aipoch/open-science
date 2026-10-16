@@ -187,6 +187,22 @@ describe('scientific reader review regressions', () => {
 })
 
 describe('Rsamtools BAM/index lineage', () => {
+  it.each(['', ', index = "inputs/reference.bai"'])(
+    'does not publish content reads for an unopened BamFile reference: %s',
+    async (index) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        `bam <- Rsamtools::BamFile("inputs/reference.bam"${index})`
+      )
+      expect(result).toMatchObject({ reads: [], writes: [] })
+      if (!index) {
+        // Default index discovery observes existence without reading file contents.
+        expect(result.readState).toBe('partial')
+        expect(result.externalState).toBe('partial')
+      }
+    }
+  )
+
   it('retains qualified BamFile inputs through scanBam and indexBam output', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'r',
@@ -378,6 +394,82 @@ describe('Rsamtools BAM/index lineage', () => {
     )
     expect(result.reads).toEqual(['inputs/coverage.bam', 'inputs/coverage.bam.bai'])
     expect(result.readState).toBe('partial')
+  })
+
+  it.each([
+    'Rsamtools::scanBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::scanBam(bam, index = NULL)',
+    'Rsamtools::countBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::idxstatsBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::filterBam(bam, "outputs/filtered.bam", index = "inputs/ignored.bai")',
+    'Rsamtools::filterBam(bam, "outputs/filtered.bam", index = NULL)'
+  ])('uses the stored BamFile index when a method ignores its index argument: %s', async (call) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      ['bam <- Rsamtools::BamFile("inputs/source.bam", index = "inputs/stored.bai")', call].join(
+        '\n'
+      )
+    )
+    expect(result.reads).toEqual(['inputs/source.bam', 'inputs/stored.bai'])
+    expect(result.writes).toEqual(call.includes('filterBam') ? ['outputs/filtered.bam'] : [])
+    expect(result.readState).toBe('partial')
+  })
+
+  it('retains the stored index opened by scanBamHeader on a BamFile reference', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam <- Rsamtools::BamFile("inputs/header.bam", index = "inputs/stored.bai")',
+        'Rsamtools::scanBamHeader(bam, index = "inputs/ignored.bai")'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual(['inputs/header.bam', 'inputs/stored.bai'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each(['rm', 'remove', 'base::rm', 'base::remove'])(
+    'does not reuse an indexed reference removed by %s',
+    async (remove) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        [
+          'handle <- Rsamtools::FaFile("inputs/reference.fa", index = "inputs/reference.fa.fai")',
+          `${remove}(handle)`,
+          'Rsamtools::scanFa(handle)'
+        ].join('\n')
+      )
+      expect(result.reads).toEqual([])
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each(['rm', 'remove'])(
+    'retains an indexed reference passed to a shadowed no-op %s',
+    async (remove) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        [
+          `${remove} <- function(...) NULL`,
+          'handle <- Rsamtools::FaFile("inputs/reference.fa", index = "inputs/reference.fa.fai")',
+          `${remove}(handle)`,
+          'Rsamtools::scanFa(handle)'
+        ].join('\n')
+      )
+      expect(result.reads).toEqual(['inputs/reference.fa', 'inputs/reference.fa.fai'])
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each([
+    'Rsamtools::scanBam("inputs/phantom.bam", index = "inputs/phantom.bai")',
+    'bam <- Rsamtools::BamFile("inputs/phantom.bam"); Rsamtools::scanBam(bam)',
+    'Rsamtools::sortBam("inputs/phantom.bam", "outputs/phantom")'
+  ])('does not certify Rsamtools I/O through a shadowed namespace operator: %s', async (call) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      ['`::` <- function(...) function(...) NULL', call].join('\n')
+    )
+    expect(result).toMatchObject({ reads: [], writes: [], externalState: 'partial' })
   })
 
   it('replays static PileupFiles inputs through applyPileups', async () => {

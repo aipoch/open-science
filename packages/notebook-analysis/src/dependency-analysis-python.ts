@@ -6364,9 +6364,8 @@ class Analyzer extends NodeVisitor {
       const canonical = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
         .filter(Boolean)
         .join('.')
-      return (
-        canonical === 'os.walk' ||
-        ['os.path.join', 'os.path.basename', 'os.path.dirname', 'os.fspath'].includes(canonical)
+      return ['os.path.join', 'os.path.basename', 'os.path.dirname', 'os.fspath'].includes(
+        canonical
       )
     })()
     if (rawCallName) {
@@ -6414,17 +6413,11 @@ class Analyzer extends NodeVisitor {
         this.unknown.add('external-state')
         if (
           canonicalCallName === 'decimal.Decimal' ||
+          canonicalCallName === 'os.walk' ||
           ['random', 'numpy.random'].some((namespace) =>
             canonicalCallName.startsWith(`${namespace}.`)
           )
         )
-          this.unknown.add('scoped-opaque-call')
-      }
-      if (canonicalCallName === 'os.walk') {
-        const callback =
-          node.keywords?.find((keyword) => keyword.arg === 'onerror')?.value ??
-          (Array.isArray(node.args) ? node.args[2] : undefined)
-        if (callback && !(callback.type === 'Constant' && callback.value === null))
           this.unknown.add('scoped-opaque-call')
       }
     }
@@ -7271,6 +7264,7 @@ const analyzePythonTree = (
 }
 
 const pythonHasUnsupportedExternalState = (canonicalName: string, node?: PyNode): boolean => {
+  if (canonicalName === 'os.walk') return true
   if (canonicalName === 'decimal.Decimal') {
     const args = Array.isArray(node?.args) ? node.args : []
     const value = args[0] ?? node?.keywords?.find((keyword) => keyword.arg === 'value')?.value
@@ -7948,6 +7942,7 @@ const pythonLocalFileWrappers = (
           (member && PYTHON_FILE_CALL_EFFECTS.has(member)) ||
           calledName === 'open' ||
           member === 'open' ||
+          member === 'walk' ||
           (member &&
             (isPotentialPythonFileReadCall(member) || isPotentialPythonFileWriteCall(member)))
         )
