@@ -23,9 +23,11 @@ import {
   type ConnectorSettingsWorkflowEffects
 } from '../../../src/main/settings/workflows/connectors'
 
-// Only the dedicated runner supplies Python and requires every scenario's evidence. Normal portable
-// npm test does not acquire a new Python requirement or pretend these opt-in tests were executed.
-const suite = process.env.RUN_PROCESS_LIFECYCLE === '1' ? describe : describe.skip
+// The dedicated configuration discovers this suite; the runner supplies Python and validates
+// all scenario evidence. Accidental direct execution must fail instead of reporting skipped tests.
+if (process.env.RUN_PROCESS_LIFECYCLE !== '1' || !process.env.LIFECYCLE_RUN_ID) {
+  throw new Error('Run lifecycle checks with node scripts/ci/process-lifecycle/run.mjs core')
+}
 
 async function scenario(
   name: string,
@@ -83,7 +85,7 @@ const waiting = setInterval(() => {
   }
 }
 
-suite('scheduled source process lifecycle', () => {
+describe('scheduled source process lifecycle', () => {
   for (const mode of ['normal', 'failure', 'cancel', 'timeout'] as const) {
     it(
       `verification-${mode}`,

@@ -18,7 +18,8 @@ export function harnessDigest() {
     'observer.mjs',
     'canary.mjs',
     'observer.node-test.mjs',
-    'lifecycle.integration.test.ts',
+    'lifecycle.suite.ts',
+    'vitest.config.ts',
     'run.mjs'
   ]) {
     hash.update(name).update(readFileSync(resolve('scripts/ci/process-lifecycle', name)))

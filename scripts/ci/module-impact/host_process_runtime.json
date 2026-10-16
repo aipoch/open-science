@@ -894,8 +894,7 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts",
-      "scripts/ci/process-lifecycle/lifecycle.integration.test.ts"
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
