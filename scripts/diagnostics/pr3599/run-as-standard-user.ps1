@@ -26,7 +26,15 @@ $configuration = Get-Content (Join-Path $PSScriptRoot 'run-config.json') -Raw | 
 $evidence = Join-Path $PSScriptRoot 'evidence'
 New-Item -ItemType Directory -Path $evidence,(Join-Path $PSScriptRoot 'temp') -Force | Out-Null
 $admin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-@{identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;isAdministrator=$admin;profile=$env:USERPROFILE;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'identity.json')
+$inheritedProfile = $env:USERPROFILE
+$env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
+$env:HOME = $env:USERPROFILE
+$env:HOMEDRIVE = [IO.Path]::GetPathRoot($env:USERPROFILE).TrimEnd('\')
+$env:HOMEPATH = $env:USERPROFILE.Substring($env:HOMEDRIVE.Length)
+$env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
+$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+if (-not $env:USERPROFILE -or $env:USERPROFILE -eq $inheritedProfile) { throw 'The isolated account profile was not loaded separately' }
+@{identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;isAdministrator=$admin;profile=$env:USERPROFILE;inheritedProfile=$inheritedProfile;appData=$env:APPDATA;localAppData=$env:LOCALAPPDATA;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'identity.json')
 if ($admin) { throw 'Upgrade acceptance must run as an ordinary user' }
 Set-Location $configuration.candidateRoot
 $env:PR3599_EVIDENCE_DIR = $evidence
@@ -38,11 +46,13 @@ $env:HTTP_PROXY = ''
 $env:HTTPS_PROXY = ''
 $env:ALL_PROXY = ''
 $env:PSExecutionPolicyPreference = 'Bypass'
-Remove-Item Env:NODE_OPTIONS,Env:ELECTRON_RUN_AS_NODE,Env:OPEN_SCIENCE_E2E_STORAGE_ROOT,Env:GH_TOKEN,Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:NODE_OPTIONS,Env:ELECTRON_RUN_AS_NODE,Env:OPEN_SCIENCE_E2E_STORAGE_ROOT,Env:OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH,Env:GH_TOKEN,Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
 $arguments = @('scripts/pr3599-upgrade-certification.mjs','--current-dir',$configuration.currentDirectory,'--previous-dir',$configuration.previousDirectory,'--output',(Join-Path $evidence 'updater-observation.json'))
 @{program=$configuration.node;arguments=$arguments;cwd=(Get-Location).Path;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'command.json')
+$ErrorActionPreference = 'Continue'
 & $configuration.node @arguments *> (Join-Path $evidence 'upgrade.log')
 $result = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
 Set-Content (Join-Path $evidence 'upgrade.exit') $result
 exit $result
 '@ | Set-Content -LiteralPath $childScript
