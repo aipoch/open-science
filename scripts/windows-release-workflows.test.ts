@@ -839,7 +839,7 @@ describe('post-merge Windows validation', () => {
       if: "inputs.dry_run != 'macos-x64'",
       uses: './.github/workflows/package-smoke.yml'
     })
-    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke', 'cli-artifacts'])
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
     expect(regression.on).not.toHaveProperty('workflow_run')
     expect(regression.on).toHaveProperty('workflow_dispatch')
     expect(regression.on.workflow_dispatch).toMatchObject({

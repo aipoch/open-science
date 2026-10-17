@@ -16,7 +16,6 @@
     "src/main/acp/attachment-content.ts",
     "src/main/acp/backend-generation-owner.test.ts",
     "src/main/acp/backend-generation-owner.ts",
-    "src/main/acp/classification-image-loader.ts",
     "src/main/acp/claude-agent-acp-patch.test.ts",
     "src/main/acp/claude-transcript-reader.test.ts",
     "src/main/acp/claude-transcript-reader.ts",

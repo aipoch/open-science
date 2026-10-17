@@ -165,10 +165,6 @@ import {
   isExternalAttachmentTableRegion
 } from './literature-pdf-native-table-candidates.mjs'
 import { serializeWorkerResult } from './scratch.mjs'
-import {
-  attachMeasuredTableSourceSegments,
-  refineMeasuredAssignedNumericSegments
-} from './literature-pdf-source-segments.mjs'
 
 const [pdfArgument, assetArgument, runtimeArgument, pageArgument, outputArgument] =
   process.argv.slice(2)
@@ -2326,9 +2322,6 @@ try {
           )
         })
       }
-      const sourceTables = { parts: tables.filter((table) => table.page === pageNumber) }
-      refineMeasuredAssignedNumericSegments(sourceTables, tokens, measuredRuns)
-      attachMeasuredTableSourceSegments(sourceTables, tokens)
     } finally {
       page.cleanup()
     }
@@ -2365,7 +2358,6 @@ try {
       for (const cell of data.cells ?? []) {
         cell.rect = restore(cell.rect)
         cell.sourceRects = cell.sourceRects.map(restore)
-        for (const segment of cell.sourceSegments ?? []) segment.rect = restore(segment.rect)
       }
       for (const row of data.rows ?? []) row.rect = restore(row.rect)
       if (data.sourceViewport && rotation !== 180)

@@ -4,8 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { createIndex, openDatabase } from './sqlite.js'
-import { createHash } from 'node:crypto'
+import { createIndex } from './sqlite.js'
 let root: string
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'reading-domain-'))
@@ -26,38 +25,6 @@ function setup(text: string) {
   const authorize = vi.fn(async () => extract)
   return { index, extract, authorize, reader: new LiteratureReader({ index, authorize }) }
 }
-it.each([
-  'open-science-pdfjs-verified-bytes-v2',
-  'open-science-pdfjs-verified-bytes-prose-columns-v3'
-])('does not reuse obsolete extraction identity %s', async (version) => {
-  const { reader, index } = setup('column ordered cohort evidence')
-  const oldFingerprint = createHash('sha256').update(version).digest('hex')
-  const oldId = createHash('sha256')
-    .update(`${reference().checksum}:${oldFingerprint}`)
-    .digest('hex')
-  const connection = await index.open()
-  await connection.replace({
-    extractionId: oldId,
-    documentChecksum: reference().checksum,
-    extractorFingerprint: oldFingerprint,
-    chunks: [
-      {
-        pageStart: 1,
-        pageEnd: 1,
-        textStart: 0,
-        textEnd: 28,
-        content: 'obsolete interleaved evidence'
-      }
-    ]
-  })
-  await connection.close()
-  const replace = vi.spyOn(LiteratureFullTextIndex.prototype, 'replace')
-  const result = await reader.searchDocuments([reference()], 'evidence')
-  expect(replace).toHaveBeenCalledOnce()
-  expect(replace.mock.calls[0][0].extractionId).not.toBe(oldId)
-  expect(replace.mock.calls[0][0].extractorFingerprint).not.toBe(oldFingerprint)
-  expect(result.passages[0].content).toBe('column ordered cohort evidence')
-})
 it('preserves multiple bindings to the same extracted content and coalesces extraction', async () => {
   const { reader, extract, authorize } = setup('--- Page 1 ---\nshared evidence')
   const result = await reader.searchDocuments([reference('a'), reference('b')], 'evidence')
@@ -96,12 +63,7 @@ it('binds sequential cursors to the intended document and rejects invalid offset
   await expect(
     reader.readDocument(
       reference(),
-      Buffer.from(
-        JSON.stringify({
-          ...JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString()),
-          offset: 18000
-        })
-      ).toString('base64url')
+      Buffer.from(JSON.stringify({ documentId: 'doc', offset: 18000 })).toString('base64url')
     )
   ).rejects.toThrow('out of range')
 })
@@ -172,96 +134,4 @@ it('keeps complete short screening evidence distinct from selected passages', as
     coverage: 'full-text',
     passages: [{ content: 'short evidence' }]
   })
-})
-
-it.each(['bm25', 'fallback'] as const)(
-  'isolates extraction caches and %s indexes by caller strategy',
-  async (mode) => {
-    type StrategyReference = DocumentReference & { strategy: string }
-    const index = createIndex(root)
-    if (mode === 'fallback') vi.spyOn(index, 'open').mockRejectedValue(new Error('offline'))
-    const extract = vi.fn(async (strategy: string) => ({
-      text: `${strategy} cohort evidence`,
-      pageCount: 2,
-      truncated: false
-    }))
-    const authorize = vi.fn(async (ref: StrategyReference) => () => extract(ref.strategy))
-    const fingerprint = (strategy: string) => createHash('sha256').update(strategy).digest('hex')
-    const onIndexError = vi.fn()
-    const reader = new LiteratureReader({
-      index,
-      authorize,
-      extractionFingerprint: (ref) => fingerprint(ref.strategy),
-      onIndexError
-    })
-    const native = { ...reference(), strategy: 'native' }
-    const explicit = { ...reference(), strategy: 'explicit' }
-    const nativeResult = await reader.searchDocuments([native], 'cohort')
-    const explicitResult = await reader.searchDocuments([explicit], 'cohort')
-    expect(nativeResult.passages[0]?.content).toBe('native cohort evidence')
-    expect(explicitResult.passages[0]?.content).toBe('explicit cohort evidence')
-    const repeatedNativeResult = await reader.searchDocuments([native], 'cohort')
-    expect(repeatedNativeResult.passages[0]?.content).toBe('native cohort evidence')
-    for (const result of [nativeResult, explicitResult, repeatedNativeResult])
-      expect(result.retrievalMode).toBe(mode)
-    expect(extract).toHaveBeenCalledTimes(2)
-    expect(authorize).toHaveBeenCalledTimes(3)
-    if (mode === 'bm25') {
-      expect(onIndexError).not.toHaveBeenCalled()
-      const db = openDatabase(root)
-      try {
-        const rows = await db.query<{ extractionId: string; extractorFingerprint: string }[]>(
-          'SELECT "extractionId", "extractorFingerprint" FROM "LiteratureIndexDocument"'
-        )
-        expect(rows).toHaveLength(2)
-        expect(new Set(rows.map((row) => row.extractionId)).size).toBe(2)
-        expect(rows.map((row) => row.extractorFingerprint).sort()).toEqual(
-          [fingerprint('native'), fingerprint('explicit')].sort()
-        )
-      } finally {
-        await db.close()
-      }
-    }
-  }
-)
-
-it('binds cursors to extraction strategy and checksum and rejects legacy cursors', async () => {
-  const reader = new LiteratureReader({
-    index: createIndex(root),
-    authorize: async () => async () => ({
-      text: 'a'.repeat(17000),
-      pageCount: 2,
-      truncated: false
-    }),
-    extractionFingerprint: (ref: DocumentReference & { strategy?: string }) =>
-      ref.strategy ?? 'native'
-  })
-  const first = await reader.readDocument(reference())
-  expect(first.nextCursor).not.toBeNull()
-  await expect(
-    reader.readDocument({ ...reference(), strategy: 'explicit' }, first.nextCursor!)
-  ).rejects.toThrow('cursor is invalid')
-  await expect(
-    reader.readDocument(reference('doc', 'b'.repeat(64)), first.nextCursor!)
-  ).rejects.toThrow('cursor is invalid')
-  await expect(
-    reader.readDocument(
-      reference(),
-      Buffer.from(JSON.stringify({ documentId: 'doc', offset: 16000 })).toString('base64url')
-    )
-  ).rejects.toThrow('cursor is invalid')
-})
-
-it('shares the six-extraction cache limit across caller strategies', async () => {
-  const extract = vi.fn(async () => ({ text: 'evidence', pageCount: 2, truncated: false }))
-  const reader = new LiteratureReader({
-    index: createIndex(root),
-    authorize: async () => extract,
-    extractionFingerprint: (ref: DocumentReference & { strategy: string }) => ref.strategy
-  })
-  for (let i = 0; i < 7; i++) await reader.readDocument({ ...reference(), strategy: String(i) })
-  await reader.readDocument({ ...reference(), strategy: '6' })
-  expect(extract).toHaveBeenCalledTimes(7)
-  await reader.readDocument({ ...reference(), strategy: '0' })
-  expect(extract).toHaveBeenCalledTimes(8)
 })

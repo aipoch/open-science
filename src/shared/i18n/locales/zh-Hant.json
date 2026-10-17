@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "目前的應用程式版本不支援此加密資料格式。請使用相容的應用程式版本或還原原始設定檔。現有憑證未被替換。"
   },
   "renderer": {
+    "Update preparation failed": "更新準備失敗",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "應用程式仍保持開啟。解決問題後重試，或取消更新以繼續工作。",
     "Select one or more options": "選擇一個或多個選項",
     "Your conversation is preserved. Try Resume again.": "您的會話已保留。請再次嘗試恢復。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能體未能及時回應。您的會話已保留。請再次嘗試恢復。",
@@ -166,7 +168,6 @@
     "Search PDC studies and versions by name or identifier.": "依名稱或識別碼搜尋 PDC 研究及版本。",
     "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",
     "Map PDC aliquots to samples, cases and external references.": "將 PDC 等分試樣對應至樣本、病例和外部參照。",
-    "Retrieve PDC case demographics, diagnoses and sample references.": "取得 PDC 病例的人口統計資訊、診斷和樣本參照。",
     "Discover PDC study files and quantitative reports without downloading files.": "探索 PDC 研究檔案和定量報告，不下載檔案。",
     "Query linkage disequilibrium between two variants in a specified population.": "查詢指定族群中兩個變異之間的連鎖不平衡。",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "尋找指定族群中具有高連鎖不平衡的鄰近變異。",
@@ -7260,19 +7261,6 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "其他連線將中斷。更新後，關閉此應用程式也會停止背景工作。您的設定和資料位置將保留。",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "另外安裝的版本不會更新。再次使用前，請確認其與現有資料相容。",
     "Continue opening Open-Science?": "繼續開啟 Open-Science？",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "正在執行的任務將停止，其他連線將中斷。未儲存的工作可能遺失。您的設定和資料位置將保留。此後關閉此應用程式也會停止背景工作。",
-    "Search incomplete. Some pages could not be read.": "搜尋結果不完整。部分頁面無法讀取。",
-    "Set two-column body": "設定雙欄正文",
-    "Applies to your next message. Select body text only; exclude tables.": "此設定適用於你的下一則訊息。僅選取正文，排除表格。",
-    "Redrawing replaces the body area on that page.": "重新繪製會取代該頁的正文區域。",
-    "Body areas: {{count}}_other": "{{count}} 個正文區域",
-    "Clear this page": "清除本頁",
-    "Drag across both columns, then confirm the divider.": "拖曳選取兩欄，然後確認分隔線。",
-    "Two-column body": "雙欄正文",
-    "Column divider": "欄間分隔線",
-    "Save body area": "儲存正文區域",
-    "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
-    "You can configure up to 32 pages.": "最多可設定 32 頁。",
-    "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。"
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "正在執行的任務將停止，其他連線將中斷。未儲存的工作可能遺失。您的設定和資料位置將保留。此後關閉此應用程式也會停止背景工作。"
   }
 }

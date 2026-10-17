@@ -12,9 +12,6 @@ import {
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import {
   withPdfContext as withPdf,
-  pdfProseReadingSelectionsFromContext,
-  withPdfProseReadingSelections,
-  type PdfProseReadingSelection,
   type PdfReadingPositionSource
 } from '../../../../shared/session-pdf-context'
 import {
@@ -115,7 +112,6 @@ type SendWorkspaceMessageIntent = {
   pdfContext?: MessagePdfContextSnapshot
   pdfReadingPosition?: PdfReadingPosition
   pdfReadingPositionSource?: PdfReadingPositionSource
-  pdfProseReadingSelections?: readonly PdfProseReadingSelection[]
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: SessionPdfContextSource[]
   parts?: MessagePart[]
@@ -859,19 +855,13 @@ const startPendingPrompt = (
           await rollbackCancelledPreparation()
           return undefined
         }
+        if (pdfContext)
+          useSessionStore.getState().replaceMessagePdfContext({
+            sessionId: pending.sessionId,
+            messageId: pending.messageId,
+            pdfContext
+          })
       }
-      pdfContext = withPdfProseReadingSelections(
-        pdfContext,
-        request.pdfProseReadingSelections ??
-          pdfProseReadingSelectionsFromContext(request.pdfContext),
-        attachments
-      )
-      if (pdfContext)
-        useSessionStore.getState().replaceMessagePdfContext({
-          sessionId: pending.sessionId,
-          messageId: pending.messageId,
-          pdfContext
-        })
     } catch (error) {
       if (promptPreparation) {
         if (!ownsPrompt(pending.sessionId, pending.messageId)) {
@@ -1174,8 +1164,6 @@ const performSendWorkspaceMessage = async (
                 })
               ),
               pdfReadingPosition: pdfContext.readingPosition,
-              pdfProseReadingSelections:
-                input.pdfProseReadingSelections ?? pdfProseReadingSelectionsFromContext(pdfContext),
               pdfReadingPositionSource: readingSourceForSend({ pdfContext }, [])
             }
           : {}),
@@ -1397,11 +1385,6 @@ const performSendWorkspaceMessage = async (
           excludeSinglePage: true
         })
       }
-      pdfContext = withPdfProseReadingSelections(
-        pdfContext,
-        input.pdfProseReadingSelections ?? pdfProseReadingSelectionsFromContext(input.pdfContext),
-        promptAttachments
-      )
       if (
         pdfContext &&
         (eligiblePendingPdfContext.attachmentIds.length > 0 ||

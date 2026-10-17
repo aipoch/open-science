@@ -261,22 +261,6 @@ export function captionKind(text) {
     )
   )
     return undefined
-  // These numbered references are paragraph prose rather than captions. The
-  // citation form is especially distinctive. Panel references with a sentence
-  // opener and unpunctuated quantifier references are likewise paragraph prose.
-  if (
-    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+of\s+[\p{L}][\p{L}-]*(?:\s+et\s+al\.)?\s*\(\d{4}[a-z]?\)/iu.test(
-      text ?? ''
-    )
-  )
-    return undefined
-  if (
-    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+\((?:left|right|top|bottom|middle|center|centre|[A-Za-z])\)\.\s+(?:The|This|These|Those|Our|Their|It|They)\b/i.test(
-      text ?? ''
-    ) ||
-    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:all|both|each)\b/i.test(text ?? '')
-  )
-    return undefined
   // A numbered figure reference can be split at the start of a paragraph
   // before a short sentence opener. Keep these narrow prose shapes out of
   // caption ownership while preserving ordinary noun titles.
@@ -342,7 +326,7 @@ export function captionKind(text) {
   const narrativeReferencePanel =
     '(?:\\s+(?!a\\s+(?:review|display|measure|list|report|contrast|complement|plot|split|break|set|use|show|exhibit)\\b)[A-Za-z](?=\\s)|\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\)(?:\\s*(?:,|and|&)\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\))*)?'
   const narrativeReferenceVerb =
-    '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|highlights?|details?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
+    '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
   const narrativeReference = new RegExp(
     `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*(?:${narrativeReferenceLabel}|[A-Z]?\\d+(?:\\.\\d+)?)${narrativeReferencePanel})*\\s+(?:(?:also|further)\\s+)?${narrativeReferenceVerb}\\b`,
     'i'

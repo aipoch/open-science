@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
+    "Update preparation failed": "업데이트 준비 실패",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",
     "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",
@@ -166,7 +168,6 @@
     "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
     "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
     "Map PDC aliquots to samples, cases and external references.": "PDC 분주 검체를 검체, 사례 및 외부 참조에 매핑.",
-    "Retrieve PDC case demographics, diagnoses and sample references.": "PDC 사례의 인구통계, 진단 및 샘플 참조를 조회합니다.",
     "Discover PDC study files and quantitative reports without downloading files.": "파일을 다운로드하지 않고 PDC 연구 파일 및 정량 보고서 검색.",
     "Query linkage disequilibrium between two variants in a specified population.": "지정한 집단에서 두 변이 간의 연관 불평형을 조회합니다.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "지정한 집단에서 높은 연관 불평형을 보이는 인접 변이를 검색합니다.",
@@ -7258,19 +7259,6 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "다른 연결이 끊어집니다. 업데이트 후 이 앱을 닫으면 백그라운드 작업도 중지됩니다. 설정과 데이터 위치는 유지됩니다.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "별도로 설치한 버전은 업데이트되지 않습니다. 다시 사용하기 전에 데이터 호환성을 확인하세요.",
     "Continue opening Open-Science?": "Open-Science를 계속 여시겠습니까?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "실행 중인 작업이 중지되고 다른 연결이 끊어집니다. 저장하지 않은 작업이 손실될 수 있습니다. 설정과 데이터 위치는 유지됩니다. 이후 이 앱을 닫으면 백그라운드 작업도 중지됩니다.",
-    "Search incomplete. Some pages could not be read.": "검색 결과가 불완전합니다. 일부 페이지를 읽을 수 없었습니다.",
-    "Set two-column body": "본문을 두 단으로 설정",
-    "Applies to your next message. Select body text only; exclude tables.": "다음 메시지에 적용됩니다. 본문만 선택하고 표는 제외하세요.",
-    "Redrawing replaces the body area on that page.": "다시 그리면 해당 페이지의 본문 영역이 바뀝니다.",
-    "Body areas: {{count}}_other": "본문 영역 {{count}}개",
-    "Clear this page": "이 페이지 지우기",
-    "Drag across both columns, then confirm the divider.": "두 단을 모두 드래그한 다음 구분선을 확인하세요.",
-    "Two-column body": "두 단 본문",
-    "Column divider": "단 구분선",
-    "Save body area": "본문 영역 저장",
-    "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
-    "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
-    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "실행 중인 작업이 중지되고 다른 연결이 끊어집니다. 저장하지 않은 작업이 손실될 수 있습니다. 설정과 데이터 위치는 유지됩니다. 이후 이 앱을 닫으면 백그라운드 작업도 중지됩니다."
   }
 }

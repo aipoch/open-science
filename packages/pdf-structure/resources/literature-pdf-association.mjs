@@ -42,7 +42,6 @@ import {
   nativeFiniteTopRowKeyedLegend
 } from './literature-pdf-figure-connected-keyed-legend.mjs'
 import { nativeAttachedPlotLabels } from './literature-pdf-figure-native-plot-labels.mjs'
-import { completeNativePanelParagraphs } from './literature-pdf-figure-panel-paragraphs.mjs'
 import {
   nativeCaptionedTextIllustration,
   nativeCaptionedVectorDiagram,
@@ -281,22 +280,13 @@ function resolveNativeHangingCaption(caption, candidates, pages) {
   const limit = plates.length
     ? Math.min(...plates.map((rect) => rect[1])) - font * 3
     : next.height * 0.18
-  // Caption coordinates are expressed in the source page's scale.  A
-  // following page may use a different physical size (for example, an
-  // inserted landscape or supplemental page), so compare its continuation
-  // against the caption's normalized horizontal lane instead of reusing the
-  // previous page's absolute x coordinates.  This keeps the cross-page
-  // provenance while avoiding a false rejection (or acceptance) caused only
-  // by page-size scaling.
-  const laneScale = next.width / page.width
-  const lane = [caption.rect[0] * laneScale, caption.rect[2] * laneScale]
   const fragments = next.lines.filter((line) => line.y < limit && !printedPageNumber(line, next))
   if (
     !fragments.length ||
     fragments.some(
       (line) =>
-        line.x < lane[0] - font * 0.1 ||
-        line.x + line.width > lane[1] + font ||
+        line.x < caption.rect[0] - font * 0.1 ||
+        line.x + line.width > caption.rect[2] + font ||
         line.y < font * 3 ||
         line.y + line.height > next.height * 0.18
     )
@@ -310,7 +300,7 @@ function resolveNativeHangingCaption(caption, candidates, pages) {
     !/^\p{Ll}/u.test(rows[0].text.trim()) ||
     rows.some(
       (row, index) =>
-        Math.abs(row.x - lane[0]) > font * (index ? 0.2 : 0.1) ||
+        Math.abs(row.x - caption.rect[0]) > font * (index ? 0.2 : 0.1) ||
         (index > 0 && row.y - rows[index - 1].bottom > font * 1.5)
     ) ||
     !/[.!?)]$/.test(rows.at(-1).text.trim()) ||
@@ -1825,14 +1815,6 @@ export function associateFigures(
     )
     const completeBottomLabels = (candidate) => {
       if (!candidate.rect) return candidate
-      const panelParagraphs = completeNativePanelParagraphs(
-        page,
-        candidate,
-        candidates,
-        tableRects,
-        nativeTokens
-      )
-      if (panelParagraphs) candidate = { ...candidate, rect: panelParagraphs }
       candidate = excludeOwnedFigurePriorProse(page, candidate, candidates, tableRects)
       const stem = nativeOwnedTimelineStroke(page, candidate, candidates, tableRects, rules)
       if (stem) candidate = { ...candidate, rect: stem }
@@ -3362,70 +3344,6 @@ function associateFigureFaces(
   // extra source pixel when a border sits immediately above its caption.
   const edgeTolerance = page.height / 256 + 1
   const pageCaptions = candidates.filter((c) => c.page === page.pageNumber)
-
-  // A vector multi-panel plate can be mistaken for a table by the detector:
-  // the detector crop then covers every panel and ends immediately above the
-  // figure caption, preventing the figure matcher from seeing any graphics.
-  // Ignore that crop only with a narrow, local proof. It must contain at
-  // least six substantial path panels in three aligned columns, span several
-  // rows, touch this figure caption, and contain no raster graphics. Raster
-  // panels and ordinary table barriers therefore remain protected.
-  const isPanelGridTableFalsePositive = (caption, table) => {
-    if (
-      captionKind(caption.lines?.[0] ?? '') !== 'figure' ||
-      !Array.isArray(table) ||
-      table.length !== 4 ||
-      !table.every(Number.isFinite) ||
-      table[2] <= table[0] ||
-      table[3] <= table[1] ||
-      table[2] - table[0] < page.width * 0.6 ||
-      table[3] < caption.rect[1] - edgeTolerance ||
-      table[3] > caption.rect[3] + edgeTolerance ||
-      table[1] > caption.rect[1] + edgeTolerance
-    )
-      return false
-    const paths = (page.graphicsBounds ?? [])
-      .filter((graphic) => graphic.kind === 'path')
-      .map((graphic) =>
-        graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
-      )
-      .filter(
-        (rect) =>
-          rect[0] >= table[0] - edgeTolerance &&
-          rect[1] >= table[1] - edgeTolerance &&
-          rect[2] <= table[2] + edgeTolerance &&
-          rect[3] <= table[3] + edgeTolerance
-      )
-    if (
-      (page.graphicsBounds ?? []).some(
-        (graphic) =>
-          graphic.kind === 'image' &&
-          intersection(
-            graphic.normalizedRect.map(
-              (value, index) => value * (index % 2 ? page.height : page.width)
-            ),
-            table
-          ) > 0
-      )
-    )
-      return false
-    const panels = paths.filter(
-      (rect) => rect[2] - rect[0] >= page.width * 0.12 && rect[3] - rect[1] >= page.height * 0.04
-    )
-    if (panels.length < 6 || area(union(panels)) < page.width * page.height * 0.05) return false
-    const columns = []
-    for (const panel of [...panels].sort((a, b) => a[0] - b[0])) {
-      const column = columns.at(-1)
-      if (!column || Math.abs(panel[0] - column[0][0]) > page.width * 0.03) columns.push([panel])
-      else column.push(panel)
-    }
-    if (columns.length < 3) return false
-    const verticalSpan = union(panels)[3] - union(panels)[1]
-    return verticalSpan >= page.height * 0.12
-  }
-  tableRects = tableRects.filter(
-    (table) => !pageCaptions.some((caption) => isPanelGridTableFalsePositive(caption, table))
-  )
   const captions = pageCaptions.filter((c) => {
     // Candidate grouping has already accepted the native title line. A
     // descriptive continuation may contain a finite verb without turning
@@ -3457,30 +3375,11 @@ function associateFigureFaces(
       )
     )
       kind = captionKind(`${c.lines[0]} ${c.lines[1]}`)
-    // A page-start figure label can be mistaken for a caption when a prior
-    // page's legend continues into ordinary body text.  A caption that owns
-    // almost an entire column needs same-page graphic evidence; without it,
-    // keep the candidate out of figure association rather than emitting a
-    // caption-only figure whose rectangle swallows prose.
-    const bodySizedWithoutGraphic =
-      kind === 'figure' &&
-      c.rect[1] < page.height * 0.2 &&
-      c.rect[3] > page.height * 0.75 &&
-      c.lines.length >= 12 &&
-      !(page.graphicsBounds ?? []).some((graphic) => {
-        const rect = figureGraphicRect(page, graphic)
-        return (
-          rect &&
-          rect[3] <= c.rect[1] + page.height * 0.05 &&
-          area(rect) > page.width * page.height * 0.02
-        )
-      })
     return (
       (kind === 'figure' ||
         nativePhotographCaption(page, c, rules) ||
         nativeUnpunctuatedRasterCaption(page, c, rules) ||
         nativeCaptionedRasterArrayFragment(page, c, pageCaptions, tableRects)) &&
-      !bodySizedWithoutGraphic &&
       !/\(facing page\)/i.test(c.lines.join(' '))
     )
   })
@@ -7543,26 +7442,6 @@ export function associateUnnumberedFigure(page, candidates, tableRects = []) {
   if (graphics.length < 20) return []
   const bounds = union(graphics)
   if (area(bounds) < page.width * page.height * 0.03) return []
-  // Prompt/code pages often draw every fenced block as many path segments.
-  // Their density looks like an unnumbered vector plot, but there is no
-  // figure ownership to recover. Require a strong code-text witness before
-  // admitting a path-only unnumbered figure; ordinary plots usually contain
-  // labels, ticks, or prose instead of repeated code syntax.
-  const codeLines = (page.lines ?? []).filter((line) => {
-    const text = line.text.trim()
-    return (
-      (/[()[\]{}]/u.test(text) && /[()[\]{}].*[()[\]{}]/u.test(text)) ||
-      /^(?:please\s+solve|your\s+plan\s+as\s+plain\s+text|(?:define|domain|objects|init|goal)\b)/iu.test(
-        text
-      )
-    )
-  })
-  if (
-    !(page.graphicsBounds ?? []).some((graphic) => graphic.kind === 'image') &&
-    codeLines.length >= 12 &&
-    codeLines.length >= (page.lines?.length ?? 0) * 0.6
-  )
-    return []
   const longLines = page.lines.filter(
     (l) => l.text.length > 80 && intersection(lineRect(l), bounds) > 0
   )

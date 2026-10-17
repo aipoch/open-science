@@ -5,6 +5,7 @@ import {
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   MAX_ACP_RUNTIME_EVENTS,
+  isDurableAgentUserChoiceRequest,
   type AcpRuntimeEvent,
   type AcpSessionAgentTarget,
   type AcpStateSnapshot,
@@ -571,16 +572,21 @@ const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
 
 // Keeps store permission state aligned with the runtime's current pending request set.
 const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void => {
-  const liveProjection = isRuntimeWriter() ? 'writer' : 'observer'
+  if (!isRuntimeWriter()) return
   const nextSessionIds = new Set(requests.map((request) => request.sessionId))
   const store = useSessionStore.getState()
+  for (const session of store.sessions) {
+    if (session.runtimeContext?.permission?.state === 'pending') {
+      nextSessionIds.add(session.id)
+    }
+  }
 
   for (const sessionId of nextSessionIds) {
-    store.setPermissionPending(sessionId, { liveProjection })
+    store.setPermissionPending(sessionId)
   }
 
   for (const sessionId of pendingPermissionSessionIds) {
-    if (!nextSessionIds.has(sessionId)) store.clearPermissionPending(sessionId, { liveProjection })
+    if (!nextSessionIds.has(sessionId)) store.clearPermissionPending(sessionId)
   }
 
   pendingPermissionSessionIds.clear()
@@ -592,19 +598,13 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
 // detached; requiring the waiting status prevents a stale pending activity from re-arming after
 // its answer has synchronously returned the Session to running.
 const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): void => {
-  const liveProjection = isRuntimeWriter() ? 'writer' : 'observer'
+  if (!isRuntimeWriter()) return
   const store = useSessionStore.getState()
-  const nextSessionIds = new Set(requests.map((request) => request.sessionId))
-  for (const sessionId of nextSessionIds) {
-    store.setElicitationPending(sessionId, true, { liveProjection })
-  }
-  for (const sessionId of pendingElicitationSessionIds) {
-    if (!nextSessionIds.has(sessionId))
-      store.setElicitationPending(sessionId, false, { liveProjection })
-  }
+  const nextSessionIds = new Set(
+    requests.filter(isDurableAgentUserChoiceRequest).map((request) => request.sessionId)
+  )
   for (const session of store.sessions) {
     if (
-      liveProjection === 'writer' &&
       (session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
       session.interactionState?.elicitation !== false &&
       session.activities?.some(
@@ -613,8 +613,16 @@ const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): v
           activity.elicitation.durable?.kind === 'agent-user-choice'
       )
     ) {
-      store.setElicitationPending(session.id, true)
+      nextSessionIds.add(session.id)
     }
+  }
+
+  for (const sessionId of nextSessionIds) {
+    store.setElicitationPending(sessionId, true)
+  }
+
+  for (const sessionId of pendingElicitationSessionIds) {
+    if (!nextSessionIds.has(sessionId)) store.setElicitationPending(sessionId, false)
   }
 
   pendingElicitationSessionIds.clear()

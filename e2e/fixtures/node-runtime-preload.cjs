@@ -7,6 +7,13 @@ if (!root) throw new Error('The Node runtime fixture requires an isolated source
 if (process.versions.electron) {
   const { app } = require('electron')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
+  if (process.platform === 'linux') {
+    // Playwright's Electron loader overrides argv with password-store=basic. Restore the
+    // explicitly selected test vault before application credential preflight runs.
+    if (!process.argv.includes('--password-store=gnome-libsecret'))
+      throw new Error('Linux source fixture requires an explicit Secret Service backend.')
+    app.commandLine.appendSwitch('password-store', 'gnome-libsecret')
+  }
   if (process.env.OPEN_SCIENCE_E2E_ISOLATE_HOME === '1') {
     // Electron resolves the Windows home through the OS, ignoring USERPROFILE. Override only
     // this isolated source fixture before application bootstrap can discover user state.

@@ -231,7 +231,7 @@ describe('workspace Agent first-output runtime sync', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('projects a live generic ACP form as waiting before its activity arrives', async () => {
+  it('does not project an unrendered generic ACP form as waiting for the user', async () => {
     await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
@@ -248,21 +248,6 @@ describe('workspace Agent first-output runtime sync', () => {
             fields: [{ id: 'detail', label: 'Detail', kind: 'text' }]
           }
         ]
-      })
-    )
-    await act(async () => root.render(<Harness />))
-
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'waiting-for-user',
-      agentPromptInFlight: true
-    })
-    expect(container.textContent).toBe('waiting-for-response')
-
-    runtimeMock.current = createRuntime(
-      createSnapshot({
-        promptInFlight: true,
-        promptInFlightSessionIds: ['session-1'],
-        agentPromptInFlightSessionIds: ['session-1']
       })
     )
     await act(async () => root.render(<Harness />))

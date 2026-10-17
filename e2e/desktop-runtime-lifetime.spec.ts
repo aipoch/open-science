@@ -156,6 +156,9 @@ for (const borrowed of [false, true]) {
         }
       })
       const page = await app.firstWindow()
+      // Keep the lifecycle assertions independent of the Windows account language. The direct
+      // launch path does not pass through ElectronAppHarness.create(), which normally pins English.
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
       await expect
         .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })

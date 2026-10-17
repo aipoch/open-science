@@ -55,9 +55,6 @@ export const renderPreviewFile = ({
   onRemoveAnnotation,
   onAnnotationError,
   onPdfReadingPositionChange,
-  pdfProseRegions,
-  pdfProseRegionIdentityKey,
-  onPdfProseRegionsChange,
   onPdfTranslationChange
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
@@ -106,9 +103,6 @@ export const renderPreviewFile = ({
         <PdfPreviewRenderer
           {...props}
           onPdfReadingPositionChange={onPdfReadingPositionChange}
-          pdfProseRegions={pdfProseRegions}
-          pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
-          onPdfProseRegionsChange={onPdfProseRegionsChange}
           onPdfTranslationChange={onPdfTranslationChange}
         />
       )

@@ -9,7 +9,6 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
-import { useSettingsStore } from '@/stores/settings-store'
 
 const persistenceMocks = vi.hoisted(() => ({
   hydratePersistedSessionIfPresent: vi.fn(),
@@ -22,18 +21,13 @@ vi.mock('./WorkspaceSidebar', () => ({
   WorkspaceSidebar: ({
     onPreviewSession,
     otherProjects = [],
-    onOpenProject,
-    credentialPendingSessionIds
+    onOpenProject
   }: {
     onPreviewSession?: (sessionId: string) => Promise<void> | void
     otherProjects?: Array<Pick<Project, 'id' | 'name' | 'description'>>
     onOpenProject?: (projectId: string) => void
-    credentialPendingSessionIds?: ReadonlySet<string>
   }) => (
     <div>
-      <span data-testid="credential-waiting-sessions">
-        {[...(credentialPendingSessionIds ?? [])].join(',')}
-      </span>
       <button type="button" onClick={() => void onPreviewSession?.('lazy-session')}>
         Preview Session
       </button>
@@ -82,7 +76,6 @@ beforeEach(() => {
   persistenceMocks.loadPersistedSession.mockReset()
   useSessionStore.setState({ sessions: [lazySession] })
   useProjectStore.setState(createInitialProjectState())
-  useSettingsStore.setState({ pendingCredentialRequests: [] })
   useNavigationStore.setState({
     view: 'workspace',
     activeProjectId: 'project-1',
@@ -93,46 +86,6 @@ beforeEach(() => {
 })
 
 describe('WorkspaceSidebarContainer Session previews', () => {
-  it('excludes closed credential requests while keeping another Session waiting', async () => {
-    useSettingsStore.setState({
-      pendingCredentialRequests: [
-        {
-          id: 'closed-credential',
-          credentialId: 'openalex',
-          connector: 'literature',
-          method: 'openalex_search_works',
-          sessionId: lazySession.id,
-          closed: true
-        },
-        {
-          id: 'open-credential',
-          credentialId: 'openalex',
-          connector: 'literature',
-          method: 'openalex_search_works',
-          sessionId: 'another-session'
-        }
-      ]
-    })
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    try {
-      await act(async () => {
-        root.render(
-          <WorkspaceSidebarContainer
-            {...({ projectId: 'project-1', isProjectArchived: false } as ComponentProps<
-              typeof WorkspaceSidebarContainer
-            >)}
-          />
-        )
-      })
-      expect(
-        container.querySelector('[data-testid="credential-waiting-sessions"]')?.textContent
-      ).toBe('another-session')
-    } finally {
-      act(() => root.unmount())
-    }
-  })
-
   it('hides only explicitly bound seeds and reveals them after release', () => {
     const pending = {
       ...lazySession,

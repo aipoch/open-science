@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。"
   },
   "renderer": {
+    "Update preparation failed": "更新の準備に失敗しました",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "アプリは開いたままです。問題を解決して再試行するか、更新をキャンセルして作業を続けてください。",
     "Select one or more options": "1つ以上の選択肢を選択",
     "Your conversation is preserved. Try Resume again.": "会話は保持されています。もう一度再開してください。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "エージェントが時間内に応答しませんでした。会話は保持されています。もう一度再開してください。",
@@ -166,7 +168,6 @@
     "Search PDC studies and versions by name or identifier.": "名前または識別子で PDC の研究とバージョンを検索。",
     "Retrieve PDC study metadata and available versions.": "PDC 研究のメタデータと利用可能なバージョンを取得。",
     "Map PDC aliquots to samples, cases and external references.": "PDC の分注試料をサンプル、症例、外部参照に対応付け。",
-    "Retrieve PDC case demographics, diagnoses and sample references.": "PDCの症例の人口統計情報、診断、サンプル参照を取得します。",
     "Discover PDC study files and quantitative reports without downloading files.": "ファイルをダウンロードせずに PDC の研究ファイルと定量レポートを検索。",
     "Query linkage disequilibrium between two variants in a specified population.": "指定した集団における2つのバリアント間の連鎖不平衡を照会します。",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "指定した集団で強い連鎖不平衡を示す近傍バリアントを検索します。",
@@ -7260,19 +7261,6 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "他の接続は切断されます。更新後は、このアプリを閉じるとバックグラウンドの作業も停止します。設定とデータの保存場所は維持されます。",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "別途インストールしたバージョンは更新されません。再使用する前にデータの互換性を確認してください。",
     "Continue opening Open-Science?": "Open-Science の起動を続けますか？",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "実行中のタスクは停止し、他の接続は切断されます。未保存の作業は失われる可能性があります。設定とデータの保存場所は維持されます。以後、このアプリを閉じるとバックグラウンドの作業も停止します。",
-    "Search incomplete. Some pages could not be read.": "検索は不完全です。一部のページを読み取れませんでした。",
-    "Set two-column body": "本文を2段組に設定",
-    "Applies to your next message. Select body text only; exclude tables.": "次のメッセージに適用されます。本文のみを選択し、表は含めないでください。",
-    "Redrawing replaces the body area on that page.": "描画し直すと、そのページの本文領域が置き換わります。",
-    "Body areas: {{count}}_other": "本文領域 {{count}} 個",
-    "Clear this page": "このページをクリア",
-    "Drag across both columns, then confirm the divider.": "両方の段をドラッグして選択し、境界線を確定してください。",
-    "Two-column body": "2段組の本文",
-    "Column divider": "段の境界線",
-    "Save body area": "本文領域を保存",
-    "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
-    "You can configure up to 32 pages.": "最大32ページまで設定できます。",
-    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "実行中のタスクは停止し、他の接続は切断されます。未保存の作業は失われる可能性があります。設定とデータの保存場所は維持されます。以後、このアプリを閉じるとバックグラウンドの作業も停止します。"
   }
 }

@@ -94,32 +94,6 @@ it.each(['Figure 1b. Results', 'Fig. 1b. Results'])(
   }
 )
 
-it('rejects a page-sized figure label that has no same-page graphic witness', () => {
-  const page = {
-    pageNumber: 2,
-    width: 600,
-    height: 800,
-    invalidGraphicsBounds: 0,
-    graphicsBounds: [],
-    lines: Array.from({ length: 16 }, (_, n) => ({
-      text: n === 0 ? 'Figure 2. Prior-page illustration.' : 'Body continuation text.',
-      x: 60,
-      y: 90 + n * 42,
-      width: 250,
-      height: 10,
-      fontSize: 10
-    }))
-  }
-  const captions = [
-    {
-      page: 2,
-      lines: page.lines.map((line) => line.text),
-      rect: [60, 90, 310, 760]
-    }
-  ]
-  expect(associateFigures(page, captions)).toEqual([])
-})
-
 it.each(['Figure 1b. Results demonstrate a measured effect.', 'Fig. 1b. Results show the effect.'])(
   'retains first-line prose rejection during figure association: %s',
   (title) => {

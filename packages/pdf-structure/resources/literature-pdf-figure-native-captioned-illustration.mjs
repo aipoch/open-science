@@ -3660,7 +3660,7 @@ export function nativeCaptionedRasterVectorStrip(
   if (!/^(?:figure|fig\.?)\s+(?:[A-Z]\.)?\d+(?:\.\d+)?[.:]/i.test(firstLine)) return
   const font = captionFont(page, caption)
   if (!(font > 0) || !Number.isFinite(font)) return
-  let images = graphics(page, 'image').filter(
+  const images = graphics(page, 'image').filter(
     (rect) =>
       rect[3] <= caption.rect[1] + font * 2 &&
       // A stacked workflow can place its first raster row well above the
@@ -3680,7 +3680,7 @@ export function nativeCaptionedRasterVectorStrip(
     )
   )
     return
-  let imageBounds = union(images)
+  const imageBounds = union(images)
   const text = caption.lines.join(' ')
   const keyedRows =
     images.length === 3 &&
@@ -3721,43 +3721,6 @@ export function nativeCaptionedRasterVectorStrip(
       rect[3] > rect[1] &&
       !tables.some((table) => intersection(table, rect) > 0)
   )
-  // A complete enclosing frame is stronger ownership evidence than the
-  // compact strip distance gate. Keep every raster inside that frame,
-  // including small panels that would otherwise be dropped by the area gate.
-  const enclosingFrames = graphics(page, 'path').filter(
-    (rect) =>
-      rect[0] <= imageBounds[0] + Math.max(font, 3) &&
-      rect[1] < imageBounds[1] - Math.max(font * 3, 18) &&
-      rect[2] >= imageBounds[2] - Math.max(font, 3) &&
-      rect[3] >= imageBounds[3] &&
-      rect[2] - rect[0] >= page.width * 0.6 &&
-      rect[3] - rect[1] >= page.width * 0.15 &&
-      rect[3] <= caption.rect[1] + font * 2 &&
-      caption.rect[1] - rect[3] <= Math.max(font * 5, 36) &&
-      !blocked(rect, caption, captions, tables)
-  )
-  if (enclosingFrames.length) {
-    const frame = enclosingFrames.slice().sort((a, b) => area(a) - area(b))[0]
-    const framedImages = graphics(page, 'image').filter(
-      (rect) =>
-        contains(frame, rect, Math.max(font, 3)) &&
-        area(rect) >= page.width * page.height * 0.0001 &&
-        !tables.some((table) => intersection(table, rect) > 0) &&
-        !captions.some((other) => other !== caption && intersection(other.rect, rect) > 0) &&
-        !ownedRasters.some((owner) => intersection(owner, rect) / area(rect) > 0.95)
-    )
-    if (framedImages.length >= images.length) {
-      images = framedImages
-      imageBounds = union(images)
-      paths = graphics(page, 'path').filter(
-        (rect) =>
-          contains(frame, rect, Math.max(font, 3)) &&
-          rect[2] > rect[0] &&
-          rect[3] > rect[1] &&
-          !tables.some((table) => intersection(table, rect) > 0)
-      )
-    }
-  }
   // Facing captions can own independent plates at the same height. A raster
   // inset in one column does not lend that owner the other column's vector
   // chart. Require both narrow caption columns, isolated native raster ink,

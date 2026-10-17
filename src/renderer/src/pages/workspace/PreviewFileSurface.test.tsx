@@ -4369,52 +4369,6 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
   })
 
-  it('routes confirmed body areas by binding and rejects callbacks from an earlier scope', async () => {
-    selectPdfContextSession(linkedPdfContext)
-    usePreviewWorkbenchStore.getState().setPdfProseRegionsScope('branch-a')
-    await act(async () => {
-      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    const oldProps = previewContentSpy.mock.calls.at(-1)![0]
-    const regions = [{ page: 1, left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, split: 0.5 }]
-    expect(oldProps.onPdfProseRegionsChange).toBeTypeOf('function')
-    act(() => oldProps.onPdfProseRegionsChange(regions))
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({
-      'binding-1': regions
-    })
-    expect(previewContentSpy.mock.calls.at(-1)![0].pdfProseRegions).toEqual(regions)
-    act(() => usePreviewWorkbenchStore.getState().setPdfProseRegionsScope('branch-b'))
-    const nextProps = previewContentSpy.mock.calls.at(-1)![0]
-    expect(nextProps.pdfProseRegions).toBeUndefined()
-    expect(nextProps.pdfProseRegionIdentityKey).not.toBe(oldProps.pdfProseRegionIdentityKey)
-    act(() => oldProps.onPdfProseRegionsChange(regions))
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({})
-    act(() => nextProps.onPdfProseRegionsChange([]))
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({
-      'binding-1': []
-    })
-  })
-
-  it('does not offer body configuration before linking or for a single-page PDF', async () => {
-    selectPdfContextSession()
-    await act(async () => {
-      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    expect(previewContentSpy.mock.calls.at(-1)![0].onPdfProseRegionsChange).toBeUndefined()
-    selectPdfContextSession(linkedPdfContext)
-    await act(async () => {
-      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
-    })
-    act(() =>
-      previewContentSpy.mock.calls
-        .at(-1)![0]
-        .onPdfReadingPositionChange({ pageNumber: 1, pageCount: 1 })
-    )
-    expect(previewContentSpy.mock.calls.at(-1)![0].onPdfProseRegionsChange).toBeUndefined()
-  })
-
   it('disables the PDF context action while its command is pending', async () => {
     selectPdfContextSession()
     let resolveLink: ((value: { version: 1; revision: number }) => void) | undefined

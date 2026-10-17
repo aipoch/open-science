@@ -189,7 +189,6 @@ type PyNode = {
   orelse?: PyNode[]
   iter?: PyNode
   test?: PyNode
-  msg?: PyNode
   elt?: PyNode
   key?: PyNode
   keys?: Array<PyNode | null>
@@ -208,7 +207,6 @@ type PyNode = {
   left?: PyNode
   right?: PyNode
   alternate?: PyNode
-  comparators?: PyNode[]
   argument?: PyNode
   context_expr?: PyNode
   optional_vars?: PyNode
@@ -399,22 +397,14 @@ const pythonDiagnosticValue = (
     if (node.type === 'JoinedStr' || node.type === 'FormattedValue') {
       return pyChildren(node).every((child) => inspect(child)) ? 'string' : undefined
     }
-    if (node.type === 'Compare') {
-      const operands = [node.left, ...(node.comparators ?? [])].filter(isPyNode)
-      return operands.length > 0 && operands.every((child) => inspect(child)) ? 'value' : undefined
-    }
-    if (['BoolOp', 'UnaryOp'].includes(node.type))
+    if (['Compare', 'BoolOp', 'UnaryOp'].includes(node.type))
       return pyChildren(node).every((child) => inspect(child)) ? 'value' : undefined
     if (node.type === 'BinOp') {
       if (node.children?.length)
         return node.children.every((child) => inspect(child)) ? 'value' : undefined
       const left = inspect(node.left)
       const right = inspect(node.right)
-      if (
-        ['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'In', 'NotIn'].includes(node.op ?? '') &&
-        left &&
-        right
-      )
+      if (['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'].includes(node.op ?? '') && left && right)
         return 'value'
       if (node.op === 'Add' && left === 'string' && right === 'string') return 'string'
       if (node.op === 'Div' && left === 'path' && right === 'string') return 'path'
@@ -1437,16 +1427,10 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
     case 'comparison_operator': {
       const operands = pythonSyntaxChildren(node).map((child) => convertExpr(child, 'Load'))
       const comparison = (
-        {
-          '==': 'Eq',
-          '!=': 'NotEq',
-          '<': 'Lt',
-          '<=': 'LtE',
-          '>': 'Gt',
-          '>=': 'GtE',
-          in: 'In',
-          'not in': 'NotIn'
-        } as Record<string, string>
+        { '==': 'Eq', '!=': 'NotEq', '<': 'Lt', '<=': 'LtE', '>': 'Gt', '>=': 'GtE' } as Record<
+          string,
+          string
+        >
       )[node.child(1)?.text ?? '']
       // Preserve all reads for chained comparisons, but only a single comparison
       // produces a reusable vector mask (Python chains use scalar truth testing).
@@ -1681,24 +1665,6 @@ const convertStmt = (node: Node): PyNode | undefined => {
           ['test', 'body', 'orelse']
         )
       )
-    case 'assert_statement': {
-      const expressions = pythonSyntaxChildren(node)
-      const expression = expressions[0]
-      const message = expressions[1]
-      return locate(
-        node,
-        py(
-          'Assert',
-          {
-            test: expression
-              ? convertExpr(expression, 'Load')
-              : py('Constant', { value: false, constKind: 'bool' }, []),
-            msg: message ? convertExpr(message, 'Load') : undefined
-          },
-          message ? ['test', 'msg'] : ['test']
-        )
-      )
-    }
     case 'with_statement':
     case 'async_with_statement': {
       const items: PyNode[] = []
@@ -4777,40 +4743,6 @@ class Analyzer extends NodeVisitor {
     }
     const aliasSource =
       value?.type === 'Name' && value.id ? (this.aliases.get(value.id) ?? value.id) : undefined
-    // functools.partial keeps the wrapped callable identity when all bound
-    // arguments are closed literals. Preserve that identity so a later
-    // scientific callback consumer can replay the wrapped function's known
-    // captures. Dynamic arguments, starred expansion, and non-name callbacks
-    // remain opaque; their invocation semantics are not modeled here.
-    const partialAliasSource = (() => {
-      if (target?.type !== 'Name' || !target.id || value?.type !== 'Call') return undefined
-      const rawName = pythonDottedName(value.func)
-      if (!rawName) return undefined
-      const [root, ...members] = rawName.split('.')
-      const importedRoot = this.importedCanonicalNames.get(root ?? '')
-      if (!importedRoot) return undefined
-      const canonical = [importedRoot, ...members].filter(Boolean).join('.')
-      if (canonical !== 'functools.partial') return undefined
-      if (this.taintedNamespaces.has('*') || this.taintedNamespaces.has('functools'))
-        return undefined
-      if (this.memberWrites.some((write) => write.receiver === root)) return undefined
-      const args = Array.isArray(value.args) ? value.args : []
-      const callback = args[0]
-      if (callback?.type !== 'Name' || !callback.id) return undefined
-      const boundArguments = [
-        ...args.slice(1),
-        ...(value.keywords ?? []).map((keyword) => keyword.value)
-      ]
-      if (
-        args.some((argument) => argument.type === 'Starred') ||
-        (value.keywords ?? []).some(
-          (keyword) => keyword.arg === null || !staticScalar(keyword.value)
-        ) ||
-        boundArguments.some((argument) => !staticScalar(argument))
-      )
-        return undefined
-      return callback.id
-    })()
     const memberSource =
       value && (value.type === 'Attribute' || value.type === 'Subscript')
         ? this.visibleRootName(value)
@@ -4925,9 +4857,6 @@ class Analyzer extends NodeVisitor {
       value?.type === 'Subscript' ? this.iterationTypes(value.value as PyNode)[0] : undefined
     if (node.type === 'AnnAssign' && node.annotation) this.visit(node.annotation)
     this.prepareAssignment(targetNames)
-    if (target?.type === 'Name' && target.id && partialAliasSource && this.controlDepth === 0) {
-      this.aliases.set(target.id, partialAliasSource)
-    }
     if (
       target?.type === 'Name' &&
       target.id &&
@@ -6358,16 +6287,6 @@ class Analyzer extends NodeVisitor {
       node.func?.type === 'Attribute' &&
       node.func.attr === 'open' &&
       this.arithmeticResultType(node.func.value as PyNode) === 'pathlib.PurePath'
-    const observationalFilesystemCall = (() => {
-      if (!rawCallName) return false
-      const [root, ...members] = rawCallName.split('.')
-      const canonical = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
-        .filter(Boolean)
-        .join('.')
-      return ['os.path.join', 'os.path.basename', 'os.path.dirname', 'os.fspath'].includes(
-        canonical
-      )
-    })()
     if (rawCallName) {
       const [root, ...members] = rawCallName.split('.')
       const canonicalCallName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
@@ -6413,11 +6332,17 @@ class Analyzer extends NodeVisitor {
         this.unknown.add('external-state')
         if (
           canonicalCallName === 'decimal.Decimal' ||
-          canonicalCallName === 'os.walk' ||
           ['random', 'numpy.random'].some((namespace) =>
             canonicalCallName.startsWith(`${namespace}.`)
           )
         )
+          this.unknown.add('scoped-opaque-call')
+      }
+      if (canonicalCallName === 'os.walk') {
+        const callback =
+          node.keywords?.find((keyword) => keyword.arg === 'onerror')?.value ??
+          (Array.isArray(node.args) ? node.args[2] : undefined)
+        if (callback && !(callback.type === 'Constant' && callback.value === null))
           this.unknown.add('scoped-opaque-call')
       }
     }
@@ -6542,7 +6467,7 @@ class Analyzer extends NodeVisitor {
         !libraryEffect.callbackKeywords?.length &&
         !libraryEffect.callbackAllKeywords &&
         !libraryEffect.callbackContainerKeywords?.length
-      if (!builtin && !localContainer && !known && !observationalFilesystemCall) {
+      if (!builtin && !localContainer && !known) {
         this.unresolvedFunctionCall = true
       }
       if (
@@ -6938,7 +6863,6 @@ class Analyzer extends NodeVisitor {
         !literalReceiver &&
         !builtinContainerView &&
         !knownPathMethod &&
-        !observationalFilesystemCall &&
         !this.isReadOnlyArithmeticCall(node)
       ) {
         const possible = new Set(
@@ -7264,7 +7188,6 @@ const analyzePythonTree = (
 }
 
 const pythonHasUnsupportedExternalState = (canonicalName: string, node?: PyNode): boolean => {
-  if (canonicalName === 'os.walk') return true
   if (canonicalName === 'decimal.Decimal') {
     const args = Array.isArray(node?.args) ? node.args : []
     const value = args[0] ?? node?.keywords?.find((keyword) => keyword.arg === 'value')?.value
@@ -7942,7 +7865,6 @@ const pythonLocalFileWrappers = (
           (member && PYTHON_FILE_CALL_EFFECTS.has(member)) ||
           calledName === 'open' ||
           member === 'open' ||
-          member === 'walk' ||
           (member &&
             (isPotentialPythonFileReadCall(member) || isPotentialPythonFileWriteCall(member)))
         )
@@ -8071,9 +7993,8 @@ const analyzePythonFileAccessTree = (
   const soleReturnAliasedReaderCalls = new Set<PyNode>()
   const soleReturnReaderHelperNames = new Set<string>()
   const nestedReaderHelperNames = new Set<string>()
-  type ChecksumHelper = { function: PyNode; parameter: string; mode?: 'path-object-metadata' }
+  type ChecksumHelper = { function: PyNode; parameter: string }
   const checksumHelpers = new Map<string, ChecksumHelper>()
-  const metadataHelpers = new Map<string, ChecksumHelper>()
   const uncertainReaderChainNames = new Set<string>()
   const uncertainReaderChainNamespaces = new Set<string>()
   const uncertainReaderChainImports = new Set<string>()
@@ -8132,71 +8053,58 @@ const analyzePythonFileAccessTree = (
     if (explicitAlias) soleReturnAliasedReaderCalls.add(call)
     return call
   }
-  const checksumPathConstructor = (node: PyNode, parameter: string): boolean => {
-    if (node.type !== 'Call' || pythonDottedName(node.func) !== 'pathlib.Path') return false
-    const args = Array.isArray(node.args) ? node.args : []
+  const checksumPathCall = (node: PyNode, parameter: string): boolean => {
+    if (node.type !== 'Call' || node.func?.type !== 'Attribute') return false
+    if (!['read_bytes', 'read_text', 'stat'].includes(node.func.attr ?? '')) return false
+    const receiver = node.func.value
+    if (
+      !isPyNode(receiver) ||
+      receiver.type !== 'Call' ||
+      receiver.func?.type !== 'Attribute' ||
+      receiver.func.attr !== 'Path' ||
+      pythonDottedName(receiver.func) !== 'pathlib.Path'
+    )
+      return false
+    const args = Array.isArray(receiver.args) ? receiver.args : []
     return (
       args.length === 1 &&
-      !(node.keywords ?? []).length &&
+      !(receiver.keywords ?? []).length &&
       args[0]?.type === 'Name' &&
       args[0].id === parameter
     )
   }
-  const checksumPathCall = (node: PyNode, parameter: string): boolean => {
-    if (node.type !== 'Call' || node.func?.type !== 'Attribute') return false
-    if (!['read_bytes', 'read_text', 'stat'].includes(node.func.attr ?? '')) return false
-    // Arguments run before the read and may replace its filesystem behavior.
-    if ((node.args as PyNode[] | undefined)?.length || node.keywords?.length) return false
-    return isPyNode(node.func.value) && checksumPathConstructor(node.func.value, parameter)
-  }
-  const checksumExpressionSafe = (
-    node: PyNode,
-    names: ReadonlySet<string>,
-    pathLocal?: string
-  ): boolean => {
+  const checksumExpressionSafe = (node: PyNode, names: ReadonlySet<string>): boolean => {
     if (node.type === 'Constant' || (node.type === 'Name' && names.has(node.id ?? ''))) return true
     if (node.type === 'Call') {
       const pathParameter = [...names][0]
       if (pathParameter && checksumPathCall(node, pathParameter)) return true
       const name = pythonDottedName(node.func)
       const args = Array.isArray(node.args) ? node.args : []
-      if (name === 'str' && pathLocal)
-        return (
-          !names.has('str') &&
-          args.length === 1 &&
-          !(node.keywords ?? []).length &&
-          args[0]?.type === 'Name' &&
-          args[0].id === pathLocal
-        )
-      if (name === 'len' && names.has('len')) return false
       if (name === 'hashlib.sha256' || name === 'len')
         return (
           args.length === 1 &&
           !(node.keywords ?? []).length &&
           isPyNode(args[0]) &&
-          checksumExpressionSafe(args[0], names, pathLocal)
+          checksumExpressionSafe(args[0], names)
         )
       if (
         node.func?.type === 'Attribute' &&
         node.func.attr === 'hexdigest' &&
-        args.length === 0 &&
-        !(node.keywords ?? []).length &&
         isPyNode(node.func.value)
       )
-        return checksumExpressionSafe(node.func.value, names, pathLocal)
+        return checksumExpressionSafe(node.func.value, names)
       return false
     }
     if (node.type === 'Attribute' && node.attr === 'st_size' && isPyNode(node.value))
-      return checksumExpressionSafe(node.value, names, pathLocal)
+      return checksumExpressionSafe(node.value, names)
     if (['Dict', 'List', 'Tuple'].includes(node.type))
-      return pyChildren(node).every((child) => checksumExpressionSafe(child, names, pathLocal))
+      return pyChildren(node).every((child) => checksumExpressionSafe(child, names))
     return false
   }
   const checksumHelperCandidate = (fn: PyNode): ChecksumHelper | undefined => {
     if (
       fn.type !== 'FunctionDef' ||
       fn.decorator_list?.length ||
-      fn.annotation ||
       !Array.isArray(fn.body) ||
       !fn.body.length
     )
@@ -8215,9 +8123,8 @@ const analyzePythonFileAccessTree = (
     )
       return undefined
     const parameter = (args.posonlyargs ?? [])[0]?.arg ?? (args.args ?? [])[0]?.arg
-    if (!parameter || parameter === 'pathlib') return undefined
+    if (!parameter) return undefined
     let returnNode: PyNode | undefined
-    let pathLocal: string | undefined
     const names = new Set([parameter])
     if (fn.body.length === 1 && fn.body[0]?.type === 'Return') {
       returnNode = fn.body[0]
@@ -8229,65 +8136,18 @@ const analyzePythonFileAccessTree = (
       const assignment = fn.body[0]
       const target = assignment.targets?.length === 1 ? assignment.targets[0] : undefined
       const local = target?.type === 'Name' ? target.id : undefined
-      if (
-        !local ||
-        local === 'pathlib' ||
-        !isPyNode(assignment.value) ||
-        !checksumPathCall(assignment.value, parameter)
-      )
+      if (!local || !isPyNode(assignment.value) || !checksumPathCall(assignment.value, parameter))
         return undefined
       names.add(local)
       returnNode = fn.body[1]
-    } else if (
-      fn.body.length === 3 &&
-      fn.body[0]?.type === 'Assign' &&
-      fn.body[1]?.type === 'Assign' &&
-      fn.body[2]?.type === 'Return' &&
-      isPyNode(fn.body[2].value) &&
-      fn.body[2].value.type === 'Dict'
-    ) {
-      const [pathAssignment, dataAssignment] = fn.body
-      const pathTarget =
-        pathAssignment.targets?.length === 1 ? pathAssignment.targets[0] : undefined
-      const dataTarget =
-        dataAssignment.targets?.length === 1 ? dataAssignment.targets[0] : undefined
-      const local = pathTarget?.type === 'Name' ? pathTarget.id : undefined
-      const data = dataTarget?.type === 'Name' ? dataTarget.id : undefined
-      const read = dataAssignment.value
-      if (
-        !local ||
-        !data ||
-        new Set([parameter, local, data]).size !== 3 ||
-        [parameter, local, data].some((name) =>
-          ['pathlib', 'hashlib', 'len', 'str'].includes(name)
-        ) ||
-        !isPyNode(pathAssignment.value) ||
-        !checksumPathConstructor(pathAssignment.value, parameter) ||
-        !isPyNode(read) ||
-        read.type !== 'Call' ||
-        read.func?.type !== 'Attribute' ||
-        read.func.attr !== 'read_bytes' ||
-        !isPyNode(read.func.value) ||
-        read.func.value.type !== 'Name' ||
-        read.func.value.id !== local ||
-        (read.args as PyNode[] | undefined)?.length ||
-        read.keywords?.length
-      )
-        return undefined
-      // Keep the fresh Path out of ordinary values: only trusted str(local)
-      // may expose it, and every return expression must remain transparent.
-      pathLocal = local
-      names.add(data)
-      returnNode = fn.body[2]
     }
     if (
       !returnNode ||
       !isPyNode(returnNode.value) ||
-      !checksumExpressionSafe(returnNode.value, names, pathLocal)
+      !checksumExpressionSafe(returnNode.value, names)
     )
       return undefined
     const pathRead =
-      pathLocal !== undefined ||
       walkPy(returnNode.value).some((node) => checksumPathCall(node, parameter)) ||
       (fn.body.length === 2 &&
         isPyNode(fn.body[0]?.value) &&
@@ -8295,416 +8155,9 @@ const analyzePythonFileAccessTree = (
     if (!pathRead) return undefined
     return { function: fn, parameter }
   }
-  const metadataExpressionSafe = (
-    node: PyNode,
-    names: ReadonlySet<string>,
-    statLocal: string,
-    dataLocal: string,
-    pathLocal?: string
-  ): boolean => {
-    if (node.type === 'Constant') return true
-    if (node.type === 'Name') return names.has(node.id ?? '')
-    if (
-      node.type === 'Attribute' &&
-      isPyNode(node.value) &&
-      node.value.type === 'Name' &&
-      node.value.id === statLocal &&
-      ['st_size', 'st_mtime'].includes(node.attr ?? '')
-    )
-      return true
-    if (node.type === 'Call') {
-      const name = pythonDottedName(node.func)
-      const args = Array.isArray(node.args) ? node.args : []
-      if (['int', 'len'].includes(name ?? '') && args.length === 1 && !(node.keywords ?? []).length)
-        return metadataExpressionSafe(args[0]!, names, statLocal, dataLocal, pathLocal)
-      if (
-        name === 'str' &&
-        pathLocal &&
-        args.length === 1 &&
-        !(node.keywords ?? []).length &&
-        args[0]?.type === 'Name' &&
-        args[0].id === pathLocal
-      )
-        return true
-      if (name === 'all' && args.length === 1 && !(node.keywords ?? []).length)
-        return metadataExpressionSafe(args[0]!, names, statLocal, dataLocal, pathLocal)
-      const hashCall =
-        node.func?.type === 'Attribute' &&
-        node.func.attr === 'hexdigest' &&
-        isPyNode(node.func.value) &&
-        node.func.value.type === 'Call'
-          ? node.func.value
-          : undefined
-      if (
-        hashCall &&
-        pythonDottedName(hashCall.func) === 'hashlib.sha256' &&
-        Array.isArray(hashCall.args) &&
-        hashCall.args.length === 1 &&
-        hashCall.args[0]?.type === 'Name' &&
-        hashCall.args[0].id === dataLocal &&
-        !(hashCall.keywords ?? []).length &&
-        Array.isArray(node.args) &&
-        node.args.length === 0 &&
-        !(node.keywords ?? []).length
-      )
-        return true
-      return false
-    }
-    if (
-      node.type === 'Compare' ||
-      (node.type === 'BinOp' &&
-        ['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'In', 'NotIn'].includes(node.op ?? ''))
-    ) {
-      return (
-        isPyNode(node.left) &&
-        metadataExpressionSafe(node.left, names, statLocal, dataLocal, pathLocal) &&
-        (node.type === 'Compare'
-          ? (node.comparators ?? []).every((value) =>
-              metadataExpressionSafe(value, names, statLocal, dataLocal, pathLocal)
-            )
-          : isPyNode(node.right) &&
-            metadataExpressionSafe(node.right, names, statLocal, dataLocal, pathLocal))
-      )
-    }
-    if (node.type === 'BoolOp')
-      return (node.values ?? []).every((value) =>
-        metadataExpressionSafe(value, names, statLocal, dataLocal, pathLocal)
-      )
-    if (node.type === 'GeneratorExp') {
-      const generators = node.generators ?? []
-      if (generators.length !== 1) return false
-      const generator = generators[0]
-      if (
-        !generator ||
-        generator.target?.type !== 'Name' ||
-        !isPyNode(generator.iter) ||
-        !metadataExpressionSafe(generator.iter, names, statLocal, dataLocal, pathLocal)
-      )
-        return false
-      const scopedNames = new Set(names)
-      if (generator.target.id) scopedNames.add(generator.target.id)
-      return (
-        (generator.ifs ?? []).every((value) =>
-          metadataExpressionSafe(value, scopedNames, statLocal, dataLocal, pathLocal)
-        ) &&
-        isPyNode(node.elt) &&
-        metadataExpressionSafe(node.elt, scopedNames, statLocal, dataLocal, pathLocal)
-      )
-    }
-    if (node.type === 'Dict') {
-      const keys = node.keys ?? []
-      const values = node.values ?? []
-      return (
-        keys.length === values.length &&
-        keys.every((key) => key?.type === 'Constant') &&
-        values.every((value) =>
-          metadataExpressionSafe(value, names, statLocal, dataLocal, pathLocal)
-        )
-      )
-    }
-    if (['List', 'Tuple', 'Set'].includes(node.type))
-      return (node.elts ?? []).every((value) =>
-        metadataExpressionSafe(value, names, statLocal, dataLocal, pathLocal)
-      )
-    return false
-  }
-  const metadataHelperCandidate = (fn: PyNode): ChecksumHelper | undefined => {
-    if (
-      fn.type !== 'FunctionDef' ||
-      fn.decorator_list?.length ||
-      fn.annotation ||
-      !Array.isArray(fn.body) ||
-      fn.body.length < 3
-    )
-      return undefined
-    const args = fn.args as PyArguments | undefined
-    if (
-      !args ||
-      (args.posonlyargs ?? []).length + (args.args ?? []).length !== 1 ||
-      (args.kwonlyargs ?? []).length ||
-      args.vararg ||
-      args.kwarg ||
-      (args.defaults ?? []).length ||
-      (args.kw_defaults ?? []).some(isPyNode) ||
-      (args.posonlyargs ?? []).some((parameter) => parameter.annotation) ||
-      (args.args ?? []).some((parameter) => parameter.annotation)
-    )
-      return undefined
-    const parameter = (args.posonlyargs ?? [])[0]?.arg ?? (args.args ?? [])[0]?.arg
-    if (!parameter || ['open', 'os', 'hashlib', 'int', 'len'].includes(parameter)) return undefined
-    if (fn.body.length > 4) {
-      const pathAssignment = fn.body[0]
-      const dataAssignment = fn.body[1]
-      const digestAssignment = fn.body[2]
-      const statAssignment = fn.body[3]
-      const pathTarget =
-        pathAssignment?.type === 'Assign' &&
-        pathAssignment.targets?.length === 1 &&
-        pathAssignment.targets[0]?.type === 'Name'
-          ? pathAssignment.targets[0].id
-          : undefined
-      const pathValue =
-        pathAssignment?.type === 'Assign' && isPyNode(pathAssignment.value)
-          ? pathAssignment.value
-          : undefined
-      const pathCall = pathValue?.type === 'Call' ? pathValue : undefined
-      const pathName = pathCall ? pythonDottedName(pathCall.func) : undefined
-      const pathArgs = pathCall && Array.isArray(pathCall.args) ? pathCall.args : []
-      const dataTarget =
-        dataAssignment?.type === 'Assign' &&
-        dataAssignment.targets?.length === 1 &&
-        dataAssignment.targets[0]?.type === 'Name'
-          ? dataAssignment.targets[0].id
-          : undefined
-      const dataValue =
-        dataAssignment?.type === 'Assign' && isPyNode(dataAssignment.value)
-          ? dataAssignment.value
-          : undefined
-      const dataCall = dataValue?.type === 'Call' ? dataValue : undefined
-      const dataReceiver = dataCall?.func?.type === 'Attribute' ? dataCall.func.value : undefined
-      const digestTarget =
-        digestAssignment?.type === 'Assign' &&
-        digestAssignment.targets?.length === 1 &&
-        digestAssignment.targets[0]?.type === 'Name'
-          ? digestAssignment.targets[0].id
-          : undefined
-      const digestValue =
-        digestAssignment?.type === 'Assign' && isPyNode(digestAssignment.value)
-          ? digestAssignment.value
-          : undefined
-      const digestCall = digestValue?.type === 'Call' ? digestValue : undefined
-      const hashCall =
-        digestCall?.func?.type === 'Attribute' && isPyNode(digestCall.func.value)
-          ? digestCall.func.value
-          : undefined
-      const hashArgs = hashCall && Array.isArray(hashCall.args) ? hashCall.args : []
-      const statTarget =
-        statAssignment?.type === 'Assign' &&
-        statAssignment.targets?.length === 1 &&
-        statAssignment.targets[0]?.type === 'Name'
-          ? statAssignment.targets[0].id
-          : undefined
-      const statValue =
-        statAssignment?.type === 'Assign' && isPyNode(statAssignment.value)
-          ? statAssignment.value
-          : undefined
-      const statCall =
-        statValue?.type === 'Attribute' &&
-        statValue.attr === 'st_size' &&
-        isPyNode(statValue.value) &&
-        statValue.value.type === 'Call'
-          ? statValue.value
-          : undefined
-      const statReceiver = statCall?.func?.type === 'Attribute' ? statCall.func.value : undefined
-      const names = new Set(
-        [parameter, dataTarget, digestTarget, statTarget].filter((name): name is string =>
-          Boolean(name)
-        )
-      )
-      const safeAssertions = fn.body.slice(4, -1).every((statement) => {
-        if (statement?.type !== 'Assert' || !isPyNode(statement.test)) return false
-        if (statement.msg) return false
-        return metadataExpressionSafe(
-          statement.test,
-          names,
-          statTarget ?? '',
-          dataTarget ?? '',
-          parameter
-        )
-      })
-      if (
-        pathTarget !== parameter ||
-        !pathCall ||
-        !['Path', 'pathlib.Path'].includes(pathName ?? '') ||
-        pathArgs.length !== 1 ||
-        pathArgs[0]?.type !== 'Name' ||
-        pathArgs[0].id !== parameter ||
-        (pathCall.keywords ?? []).length ||
-        !dataTarget ||
-        new Set([parameter, dataTarget, digestTarget, statTarget]).size !== 4 ||
-        dataCall?.func?.type !== 'Attribute' ||
-        dataCall.func.attr !== 'read_bytes' ||
-        !isPyNode(dataReceiver) ||
-        dataReceiver.type !== 'Name' ||
-        dataReceiver.id !== parameter ||
-        (dataCall.args as PyNode[] | undefined)?.length ||
-        dataCall.keywords?.length ||
-        !digestTarget ||
-        digestCall?.func?.type !== 'Attribute' ||
-        digestCall.func.attr !== 'hexdigest' ||
-        (digestCall.args as PyNode[] | undefined)?.length ||
-        digestCall.keywords?.length ||
-        hashCall?.type !== 'Call' ||
-        pythonDottedName(hashCall.func) !== 'hashlib.sha256' ||
-        hashArgs.length !== 1 ||
-        hashArgs[0]?.type !== 'Name' ||
-        hashArgs[0].id !== dataTarget ||
-        hashCall.keywords?.length ||
-        !statTarget ||
-        statCall?.func?.type !== 'Attribute' ||
-        statCall.func.attr !== 'stat' ||
-        !isPyNode(statReceiver) ||
-        statReceiver.type !== 'Name' ||
-        statReceiver.id !== parameter ||
-        (statCall.args as PyNode[] | undefined)?.length ||
-        statCall.keywords?.length ||
-        !safeAssertions
-      )
-        return undefined
-      const returned = fn.body[fn.body.length - 1]
-      if (
-        returned?.type !== 'Return' ||
-        !isPyNode(returned.value) ||
-        !metadataExpressionSafe(returned.value, names, statTarget, dataTarget, parameter)
-      )
-        return undefined
-      return { function: fn, parameter, mode: 'path-object-metadata' }
-    }
-    if (![3, 4].includes(fn.body.length)) return undefined
-    const withNode = fn.body[0]
-    if (withNode?.type !== 'With' || withNode.items?.length !== 1) return undefined
-    const item = withNode.items[0]
-    const openCall = item?.context_expr
-    const fileHandle = item?.optional_vars
-    if (
-      openCall?.type !== 'Call' ||
-      pythonDottedName(openCall.func) !== 'open' ||
-      !Array.isArray(openCall.args) ||
-      openCall.args.length !== 2 ||
-      openCall.args[0]?.type !== 'Name' ||
-      openCall.args[0].id !== parameter ||
-      openCall.args[1]?.type !== 'Constant' ||
-      openCall.args[1].value !== 'rb' ||
-      (openCall.keywords ?? []).length ||
-      fileHandle?.type !== 'Name' ||
-      !fileHandle.id
-    )
-      return undefined
-    const fileHandleName = fileHandle.id
-    const withBody = Array.isArray(withNode.body) ? withNode.body : []
-    const dataAssignment = withBody.length === 1 ? withBody[0] : undefined
-    const dataTarget =
-      dataAssignment?.type === 'Assign' &&
-      dataAssignment.targets?.length === 1 &&
-      dataAssignment.targets[0]?.type === 'Name'
-        ? dataAssignment.targets[0].id
-        : undefined
-    const dataRead =
-      dataAssignment?.type === 'Assign' && isPyNode(dataAssignment.value)
-        ? dataAssignment.value
-        : undefined
-    if (
-      !dataTarget ||
-      dataTarget === parameter ||
-      dataTarget === fileHandleName ||
-      dataRead?.type !== 'Call' ||
-      dataRead.func?.type !== 'Attribute' ||
-      dataRead.func.attr !== 'read' ||
-      !isPyNode(dataRead.func.value) ||
-      dataRead.func.value.type !== 'Name' ||
-      dataRead.func.value.id !== fileHandleName ||
-      (dataRead.args as PyNode[] | undefined)?.length ||
-      dataRead.keywords?.length
-    )
-      return undefined
-    const statAssignment = fn.body[1]
-    const statTarget =
-      statAssignment?.type === 'Assign' &&
-      statAssignment.targets?.length === 1 &&
-      statAssignment.targets[0]?.type === 'Name'
-        ? statAssignment.targets[0].id
-        : undefined
-    const statCall =
-      statAssignment?.type === 'Assign' && isPyNode(statAssignment.value)
-        ? statAssignment.value
-        : undefined
-    const statArgs = statCall && Array.isArray(statCall.args) ? statCall.args : []
-    if (
-      !statTarget ||
-      statTarget === parameter ||
-      statTarget === dataTarget ||
-      statCall?.type !== 'Call' ||
-      pythonDottedName(statCall.func) !== 'os.stat' ||
-      statArgs.length !== 1 ||
-      statArgs[0]?.type !== 'Name' ||
-      statArgs[0].id !== parameter ||
-      (statCall.keywords ?? []).length
-    )
-      return undefined
-    const digestAssignment = fn.body.length === 4 ? fn.body[2] : undefined
-    const digestTarget =
-      digestAssignment?.type === 'Assign' &&
-      digestAssignment.targets?.length === 1 &&
-      digestAssignment.targets[0]?.type === 'Name'
-        ? digestAssignment.targets[0].id
-        : undefined
-    if (fn.body.length === 4) {
-      const digestValue =
-        digestAssignment?.type === 'Assign' && isPyNode(digestAssignment.value)
-          ? digestAssignment.value
-          : undefined
-      const digestCall = digestValue?.type === 'Call' ? digestValue : undefined
-      const hashCall =
-        digestCall?.func?.type === 'Attribute' && isPyNode(digestCall.func.value)
-          ? digestCall.func.value
-          : undefined
-      const hashArgs = hashCall && Array.isArray(hashCall.args) ? hashCall.args : []
-      if (
-        !digestTarget ||
-        new Set([parameter, dataTarget, statTarget]).has(digestTarget) ||
-        digestCall?.func?.type !== 'Attribute' ||
-        digestCall.func.attr !== 'hexdigest' ||
-        (digestCall.args as PyNode[] | undefined)?.length ||
-        digestCall.keywords?.length ||
-        hashCall?.type !== 'Call' ||
-        pythonDottedName(hashCall.func) !== 'hashlib.sha256' ||
-        hashArgs.length !== 1 ||
-        hashArgs[0]?.type !== 'Name' ||
-        hashArgs[0].id !== dataTarget ||
-        (hashCall.keywords ?? []).length
-      )
-        return undefined
-    }
-    const returned = fn.body[fn.body.length - 1]
-    const names = new Set(
-      [parameter, dataTarget, statTarget, digestTarget].filter((name): name is string =>
-        Boolean(name)
-      )
-    )
-    if (
-      returned?.type !== 'Return' ||
-      !isPyNode(returned.value) ||
-      !metadataExpressionSafe(returned.value, names, statTarget, dataTarget)
-    )
-      return undefined
-    return { function: fn, parameter }
-  }
   for (const statement of Array.isArray(tree.body) ? tree.body : []) {
     const candidate = statement.name ? checksumHelperCandidate(statement) : undefined
     if (candidate && statement.name) checksumHelpers.set(statement.name, candidate)
-    const metadataCandidate = statement.name ? metadataHelperCandidate(statement) : undefined
-    if (metadataCandidate && statement.name) metadataHelpers.set(statement.name, metadataCandidate)
-  }
-  const metadataHelperEnvironmentSafe = (helper: ChecksumHelper): boolean => {
-    const pathObject = helper.mode === 'path-object-metadata'
-    const importsSafe = pathObject
-      ? importedNames.get('Path') === 'pathlib.Path' && importedNames.get('hashlib') === 'hashlib'
-      : importedNames.get('os') === 'os' && importedNames.get('hashlib') === 'hashlib'
-    if (!importsSafe || pythonTaintedNamespaces.has('*') || pythonTaintedNamespaces.has('hashlib'))
-      return false
-    const namespaces = pathObject ? ['pathlib'] : ['os']
-    if (namespaces.some((name) => pythonTaintedNamespaces.has(name))) return false
-    const builtins = pathObject ? ['all', 'len', 'str'] : ['open', 'int', 'len']
-    return builtins.every(
-      (builtin) =>
-        !shadowedStaticCalls.has(builtin) &&
-        !importedNames.has(builtin) &&
-        !bindings.has(builtin) &&
-        !collections.has(builtin) &&
-        !context?.pythonBindings?.some(({ name }) => name === builtin) &&
-        !context?.resolvedKernelNames?.includes(builtin) &&
-        !pythonTaintedNamespaces.has('builtins')
-    )
   }
   const localFunctionNames = new Set<string>()
   const repeatedLocalFunctionNames = new Set<string>()
@@ -8855,10 +8308,7 @@ const analyzePythonFileAccessTree = (
     shadowHelper = true
   ): void => {
     if (!name) return
-    if (
-      shadowHelper &&
-      (isHelperName(name) || checksumHelpers.has(name) || metadataHelpers.has(name))
-    )
+    if (shadowHelper && (isHelperName(name) || checksumHelpers.has(name)))
       shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
@@ -10389,35 +9839,6 @@ const analyzePythonFileAccessTree = (
       return
     }
     if (
-      ['pysam.FastaFile', 'pysam.Fastafile', 'pysam.FastxFile', 'pysam.FastqFile'].includes(
-        canonicalName
-      ) &&
-      importedNames.has(rawName.split('.')[0]!)
-    ) {
-      // FastaFile opens an indexed FASTA and accepts explicit .fai/.gzi paths;
-      // FastxFile/FastqFile stream one explicit FASTA/FASTQ path.  Keep only
-      // caller-provided paths: pysam derives default companion indexes from
-      // the filename, but those defaults are intentionally left partial here.
-      const args = Array.isArray(node.args) ? node.args : []
-      const keyword = (name: string): PyNode | undefined =>
-        (node.keywords ?? []).find((entry) => entry.arg === name)?.value
-      const path = keyword('filename') ?? args[0]
-      if (canonicalName === 'pysam.FastaFile' || canonicalName === 'pysam.Fastafile') {
-        recordHtsFileAccess('read', path)
-        const index = keyword('filepath_index') ?? args[1]
-        const compressedIndex = keyword('filepath_index_compressed') ?? args[2]
-        if (index && !(index.type === 'Constant' && !index.value))
-          recordHtsFileAccess('read', index)
-        if (compressedIndex && !(compressedIndex.type === 'Constant' && !compressedIndex.value))
-          recordHtsFileAccess('read', compressedIndex)
-      } else {
-        recordHtsFileAccess('read', path)
-      }
-      unresolvedReads = true
-      unsupportedExternalState = true
-      return
-    }
-    if (
       ['pysam.VariantFile', 'pysam.TabixFile'].includes(canonicalName) &&
       importedNames.has(rawName.split('.')[0]!)
     ) {
@@ -10574,14 +9995,7 @@ const analyzePythonFileAccessTree = (
         if (index && !(index.type === 'Constant' && !index.value))
           recordHtsFileAccess('read', index)
       }
-      const positionalReference =
-        args.length > 5 &&
-        args
-          .slice(2, 5)
-          .every((argument) => argument.type === 'Constant' && argument.value === null)
-          ? args[5]
-          : undefined
-      const reference = keyword('reference_filename') ?? positionalReference
+      const reference = keyword('reference_filename')
       if (
         (reading || mode === 'wc') &&
         reference &&
@@ -11637,80 +11051,16 @@ const analyzePythonFileAccessTree = (
       const element = isPyNode(node.elt) ? node.elt : undefined
       const helperName =
         element?.type === 'Call' && element.func?.type === 'Name' ? element.func.id : undefined
-      const metadataHelper = helperName ? metadataHelpers.get(helperName) : undefined
-      if (
-        metadataHelper &&
-        (metadataHelper.function.end_lineno ?? metadataHelper.function.lineno ?? Infinity) <
-          (node.lineno ?? 0) &&
-        !shadowedHelperNames.has(helperName ?? '') &&
-        generator &&
-        generator.ifs.length === 0 &&
-        generator.target?.type === 'Name' &&
-        loopTargetNames(generator.target).length === 1 &&
-        element?.type === 'Call' &&
-        Array.isArray(element.args) &&
-        element.args.length === 1 &&
-        !(element.keywords ?? []).length &&
-        element.args[0]?.type === 'Name' &&
-        element.args[0].id === loopTargetNames(generator.target)[0] &&
-        metadataHelperEnvironmentSafe(metadataHelper)
-      ) {
-        const collection = pythonStaticStringCollection(generator.iter, bindings, collections, {
-          collections,
-          importedNames,
-          shadowedNames: shadowedStaticCalls,
-          managedEnvironment:
-            !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
-              ? context?.managedEnvironment
-              : undefined
-        })
-        if (
-          collection?.kind === 'sequence' &&
-          collection.values.length <= MAX_STATIC_FILE_LOOP_ITERATIONS
-        ) {
-          for (const path of collection.values) {
-            recordFileAccess('read', {
-              type: 'Constant',
-              constKind: 'str',
-              value: path,
-              _fields: []
-            })
-          }
-          unresolvedReads = true
-          unresolvedWrites = true
-          unsupportedExternalState = true
-          return
-        }
-      }
       const helper = helperName ? checksumHelpers.get(helperName) : undefined
       if (
         helper &&
-        (helper.function.end_lineno ?? helper.function.lineno ?? Infinity) < (node.lineno ?? 0) &&
         !shadowedHelperNames.has(helperName ?? '') &&
         generator &&
         generator.ifs.length === 0 &&
         generator.target?.type === 'Name' &&
-        generator.target.id !== helperName &&
         loopTargetNames(generator.target).length === 1 &&
         importedNames.get('pathlib') === 'pathlib' &&
-        importedNames.get('hashlib') === 'hashlib' &&
-        !pythonTaintedNamespaces.has('*') &&
-        !pythonTaintedNamespaces.has('pathlib') &&
-        !pythonTaintedNamespaces.has('hashlib') &&
-        // An opaque tail can replace file access before a later iteration.
-        ['len', 'str'].every(
-          (builtin) =>
-            !walkPy(helper.function).some(
-              (child) => child.type === 'Call' && pythonDottedName(child.func) === builtin
-            ) ||
-            (!shadowedStaticCalls.has(builtin) &&
-              !importedNames.has(builtin) &&
-              !bindings.has(builtin) &&
-              !collections.has(builtin) &&
-              !context?.pythonBindings?.some(({ name }) => name === builtin) &&
-              !context?.resolvedKernelNames?.includes(builtin) &&
-              !pythonTaintedNamespaces.has('builtins'))
-        )
+        importedNames.get('hashlib') === 'hashlib'
       ) {
         const collection = pythonStaticStringCollection(generator.iter, bindings, collections, {
           collections,
@@ -12034,144 +11384,6 @@ const analyzePythonFileAccessTree = (
     if (node.type === 'For') {
       if (node.iter) visit(node.iter)
       const targetNames = pythonLoopTargetNames(node.target)
-      const body = Array.isArray(node.body) ? node.body : node.body ? [node.body] : []
-      const metadataAssignment = body.find(
-        (statement) =>
-          statement.type === 'Assign' &&
-          statement.targets?.length === 1 &&
-          statement.targets[0]?.type === 'Name' &&
-          isPyNode(statement.value) &&
-          statement.value.type === 'Call' &&
-          statement.value.func?.type === 'Name'
-      )
-      const metadataCall =
-        metadataAssignment?.type === 'Assign' &&
-        metadataAssignment.targets?.length === 1 &&
-        metadataAssignment.targets[0]?.type === 'Name' &&
-        isPyNode(metadataAssignment.value) &&
-        metadataAssignment.value.type === 'Call'
-          ? metadataAssignment.value
-          : undefined
-      const metadataHelperName =
-        metadataCall?.func?.type === 'Name' ? metadataCall.func.id : undefined
-      const metadataHelper = metadataHelperName
-        ? metadataHelpers.get(metadataHelperName)
-        : undefined
-      const metadataTarget =
-        metadataAssignment?.type === 'Assign' && metadataAssignment.targets?.[0]?.type === 'Name'
-          ? metadataAssignment.targets[0].id
-          : undefined
-      const metadataLoopBodySafe =
-        metadataTarget && targetNames.length === 1
-          ? body.every((statement) => {
-              if (statement === metadataAssignment) return true
-              if (statement.type === 'Assert' && isPyNode(statement.test)) {
-                if (statement.msg) return false
-                const test = statement.test
-                if (
-                  test.type === 'Call' &&
-                  test.func?.type === 'Attribute' &&
-                  test.func.attr === 'exists' &&
-                  isPyNode(test.func.value) &&
-                  test.func.value.type === 'Name' &&
-                  test.func.value.id === targetNames[0] &&
-                  (!Array.isArray(test.args) || test.args.length === 0) &&
-                  !(test.keywords ?? []).length
-                )
-                  return true
-                if (
-                  test.type === 'BinOp' &&
-                  test.op === 'Gt' &&
-                  isPyNode(test.left) &&
-                  test.left.type === 'Subscript' &&
-                  isPyNode(test.left.value) &&
-                  test.left.value.type === 'Name' &&
-                  test.left.value.id === metadataTarget &&
-                  test.left.slice?.type === 'Constant' &&
-                  test.left.slice.constKind === 'str' &&
-                  test.left.slice.value === 'size_bytes' &&
-                  test.right?.type === 'Constant' &&
-                  test.right.constKind === 'int' &&
-                  test.right.value === 0
-                )
-                  return true
-              }
-              if (
-                statement.type === 'Call' &&
-                statement.func?.type === 'Attribute' &&
-                statement.func.attr === 'append' &&
-                isPyNode(statement.func.value) &&
-                statement.func.value.type === 'Name' &&
-                Array.isArray(statement.args) &&
-                statement.args.length === 1 &&
-                statement.args[0]?.type === 'Name' &&
-                statement.args[0].id === metadataTarget &&
-                !(statement.keywords ?? []).length
-              )
-                return true
-              return false
-            })
-          : false
-      if (
-        metadataHelper &&
-        metadataCall &&
-        targetNames.length === 1 &&
-        Array.isArray(metadataCall.args) &&
-        metadataCall.args.length === 1 &&
-        metadataCall.args[0]?.type === 'Name' &&
-        metadataCall.args[0].id === targetNames[0] &&
-        !(metadataCall.keywords ?? []).length &&
-        metadataLoopBodySafe &&
-        !(node.orelse ?? []).length &&
-        !pythonLoopHasEarlyExit(node) &&
-        !shadowedHelperNames.has(metadataHelperName ?? '') &&
-        metadataHelperEnvironmentSafe(metadataHelper)
-      ) {
-        const collection = pythonStaticStringCollection(node.iter, bindings, collections, {
-          collections,
-          importedNames,
-          shadowedNames: shadowedStaticCalls,
-          managedEnvironment:
-            !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
-              ? context?.managedEnvironment
-              : undefined
-        })
-        if (
-          collection?.kind === 'sequence' &&
-          collection.values.length <= MAX_STATIC_FILE_LOOP_ITERATIONS
-        ) {
-          for (const path of collection.values) {
-            recordFileAccess('read', {
-              type: 'Constant',
-              constKind: 'str',
-              value: path,
-              _fields: []
-            })
-          }
-          const assignedNames = new Set(
-            body.flatMap((statement) =>
-              walkPy(statement).flatMap((child) =>
-                child.type === 'Name' && child.ctx === 'Store' && child.id ? [child.id] : []
-              )
-            )
-          )
-          for (const name of [...targetNames, ...assignedNames]) {
-            invalidateStaticValue(name, false)
-            shadowedStaticCalls.add(name)
-            shadowedHelperNames.add(name)
-            importedNames.delete(name)
-            scientificObjectTypes.delete(name)
-            inMemoryInputs.delete(name)
-            fileConnections.delete(name)
-          }
-          // The helper's reads are useful evidence, but the loop and helper
-          // body remain user code. Keep the overall contract partial.
-          unresolvedReads = true
-          unresolvedWrites = true
-          unsupportedExternalState = true
-          return
-        }
-      }
       const partialMappingRows = (() => {
         if (
           node.iter?.type !== 'Call' ||
@@ -12220,6 +11432,7 @@ const analyzePythonFileAccessTree = (
         // still change underneath the loop. Argument validity is checked by loopRows.
         return source?.kind === 'sequence' || source?.kind === 'mapping'
       })()
+      const body = Array.isArray(node.body) ? node.body : node.body ? [node.body] : []
       for (const targetName of targetNames) {
         shadowedStaticCalls.add(targetName)
         if (isHelperName(targetName)) shadowedHelperNames.add(targetName)

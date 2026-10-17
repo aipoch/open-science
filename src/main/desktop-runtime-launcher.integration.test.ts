@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
@@ -45,6 +45,180 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it('hands a target-bound credential snapshot to one backend attempt and removes it after startup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(
+      entry,
+      `const observedFs=require('node:fs');
+const observedPath=require('node:path');
+const inventoryPath=process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH;
+const inventory=JSON.parse(observedFs.readFileSync(inventoryPath, 'utf8'));
+observedFs.writeFileSync(observedPath.join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'inventory-observed.json'), JSON.stringify({ inventory, inventoryPath, existsDuringStartup: observedFs.existsSync(inventoryPath) }));
+${fixtureSource}`
+    )
+    const profilePath = join(root, 'profile')
+    const launch = await startOrAttachDesktopBackend({
+      configRoot: root,
+      profilePath,
+      version: 'test',
+      command: process.execPath,
+      entry,
+      packaged: true,
+      credentialInventory: [Buffer.from('snapshot-ciphertext')],
+      timeoutMs: 10000
+    })
+    const observed = JSON.parse(await readFile(join(root, 'inventory-observed.json'), 'utf8'))
+    expect(observed).toMatchObject({
+      inventory: {
+        schemaVersion: 1,
+        configRoot: root,
+        profilePath,
+        ciphertexts: [Buffer.from('snapshot-ciphertext').toString('base64')]
+      },
+      existsDuringStartup: true
+    })
+    expect(observed.inventory.attemptId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    await expect(stat(observed.inventoryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH).toBeUndefined()
+    expect(launch.startedProcess?.pid).toBeGreaterThan(0)
+  })
+
+  it('does not pass or remove an inherited snapshot when no new inventory is supplied', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inherited-inventory-'))
+    roots.push(root)
+    const stalePath = join(root, 'stale-inventory.json')
+    await writeFile(stalePath, JSON.stringify({ stale: true }))
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(
+      entry,
+      `const observedFs=require('node:fs');
+const observedPath=require('node:path').join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'inherited-observed.json');
+observedFs.writeFileSync(observedPath, JSON.stringify({
+  inventoryPath: process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH ?? null,
+  inventoryDigest: process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256 ?? null,
+  staleExists: observedFs.existsSync(${JSON.stringify(stalePath)})
+}));
+${fixtureSource}`
+    )
+    const previous = process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
+    const previousDigest = process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256
+    process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH = stalePath
+    process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256 = 'stale-digest'
+    try {
+      try {
+        await startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: join(root, 'profile'),
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true,
+          timeoutMs: 10000
+        })
+      } catch (error) {
+        const logFiles = await readdir(join(root, 'logs')).catch(() => [])
+        const log = (
+          await Promise.all(
+            logFiles.map((name) => readFile(join(root, 'logs', name), 'utf8').catch(() => ''))
+          )
+        ).join('\n')
+        throw new Error(`${String(error)}\n${log}`, { cause: error })
+      }
+    } finally {
+      if (previous === undefined) delete process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
+      else process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH = previous
+      if (previousDigest === undefined) delete process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256
+      else process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256 = previousDigest
+    }
+    expect(JSON.parse(await readFile(join(root, 'inherited-observed.json'), 'utf8'))).toEqual({
+      inventoryPath: null,
+      inventoryDigest: null,
+      staleExists: true
+    })
+    await expect(stat(stalePath)).resolves.toBeDefined()
+  })
+
+  it('removes a credential snapshot when startup fails before publishing an endpoint', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-failure-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(
+      entry,
+      `const fs=require('node:fs');
+const path=require('node:path');
+const inventoryPath=process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH;
+fs.writeFileSync(path.join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'failure-observed.json'), JSON.stringify({ exists: fs.existsSync(inventoryPath), inventory: JSON.parse(fs.readFileSync(inventoryPath, 'utf8')) }));
+process.exitCode=23;`
+    )
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: join(root, 'profile'),
+        version: 'test',
+        command: process.execPath,
+        entry,
+        packaged: true,
+        credentialInventory: [Buffer.from('failed-startup')],
+        timeoutMs: 2000
+      })
+    ).rejects.toThrow('exited during startup (23)')
+    expect(JSON.parse(await readFile(join(root, 'failure-observed.json'), 'utf8')).exists).toBe(
+      true
+    )
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith('.credential-inventory-'))
+    ).toEqual([])
+  })
+
+  it('requires a fresh desktop bootstrap instead of reusing inventory after an ownership conflict', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-retry-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    const marker = join(root, 'first-attempt')
+    await writeFile(
+      entry,
+      `const fs=require('node:fs');
+const path=require('node:path');
+const inventoryPath=process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH;
+const observedPath=path.join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'retry-observed.json');
+const observed=fs.existsSync(observedPath) ? JSON.parse(fs.readFileSync(observedPath, 'utf8')) : [];
+observed.push({ exists: fs.existsSync(inventoryPath), inventory: JSON.parse(fs.readFileSync(inventoryPath, 'utf8')) });
+fs.writeFileSync(observedPath, JSON.stringify(observed));
+if (!fs.existsSync(${JSON.stringify(marker)})) { fs.writeFileSync(${JSON.stringify(marker)}, '1'); process.exit(75); }
+process.exit(23);`
+    )
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: join(root, 'profile'),
+        version: 'test',
+        command: process.execPath,
+        entry,
+        packaged: true,
+        credentialInventory: [],
+        timeoutMs: 2000,
+        ownershipWaitMs: 100,
+        terminationDeps: { lockHeld: () => false }
+      })
+    ).rejects.toThrow('inventory cannot be reused after an ownership conflict')
+    const observed = JSON.parse(await readFile(join(root, 'retry-observed.json'), 'utf8'))
+    expect(observed).toHaveLength(1)
+    expect(observed.every((attempt: { exists: boolean }) => attempt.exists)).toBe(true)
+    expect(
+      observed.every(
+        (attempt: { inventory: { ciphertexts: string[] } }) =>
+          attempt.inventory.ciphertexts.length === 0
+      )
+    ).toBe(true)
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith('.credential-inventory-'))
+    ).toEqual([])
+  })
+
   it('re-spawns after an ownership conflict exit once the lock is released', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-'))
     roots.push(root)
@@ -212,10 +386,76 @@ ${fixtureSource}`
         }
       })
     ).toBe(options.profilePath)
-    const second = await startOrAttachDesktopBackend(options)
+    const second = await startOrAttachDesktopBackend({ ...options, credentialInventory: [] })
     expect(second.endpoint).toEqual(first.endpoint)
     expect(second.startedProcess).toBeUndefined()
     expect(first.startedProcess?.exitCode).toBeNull()
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith('.credential-inventory-'))
+    ).toEqual([])
+  })
+
+  it('removes the snapshot when the executable cannot be spawned', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-spawn-failure-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(entry, 'process.exit(0)')
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: join(root, 'profile'),
+        version: 'test',
+        command: root,
+        entry,
+        packaged: true,
+        credentialInventory: [],
+        timeoutMs: 2000
+      })
+    ).rejects.toThrow()
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith('.credential-inventory-'))
+    ).toEqual([])
+  })
+
+  it('keeps two config and profile roots isolated while reusing each root on repeat startup', async () => {
+    const firstRoot = await mkdtemp(join(tmpdir(), 'desktop-launch-profile-a-'))
+    const secondRoot = await mkdtemp(join(tmpdir(), 'desktop-launch-profile-b-'))
+    roots.push(firstRoot, secondRoot)
+    const makeEntry = async (root: string): Promise<string> => {
+      const entry = join(root, 'fixture.cjs')
+      await writeFile(entry, fixtureSource)
+      return entry
+    }
+    const firstOptions = {
+      configRoot: firstRoot,
+      profilePath: join(firstRoot, 'profile'),
+      version: 'test',
+      command: process.execPath,
+      entry: await makeEntry(firstRoot),
+      packaged: true,
+      timeoutMs: 10000
+    }
+    const secondOptions = {
+      ...firstOptions,
+      configRoot: secondRoot,
+      profilePath: join(secondRoot, 'profile'),
+      entry: await makeEntry(secondRoot)
+    }
+    const first = await startOrAttachDesktopBackend(firstOptions)
+    const repeated = await startOrAttachDesktopBackend(firstOptions)
+    const second = await startOrAttachDesktopBackend(secondOptions)
+    expect(repeated.endpoint).toEqual(first.endpoint)
+    expect(repeated.startedProcess).toBeUndefined()
+    expect(second.startedProcess?.pid).toBeGreaterThan(0)
+    expect(second.endpoint).not.toEqual(first.endpoint)
+    expect(JSON.parse(await readFile(join(firstRoot, 'launched.json'), 'utf8'))).toMatchObject({
+      configRoot: firstRoot,
+      userData: firstOptions.profilePath
+    })
+    expect(JSON.parse(await readFile(join(secondRoot, 'launched.json'), 'utf8'))).toMatchObject({
+      configRoot: secondRoot,
+      userData: secondOptions.profilePath
+    })
   })
   it('keeps a live child intact and honors the deadline despite repeated ready reports', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-live-'))

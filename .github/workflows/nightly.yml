@@ -94,16 +94,6 @@ jobs:
     with:
       platform_name: ${{ inputs.dry_run == 'linux-arm64' && 'linux-arm64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}
 
-  # Repack the same-run payload and verify native CLI installation before publication.
-  cli-artifacts:
-    needs: [build, package-smoke]
-    if: inputs.dry_run != 'macos-x64'
-    uses: ./.github/workflows/runtime-packages.yml
-    with:
-      desktop_run_id: ${{ format('{0}', github.run_id) }}
-      nightly: true
-      target: ${{ inputs.dry_run == 'linux-arm64' && 'linux-arm64-gnu' || inputs.dry_run == 'linux-cli' && 'linux-x64-gnu' || inputs.dry_run == 'windows-package' && 'win32-x64' || 'all' }}
-
   # Run desktop behavior checks inside the same read-only Nightly run. Failures keep the build green
   # and independently rerunnable so artifacts stay diagnosable, but nightly-publish.yml refuses to
   # roll the tag unless every regression job succeeded.
@@ -120,8 +110,8 @@ jobs:
   # separate publisher as artifacts, never as executable code.
   prepare:
     name: Prepare nightly publish artifact
-    needs: [plan, build, package-smoke, cli-artifacts]
-    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && needs.cli-artifacts.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'
+    needs: [plan, build, package-smoke]
+    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -132,16 +122,6 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: 24
-
-      - name: Verify all five nightly CLI archives
-        env:
-          OPEN_SCIENCE_RUNTIME_NIGHTLY: 'true'
-        run: node scripts/runtime-archives.mjs verify artifacts
 
       - name: Aggregate release certification evidence
         run: >-
@@ -154,7 +134,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb open-science-cli-*.tar.gz)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -164,17 +144,16 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nightly-ready
-          retention-days: 5
+          retention-days: 1
           path: |
             artifacts/SHA256SUMS.txt
-            artifacts/CLI-SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
           if-no-files-found: error
 
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, build, runtime-certification, package-smoke, cli-artifacts, regression, prepare]
+    needs: [plan, build, runtime-certification, package-smoke, regression, prepare]
     if: ${{ always() && github.event_name == 'schedule' }}
     # Reporting must never turn a publishable Nightly into a failed workflow_run for the publisher.
     continue-on-error: true

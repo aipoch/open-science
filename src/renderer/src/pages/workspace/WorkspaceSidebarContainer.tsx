@@ -41,7 +41,7 @@ const WorkspaceSidebarContainer = ({
     () =>
       new Set(
         pendingCredentialRequests.flatMap((request) =>
-          request.sessionId && !request.closed ? [request.sessionId] : []
+          request.sessionId ? [request.sessionId] : []
         )
       ),
     [pendingCredentialRequests]

@@ -29,7 +29,10 @@ export const runtimeUpdateState = (status: UpdateStatus): string => {
     return r?.detail === 'other-runtime' ? 'S07' : 'S33'
   }
   if (r && r.runtime !== 'running') return 'S12'
-  if (reason === 'install-failed') return 'S13'
+  if (reason === 'install-failed')
+    return r?.phase === 'preparing' && r.runtime === 'running' && r.installation === 'unchanged'
+      ? 'S35'
+      : 'S13'
   return r?.canRetryInstall ? 'S30' : 'S01'
 }
 

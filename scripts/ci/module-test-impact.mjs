@@ -17,9 +17,7 @@ import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
-import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
-
-const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
+const defaultManifest = loadModuleImpactManifest()
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
 // Older trusted extraction bundles have no registry: retain all tests rather than guess.
 const packageRegistry = existsSync(packageRegistryPath)
@@ -116,19 +114,6 @@ function selectivePlan(manifest, moduleIds, reasonChains, graph) {
   }
 }
 
-function explainDerivedTests(plan, manifest) {
-  const selected = new Set(plan.testFiles)
-  plan.reasonChains = sorted([
-    ...plan.reasonChains,
-    ...plan.modules.flatMap((id) =>
-      (manifest.modules[id].derivedConsumerTests ?? [])
-        .filter((test) => selected.has(test))
-        .map((test) => `${id} -> derived dependency evidence -> ${test}`)
-    )
-  ])
-  return plan
-}
-
 function fullPlan(reason) {
   return {
     mode: 'full',
@@ -152,12 +137,9 @@ export function createModuleTestPlan(moduleId, manifest = defaultManifest) {
     status: 'not-requested',
     testFiles: []
   })
-  return explainDerivedTests(
-    applyPackageBoundary(
-      plan,
-      manifest.modules[moduleId].ownerPaths.filter((path) => path.startsWith('packages/'))
-    ),
-    manifest
+  return applyPackageBoundary(
+    plan,
+    manifest.modules[moduleId].ownerPaths.filter((path) => path.startsWith('packages/'))
   )
 }
 
@@ -274,12 +256,9 @@ export function createAffectedTestPlan(
     ...directTests,
     ...graph.testFiles
   ])
-  return explainDerivedTests(
-    applyPackageBoundary(
-      plan,
-      changes.flatMap((change) => [change.path, change.previousPath].filter(Boolean))
-    ),
-    manifest
+  return applyPackageBoundary(
+    plan,
+    changes.flatMap((change) => [change.path, change.previousPath].filter(Boolean))
   )
 }
 

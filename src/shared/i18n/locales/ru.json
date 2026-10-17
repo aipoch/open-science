@@ -148,6 +148,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
+    "Update preparation failed": "Не удалось подготовить обновление",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",
     "Your conversation is preserved. Try Resume again.": "Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "Агент не ответил вовремя. Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
@@ -169,7 +171,6 @@
     "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",
     "Map PDC aliquots to samples, cases and external references.": "Сопоставление аликвот PDC с образцами, случаями и внешними ссылками.",
-    "Retrieve PDC case demographics, diagnoses and sample references.": "Получить демографические данные, диагнозы и ссылки на образцы случаев PDC.",
     "Discover PDC study files and quantitative reports without downloading files.": "Поиск файлов исследований и количественных отчётов PDC без скачивания файлов.",
     "Query linkage disequilibrium between two variants in a specified population.": "Запросить неравновесие по сцеплению между двумя вариантами в указанной популяции.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "Найти близлежащие варианты с высоким неравновесием по сцеплению в указанной популяции.",
@@ -7727,22 +7728,6 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "Другие подключения будут закрыты. После обновления закрытие этого приложения также остановит фоновую работу. Ваши настройки и расположение данных сохранятся.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "Отдельная установка не будет обновлена. Перед её повторным использованием проверьте совместимость данных.",
     "Continue opening Open-Science?": "Продолжить открытие Open-Science?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Выполняемые задачи остановятся, а другие подключения будут закрыты. Несохранённая работа может быть потеряна. Ваши настройки и расположение данных сохранятся. После этого закрытие приложения также остановит фоновую работу.",
-    "Search incomplete. Some pages could not be read.": "Поиск выполнен не полностью. Некоторые страницы не удалось прочитать.",
-    "Set two-column body": "Задать две колонки основного текста",
-    "Applies to your next message. Select body text only; exclude tables.": "Применяется к следующему сообщению. Выделите только основной текст, исключив таблицы.",
-    "Redrawing replaces the body area on that page.": "Повторное выделение заменит область основного текста на этой странице.",
-    "Body areas: {{count}}_one": "{{count}} область основного текста",
-    "Body areas: {{count}}_few": "{{count}} области основного текста",
-    "Body areas: {{count}}_many": "{{count}} областей основного текста",
-    "Body areas: {{count}}_other": "{{count}} области основного текста",
-    "Clear this page": "Очистить эту страницу",
-    "Drag across both columns, then confirm the divider.": "Выделите обе колонки перетаскиванием, затем подтвердите разделитель.",
-    "Two-column body": "Основной текст в две колонки",
-    "Column divider": "Разделитель колонок",
-    "Save body area": "Сохранить область основного текста",
-    "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
-    "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
-    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Выполняемые задачи остановятся, а другие подключения будут закрыты. Несохранённая работа может быть потеряна. Ваши настройки и расположение данных сохранятся. После этого закрытие приложения также остановит фоновую работу."
   }
 }

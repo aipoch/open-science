@@ -11,7 +11,6 @@
     "src/renderer/src/hooks/useProjectFormDialog.test.tsx",
     "src/renderer/src/hooks/useProjectFormDialog.ts",
     "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts",
-    "src/renderer/src/hooks/useSessionPendingInteractions.ts",
     "src/renderer/src/hooks/useUnreadTaskViewSync.test.tsx",
     "src/renderer/src/hooks/useUnreadTaskViewSync.ts",
     "src/renderer/src/hooks/useWebEventConnection.test.ts",
@@ -31,7 +30,6 @@
     "src/renderer/src/hooks/useMediaQuery.ts",
     "src/renderer/src/hooks/useProjectFormDialog.ts",
     "src/renderer/src/hooks/useQuitPersistenceFlush.ts",
-    "src/renderer/src/hooks/useSessionPendingInteractions.ts",
     "src/renderer/src/hooks/useUnreadTaskViewSync.ts",
     "src/renderer/src/hooks/useWindowFindAppearanceSync.ts",
     "src/renderer/src/pages/workspace/previews/useNearViewport.ts"

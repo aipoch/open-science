@@ -103,8 +103,6 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Retrieve PDC study metadata and available versions.')
     case 'pdc/pdc_list_biospecimens':
       return t('Map PDC aliquots to samples, cases and external references.')
-    case 'pdc/pdc_list_clinical':
-      return t('Retrieve PDC case demographics, diagnoses and sample references.')
     case 'pdc/pdc_list_files':
       return t('Discover PDC study files and quantitative reports without downloading files.')
 

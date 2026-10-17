@@ -9550,6 +9550,10 @@ it.each([
   'missing-title',
   'duplicate-title',
   'missing-closing',
+  'missing-observed-TJ',
+  'inside-glyph-TJ-gap',
+  'duplicate-observed-run',
+  'metadata-run-mismatch',
   'native-interior-wall'
 ])(
   'refuses the partial-rule parent projection without unique complete native owners: %s',
@@ -9559,6 +9563,8 @@ it.each([
         .filter((r: number[]) => r[2] - r[0] < 200)
         .sort((a: number[], b: number[]) => a[0] - b[0]),
       top = Math.min(...f.items.map((i: { baseline: number }) => i.baseline)),
+      parent = f.items.find((i: { text: string }) => i.text === '97.5XX XXX.'),
+      observed = f.runs.find((i: { text: string }) => i.text === parent.text),
       last = partial.at(-1)
     if (control === 'missing-partial-rule') f.rules = f.rules.filter((r: unknown) => r !== last)
     if (control === 'partial-rule-center-shift') {
@@ -9581,6 +9587,15 @@ it.each([
     if (control === 'missing-title') f.captions = []
     if (control === 'duplicate-title') f.captions.push(structuredClone(f.captions[0]))
     if (control === 'missing-closing') f.rules.splice(2, 1)
+    if (control === 'missing-observed-TJ') f.runs = f.runs.filter((r: unknown) => r !== observed)
+    if (control === 'inside-glyph-TJ-gap')
+      observed.gaps = observed.gaps.map((g: { left: number; right: number; index: number }) => ({
+        ...g,
+        left: g.left + 4,
+        right: g.right + 4
+      }))
+    if (control === 'duplicate-observed-run') f.runs.push(structuredClone(observed))
+    if (control === 'metadata-run-mismatch') observed.height += 0.2
     if (control === 'native-interior-wall') f.rules.push([350, f.rules[0][1], 350, f.rules[2][1]])
     const before = structuredClone(f),
       result = literalOutput(f)
@@ -9588,94 +9603,6 @@ it.each([
     expect(f).toEqual(before)
   }
 )
-
-const partialRuleRunFaults = [
-  'missing-observed-TJ',
-  'inside-glyph-TJ-gap',
-  'duplicate-observed-run',
-  'metadata-run-mismatch'
-]
-const damagePartialRuleRun = (f: ReturnType<typeof JSON.parse>, control: string): void => {
-  const observed = f.runs.find((run: { text: string }) => run.text === '97.5XX XXX.')
-  if (control === 'missing-observed-TJ') f.runs = f.runs.filter((run: unknown) => run !== observed)
-  if (control === 'inside-glyph-TJ-gap')
-    observed.gaps = observed.gaps.map((gap: { left: number; right: number; index: number }) => ({
-      ...gap,
-      left: gap.left + 4,
-      right: gap.right + 4
-    }))
-  if (control === 'duplicate-observed-run') f.runs.push(structuredClone(observed))
-  if (control === 'metadata-run-mismatch') observed.height += 0.2
-}
-it.each(partialRuleRunFaults)(
-  'preserves complete partial-rule parent source owners without splitting on %s',
-  (control) => {
-    const f = partialRuleParents()
-    damagePartialRuleRun(f, control)
-    const before = structuredClone(f),
-      result = literalOutput(f)
-    expect(result.grid).toEqual(partialRuleParentGrid)
-    const parent = result.cells.find(
-      (cell: { row: number; column: number }) => cell.row === 0 && cell.column === 6
-    )
-    const original = f.items.find((item: { text: string }) => item.text === '97.5XX XXX.')
-    expect(parent.sourceTokens).toEqual([original])
-    expect(parent.sourceRects).toEqual([original.rect])
-    expect(
-      result.cells
-        .flatMap((cell: { sourceTokens: unknown[] }) => cell.sourceTokens)
-        .map(literalNativeSignature)
-        .sort()
-    ).toEqual(f.items.map(literalNativeSignature).sort())
-    expect(result.unassigned).toEqual([])
-    expect(f).toEqual(before)
-  }
-)
-const splitPartialRuleOwners = (
-  f: ReturnType<typeof JSON.parse>
-): ReturnType<typeof JSON.parse> => {
-  // Explicit coarse donors exercise the measured-gap gate even though the
-  // public header path now keeps the original fused token intact.
-  const table = {
-    ...structuredClone(f.table),
-    grid: structuredClone(f.expectedGrid),
-    cells: structuredClone([...f.retainedCells, ...f.initialFaultyParentCells]),
-    notes: []
-  }
-  for (const cell of table.cells) table.grid[cell.row][cell.column] = cell.text
-  return table
-}
-it('accepts explicitly split partial-rule donors only with their unique measured native gap', () => {
-  const f = partialRuleParents(),
-    table = splitPartialRuleOwners(f),
-    before = structuredClone(table)
-  expect(
-    lateFencedGroupHelpers.proveNativePartialRuleParentOwners(
-      table,
-      f.items,
-      f.captions,
-      f.rules,
-      f.runs
-    )?.replacements
-  ).toHaveLength(2)
-  expect(table).toEqual(before)
-})
-it.each(partialRuleRunFaults)('rejects explicitly split partial-rule donors with %s', (control) => {
-  const f = partialRuleParents(),
-    table = splitPartialRuleOwners(f)
-  damagePartialRuleRun(f, control)
-  const before = structuredClone({ f, table })
-  expect(
-    lateFencedGroupHelpers.proveNativePartialRuleParentOwners(
-      table,
-      f.items,
-      f.captions,
-      f.rules,
-      f.runs
-    )
-  ).toBeUndefined()
-  expect({ f, table }).toEqual(before)
-})
 
 it('counts redundant native paint once for an otherwise uniquely proved parent tier', () => {
   const f = partialRuleParents(),
@@ -10507,25 +10434,7 @@ it('repairs only a same-baseline small-caps native fenced stub without rebuildin
     result = literalOutput(f)
   expect(result.grid).toEqual(f.expectedGrid)
   expect(result.cells).toHaveLength(f.expectedCellCount)
-  const headerRun = f.runs.find(
-    (run: { text: string }) => run.text === 'Model XXXXXXXX-4 XXXXXXXX-3 XXXXXXXXXX'
-  )
-  // Earlier snapshots divided this header by character counts. Its native TJ
-  // gaps supply the actual ink edges; every unrelated rich cell stays exact.
-  const expectedCells = structuredClone(f.expectedCells)
-  for (const cell of expectedCells) {
-    if (cell.row !== 0 || cell.column < 1 || cell.column > 4) continue
-    const part = cell.column - 1
-    const rect = [
-      part ? headerRun.gaps[part - 1].right : headerRun.rect[0],
-      headerRun.rect[1],
-      part < 3 ? headerRun.gaps[part].left : headerRun.rect[2],
-      headerRun.rect[3]
-    ]
-    cell.sourceRects = [rect]
-    cell.sourceTokens[0].rect = rect
-  }
-  for (const expected of expectedCells)
+  for (const expected of f.expectedCells)
     expect(
       result.cells.find(
         (c: { row: number; column: number }) =>

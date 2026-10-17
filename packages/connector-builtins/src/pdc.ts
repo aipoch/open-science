@@ -309,50 +309,6 @@ export const PDC_TOOLS: ToolDescriptor[] = [
   {
     connector: 'pdc',
     credentialKeys: [],
-    id: 'pdc_list_clinical',
-    description:
-      'Retrieve public PDC case demographics and diagnosis metadata, with available sample identifiers and named external references for linking to GDC. Values retain upstream types, nulls and obfuscation flags. ' +
-      versionNote,
-    input: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { ...studyProperties, ...paginationProperties },
-      oneOf: studyRequired
-    },
-    returns:
-      '{ clinical: [{ case_id, case_submitter_id, status, disease_type, primary_site, ethnicity, gender, race, vital_status, age_at_index, age_is_obfuscated, primary_diagnosis, morphology, tumor_grade, tumor_stage, days_to_death, samples, externalReferences }], study_selector, offset, limit, returned, available, total: null, completeness: "unknown", next_offset, truncated, pagination_mode: "local", usage }. The public clinicalPerStudy endpoint has no offset/limit arguments. Fetches its response within an 8 MiB budget, sorts by case_id and pages received records locally. available counts received cases, not a verified full-study total. truncated only indicates that the local offset ceiling prevents paging more received records; false does not establish upstream completeness. next_offset: null does not prove completeness. Each call refetches data with no cross-page snapshot. Preserves upstream values without inferring survival, normalizing units or equating PDC and GDC UUIDs. age_at_index may be null; age_is_obfuscated may be a string such as "false", a boolean or null, and must not be interpreted using JavaScript truthiness. samples and externalReferences may be empty or unavailable; this does not establish that no corresponding samples or external data exist. Use pdc_list_biospecimens with the same pinned study_id and join by PDC case_id for sample mappings. Treatment, exposure and follow-up histories are not included. ' +
-      versionNote,
-    exampleArgs: { pdc_study_id: 'PDC000127', limit: 10 },
-    maxResponseBytes: 8 * 1024 * 1024,
-    run: async (ctx, args) => {
-      const data = await query(
-        ctx,
-        `query(${selectorDeclaration}) {
-          clinicalPerStudy(${selectorArguments}) {
-            case_id case_submitter_id status disease_type primary_site ethnicity gender race
-            vital_status age_at_index age_is_obfuscated primary_diagnosis morphology
-            tumor_grade tumor_stage days_to_death
-            samples { sample_id sample_submitter_id annotation }
-            externalReferences { external_reference_id reference_resource_shortname
-              reference_resource_name reference_entity_location }
-          }
-        }`,
-        selector(args)
-      )
-      const records = rows(data.clinicalPerStudy, ['case_id'])
-      records.sort((a, b) => String(a.case_id).localeCompare(String(b.case_id)))
-      return {
-        ...page(records, args, 'clinical'),
-        study_selector: selector(args),
-        available: records.length,
-        total: null,
-        completeness: 'unknown'
-      }
-    }
-  },
-  {
-    connector: 'pdc',
-    credentialKeys: [],
     id: 'pdc_list_files',
     description:
       'Discover PDC study files, including quantitative reports (data_category: Protein Assembly) and publication supplements. Filters are passed to the official API. Returns metadata and storage paths, not file contents or download URLs. ' +

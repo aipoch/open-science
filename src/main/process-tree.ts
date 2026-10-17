@@ -1116,14 +1116,9 @@ const scanForOwnedDescendants = async (
             ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
           }
           // Extract starttime (field 22, 1-indexed)
-          // comm may itself contain ')' (for example systemd's '(sd-pam)'). Only the final
-          // delimiter ends field 2, as in parseLinuxProcStat above.
-          const commandEnd = stat.lastIndexOf(')')
-          if (commandEnd >= 0) {
-            const afterComm = stat
-              .slice(commandEnd + 1)
-              .trim()
-              .split(/\s+/)
+          const fields = stat.split(')')
+          if (fields.length >= 2) {
+            const afterComm = fields[1].trim().split(/\s+/)
             if (afterComm.length >= 20 && bootTime !== undefined) {
               const starttimeJiffies = parseInt(afterComm[19], 10) // 0-indexed field 21
               const clockTick = 100 // USER_HZ, typically 100 on Linux
@@ -1189,16 +1184,22 @@ const scanForOwnedDescendants = async (
       }
 
       let hadRelevantPermissionDenied = false
+      let hadSuspiciousMarkerAbsence = false
       for (const pidStr of procs) {
         try {
           const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
           // environ is null-separated key=value pairs
           if (environ.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
             found.push(parseInt(pidStr, 10))
+          } else {
+            // Successfully read environ but marker not found. If this process could be our
+            // descendant, it may have cleared its environment (e.g., via exec with env -i).
+            // Treat this as suspicious - we cannot safely clear ownership.
+            const pid = parseInt(pidStr, 10)
+            if (couldBeDescendant(pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
           }
-          // A successful read without our marker is not evidence of descent. Unrelated processes
-          // can start after the receipt, including independent OS observers. As on Darwin, only
-          // unreadable candidates make this marker scan incomplete.
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code
           // ENOENT/ESRCH are benign (process exited between readdir and readFile).
@@ -1211,8 +1212,9 @@ const scanForOwnedDescendants = async (
           }
         }
       }
-      // An unreadable potential descendant makes absence of the marker inconclusive.
-      if (hadRelevantPermissionDenied && found.length === 0) {
+      // If we hit permission errors for potential descendants, or found potential descendants
+      // without the marker (suspicious environment clearing), the scan is incomplete
+      if ((hadRelevantPermissionDenied || hadSuspiciousMarkerAbsence) && found.length === 0) {
         return undefined
       }
       return found

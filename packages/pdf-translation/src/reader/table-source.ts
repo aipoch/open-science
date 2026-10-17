@@ -12,8 +12,6 @@ export type PdfTranslationSourceIdentity = Readonly<{
 type Document = Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'>
 type Viewport = ReturnType<PDFPageProxy['getViewport']>
 type Rect = PdfTranslationFragment['rect']
-type TableRect = Rect & { page: number }
-type SourcePiece = { text: string; rect: Rect; range?: { start: number; end: number } }
 
 // Independent native advance boxes, not glyph masks or regions safe to paint over.
 function nativeRect(
@@ -61,113 +59,6 @@ function nativeRect(
     rect.y + rect.height <= 1 + 1e-9
     ? rect
     : undefined
-}
-
-function normalizeSourceText(text: string): string {
-  return text.replace(/\s+/gu, '')
-}
-
-function countSubstring(haystack: string, needle: string): number {
-  if (!needle) return 0
-  let count = 0,
-    offset = 0
-  while (true) {
-    const index = haystack.indexOf(needle, offset)
-    if (index < 0) return count
-    count++
-    offset = index + 1
-  }
-}
-
-const REGION_EPSILON = 1e-6
-
-function sameRect(a: Rect, b: Rect): boolean {
-  return (['x', 'y', 'width', 'height'] as const).every(
-    (axis) => Math.abs(a[axis] - b[axis]) <= REGION_EPSILON
-  )
-}
-
-function envelope(rects: readonly Rect[]): Rect {
-  const x = Math.min(...rects.map((rect) => rect.x)),
-    y = Math.min(...rects.map((rect) => rect.y)),
-    right = Math.max(...rects.map((rect) => rect.x + rect.width)),
-    bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
-  return { x, y, width: right - x, height: bottom - y }
-}
-
-// A source item can be represented by several glyph runs (for example a word
-// split around a marked-content boundary). Keep all of those regions together
-// only when they form one horizontal native advance box. The caller still
-// consumes every matched region, so an unaccounted run cannot disappear.
-function findNativeRegionGroup(
-  regions: readonly { region: TableRect; index: number }[],
-  native: Rect,
-  page: number
-): number[] | undefined {
-  const exact = regions.filter(({ region }) => region.page === page && sameRect(region, native))
-  if (exact.length === 1) return [exact[0].index]
-  if (exact.length > 1) return undefined
-  const candidates = regions
-    .filter(
-      ({ region }) =>
-        region.page === page &&
-        region.x >= native.x - REGION_EPSILON &&
-        region.x + region.width <= native.x + native.width + REGION_EPSILON &&
-        Math.abs(region.y - native.y) <= REGION_EPSILON &&
-        Math.abs(region.height - native.height) <= REGION_EPSILON
-    )
-    .sort((a, b) => a.region.x - b.region.x)
-  if (candidates.length < 2) return undefined
-  const groups: number[][] = []
-  for (let start = 0; start < candidates.length; start++) {
-    for (let end = start + 1; end <= candidates.length; end++) {
-      const group = candidates.slice(start, end),
-        boxes = group.map(({ region }) => region),
-        indexes = group.map(({ index }) => index)
-      if (
-        indexes.at(-1)! - indexes[0] !== indexes.length - 1 ||
-        group[0].region.x > native.x + REGION_EPSILON ||
-        group.at(-1)!.region.x + group.at(-1)!.region.width <
-          native.x + native.width - REGION_EPSILON ||
-        boxes.some(
-          (box, index) =>
-            index > 0 && box.x < boxes[index - 1].x + boxes[index - 1].width - REGION_EPSILON
-        )
-      )
-        continue
-      if (sameRect(envelope(boxes), native)) groups.push(group.map(({ index }) => index))
-    }
-  }
-  return groups.length === 1 ? groups[0] : undefined
-}
-
-// A table cell may contain clipped pieces from several PDF.js text items.  The
-// structure cache keeps those origins in the same order as the cell regions;
-// recover each piece only when a unique, whitespace-normalized partition exists.
-function partitionCellText(cellText: string, origins: readonly string[]): string[] | undefined {
-  const trimmed = cellText.trim(),
-    tokens = trimmed ? trimmed.split(/\s+/u) : []
-  if (!tokens.length || !origins.length) return undefined
-  if (origins.length === 1 && normalizeSourceText(trimmed) === normalizeSourceText(origins[0]))
-    return [trimmed]
-  const solutions: string[][] = []
-  const visit = (originIndex: number, tokenIndex: number, pieces: string[]): void => {
-    if (solutions.length > 1) return
-    if (originIndex === origins.length) {
-      if (tokenIndex === tokens.length) solutions.push(pieces)
-      return
-    }
-    const origin = normalizeSourceText(origins[originIndex])
-    for (let end = tokenIndex + 1; end <= tokens.length; end++) {
-      const piece = tokens.slice(tokenIndex, end).join(' '),
-        normalized = normalizeSourceText(piece)
-      if (!normalized || !origin.includes(normalized) || countSubstring(origin, normalized) !== 1)
-        continue
-      visit(originIndex + 1, end, [...pieces, piece])
-    }
-  }
-  visit(0, 0, [])
-  return solutions.length === 1 ? solutions[0] : undefined
 }
 
 /** Before publication only. Failure preserves the entire extraction; cells remain source-only. */
@@ -236,22 +127,7 @@ export async function applyCachedPdfTableSources({
       results.push(result)
     }
     const owners = new Map<string, string>(),
-      // A PDF.js text item can contain two visually separate table values.  Keep
-      // one ownership claim for the native item, while allowing strictly clipped
-      // pieces from the same table to contribute to the one source-only unit.
-      claims = new Map<
-        string,
-        {
-          tableKey: string
-          replacementIndex: number
-          nativeRect: Rect
-          originText: string
-          rects: Rect[]
-          pieces: SourcePiece[]
-          split: boolean
-          measured: boolean
-        }
-      >()
+      claims = new Map<string, string>()
     const ids = new Set<string>(),
       removed = new Set<string>()
     const replacements: PdfTranslationExtraction['source']['units'][number][] = []
@@ -280,45 +156,17 @@ export async function applyCachedPdfTableSources({
         for (const [part, table] of tables.entries()) {
           const tableKey = `${result.extractionId}:${element.id}:${part}`
           for (const cell of table.cells) {
-            const segments = cell.sourceSegments,
-              origins = segments ?? cell.sourceItems
-            if (!cell.text.trim() && !cell.regions.length && !origins?.length) continue
-            if (!origins?.length || cell.regions.length < origins.length) return extraction
-            if (
-              segments &&
-              normalizeSourceText(segments.map((s) => s.text.slice(s.start, s.end)).join('')) !==
-                normalizeSourceText(cell.text)
-            )
+            if (!cell.text.trim() && !cell.regions.length && !cell.sourceItems?.length) continue
+            if (!cell.sourceItems?.length || cell.sourceItems.length !== cell.regions.length)
               return extraction
-            const remaining = [...cell.regions] as TableRect[],
+            const remaining = [...cell.regions],
               fragments = new Map<
                 number,
                 { items: { index: number; text: string }[]; rects: Rect[] }
               >()
-            const primaryClaims: {
-              key: string
-              rects: Rect[]
-              nativeRect: Rect
-              originText: string
-              split: boolean
-              measured: boolean
-              pieces: SourcePiece[]
-            }[] = []
-            const pieces = segments
-              ? segments.map((s) => s.text.slice(s.start, s.end))
-              : partitionCellText(
-                  cell.text,
-                  origins.map((origin) => origin.text)
-                )
-            for (const [originIndex, origin] of origins.entries()) {
-              const segment = segments?.[originIndex],
-                range = segment ? { start: segment.start, end: segment.end } : undefined
-              const piece = pieces?.[originIndex] ?? cell.text.trim()
+            for (const origin of cell.sourceItems) {
               const key = `${origin.pageNumber}:${origin.index}`
-              if (owners.get(key) !== origin.text) return extraction
-              const prior = claims.get(key)
-              if (prior && (prior.tableKey !== tableKey || prior.measured !== !!segment))
-                return extraction
+              if (owners.get(key) !== origin.text || claims.has(key)) return extraction
               let page = pages.get(origin.pageNumber)
               if (!page) {
                 current()
@@ -349,148 +197,30 @@ export async function applyCachedPdfTableSources({
               if (!raw || !('str' in raw) || raw.str !== origin.text) return extraction
               const rect = nativeRect(raw, page.content.styles[raw.fontName], page.viewport)
               if (!rect) return extraction
-              let matchedIndexes = segment
-                ? remaining.flatMap((region, index) =>
-                    region.page === segment.region.page && sameRect(region, segment.region)
-                      ? [index]
-                      : []
-                  )
-                : findNativeRegionGroup(
-                    remaining.map((region, index) => ({ region, index })),
-                    rect,
-                    origin.pageNumber
-                  )
-              if (
-                segment &&
-                (matchedIndexes?.length !== 1 ||
-                  segment.region.x < rect.x - REGION_EPSILON ||
-                  segment.region.x + segment.region.width > rect.x + rect.width + REGION_EPSILON ||
-                  Math.abs(segment.region.y - rect.y) > REGION_EPSILON ||
-                  Math.abs(segment.region.height - rect.height) > REGION_EPSILON)
-              )
-                return extraction
-              let clipped = false
-              // A fused native item has no exact region for either visual value.
-              // Permit only a strict horizontal clip whose cell text is one unique
-              // substring of the original item.  Ambiguous text or geometry keeps
-              // the old all-or-nothing behavior.
-              if (!segment && !matchedIndexes && origin.text !== piece) {
-                if (!pieces) return extraction
-                clipped = true
-                const first = origin.text.indexOf(piece)
-                if (!piece || first < 0 || origin.text.indexOf(piece, first + 1) >= 0)
-                  return extraction
-                const matches = remaining
-                  .map((region, index) => ({ region, index }))
-                  .filter(
-                    ({ region }) =>
-                      region.page === origin.pageNumber &&
-                      region.x >= rect.x - 1e-6 &&
-                      region.x + region.width <= rect.x + rect.width + 1e-6 &&
-                      (region.width < rect.width - 1e-6 || region.height < rect.height - 1e-6) &&
-                      Math.abs(region.y - rect.y) <= 1e-6 &&
-                      Math.abs(region.height - rect.height) <= 1e-6 &&
-                      origin.text.includes(piece)
-                  )
-                if (matches.length !== 1) return extraction
-                matchedIndexes = [matches[0].index]
-              }
-              if (!matchedIndexes?.length) return extraction
-              const matchedRects = matchedIndexes
-                .sort((a, b) => a - b)
-                .map((index) => remaining[index])
-              if (matchedRects.some((item) => !item)) return extraction
-              for (const index of [...matchedIndexes].sort((a, b) => b - a))
-                remaining.splice(index, 1)
-              const matched = envelope(matchedRects)
-              const pending = primaryClaims.find((claim) => claim.key === key),
-                existingClaim = prior ?? pending
-              if (existingClaim) {
-                if (
-                  existingClaim.measured !== !!segment ||
-                  (!segment && existingClaim.pieces.some((entry) => entry.text === piece))
-                )
-                  return extraction
-                if (
-                  existingClaim.rects.some((other) =>
-                    matchedRects.some(
-                      (region) =>
-                        other.x < region.x + region.width - REGION_EPSILON &&
-                        region.x < other.x + other.width - REGION_EPSILON &&
-                        other.y < region.y + region.height - REGION_EPSILON &&
-                        region.y < other.y + other.height - REGION_EPSILON
+              const matches = remaining
+                .map((region, index) => ({ region, index }))
+                .filter(
+                  ({ region }) =>
+                    region.page === origin.pageNumber &&
+                    (['x', 'y', 'width', 'height'] as const).every(
+                      (axis) => Math.abs(region[axis] - rect[axis]) <= 1e-6
                     )
-                  )
                 )
-                  return extraction
-                existingClaim.rects.push(...matchedRects)
-                existingClaim.pieces.push({
-                  text: piece,
-                  rect: matched,
-                  ...(range ? { range } : {})
-                })
-                existingClaim.split = true
-                if (!prior) {
-                  fragments.get(origin.pageNumber)!.rects.push(...matchedRects)
-                  continue
-                }
-                const existing = replacements[prior.replacementIndex]
-                if (!existing) return extraction
-                const existingFragment = existing.fragments.find(
-                  (fragment) => fragment.pageNumber === origin.pageNumber
-                )
-                if (!existingFragment) return extraction
-                const x = Math.min(existingFragment.rect.x, matched.x),
-                  y = Math.min(existingFragment.rect.y, matched.y),
-                  right = Math.max(
-                    existingFragment.rect.x + existingFragment.rect.width,
-                    matched.x + matched.width
-                  ),
-                  bottom = Math.max(
-                    existingFragment.rect.y + existingFragment.rect.height,
-                    matched.y + matched.height
-                  )
-                replacements[prior.replacementIndex] = {
-                  ...existing,
-                  fragments: existing.fragments.map((fragment) =>
-                    fragment === existingFragment
-                      ? {
-                          ...fragment,
-                          rect: { x, y, width: right - x, height: bottom - y }
-                        }
-                      : fragment
-                  )
-                }
-                continue
-              }
+              if (matches.length !== 1) return extraction
+              const [matched] = remaining.splice(matches[0].index, 1)
+              claims.set(key, tableKey)
               const fragment = fragments.get(origin.pageNumber) ?? { items: [], rects: [] }
               fragment.items.push({ index: origin.index, text: origin.text })
-              fragment.rects.push(...matchedRects)
+              fragment.rects.push(matched)
               fragments.set(origin.pageNumber, fragment)
-              primaryClaims.push({
-                key,
-                rects: matchedRects,
-                nativeRect: rect,
-                originText: origin.text,
-                split: clipped,
-                measured: !!segment,
-                pieces: [{ text: piece, rect: matched, ...(range ? { range } : {}) }]
-              })
             }
-            // Every region must have a verified native owner. Extra geometry
-            // cannot be silently dropped when a source item owns multiple runs.
-            if (remaining.length) return extraction
-            if (!fragments.size) continue
             const id = `table-source:${tableKey}:${cell.row}:${cell.column}`
             if (ids.has(id)) return extraction
             ids.add(id)
-            const replacementIndex = replacements.length
             replacements.push({
               id,
               sourceOnly: true,
-              // Earlier cells retain shared fused origins. Only the native
-              // items added to this replacement may contribute its text.
-              source: primaryClaims.map(({ originText }) => originText).join(' '),
+              source: cell.sourceItems.map((i) => i.text).join(' '),
               fragments: [...fragments].map(([pageNumber, { items, rects }]) => {
                 const x = Math.min(...rects.map((r) => r.x)),
                   y = Math.min(...rects.map((r) => r.y))
@@ -506,73 +236,9 @@ export async function applyCachedPdfTableSources({
                 }
               })
             })
-            for (const {
-              key,
-              rects: claimRects,
-              nativeRect: originalRect,
-              originText,
-              split,
-              measured,
-              pieces: sourcePieces
-            } of primaryClaims)
-              claims.set(key, {
-                tableKey,
-                replacementIndex,
-                nativeRect: originalRect,
-                originText,
-                rects: claimRects,
-                pieces: sourcePieces,
-                split,
-                measured
-              })
           }
         }
       }
-    for (const claim of claims.values()) {
-      if (!claim.split && !claim.measured) continue
-      const pieces = [...claim.pieces].sort((a, b) => a.rect.x - b.rect.x)
-      // Measured ranges account for the original string without guessing which
-      // occurrence a repeated value denotes. Only whitespace may lie between
-      // ranges; its measured advance may leave a real horizontal gap.
-      if (
-        claim.measured &&
-        pieces.some((piece, index) => {
-          const range = piece.range,
-            previous = pieces[index - 1]?.range
-          return (
-            !range ||
-            (index === 0 && !!claim.originText.slice(0, range.start).trim()) ||
-            (index === pieces.length - 1 && !!claim.originText.slice(range.end).trim()) ||
-            (previous &&
-              (range.start < previous.end ||
-                !!claim.originText.slice(previous.end, range.start).trim())) ||
-            piece.text !== claim.originText.slice(range.start, range.end)
-          )
-        })
-      )
-        return extraction
-      if (
-        normalizeSourceText(pieces.map((piece) => piece.text).join('')) !==
-          normalizeSourceText(claim.originText) ||
-        (!claim.measured && pieces.length < 2) ||
-        pieces.some(
-          (piece) =>
-            Math.abs(piece.rect.y - claim.nativeRect.y) > 1e-6 ||
-            Math.abs(piece.rect.height - claim.nativeRect.height) > 1e-6
-        ) ||
-        pieces[0].rect.x > claim.nativeRect.x + 1e-6 ||
-        pieces.at(-1)!.rect.x + pieces.at(-1)!.rect.width <
-          claim.nativeRect.x + claim.nativeRect.width - 1e-6 ||
-        pieces.some(
-          (piece, index) =>
-            index > 0 &&
-            (piece.rect.x < pieces[index - 1].rect.x + pieces[index - 1].rect.width - 1e-6 ||
-              (piece.rect.x > pieces[index - 1].rect.x + pieces[index - 1].rect.width + 1e-6 &&
-                (!claim.measured || piece.range!.start === pieces[index - 1].range!.end)))
-        )
-      )
-        return extraction
-    }
     if (!replacements.length) return extraction
     for (const unit of source.units) {
       const keys = unit.fragments.flatMap((f) => f.items.map((i) => `${f.pageNumber}:${i.index}`))
@@ -580,7 +246,7 @@ export async function applyCachedPdfTableSources({
       if (!claimed.length) continue
       if (
         claimed.length !== keys.length ||
-        new Set(claimed.map((key) => claims.get(key)?.tableKey)).size !== 1
+        new Set(claimed.map((key) => claims.get(key))).size !== 1
       )
         return extraction
       removed.add(unit.id)

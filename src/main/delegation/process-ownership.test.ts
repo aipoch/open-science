@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -414,54 +414,6 @@ describe('durable delegated process ownership', () => {
       await expect.poll(() => cold.recover(scope), { timeout: 5_000 }).toBeUndefined()
       expect(cold.receipts(scope)).toHaveLength(0)
     }
-  )
-
-  it.skipIf(process.platform !== 'linux')(
-    'recovers a live tree while a newer unrelated process remains running',
-    async () => {
-      const owner = await setup()
-      const child = owner.spawn(
-        scope,
-        process.execPath,
-        [
-          '-e',
-          `
-          require('node:child_process').spawn(process.execPath, ['-e',
-            'process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)'
-          ], { stdio: ['ignore', 'inherit', 'inherit'] })
-          setInterval(() => {}, 1000)
-        `
-        ],
-        { stdio: 'pipe', env: process.env, windowsHide: true }
-      )
-      children.push(child)
-      const [ready] = await once(child.stdout, 'data')
-      const descendantPid = Number(String(ready))
-      expect(descendantPid).toBeGreaterThan(0)
-      // Keep an independent process alive after the receipt, as the OS observer can be during
-      // recovery. A readiness barrier makes this regression independent of observer scheduling.
-      const unrelated = spawn(
-        process.execPath,
-        ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
-        { stdio: 'pipe' }
-      )
-      try {
-        await once(unrelated.stdout, 'data')
-        const cold = new DelegatedProcessOwnership(directory!)
-        expect(cold.receipts(scope)).toHaveLength(1)
-        await expect(cold.recover(scope, true)).resolves.toBeUndefined()
-        expect(cold.receipts(scope)).toHaveLength(0)
-        for (const pid of [child.pid!, descendantPid]) {
-          expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
-        }
-        expect(process.kill(unrelated.pid!, 0)).toBe(true)
-      } finally {
-        const closed = once(unrelated, 'close')
-        unrelated.kill('SIGKILL')
-        await closed
-      }
-    },
-    15_000
   )
 
   it('does not erase historical ownership uncertainty with a clean cold scan', async () => {

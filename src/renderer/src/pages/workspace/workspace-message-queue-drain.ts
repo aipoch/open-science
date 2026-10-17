@@ -134,7 +134,6 @@ const dispatchQueuedSession = (
             pdfContext: item.snapshot?.pdfContext,
             pdfReadingPosition: item.snapshot?.pdfReadingPosition,
             pdfReadingPositionSource: item.snapshot?.pdfReadingPositionSource,
-            pdfProseReadingSelections: item.snapshot?.pdfProseReadingSelections,
             pendingPdfContextAttachmentIds: item.snapshot?.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: item.snapshot?.pendingPdfContextVersions,
             cwd: item.cwd,

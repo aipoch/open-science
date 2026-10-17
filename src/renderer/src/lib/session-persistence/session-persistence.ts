@@ -1973,6 +1973,7 @@ const createStoreSaver = (
       // A reader flush must not write a received snapshot back to the authority. Real user edits
       // differ from the acknowledged snapshot and still follow normal conflict checking.
       if (
+        isForced &&
         !isRuntimeWriter() &&
         jsonValuesEqual(
           toPersistedSession(session, nextStreamingMessages),

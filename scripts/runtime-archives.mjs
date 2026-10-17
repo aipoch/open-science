@@ -16,16 +16,12 @@ export const archiveTar =
     : 'tar'
 
 export const archiveStem = (version, target) => {
-  assert.match(version, /^\d+\.\d+\.\d+(?:-nightly\.g[a-f0-9]{7})?$/)
+  assert.match(version, /^\d+\.\d+\.\d+$/)
   assert.ok(
     runtimeTargets.some((item) => item.id === target.id),
     'Unsupported archive target'
   )
   return `open-science-cli-${version}-${target.id}`
-}
-export function runtimeArchiveVersion(baseVersion, sourceSha, nightly = false) {
-  assert.match(sourceSha, /^[a-f0-9]{40}$/)
-  return nightly ? `${baseVersion}-nightly.g${sourceSha.slice(0, 7)}` : baseVersion
 }
 export const archiveFilename = (version, target) =>
   `${archiveStem(version, target)}.${target.os === 'win32' ? 'zip' : 'tar.gz'}`
@@ -57,11 +53,9 @@ export async function packRuntimeArchive({
   output,
   target,
   sourceSha,
-  verifySignatures = false,
-  nightly = false
+  verifySignatures = false
 }) {
-  const { version: baseVersion } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
-  const version = runtimeArchiveVersion(baseVersion, sourceSha, nightly)
+  const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const stem = archiveStem(version, target)
   assert.match(sourceSha, /^[a-f0-9]{40}$/)
   const backend = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
@@ -90,9 +84,9 @@ export async function packRuntimeArchive({
     await writeFile(join(destination, 'release.json'), JSON.stringify(metadata, null, 2) + '\n')
     await writeFile(
       join(destination, 'README.txt'),
-      `Open-Science ${version} — ${target.id}\n\nExtract the entire directory. No installed Node, npm or Electron is needed.\nRun ${target.os === 'win32' ? '.\\open-science.cmd' : './open-science'} start --no-open\nThen use status, url, run --help, or stop.\nAdd this directory to PATH if desired. Keep backend and node-runtime beside the launcher.\nStop this profile before upgrading; extract a new version into a separate directory.\nProfiles and credentials remain in the normal OS data/vault locations. Do not delete them to uninstall.\nLinux requires glibc and an OS secret service; Python/R and sandbox prerequisites are separate.\nSee https://github.com/aipoch/open-science/blob/${sourceSha}/docs/standalone-runtime.md\nApplication and Node licenses: backend/LICENSE and node-runtime/LICENSE.\n`
+      `Open-Science ${version} — ${target.id}\n\nExtract the entire directory. No installed Node, npm or Electron is needed.\nRun ${target.os === 'win32' ? '.\\open-science.cmd' : './open-science'} start --no-open\nThen use status, url, run --help, or stop.\nAdd this directory to PATH if desired. Keep backend and node-runtime beside the launcher.\nStop this profile before upgrading; extract a new version into a separate directory.\nProfiles and credentials remain in the normal OS data/vault locations. Do not delete them to uninstall.\nLinux requires glibc and an OS secret service; Python/R and sandbox prerequisites are separate.\nSee https://github.com/aipoch/open-science/blob/v${version}/docs/standalone-runtime.md\nApplication and Node licenses: backend/LICENSE and node-runtime/LICENSE.\n`
     )
-    if (verifySignatures) await verifyRuntimeSignatures(destination, { nightly })
+    if (verifySignatures) await verifyRuntimeSignatures(destination)
     const filename = archiveFilename(version, target)
     // Keep Unicode parent directories out of Windows bsdtar's locale-encoded arguments.
     execFileSync(
@@ -144,13 +138,11 @@ export async function collectRuntimeArchives(directory, version, sourceSha) {
 }
 async function main() {
   const root = resolve(import.meta.dirname, '..')
-  const baseVersion = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version
-  const nightly = process.env.OPEN_SCIENCE_RUNTIME_NIGHTLY === 'true'
+  const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version
   const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf8'
   }).trim()
-  const version = runtimeArchiveVersion(baseVersion, sourceSha, nightly)
   if (process.env.GITHUB_SHA) assert.equal(sourceSha, process.env.GITHUB_SHA)
   if (process.env.GITHUB_REF?.startsWith('refs/tags/'))
     assert.equal(process.env.GITHUB_REF_NAME, `v${version}`)
@@ -174,8 +166,7 @@ async function main() {
           process.env.OPEN_SCIENCE_NODE_SOURCE ??
           join(root, 'out/node-runtime', `${target.os}-${target.cpu}`),
         output: join(root, 'out/cli-artifacts'),
-        verifySignatures: process.env.OPEN_SCIENCE_RUNTIME_VERIFY_SIGNATURES === '1',
-        nightly
+        verifySignatures: process.env.OPEN_SCIENCE_RUNTIME_VERIFY_SIGNATURES === '1'
       })
     )
   }

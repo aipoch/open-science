@@ -94,23 +94,19 @@ export const SessionHeaderMenu = ({
   bindings,
   createSideChat,
   credentialPending = false,
-  rootPermissionPending,
   disabledReason
 }: {
   session: SessionActionInvocation['session']
   bindings?: Partial<ReturnType<typeof createSessionActionBindings>>
   createSideChat?: () => string | undefined
   credentialPending?: boolean
-  rootPermissionPending?: boolean
   disabledReason?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const invocation: SessionActionInvocation = {
     session,
-    presentedStatus: projectPresentedSessionActionability(session, {
-      credentialPending,
-      rootPermissionPending
-    }).presentedStatus
+    presentedStatus: projectPresentedSessionActionability(session, { credentialPending })
+      .presentedStatus
   }
   return (
     <ActionMenuProvider testId="session-header-context-menu" contentClassName="min-w-52">

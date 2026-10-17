@@ -9,7 +9,6 @@ export type ModuleImpactManifest = {
       consumerModules: string[]
       capabilityOverlays: string[]
       fallbackCapability: string
-      derivedConsumerTests?: string[]
       fullTestReason?: string
     }
   >

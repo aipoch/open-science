@@ -408,8 +408,6 @@ describe('PR Gate workflow', () => {
           'module-impact-shadow.mjs',
           'module-ownership-paths.mjs',
           'module-test-impact.mjs',
-          'module-derived-consumers.mjs',
-          'module-derived-consumers.json',
           'module-impact.json',
           'load-module-impact.mjs',
           'package-test-impact.mjs',

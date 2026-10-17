@@ -20,7 +20,6 @@ import {
   sanitizeMessageAttribution,
   sanitizeMessageImages,
   sanitizeSessionPdfContext,
-  sanitizeMessagePdfContextSnapshot,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
   type PersistedChatMessage,
@@ -38,12 +37,6 @@ import {
   synchronizeActiveConversationActivities
 } from './conversation-graph'
 import type { ActivePlanProjection } from './session-plan/contract'
-import {
-  pdfProseReadingSelectionsFromContext,
-  withPdfProseReadingSelections,
-  type PdfProseReadingSelection
-} from './session-pdf-context'
-import type { MessagePdfContextSnapshot } from './session-persistence'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
   id: 'session-1',
@@ -5492,103 +5485,6 @@ describe('normalizeSessionFile with activities', () => {
   })
 })
 
-describe('Immutable message PDF prose selections', () => {
-  const binding = {
-    version: 1,
-    bindingId: 'binding-1',
-    sourceKind: 'upload-version',
-    sourceFileId: 'upload-1',
-    sourceVersionId: 'version-1',
-    sourceSessionId: 'session-1',
-    name: 'paper.pdf',
-    mimeType: 'application/pdf',
-    sizeBytes: 42,
-    checksum: 'a'.repeat(64),
-    linkedAt: 1
-  }
-  const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-  const snapshot = {
-    version: 1,
-    bindings: [binding],
-    proseRegionsByBindingId: { 'binding-1': [region] }
-  }
-
-  it.each([
-    {},
-    { activeBindingId: 'unknown', readingPosition: { pageNumber: 1, pageCount: 2 } },
-    { activeBindingId: 'binding-1', readingPosition: null },
-    { activeBindingId: 'binding-1', readingPosition: { pageNumber: 3, pageCount: 2 } }
-  ])('preserves selections independently of invalid viewport hints: %j', (hints) => {
-    const restored = sanitizeMessagePdfContextSnapshot(
-      JSON.parse(JSON.stringify({ ...snapshot, ...hints }))
-    )
-    expect(restored?.proseRegionsByBindingId).toEqual(snapshot.proseRegionsByBindingId)
-    expect(restored?.proseRegionsByBindingId?.['binding-1']?.[0]).not.toBe(region)
-    expect(sanitizeSessionPdfContext(snapshot)).toEqual({ version: 1, bindings: [binding] })
-  })
-
-  it.each([
-    null,
-    [],
-    { unknown: [region] },
-    { 'binding-1': [] },
-    { 'binding-1': Array.from({ length: 33 }, () => region) },
-    { 'binding-1': [null] },
-    { 'binding-1': [{ ...region, page: '1' }] },
-    { 'binding-1': [{ ...region, split: Number.NaN }] },
-    { 'binding-1': [{ ...region, split: 1 }] },
-    { 'binding-1': [{ ...region, unexpected: true }] },
-    { 'binding-1': [region, region] }
-  ])(
-    'rejects corrupt extraction authority without a native fallback: %j',
-    (proseRegionsByBindingId) => {
-      expect(
-        sanitizeMessagePdfContextSnapshot({ ...snapshot, proseRegionsByBindingId })
-      ).toBeUndefined()
-    }
-  )
-
-  it('keeps historical snapshots native and omits an empty selection map', () => {
-    const native = { version: 1, bindings: [binding] }
-    expect(sanitizeMessagePdfContextSnapshot(native)).toEqual(native)
-    expect(sanitizeMessagePdfContextSnapshot({ ...native, proseRegionsByBindingId: {} })).toEqual(
-      native
-    )
-  })
-
-  it('round-trips confirmed regions only on the user message and removes a corrupt snapshot', () => {
-    const restored = normalizeSessionFile({
-      ...createSessionWithActivity(undefined),
-      runtimeContext: { version: 1, revision: 1, pdfContext: snapshot },
-      messages: [
-        {
-          id: 'message-1',
-          role: 'user',
-          content: 'Read this PDF',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1,
-          pdfContext: snapshot
-        }
-      ]
-    })!
-    const reopened = normalizeSessionFile(JSON.parse(JSON.stringify(createSessionFile(restored))))!
-    expect(reopened.messages[0]?.pdfContext).toEqual(snapshot)
-    expect(reopened.runtimeContext?.pdfContext).toEqual({ version: 1, bindings: [binding] })
-    const corrupted = normalizeSessionFile({
-      ...createSessionWithActivity(undefined),
-      messages: [
-        {
-          ...restored.messages[0],
-          pdfContext: { ...snapshot, proseRegionsByBindingId: { unknown: [region] } }
-        }
-      ]
-    })!
-    expect(corrupted.messages[0]?.pdfContext).toBeUndefined()
-  })
-})
-
 // The response extension is transient and valid only for a committed deletion.
 describe('Session deletion result', () => {
   it('accepts a cleanup warning without changing the existing deletion result', () => {
@@ -5629,108 +5525,4 @@ describe('Side chat reasoning effort compatibility', () => {
       expect(sanitizePersistedSideChat(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
     }
   )
-})
-
-describe('PDF prose send identity', () => {
-  const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-  const binding: MessagePdfContextSnapshot['bindings'][number] = {
-    version: 1,
-    bindingId: 'fresh-upload-binding',
-    sourceKind: 'upload-version',
-    sourceFileId: 'upload-1',
-    sourceVersionId: 'version-1',
-    sourceSessionId: 'session-1',
-    name: 'paper.pdf',
-    mimeType: 'application/pdf',
-    sizeBytes: 42,
-    checksum: 'a'.repeat(64),
-    linkedAt: 1
-  }
-  const context: MessagePdfContextSnapshot = {
-    version: 1,
-    bindings: [
-      binding,
-      { ...binding, bindingId: 'newer-binding', sourceVersionId: 'version-2' },
-      { ...binding, bindingId: 'artifact-binding', sourceKind: 'artifact-version' }
-    ]
-  }
-
-  it('rebinds captured regions by immutable kind and version, never by filename or old binding ID', () => {
-    const oldRegion = { ...region }
-    const captured = pdfProseReadingSelectionsFromContext({
-      version: 1,
-      bindings: [{ ...binding, bindingId: 'old-binding' }],
-      proseRegionsByBindingId: { 'old-binding': [oldRegion] }
-    })
-    oldRegion.split = 0.6
-    const rebound = withPdfProseReadingSelections(context, captured, [])!
-    expect(rebound.proseRegionsByBindingId).toEqual({ 'fresh-upload-binding': [region] })
-    expect(rebound.proseRegionsByBindingId?.['fresh-upload-binding'][0]).not.toBe(
-      captured[0].proseRegions[0]
-    )
-    expect(context).not.toHaveProperty('proseRegionsByBindingId')
-    expect(pdfProseReadingSelectionsFromContext(undefined)).toEqual([])
-  })
-
-  it('resolves a staged upload through its finalized attachment Version', () => {
-    const rebound = withPdfProseReadingSelections(
-      context,
-      [{ source: { attachmentId: 'staged-1' }, proseRegions: [region] }],
-      [
-        {
-          id: 'staged-1',
-          sessionId: 'session-1',
-          name: 'paper.pdf',
-          originalName: 'paper.pdf',
-          path: 'upload-version:version-2',
-          mimeType: 'application/pdf',
-          size: 42,
-          versionId: 'version-2'
-        }
-      ]
-    )
-    expect(rebound?.proseRegionsByBindingId).toEqual({ 'newer-binding': [region] })
-  })
-
-  it.each([
-    {
-      source: { sourceKind: 'upload-version', sourceVersionId: 'missing-version' },
-      proseRegions: [region]
-    },
-    {
-      source: {
-        sourceKind: 'upload-version',
-        sourceVersionId: 'version-1',
-        sourceFileId: 'different-file'
-      },
-      proseRegions: [region]
-    },
-    { source: { attachmentId: 'not-finalized' }, proseRegions: [region] }
-  ] satisfies PdfProseReadingSelection[])(
-    'rejects an unresolved immutable identity without falling back to native extraction: %j',
-    (selection) => {
-      expect(() => withPdfProseReadingSelections(context, [selection], [])).toThrow(
-        'PDF_READING_REGION_INVALID'
-      )
-      expect(() => withPdfProseReadingSelections(undefined, [selection], [])).toThrow(
-        'PDF_READING_REGION_INVALID'
-      )
-    }
-  )
-
-  it('rejects duplicate selection identities and clears only the explicitly native binding', () => {
-    const selection = { source: binding, proseRegions: [region] }
-    expect(() => withPdfProseReadingSelections(context, [selection, selection], [])).toThrow(
-      'PDF_READING_REGION_INVALID'
-    )
-    const selected = {
-      ...context,
-      proseRegionsByBindingId: { 'fresh-upload-binding': [region], 'newer-binding': [region] }
-    }
-    expect(
-      withPdfProseReadingSelections(selected, [{ source: binding, proseRegions: [] }], [])
-        ?.proseRegionsByBindingId
-    ).toEqual({ 'newer-binding': [region] })
-    expect(withPdfProseReadingSelections(context, undefined, [])).toBe(context)
-  })
 })

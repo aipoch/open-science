@@ -1,5 +1,3 @@
-import type { PdfProseRegion } from './pdf-text'
-
 export const MAX_SESSION_PDF_CONTEXTS = 3
 
 export type SessionPdfBindingBase = Readonly<{
@@ -40,7 +38,6 @@ export type MessagePdfContextSnapshot = SessionPdfContext &
   Readonly<{
     activeBindingId?: string
     readingPosition?: PdfReadingPosition
-    proseRegionsByBindingId?: Readonly<Record<string, readonly PdfProseRegion[]>>
   }>
 
 export type SessionPdfContextSource = Readonly<{

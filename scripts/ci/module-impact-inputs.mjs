@@ -8,8 +8,6 @@ import {
 } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
-import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
-
 const defaultManifest = loadModuleImpactManifest()
 const shard = /^scripts\/ci\/module-impact\/([a-z][a-z0-9_]*)\.json$/
 const testKinds = ['owner', 'contract', 'consumer']
@@ -61,7 +59,7 @@ export function additiveModuleImpact(base, head, trusted, baseFiles, headFiles) 
   return resolved
 }
 
-function resolveExplicitModuleImpactInputs(
+export function resolveModuleImpactInputs(
   changes,
   { base, head, cwd = process.cwd(), execute = execFileSync, manifest = defaultManifest } = {}
 ) {
@@ -103,11 +101,4 @@ function resolveExplicitModuleImpactInputs(
     // CI Integrity independently reports the registration error and blocks admission.
     return fallback
   }
-}
-
-// Explicit registration proofs always inspect raw manifests, then add derived evidence for execution.
-export function resolveModuleImpactInputs(changes, options = {}) {
-  const result = resolveExplicitModuleImpactInputs(changes, options)
-  const index = options.derivedConsumers ?? (options.manifest ? undefined : loadDerivedConsumers())
-  return index ? { ...result, manifest: withDerivedConsumers(result.manifest, index) } : result
 }

@@ -41,9 +41,8 @@ if (process.platform === 'darwin') {
   source = join(destination, 'resources/backend')
 }
 const nodeSource = join(dirname(source), 'node-runtime')
-const signatureOptions = { nightly: process.env.OPEN_SCIENCE_RUNTIME_NIGHTLY === 'true' }
-await verifyRuntimeSignatures(source, signatureOptions)
-await verifyRuntimeSignatures(nodeSource, signatureOptions)
+await verifyRuntimeSignatures(source)
+await verifyRuntimeSignatures(nodeSource)
 await appendFile(
   process.env.GITHUB_ENV,
   `OPEN_SCIENCE_RUNTIME_SOURCE=${source}\nOPEN_SCIENCE_NODE_SOURCE=${nodeSource}\nOPEN_SCIENCE_RUNTIME_VERIFY_SIGNATURES=1\n`

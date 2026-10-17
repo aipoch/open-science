@@ -58,9 +58,7 @@ console.log('PASS bundled Node and native dependencies');
   }
   await forbidden(backend)
   if (process.env.OPEN_SCIENCE_RUNTIME_VERIFY_SIGNATURES === '1')
-    await verifyRuntimeSignatures(installed, {
-      nightly: process.env.OPEN_SCIENCE_RUNTIME_NIGHTLY === 'true'
-    })
+    await verifyRuntimeSignatures(installed)
   // A host tool accidentally used by the launcher must fail, even on provisioned CI runners.
   const poison = join(temporary, 'host tools')
   await mkdir(poison)

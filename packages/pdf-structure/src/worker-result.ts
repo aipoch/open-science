@@ -7,8 +7,7 @@ import { readFileWithinLimit } from './bounded-read.js'
 import {
   checkPdfStructureDecodingBudget,
   pdfTextRunsSchema,
-  pdfTableSourceItemsSchema,
-  pdfTableSourceSegmentSchema
+  pdfTableSourceItemsSchema
 } from './result.js'
 import {
   parsePdfStructureResult,
@@ -56,11 +55,6 @@ const rawTableData = z.object({
         text: z.string(),
         textRuns: pdfTextRunsSchema.optional(),
         sourceItems: pdfTableSourceItemsSchema.optional(),
-        sourceSegments: z
-          .array(pdfTableSourceSegmentSchema.omit({ region: true }).extend({ rect }))
-          .min(1)
-          .max(8192)
-          .optional(),
         sourceRects: z.array(rect)
       })
     )
@@ -118,9 +112,7 @@ function fitSourceMetadataBudget(input: unknown): unknown {
     return input
   } catch {
     const withoutOrigins: unknown = JSON.parse(
-      JSON.stringify(input, (key, value) =>
-        key === 'sourceItems' || key === 'sourceSegments' ? undefined : value
-      )
+      JSON.stringify(input, (key, value) => (key === 'sourceItems' ? undefined : value))
     )
     check(withoutOrigins)
     return withoutOrigins
@@ -279,31 +271,6 @@ export const readWorkerResult = async (
             text: cell.text,
             ...(cell.textRuns ? { textRuns: cell.textRuns } : {}),
             ...(cell.sourceItems ? { sourceItems: cell.sourceItems } : {}),
-            ...(cell.sourceSegments
-              ? {
-                  sourceSegments: cell.sourceSegments.map(({ rect: box, ...segment }) => {
-                    if (
-                      segment.pageNumber !== item.page ||
-                      box[0] < 0 ||
-                      box[1] < 0 ||
-                      box[2] > data.sourceViewport.width ||
-                      box[3] > data.sourceViewport.height ||
-                      box[2] <= box[0] ||
-                      box[3] <= box[1]
-                    )
-                      throw new Error('Invalid PDF worker source segment region.')
-                    return {
-                      ...segment,
-                      region: region(
-                        item.page,
-                        box,
-                        data.sourceViewport.width,
-                        data.sourceViewport.height
-                      )
-                    }
-                  })
-                }
-              : {}),
             regions: cell.sourceRects.map((box) =>
               region(item.page, box, data.sourceViewport.width, data.sourceViewport.height)
             )

@@ -18,7 +18,6 @@ import {
 } from '../../../../shared/acp'
 import {
   createInitialSessionState,
-  projectSessionActionability,
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
@@ -220,44 +219,6 @@ describe('workspace Agent Runtime hook contract', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
-  })
-
-  it('projects an already pending live approval after the Session loads without a new runtime snapshot', async () => {
-    runtimeMock.current = createRuntime(
-      createSnapshot({
-        revision: 1,
-        pendingPermissions: [
-          {
-            requestId: 'approval-before-session-load',
-            sessionId: 'session-1',
-            toolCallId: 'app-approval:approval-before-session-load',
-            title: 'Approve risky code',
-            appOwned: true,
-            options: []
-          }
-        ]
-      })
-    )
-    await render()
-
-    await act(async () =>
-      useSessionStore.getState().hydrateSessions([
-        {
-          id: 'session-1',
-          projectId: 'project-1',
-          cwd: workspacePath,
-          title: 'Risky code',
-          status: 'running',
-          messages: [],
-          createdAt: 1,
-          updatedAt: 1
-        }
-      ])
-    )
-
-    expect(
-      projectSessionActionability(useSessionStore.getState().sessions[0]).presentedStatus
-    ).toBe('waiting-permission')
   })
 
   it('publishes the exact state and command surface consumed by WorkspacePage', async () => {

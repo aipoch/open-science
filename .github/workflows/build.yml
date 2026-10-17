@@ -14,9 +14,6 @@ name: Build
 on:
   workflow_call:
     inputs:
-      upgrade_version:
-        type: string
-        required: true
       nightly:
         description: >-
           Mark artifacts as a nightly build: appends `-nightly.g<short-sha>` to the version so
@@ -74,7 +71,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6a88fab3e6a6095f2c9f6b836d692d009491d8de
           persist-credentials: false
 
       - name: Setup Node
@@ -120,7 +116,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6a88fab3e6a6095f2c9f6b836d692d009491d8de
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -177,7 +172,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6a88fab3e6a6095f2c9f6b836d692d009491d8de
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -221,7 +215,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6a88fab3e6a6095f2c9f6b836d692d009491d8de
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -331,7 +324,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: 6a88fab3e6a6095f2c9f6b836d692d009491d8de
           persist-credentials: false
 
       - name: Setup Node
@@ -339,24 +331,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-
-      - name: Prepare version-only upgrade candidate in clean checkout
-        shell: bash
-        env:
-          UPGRADE_VERSION: ${{ inputs.upgrade_version }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          # Diagnostic artifact only: same PR code, greater stable version for real updater checks.
-          test "$(git rev-parse HEAD)" = "6a88fab3e6a6095f2c9f6b836d692d009491d8de"
-          test "$(node -p "require('./package.json').version")" = "1.0.0"
-          case "$UPGRADE_VERSION" in 1.0.0|1.0.1) ;; *) exit 1 ;; esac
-          if [ "$UPGRADE_VERSION" = "1.0.1" ]; then npm version --no-git-tag-version --ignore-scripts 1.0.1; fi
-          mkdir -p dist
-          git rev-parse HEAD > dist/upgrade-product-sha.txt
-          git diff --binary > dist/upgrade-version-only.patch
-          git diff --name-only > dist/upgrade-modified-files.txt
-          node -e "const fs=require('fs'); const names=fs.readFileSync('dist/upgrade-modified-files.txt','utf8').trim().split(/\r?\n/).filter(Boolean); console.log(names); if(names.some(n=>!['package.json','package-lock.json'].includes(n))) throw Error('Unexpected product modification')"
 
       # The Node secret backend compiles against libsecret/dbus headers during packaging
       # (build:backend-native); Ubuntu images do not ship them.
@@ -615,13 +589,6 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: node scripts/windows-runtime-cdn.mjs check
 
-      - name: Record generated native build changes and verify product source
-        shell: bash
-        run: |
-          git diff --exit-code -- src scripts build .github
-          git diff --binary > dist/upgrade-generated-build.patch
-          git diff --name-only > dist/upgrade-generated-files.txt
-
       - name: Build & package
         id: package
         shell: bash
@@ -749,8 +716,6 @@ jobs:
           name: ${{ matrix.name }}
           retention-days: 7
           path: |
-            dist/upgrade-*.txt
-            dist/upgrade-*.patch
             dist/*.dmg
             dist/*.zip
             dist/*.exe

@@ -44,24 +44,3 @@ rerunning the workflow. If the release is missing, disable the Zenodo integratio
 the long-lived prerelease, verify that Zenodo did not archive it, and then re-enable the integration.
 The workflow intentionally fails closed in either case instead of attempting an unsafe automatic
 bootstrap.
-
-## Recovering a stale nightly
-
-A manual full **Nightly** run produces desktop and five-platform CLI artifacts but does not publish.
-After it succeeds on `main`, validate and promote the same run explicitly:
-
-```bash
-gh workflow run nightly-publish.yml --ref main -f source_run_id=<run-id> -F dry_run=true
-# Inspect the successful dry-run before publishing.
-gh workflow run nightly-publish.yml --ref main -f source_run_id=<run-id> -F dry_run=false
-```
-
-The recovery path shares automatic publication's lock, checks and tag advancement. It rejects foreign
-repositories, other workflows/branches, incomplete or unsuccessful runs, missing CLI artifacts,
-failed advisory jobs, corrupt files and commits outside main history. Duplicate or older publications
-are skipped. Both paths preserve the existing Release identity and move the tag after asset uploads.
-
-Use a newly completed full run when metadata or CLI artifacts have expired (five-day retention).
-Historical desktop-only runs cannot be promoted through the complete desktop/CLI publication path.
-CLI archives use the same nightly version and commit as desktop packages; Linux CLI deb/rpm packages,
-npm and Homebrew publication are not part of nightly. No application-data migration is involved.

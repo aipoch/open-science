@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "modules": {
-    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"]
-  }
-}

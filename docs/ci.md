@@ -94,18 +94,7 @@ be discovered in queue or scheduled validation, and non-mainline Windows failure
 discovered in Windows E2E Regression. A failing scheduled run opens or refreshes one
 tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
 Nightly publication additionally requires the advisory runtime-certification and regression
-jobs of the source run to have succeeded, as well as all five standalone CLI archive legs and their
-complete-set check. `linux-cli`, `linux-arm64` and `windows-package` focused Nightly dispatches also
-repack and test the corresponding CLI archive but never prepare a publishable set.
-
-To recover after fixing a scheduled failure, run a full manual Nightly on `main`, then explicitly
-promote its run through **Nightly Publish**. `source_run_id` selects that completed run and `dry_run`
-defaults to true. The publisher checks source provenance, main ancestry, all publication gates,
-checksums and all five CLI artifacts before any release write. Run the dry-run first, then dispatch
-from `main` with `dry_run=false` to replace assets and advance the tag last. Branch dry-runs can test
-candidate gates; actual publication is main-only. Old desktop-only or partial diagnostic runs are
-not eligible. Metadata and CLI artifacts are retained for five days; rebuild after expiration.
-See [nightly recovery](../release-notes/README.md#recovering-a-stale-nightly).
+jobs of the source run to have succeeded.
 
 ## PR and issue labels
 
@@ -128,11 +117,6 @@ PRs and issues. Size labels and custom labels, including other `area:*` names, a
 Stable Releases include five standalone CLI archives alongside desktop installers. They reuse the
 certified backend and pinned Node bytes, with native signature, extracted-installation, source/version
 and complete-set checks before publication. See the [standalone runtime guide](standalone-runtime.md).
-Nightly also includes the five CLI archives with the desktop build's exact `-nightly.g<sha>` version,
-source revision and backend/Node payload. macOS nightly verifies valid ad-hoc or Developer ID signatures
-without requiring notarization. Windows nightly permits unsigned binaries but rejects invalid existing
-signatures; stable Release checks remain unchanged. Nightly does not publish CLI
-deb/rpm packages, npm packages or Homebrew updates.
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
 credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
 for a GitHub Release.
@@ -214,22 +198,13 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
-## Derived consumer evidence
-
-The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
-selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
-Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
-missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
-Older bases retain legacy rules; existing explicit contracts are not retired automatically.
-
 ## CI control-plane approval
 
-CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
-CODEOWNERS itself have `@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership
-in GitHub instead of editing individual usernames in the file. The team must be visible and have
-explicit repository write access. The main ruleset requires approval from one owner other than the
-PR author and dismisses stale approvals after new commits. Ordinary package and host files have no
-CODEOWNERS entry.
+CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
+`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
+of editing individual usernames in the file. The team must be visible and have explicit repository
+write access. The main ruleset requires approval from one owner other than the PR author and
+dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
 The `scripts/ci/module-impact.json` registration file and JSON records directly under
 `scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
 protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
@@ -392,13 +367,3 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
-
-### Runtime module evidence diagnostic
-
-Source Regression's manual `runtime-evidence` mode collects V8 coverage for five fixed test files.
-Locally, run `npm run pretest`, then `node scripts/ci/runtime-module-evidence.mjs`.
-Reports and logs go to `coverage/runtime-module-evidence/`; Actions retains them for seven days.
-
-Use a checkout-local dependency install: positive controls check actual source and built-package
-execution separately. Missing observations or failed controls fail the job. Zero hits do not justify
-removing a test; these diagnostics do not change test selection.

@@ -182,12 +182,6 @@ jobs:
           if git cat-file -e "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" > "$trusted_dir/module-ownership-paths.mjs"
           fi
-          # Derived evidence stays JSON-only in preflight; Integrity recomputes it from Git blobs.
-          for file in module-derived-consumers.mjs module-derived-consumers.json; do
-            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
-              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
-            fi
-          done
           # Older trusted bases predate the loader; retain their original classifier.
           if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$trusted_dir/package-test-impact.mjs"
@@ -1116,6 +1110,12 @@ jobs:
           src/main/windows.test.ts
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts
+          src/main/system-boot-identity.test.ts
+          src/main/system-boot-identity.windows.test.ts
+          src/main/update/deb-gate-recovery.test.ts
+          src/main/update/installation-executor.test.ts
+          src/main/update/installation-preparation.test.ts
+          src/main/update/installation-reboot-recovery.test.ts
           src/main/delegation/acp-execution.test.ts
           src/main/delegation/production-framework-runtime.test.ts
           src/main/acp/specialist-switch-recovery.integration.test.ts

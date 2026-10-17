@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Directory, [switch]$AllowUnsigned)
+param([Parameter(Mandatory = $true)][string]$Directory)
 $ErrorActionPreference = 'Stop'
 $count = 0
 Get-ChildItem -LiteralPath $Directory -Recurse -File | ForEach-Object {
@@ -14,12 +14,10 @@ Get-ChildItem -LiteralPath $Directory -Recurse -File | ForEach-Object {
     if ($reader.ReadUInt32() -ne 0x4550) { return }
   } finally { $stream.Dispose() }
   $signature = Get-AuthenticodeSignature -LiteralPath $_.FullName
-  # Nightly desktop payloads are unsigned; a present but invalid signature still fails closed.
-  if ($AllowUnsigned -and $signature.Status -eq 'NotSigned') { $count++; return }
   if ($signature.Status -ne 'Valid') { throw "Invalid native signature: $($_.FullName) ($($signature.Status))" }
   # Preserve valid vendor signatures; the parent installer has its publisher checked by package-smoke.
   if ($null -eq $signature.TimeStamperCertificate) { throw "Missing native timestamp: $($_.FullName)" }
   $count++
 }
 if ($count -eq 0) { throw 'No PE payloads found' }
-Write-Host "Verified $count native payloads"
+Write-Host "Verified $count signed native payloads"

@@ -84,35 +84,6 @@ it('keeps a framed raster workflow with adjacent vector panels', () => {
   ])
 })
 
-it('keeps small raster panels inside a proved enclosing frame', () => {
-  const caption = {
-    page: 1,
-    lines: ['Figure 18: Full workflow plate.'],
-    rect: [179, 226, 416, 238]
-  }
-  const frame = path([70, 90, 525, 227])
-  const paths = [
-    frame,
-    ...Array.from({ length: 20 }, (_, index) =>
-      path([
-        160 + (index % 5) * 60,
-        145 + Math.floor(index / 5) * 16,
-        185 + (index % 5) * 60,
-        158 + Math.floor(index / 5) * 16
-      ])
-    )
-  ]
-  const page = makePage(caption, [
-    image([77, 138, 151, 217]),
-    image([90, 100, 100, 110]),
-    image([105, 100, 115, 110]),
-    ...paths
-  ])
-  expect(nativeCaptionedRasterVectorStrip(page, caption, [caption], [])?.rect).toEqual([
-    70, 90, 525, 227
-  ])
-})
-
 it('keeps both raster rows in a repeated workflow panel', () => {
   const caption = {
     page: 1,

@@ -16,7 +16,6 @@
     "src/main/settings/service.test.ts",
     "src/main/settings/settings-snapshot-commit-owner.test.ts",
     "src/main/settings/classification-settings.ts",
-    "src/main/settings/classification-images.ts",
     "src/main/settings/classification-settings.test.ts",
     "src/main/settings/classification-usage.ts",
     "src/main/settings/classification-usage.test.ts",
@@ -66,7 +65,6 @@
       "src/preload/index.test.ts"
     ],
     "consumer": [
-      "src/main/acp/prompt-preparation-owner.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",

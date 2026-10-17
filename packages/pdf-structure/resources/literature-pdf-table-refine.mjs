@@ -296,7 +296,6 @@ import {
   rebaseTableCrop,
   isAdjacentTableScript
 } from './literature-pdf-table-geometry.mjs'
-import { removeEmptySeparatorColumns } from './literature-pdf-table-grid-normalize.mjs'
 import {
   groupSourceRowsWithScripts,
   recoverRuledHeaderBands,
@@ -511,183 +510,6 @@ export function reconcileResolvedSpanDiagnostics({
   if (!cleared.length) return false
   repairs.push('resolved-span-conflicts-discarded')
   return true
-}
-
-// Recover a parent header when the detector put its label in one leaf slot,
-// while native source geometry proves the printed parent span.  The underline
-// is the ownership boundary: it must sit between the parent's source tokens
-// and a complete, independent leaf row, and its covered leaf centres must form
-// one unique contiguous run.  This deliberately refuses unruled/partial
-// headers, duplicated source tokens, and any table with unassigned source text.
-export function recoverCenteredGroupedHeaderSpans({
-  cells,
-  rows,
-  columns,
-  items,
-  headerRows,
-  rules,
-  unassigned,
-  issues,
-  repairs
-}) {
-  if (
-    !Array.isArray(cells) ||
-    !Array.isArray(rows) ||
-    !Array.isArray(columns) ||
-    !Array.isArray(items) ||
-    !Array.isArray(headerRows) ||
-    !headerRows.length ||
-    unassigned?.length ||
-    [
-      'overlapping-predicted-columns',
-      'ambiguous-cell-assignment',
-      'unresolved-spanning-cells',
-      'span-conflicts-with-source-rows',
-      'conflicting-spanning-cells'
-    ].some((issue) => issues?.has(issue))
-  )
-    return 0
-  const horizontal = joinHorizontalTableRules(rules ?? [])
-  if (!horizontal.length) return 0
-  const sameSource = (a, b) =>
-    a === b ||
-    (a?.text === b?.text &&
-      Array.isArray(a?.rect) &&
-      Array.isArray(b?.rect) &&
-      a.rect.length === 4 &&
-      b.rect.length === 4 &&
-      a.rect.every((value, index) => Math.abs(value - b.rect[index]) <= 0.05))
-  const sourceOwnedBy = (token) =>
-    cells.filter((cell) =>
-      (cell.sourceTokens ?? []).some((candidate) => sameSource(candidate, token))
-    )
-  const center = (rect) => (rect[0] + rect[2]) / 2
-  const unionRect = (rects) => [
-    Math.min(...rects.map((rect) => rect[0])),
-    Math.min(...rects.map((rect) => rect[1])),
-    Math.max(...rects.map((rect) => rect[2])),
-    Math.max(...rects.map((rect) => rect[3]))
-  ]
-  let recovered = 0
-  const candidateRows = [...new Set(headerRows.flatMap((header) => [header, header - 1]))]
-    .filter((row) => row >= 0)
-    .sort((a, b) => a - b)
-  for (const row of candidateRows) {
-    const nextRow = row + 1
-    if (!headerRows.includes(nextRow) || !rows[row] || !rows[nextRow]) continue
-    const parentCells = cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
-    const leafCells = cells
-      .filter((cell) => cell.row === nextRow)
-      .sort((a, b) => a.column - b.column)
-    if (
-      parentCells.length !== columns.length ||
-      leafCells.length !== columns.length ||
-      parentCells.some((cell, index) => cell.column !== index) ||
-      leafCells.some((cell, index) => cell.column !== index)
-    )
-      continue
-    const leaves = leafCells.filter(
-      (cell) =>
-        cell.rowSpan === 1 &&
-        cell.colSpan === 1 &&
-        cell.text?.trim() &&
-        (cell.sourceTokens ?? []).length > 0
-    )
-    if (leaves.length !== columns.length) continue
-    for (const parent of parentCells) {
-      const tokens = (parent.sourceTokens ?? []).filter((token) => token.text?.trim())
-      if (
-        parent.rowSpan !== 1 ||
-        parent.colSpan !== 1 ||
-        tokens.length < 2 ||
-        !/\p{L}/u.test(parent.text?.trim() ?? '') ||
-        tokens.some(
-          (token) =>
-            sourceOwnedBy(token).length !== 1 ||
-            items.filter((item) => sameSource(item, token)).length !== 1
-        )
-      )
-        continue
-      const ink = unionRect(tokens.map((token) => token.rect))
-      const height = Math.max(
-        ...tokens.map((token) => token.height ?? token.rect[3] - token.rect[1])
-      )
-      if (!(height > 0)) continue
-      const candidateRules = horizontal
-        .filter(
-          (rule) =>
-            rule[1] >= ink[3] - height * 0.15 &&
-            rule[1] <= rows[nextRow].rect[1] + height * 0.4 &&
-            rule[2] - rule[0] >= height * 3 &&
-            center(rule) >= center(ink) - height * 0.9 &&
-            center(rule) <= center(ink) + height * 0.9
-        )
-        .sort((a, b) => Math.abs(a[1] - ink[3]) - Math.abs(b[1] - ink[3]))
-      if (candidateRules.length !== 1) continue
-      const rule = candidateRules[0]
-      const covered = leaves.filter((cell) => {
-        const leafCenter = center(cell.rect)
-        return leafCenter >= rule[0] - height * 0.35 && leafCenter <= rule[2] + height * 0.35
-      })
-      if (covered.length < 2) continue
-      covered.sort((a, b) => a.column - b.column)
-      if (
-        covered.some((cell, index) => index && cell.column !== covered[index - 1].column + 1) ||
-        Math.abs(center(ink) - center(unionRect(covered.map((cell) => cell.rect)))) > height * 1.2
-      )
-        continue
-      const first = covered[0].column,
-        last = covered.at(-1).column,
-        slots = parentCells.filter((cell) => cell.column >= first && cell.column <= last)
-      if (
-        slots.length !== covered.length ||
-        !slots.includes(parent) ||
-        slots.some((cell) => !cells.includes(cell) || cell.rowSpan !== 1 || cell.colSpan !== 1) ||
-        slots.some(
-          (cell) => cell !== parent && (cell.text?.trim() || (cell.sourceTokens ?? []).length)
-        ) ||
-        parentCells.some(
-          (cell) =>
-            cell !== parent &&
-            cell.row === row &&
-            (cell.sourceTokens ?? []).some((token) =>
-              tokens.some((owner) => sameSource(owner, token))
-            )
-        )
-      )
-        continue
-      // Every native leaf token must stay in exactly its own child cell. This
-      // rejects fused/repeated metric runs even when the underline is nearby.
-      if (
-        covered.some((cell) =>
-          (cell.sourceTokens ?? []).some(
-            (token) =>
-              sourceOwnedBy(token).length !== 1 ||
-              items.filter((item) => sameSource(item, token)).length !== 1 ||
-              token.rect[0] < cell.rect[0] - 0.05 ||
-              token.rect[2] > cell.rect[2] + 0.05
-          )
-        )
-      )
-        continue
-      const merged = {
-        ...parent,
-        column: first,
-        colSpan: covered.length,
-        rect: [slots[0].rect[0], parent.rect[1], slots.at(-1).rect[2], parent.rect[3]],
-        origin: 'source-centered-grouped-header'
-      }
-      const remove = new Set(slots)
-      cells.splice(0, cells.length, ...cells.filter((cell) => !remove.has(cell)), merged)
-      cells.sort((a, b) => a.row - b.row || a.column - b.column)
-      repairs.push('source-centered-grouped-header-span-recovered')
-      recovered++
-    }
-  }
-  // This local repair has no provenance for the table-wide conflict set.
-  // A rejected body span can coexist with the recovered header, so retain
-  // its diagnostic until the conflicting proposal itself is proven resolved.
-  return recovered
 }
 
 export function constrainCaptionLaneCrop(table, detectorCrop, captions = []) {
@@ -11273,17 +11095,6 @@ export function refineTable(
     issues,
     repairs
   })
-  recoverCenteredGroupedHeaderSpans({
-    cells,
-    rows,
-    columns,
-    items,
-    headerRows,
-    rules: sourceRules,
-    unassigned,
-    issues,
-    repairs
-  })
   // A centered section title can sit inside the detector's first header band
   // rather than receiving its own row. When the source leaves that title
   // unassigned, recover a single full-width row only with two matching full
@@ -11630,49 +11441,6 @@ export function refineTable(
     issues,
     repairs
   })
-  const removedSeparatorColumns = issues.has('overlapping-predicted-columns')
-    ? removeEmptySeparatorColumns({
-        cells,
-        columns,
-        columnRects,
-        items,
-        repairs,
-        preserveRecoveredRotatedColumns:
-          table.readingRotation === 90 || table.readingRotation === 270
-      })
-    : 0
-  // Removing an empty detector slot can leave the original overlap marker
-  // stale. Clear it only when every surviving source item has one cell owner
-  // and no ambiguity or span conflict remains; the grid itself is unchanged.
-  if (
-    removedSeparatorColumns > 0 &&
-    !unassigned.length &&
-    !issues.has('ambiguous-cell-assignment') &&
-    !issues.has('unresolved-spanning-cells') &&
-    !issues.has('span-conflicts-with-source-rows') &&
-    !issues.has('span-conflicts-with-source-columns') &&
-    !issues.has('conflicting-spanning-cells')
-  ) {
-    const ownedSourceItems = items.filter((item) => item.horizontal && item.text.trim())
-    const sameSourceItem = (token, item) =>
-      token === item ||
-      (token?.text === item.text &&
-        Array.isArray(token.rect) &&
-        token.rect.length === 4 &&
-        token.rect.every((value, index) => Math.abs(value - item.rect[index]) <= 0.05))
-    const uniquelyOwned =
-      ownedSourceItems.length > 0 &&
-      ownedSourceItems.every(
-        (item) =>
-          cells.filter((cell) =>
-            (cell.sourceTokens ?? []).some((token) => sameSourceItem(token, item))
-          ).length === 1
-      )
-    if (uniquelyOwned) {
-      issues.delete('overlapping-predicted-columns')
-      repairs.push('source-owned-overlap-reconciled')
-    }
-  }
   // A source-separated model alternative can leave a stale overlap diagnostic
   // after every surviving span has become a complete, single-row section
   // heading.  Clear only this fully reconciled shape; ordinary overlapping
@@ -13041,15 +12809,9 @@ export function refineTable(
       : undefined)
   if (nativeRecordPlan) {
     const { cuts, groups, repair } = nativeRecordPlan
-    const groupEntries =
-      groups instanceof Map
-        ? [...groups.entries()]
-        : Array.isArray(groups)
-          ? groups.map((group, row) => [row, group])
-          : Object.entries(groups ?? {}).map(([row, group]) => [Number(row), group])
     const nativeRows = []
     const nativeCells = []
-    for (const [row, group] of groupEntries) {
+    for (const [row, group] of groups.entries()) {
       const rowTop =
         nativeRecordPlan.rowRects?.[row]?.[1] ?? Math.min(...group.map((item) => item.rect[1]))
       const rowBottom =
@@ -14648,10 +14410,10 @@ export function refineTable(
       terminalRecordSeed,
       rulePaintBounds
     ) ?? wrappedHeaderResult
-  const finalResult =
+  return (
     recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules) ??
     calibratedResult
-  return finalResult
+  )
 }
 
 function recoverCenteredNumericRows({

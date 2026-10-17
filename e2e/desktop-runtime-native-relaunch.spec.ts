@@ -2,20 +2,25 @@ import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { chromium, type Browser, type ElectronApplication } from 'playwright'
-import { electronLaunchTarget, launchEnvironment, launchOpenScience } from './fixtures/electron-app'
+import {
+  electronLaunchTarget,
+  launchEnvironment,
+  launchOpenScience,
+  removeTreeForCleanup
+} from './fixtures/electron-app'
 
 for (const stalled of [false, true]) {
   // eslint-disable-next-line no-empty-pattern
   test(`Runtime-requested relaunch ${stalled ? 'times out before the transport closes' : 'replies before clean shutdown and Desktop relaunch'}`, async ({}, testInfo) => {
     test.skip(
-      !['darwin', 'win32'].includes(process.platform) ||
+      !['darwin', 'win32', 'linux'].includes(process.platform) ||
         Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-      'Isolated macOS or Windows source credential fixture'
+      'Isolated source credential fixture'
     )
     // Windows acceptance exercises spaced paths; macOS rejects them for environment data.
     const root = await mkdtemp(
@@ -167,7 +172,7 @@ for (const stalled of [false, true]) {
       if (server.exitCode === null && server.signalCode === null)
         server.kill(stalled ? 'SIGKILL' : 'SIGTERM')
       await expect.poll(() => server.exitCode !== null || server.signalCode !== null).toBe(true)
-      await rm(root, { recursive: true, force: true })
+      await removeTreeForCleanup(root)
     }
   })
 }
@@ -175,9 +180,9 @@ for (const stalled of [false, true]) {
 // eslint-disable-next-line no-empty-pattern
 test('actual Electron relaunch starts a new Desktop and Runtime and reads the original Session', async ({}, testInfo) => {
   test.skip(
-    !['darwin', 'win32'].includes(process.platform) ||
+    !['darwin', 'win32', 'linux'].includes(process.platform) ||
       Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-    'Isolated macOS or Windows source relaunch'
+    'Isolated source relaunch'
   )
   const root = await mkdtemp(
     join(
@@ -194,7 +199,8 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
   await mkdir(join(root, 'workspace'))
   const capability = randomUUID()
   const target = electronLaunchTarget(profileRoot)
-  const initialArgs = [...target.args]
+  // Match Playwright's source Electron launch in Linux containers without a setuid sandbox.
+  const initialArgs = [...(process.platform === 'linux' ? ['--no-sandbox'] : []), ...target.args]
   initialArgs.splice(
     initialArgs.length - 1,
     0,
@@ -206,6 +212,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
   let successorPid: number | undefined
   let launchStderr = ''
   let launchIdentity: unknown
+  let completed = false
   const exited = (pid: number): boolean => {
     try {
       process.kill(pid, 0)
@@ -220,7 +227,9 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     const executablePath = createRequire(resolve('package.json'))('electron') as string
     desktop = spawn(executablePath, [...initialArgs, '--remote-debugging-port=0'], {
       env: {
-        ...launchEnvironment(configRoot),
+        // Native relaunch must exercise the same visible-window startup used for product
+        // acceptance; a hidden fixture window can be throttled before renderer registration.
+        ...launchEnvironment(configRoot, undefined, process.env, undefined, 'normal'),
         OPEN_SCIENCE_USER_DATA: profileRoot,
         OPEN_SCIENCE_E2E_RELAUNCH_CAPABILITY: capability
       },
@@ -247,6 +256,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), { timeout: 60000 })
       .toMatchObject({ phase: 'ready' })
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.evaluate(() => window.api.settings.getSettings())
     const identity = await page.evaluate(
@@ -277,6 +287,10 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       join(root, 'workspace')
     )
     const firstDesktop = desktop
+    // Refuse to request a native successor unless the cleanup observer is already active.
+    expect(await readFile(join(configRoot, 'fixture-desktop-pids'), 'utf8')).toBe(
+      `${firstDesktop.pid}\n`
+    )
     const firstOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
     await page
       .evaluate(
@@ -352,9 +366,12 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     for (const entry of desktopIdentities) {
       expect(entry).toMatchObject({
         configRoot,
-        userData: await realpath(profileRoot),
         isPackaged: false
       })
+      // Electron can preserve macOS's /var alias; compare the actual directories on both sides.
+      expect(await realpath(entry.userData)).toBe(await realpath(profileRoot))
+      expect(await realpath(entry.sessionData)).toBe(await realpath(profileRoot))
+      expect(entry.environmentUserData).toBe(profileRoot)
       expect(entry.argv).toContain(`--user-data-dir=${profileRoot}`)
       if (process.platform === 'darwin') expect(entry.argv).toContain('--use-mock-keychain')
     }
@@ -386,6 +403,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       body: JSON.stringify(identities),
       contentType: 'application/json'
     })
+    completed = true
   } finally {
     await testInfo.attach('actual-relaunch-launch', {
       body: JSON.stringify({ root, launchIdentity, launchStderr, successorPid }),
@@ -409,6 +427,16 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       desktop.kill('SIGKILL')
       await new Promise<void>((resolve) => desktop!.once('exit', () => resolve()))
     }
-    await rm(root, { recursive: true, force: true })
+    if (completed) await removeTreeForCleanup(root)
+    else {
+      await writeFile(
+        join(root, 'native-relaunch-failed.json'),
+        JSON.stringify({ launchIdentity, launchStderr }, null, 2)
+      )
+      await testInfo.attach('native-relaunch-failed-root', {
+        body: JSON.stringify({ root, launchIdentity, launchStderr }, null, 2),
+        contentType: 'application/json'
+      })
+    }
   }
 })

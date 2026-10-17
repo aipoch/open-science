@@ -18,43 +18,6 @@ type PreviewItemInput = Parameters<
 >[0]
 
 describe('preview workbench store', () => {
-  it('keeps confirmed prose by binding, clones inputs, and distinguishes native override from unset', () => {
-    const store = usePreviewWorkbenchStore.getState()
-    const regions = [{ page: 2, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
-    store.setPdfProseRegionsScope('project/session/branch')
-    store.setPdfProseRegions('version-a', regions)
-    regions[0].split = 0.6
-    expect(
-      usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['version-a'][0].split
-    ).toBe(0.5)
-    expect(
-      usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['version-b']
-    ).toBeUndefined()
-    store.clearPdfProseRegions('version-a')
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['version-a']).toEqual([])
-    store.clearPdfReadingPosition('version-a')
-    expect(
-      usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['version-a']
-    ).toBeUndefined()
-  })
-
-  it('retains prose within the same scope and discards it when the active scope changes', () => {
-    const store = usePreviewWorkbenchStore.getState()
-    store.setPdfProseRegionsScope('branch-a')
-    store.setPdfProseRegions('binding', [
-      { page: 1, left: 0, top: 0, right: 1, bottom: 1, split: 0.5 }
-    ])
-    store.setPdfProseRegionsScope('branch-a')
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId.binding).toHaveLength(1)
-    store.setPdfProseRegionsScope('branch-b')
-    expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({})
-    expect(() =>
-      store.setPdfProseRegions('binding', [
-        { page: 1, left: 0, top: 0, right: 1, bottom: 1, split: 1 }
-      ])
-    ).toThrow('PDF_READING_REGION_INVALID')
-  })
-
   it('keeps file view selection across versions and project restore, but clears it on tab removal', () => {
     const store = usePreviewWorkbenchStore.getState()
     const file: PreviewItemInput = {

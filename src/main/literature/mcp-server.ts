@@ -90,15 +90,14 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId. Desktop-confirmed, table-free two-column body regions from the current message snapshot apply automatically to each linked PDF Version, including search and cursor continuation. Without a confirmed selection, reading order is native. Regions change reading order, not extraction coverage: text outside regions and undeclared pages remains in native order. This does not automatically detect layout.',
+        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId.',
       inputSchema: z
         .object({
           documentId: z.string().trim().min(1).max(512).optional(),
           documentIds: z.array(z.string().trim().min(1).max(512)).min(1).max(3).optional(),
           query: z.string().trim().min(1).max(2_000).optional(),
-          cursor: z.string().trim().min(1).max(2048).optional()
+          cursor: z.string().trim().min(1).max(128).optional()
         })
-        .strict()
         .superRefine((request, context) => {
           if (request.query !== undefined) {
             for (const field of ['documentId', 'cursor'] as const) {
@@ -106,14 +105,16 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
                 context.addIssue({
                   code: 'custom',
                   path: [field],
-                  message: 'Search requests must omit documentId and cursor.'
+                  message:
+                    'Search requests accept query and documentIds only; omit documentId and cursor.'
                 })
             }
           } else if (request.documentIds !== undefined) {
             context.addIssue({
               code: 'custom',
               path: ['documentIds'],
-              message: 'Sequential requests must omit documentIds or provide query.'
+              message:
+                'Sequential requests accept documentId and cursor only; omit documentIds or provide query.'
             })
           }
         })

@@ -1,4 +1,3 @@
-import { validatePdfProseRegions, type PdfProseRegion } from '../pdf-text'
 import {
   MAX_SESSION_PDF_CONTEXTS,
   MessagePdfContextSnapshot,
@@ -92,48 +91,8 @@ export const sanitizeSessionPdfContext = (value: unknown): SessionPdfContext | u
 export const sanitizeMessagePdfContextSnapshot = (
   value: unknown
 ): MessagePdfContextSnapshot | undefined => {
-  let context: MessagePdfContextSnapshot | undefined = sanitizeSessionPdfContext(value)
+  const context = sanitizeSessionPdfContext(value)
   if (!context || !isRecord(value)) return context
-  // Region selection is extraction authority, unlike optional viewport hints. Reject
-  // the complete snapshot on corruption rather than silently reading native order.
-  if (value.proseRegionsByBindingId !== undefined) {
-    if (!isRecord(value.proseRegionsByBindingId)) return undefined
-    const entries = Object.entries(value.proseRegionsByBindingId)
-    if (entries.length > MAX_SESSION_PDF_CONTEXTS) return undefined
-    const validEntries: [string, PdfProseRegion[]][] = []
-    for (const [bindingId, regions] of entries) {
-      if (
-        !context.bindings.some((binding) => binding.bindingId === bindingId) ||
-        !Array.isArray(regions) ||
-        regions.length < 1 ||
-        regions.length > 32
-      )
-        return undefined
-      const fields = ['page', 'left', 'top', 'right', 'bottom', 'split'] as const
-      if (
-        regions.some(
-          (region) =>
-            !isRecord(region) ||
-            Object.keys(region).length !== fields.length ||
-            !fields.every((field) => asNumber(region[field]) !== undefined)
-        )
-      )
-        return undefined
-      const validRegions = regions.map(
-        ({ page, left, top, right, bottom, split }) =>
-          ({ page, left, top, right, bottom, split }) as PdfProseRegion
-      )
-      try {
-        validatePdfProseRegions(validRegions)
-      } catch {
-        return undefined
-      }
-      validEntries.push([bindingId, validRegions])
-    }
-    if (validEntries.length > 0) {
-      context = { ...context, proseRegionsByBindingId: Object.fromEntries(validEntries) }
-    }
-  }
   const activeBindingId = asString(value.activeBindingId)
   if (
     !activeBindingId ||

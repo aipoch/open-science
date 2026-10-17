@@ -22,9 +22,6 @@ export const PreviewFileContent = ({
   onRedoAnnotation,
   onAnnotationError,
   onPdfReadingPositionChange,
-  pdfProseRegions,
-  pdfProseRegionIdentityKey,
-  onPdfProseRegionsChange,
   onPdfTranslationChange
 }: PreviewFileRendererProps & {
   downloadVersionContext?: PreviewDownloadVersionContext
@@ -45,9 +42,6 @@ export const PreviewFileContent = ({
     onRedoAnnotation,
     onAnnotationError,
     onPdfReadingPositionChange,
-    pdfProseRegions,
-    pdfProseRegionIdentityKey,
-    onPdfProseRegionsChange,
     onPdfTranslationChange
   })
 

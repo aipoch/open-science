@@ -21,7 +21,6 @@ import {
   type SessionPdfContext
 } from '../../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 
 import type { UploadStagingApi } from './composer-upload-transfer'
 import {
@@ -86,7 +85,6 @@ const uploads = (
 
 type ControllerHook = {
   result: { current: ReturnType<typeof useWorkspaceComposerController> }
-  selectProject: (projectId: string) => void
   selectDraft: (draftKey: string) => void
   selectSession: (
     session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
@@ -116,7 +114,6 @@ const renderController = (
   strictMode = false
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
-  let activeProjectId = 'project'
   let selectedActiveSession = activeSession ?? undefined
   let pendingCustomizePrefill: CustomizePrefillIntent | undefined
   let pendingWslSupportPrefill: WslSupportPrefillIntent | undefined
@@ -129,7 +126,7 @@ const renderController = (
     result.current = useWorkspaceComposerController({
       currentDraftKey,
       newConversationDraftKey: 'new:project',
-      activeProjectId,
+      activeProjectId: 'project',
       pendingCustomizePrefill,
       pendingWslSupportPrefill,
       onCustomizePrefillApplied: vi.fn(),
@@ -165,10 +162,6 @@ const renderController = (
   render()
   return {
     result,
-    selectProject: (projectId: string): void => {
-      activeProjectId = projectId
-      render()
-    },
     selectDraft: (draftKey: string): void => {
       currentDraftKey = draftKey
       render()
@@ -1335,93 +1328,6 @@ describe('workspace composer controller', () => {
     expect(pdfContext).not.toHaveProperty('readingPosition')
   })
 
-  it.each(['draft', 'session', 'project', 'frame', 'branch'] as const)(
-    'drops PDF prose areas when the %s scope changes and keeps the captured snapshot immutable',
-    (scope) => {
-      const binding: SessionPdfContext['bindings'][number] = {
-        version: 1,
-        bindingId: 'binding-1',
-        sourceKind: 'artifact-version',
-        sourceFileId: 'artifact-1',
-        sourceVersionId: 'version-1',
-        sourceSessionId: 'source-session',
-        name: 'paper.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 42,
-        checksum: 'a'.repeat(64),
-        linkedAt: 1
-      }
-      const graph = createLinearConversationGraph({
-        sessionId: 'session-a',
-        messages: [],
-        createdAt: 1,
-        updatedAt: 1
-      })
-      const activeSession = {
-        id: 'session-a',
-        projectId: 'project',
-        conversationGraph: graph,
-        runtimeContext: { revision: 1, pdfContext: { version: 1 as const, bindings: [binding] } }
-      }
-      const hook = renderController(uploads(), undefined, [], activeSession)
-      mounted.push(hook)
-      const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-      act(() => usePreviewWorkbenchStore.getState().setPdfProseRegions('binding-1', [region]))
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      expect(snapshot.pdfProseReadingSelections).toEqual([
-        {
-          source: {
-            sourceKind: 'artifact-version',
-            sourceFileId: 'artifact-1',
-            sourceVersionId: 'version-1'
-          },
-          proseRegions: [{ ...region }]
-        }
-      ])
-      const expected = snapshot.pdfProseReadingSelections!.map((selection) => ({
-        source: { ...selection.source },
-        proseRegions: selection.proseRegions.map((area) => ({ ...area }))
-      }))
-      Object.assign(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['binding-1'][0],
-        {
-          split: 0.7
-        }
-      )
-      expect(snapshot.pdfProseReadingSelections).toEqual(expected)
-      region.split = 0.6
-      act(() =>
-        usePreviewWorkbenchStore.getState().setPdfProseRegions('binding-1', [{ ...region }])
-      )
-      expect(snapshot.pdfProseReadingSelections).toEqual(expected)
-      act(() => usePreviewWorkbenchStore.getState().clearPdfProseRegions('binding-1'))
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source: expected[0].source, proseRegions: [] }
-      ])
-      if (scope === 'draft') hook.selectDraft('new:project')
-      else if (scope === 'session') hook.selectSession({ ...activeSession, id: 'session-b' })
-      else if (scope === 'project') hook.selectProject('project-b')
-      else {
-        const nextFrame = {
-          ...graph.frames[0],
-          id: scope === 'frame' ? 'frame-b' : graph.activeFrameId,
-          activeBranchId: scope === 'branch' ? 'branch-b' : graph.frames[0].activeBranchId
-        }
-        hook.selectSession({
-          ...activeSession,
-          conversationGraph: {
-            ...graph,
-            activeFrameId: nextFrame.id,
-            frames: [nextFrame]
-          }
-        })
-      }
-      expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({})
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-      expect(snapshot.pdfProseReadingSelections).toEqual(expected)
-    }
-  )
-
   it('shows a staged-upload draft selection while its attachment is in the draft', async () => {
     const stageLocalFile = vi.fn().mockResolvedValue({
       id: 'upload-pdf-1',
@@ -1458,16 +1364,6 @@ describe('workspace composer controller', () => {
       draftSelection: true
     })
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeDefined()
-    const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-    act(() =>
-      usePreviewWorkbenchStore.getState().setPdfProseRegions('staged:upload-pdf-1', [region])
-    )
-    expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-      { source: { attachmentId: 'upload-pdf-1' }, proseRegions: [region] }
-    ])
-    expect(
-      hook.result.current.lifecycle.captureSend(false).pdfProseReadingSelections
-    ).toBeUndefined()
   })
 
   it('keeps first-send Discussion and Reading context visible while a pending Session settles', () => {
@@ -1993,11 +1889,6 @@ describe('workspace composer controller', () => {
     preview.activateProject('project', { items: [], panelState: 'collapsed' })
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
-    const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-    act(() => {
-      for (const id of [1, 2, 3])
-        preview.setPdfProseRegions(`version:literature-attachment-version:version-${id}`, [region])
-    })
     expect(hook.result.current.view.readingContext.bindings.map(({ name }) => name)).toEqual([
       'paper-1.pdf',
       'paper-2.pdf',
@@ -2027,19 +1918,6 @@ describe('workspace composer controller', () => {
       { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
       { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
     ])
-    expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-      {
-        source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
-        proseRegions: [region]
-      },
-      {
-        source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' },
-        proseRegions: [region]
-      }
-    ])
-    expect(
-      hook.result.current.lifecycle.captureSend(false).pdfProseReadingSelections
-    ).toBeUndefined()
     expect(
       hook.result.current.lifecycle.captureSend(false).pendingPdfContextVersions
     ).toBeUndefined()
@@ -3738,491 +3616,6 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.lifecycle.restoreFailedSend(superseded))
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
     expect(hook.result.current.view.errorDetail).toBe('original')
-  })
-
-  describe('restored PDF prose reading policy', () => {
-    const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
-    const binding: SessionPdfContext['bindings'][number] = {
-      version: 1,
-      bindingId: 'reading-binding',
-      sourceKind: 'artifact-version',
-      sourceFileId: 'paper',
-      sourceVersionId: 'paper-version',
-      sourceSessionId: 'source-session',
-      name: 'paper.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 42,
-      checksum: 'a'.repeat(64),
-      linkedAt: 1
-    }
-    const source = {
-      sourceKind: binding.sourceKind,
-      sourceFileId: binding.sourceFileId,
-      sourceVersionId: binding.sourceVersionId
-    }
-    const activeSession = {
-      id: 'session-a',
-      projectId: 'project',
-      runtimeContext: { revision: 1, pdfContext: { version: 1 as const, bindings: [binding] } }
-    }
-
-    it('consumes an admitted selection once and restores its frozen policy after a send failure', () => {
-      const hook = renderController(uploads(), undefined, [], activeSession)
-      mounted.push(hook)
-      act(() => {
-        hook.result.current.actions.changeDoc(textDoc('First question'))
-        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
-        usePreviewWorkbenchStore.getState().setPdfProseRegions('unrelated-binding', [region])
-      })
-      const first = hook.result.current.lifecycle.captureSend()
-      act(() => hook.result.current.lifecycle.clearDraft(first.draftKey, first.version))
-      // Clearing or capturing a draft is not admission and must preserve the policy.
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual([region])
-      act(() => hook.result.current.lifecycle.consumePdfProseReading(first))
-      expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toEqual({
-        'unrelated-binding': [region]
-      })
-      act(() => hook.result.current.actions.changeDoc(textDoc('Next question')))
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-      expect(first.pdfProseReadingSelections).toEqual([{ source, proseRegions: [region] }])
-      act(() => hook.result.current.lifecycle.clearDraft(first.draftKey))
-      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(first, true)).toBe(true))
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: [region] }
-      ])
-    })
-
-    it.each([
-      'redraw',
-      'clear',
-      'native-to-area',
-      'same-area-redraw',
-      'clear-then-same-area'
-    ] as const)('preserves a newer %s policy when the captured message is admitted', (change) => {
-      const hook = renderController(uploads(), undefined, [], activeSession)
-      mounted.push(hook)
-      act(() =>
-        usePreviewWorkbenchStore
-          .getState()
-          .setPdfProseRegions(binding.bindingId, change === 'native-to-area' ? [] : [region])
-      )
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      const newer =
-        change === 'clear'
-          ? []
-          : change === 'same-area-redraw' || change === 'clear-then-same-area'
-            ? [region]
-            : [{ ...region, split: 0.6 }]
-      if (change === 'clear-then-same-area')
-        act(() => usePreviewWorkbenchStore.getState().clearPdfProseRegions(binding.bindingId))
-      act(() => usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, newer))
-      act(() => hook.result.current.lifecycle.consumePdfProseReading(snapshot))
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual(newer)
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: newer }
-      ])
-    })
-
-    it('does not consume another scope or a newly linked binding for the same PDF Version', () => {
-      const hook = renderController(uploads(), undefined, [], activeSession)
-      mounted.push(hook)
-      act(() => usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region]))
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      hook.selectSession({ ...activeSession, id: 'session-b' })
-      act(() => usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region]))
-      act(() => hook.result.current.lifecycle.consumePdfProseReading(snapshot))
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual([region])
-      hook.selectSession({
-        ...activeSession,
-        runtimeContext: {
-          revision: 2,
-          pdfContext: { version: 1, bindings: [{ ...binding, bindingId: 'fresh-binding' }] }
-        }
-      })
-      act(() => usePreviewWorkbenchStore.getState().setPdfProseRegions('fresh-binding', [region]))
-      act(() => hook.result.current.lifecycle.consumePdfProseReading(snapshot))
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['fresh-binding']
-      ).toEqual([region])
-    })
-
-    it.each([
-      ['failed send', true],
-      ['failed send', false],
-      ['queued edit', true],
-      ['queued edit', false]
-    ] as const)('keeps %s policy after editing text (prose areas: %s)', (kind, withAreas) => {
-      const hook = renderController(uploads(), undefined, [], activeSession)
-      mounted.push(hook)
-      if (withAreas)
-        act(() =>
-          usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
-        )
-      act(() => hook.result.current.actions.changeDoc(textDoc('Read this PDF')))
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      if (kind === 'queued edit')
-        snapshot.queuedEdit = {
-          kind: 'user',
-          sessionId: 'session-a',
-          agentFrameId: 'frame',
-          messageBranchId: 'branch',
-          permissionProfile: 'full',
-          specialistId: undefined,
-          projectId: 'project',
-          cwd: undefined
-        }
-      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-      act(() =>
-        usePreviewWorkbenchStore
-          .getState()
-          .setPdfProseRegions(binding.bindingId, [{ ...region, split: 0.7 }])
-      )
-      const liveMap = usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId
-      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(true))
-      act(() => hook.result.current.actions.changeDoc(textDoc('Read this PDF, revised')))
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: withAreas ? [region] : [] }
-      ])
-      expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).not.toBe(liveMap)
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual(withAreas ? [region] : [])
-      if (snapshot.pdfProseReadingSelections)
-        Object.assign(snapshot.pdfProseReadingSelections[0].proseRegions[0], { split: 0.8 })
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: withAreas ? [region] : [] }
-      ])
-      act(() =>
-        usePreviewWorkbenchStore
-          .getState()
-          .setPdfProseRegions(binding.bindingId, [{ ...region, split: 0.6 }])
-      )
-      hook.selectSession({ id: 'session-b', projectId: 'project' })
-      hook.selectSession(activeSession)
-      hook.remount()
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual([{ ...region, split: 0.6 }])
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: [{ ...region, split: 0.6 }] }
-      ])
-      act(() => usePreviewWorkbenchStore.getState().clearPdfProseRegions(binding.bindingId))
-      expect(
-        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
-      ).toEqual([])
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-        { source, proseRegions: [] }
-      ])
-    })
-
-    it.each([false, true])(
-      'parks an inactive failed send without changing the visible scope (preserve conflict: %s)',
-      (preserve) => {
-        const hook = renderController(uploads(), undefined, [], activeSession)
-        mounted.push(hook)
-        act(() => {
-          hook.result.current.actions.changeDoc(textDoc('Earlier message'))
-          usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
-        })
-        const snapshot = hook.result.current.lifecycle.captureSend()
-        act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-        hook.selectSession({ ...activeSession, id: 'session-b' })
-        act(() =>
-          usePreviewWorkbenchStore
-            .getState()
-            .setPdfProseRegions(binding.bindingId, [{ ...region, split: 0.7 }])
-        )
-        const liveMap = usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId
-        act(() =>
-          expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, preserve)).toBe(
-            !preserve
-          )
-        )
-        expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toBe(liveMap)
-        expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-          { source, proseRegions: [{ ...region, split: 0.7 }] }
-        ])
-        hook.selectSession(activeSession)
-        act(() => hook.result.current.actions.changeDoc(textDoc('Earlier message, revised')))
-        expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-          { source, proseRegions: [region] }
-        ])
-      }
-    )
-
-    it.each([false, true])(
-      'restores into a bound Session with fresh binding IDs (inactive target: %s)',
-      (inactive) => {
-        const hook = renderController(uploads(), undefined, [], activeSession)
-        mounted.push(hook)
-        act(() => {
-          hook.result.current.actions.changeDoc(textDoc('Message before binding'))
-          usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
-        })
-        const snapshot = hook.result.current.lifecycle.captureSend()
-        act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-        const boundSession = {
-          ...activeSession,
-          id: 'bound-session',
-          runtimeContext: {
-            revision: 2,
-            pdfContext: {
-              version: 1 as const,
-              bindings: [{ ...binding, bindingId: 'fresh-binding' }]
-            }
-          }
-        }
-        hook.selectSession(inactive ? { id: 'other-session', projectId: 'project' } : boundSession)
-        const liveMap = usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId
-        act(() =>
-          expect(
-            hook.result.current.lifecycle.restoreFailedSend(snapshot, true, 'bound-session')
-          ).toBe(!inactive)
-        )
-        if (inactive) {
-          expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId).toBe(liveMap)
-          hook.selectSession(boundSession)
-        }
-        expect(
-          usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId['fresh-binding']
-        ).toEqual([region])
-        expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-          { source, proseRegions: [region] }
-        ])
-        act(() =>
-          usePreviewWorkbenchStore
-            .getState()
-            .setPdfProseRegions('fresh-binding', [{ ...region, split: 0.6 }])
-        )
-        expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual([
-          { source, proseRegions: [{ ...region, split: 0.6 }] }
-        ])
-      }
-    )
-
-    it('invalidates restored policy on branch changes and filters unlinked or different Versions', () => {
-      const graph = createLinearConversationGraph({
-        sessionId: 'session-a',
-        messages: [],
-        createdAt: 1,
-        updatedAt: 1
-      })
-      const sessionWithGraph = { ...activeSession, conversationGraph: graph }
-      const hook = renderController(uploads(), undefined, [], sessionWithGraph)
-      mounted.push(hook)
-      act(() => {
-        hook.result.current.actions.changeDoc(textDoc('Read this PDF'))
-        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
-      })
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-      act(() => hook.result.current.lifecycle.restoreFailedSend(snapshot, true))
-      hook.selectSession({
-        ...sessionWithGraph,
-        runtimeContext: {
-          revision: 2,
-          pdfContext: {
-            version: 1,
-            bindings: [
-              {
-                ...binding,
-                bindingId: 'different-version-binding',
-                sourceVersionId: 'different-version'
-              }
-            ]
-          }
-        }
-      })
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-      hook.selectSession({
-        ...sessionWithGraph,
-        runtimeContext: {
-          revision: 3,
-          pdfContext: {
-            version: 1,
-            bindings: []
-          }
-        }
-      })
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-      hook.selectSession({
-        ...sessionWithGraph,
-        conversationGraph: {
-          ...graph,
-          frames: [{ ...graph.frames[0], activeBranchId: 'different-branch' }]
-        }
-      })
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-      hook.selectSession(sessionWithGraph)
-      expect(hook.result.current.lifecycle.captureSend().pdfProseReadingSelections).toBeUndefined()
-    })
-
-    it.each([
-      [true, 3],
-      [false, 3],
-      [true, 0],
-      [false, 0]
-    ] as const)(
-      'restores finalized staged policy to the visible target (areas: %s, linked PDFs: %s)',
-      async (withAreas, linkedCount) => {
-        const attachment: UploadedAttachment = {
-          id: 'staged-pdf',
-          sessionId: '.pending',
-          name: 'paper.pdf',
-          originalName: 'paper.pdf',
-          path: '/uploads/.pending/paper.pdf',
-          mimeType: 'application/pdf',
-          size: 3
-        }
-        const hook = renderController(
-          uploads(vi.fn().mockResolvedValue(attachment)),
-          undefined,
-          [],
-          null
-        )
-        mounted.push(hook)
-        hook.selectSession(undefined)
-        act(() =>
-          hook.result.current.actions.stageFiles([
-            new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
-          ])
-        )
-        await flushAsyncWork()
-        act(() => {
-          usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
-            kind: 'staged-upload',
-            attachmentId: attachment.id,
-            previewItemId: `upload:${attachment.id}`
-          })
-          if (withAreas)
-            usePreviewWorkbenchStore
-              .getState()
-              .setPdfProseRegions(`staged:${attachment.id}`, [region])
-        })
-        const snapshot = hook.result.current.lifecycle.captureSend()
-        act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-        // The production conversation controller replaces the snapshot attachments at binding.
-        snapshot.attachments = [
-          {
-            ...attachment,
-            sessionId: 'bound-session',
-            path: 'upload-version:finalized-version',
-            versionId: 'finalized-version',
-            versionNumber: 1
-          }
-        ]
-        const finalizedBinding = {
-          ...binding,
-          bindingId: 'fresh-upload-binding',
-          sourceKind: 'upload-version' as const,
-          sourceFileId: attachment.id,
-          sourceVersionId: 'finalized-version'
-        }
-        hook.selectSession(
-          linkedCount
-            ? {
-                id: 'bound-session',
-                projectId: 'project',
-                runtimeContext: {
-                  revision: 2,
-                  pdfContext: {
-                    version: 1,
-                    bindings: linkedCount
-                      ? [
-                          finalizedBinding,
-                          { ...binding, bindingId: 'other-a', sourceVersionId: 'other-version-a' },
-                          { ...binding, bindingId: 'other-b', sourceVersionId: 'other-version-b' }
-                        ]
-                      : []
-                  }
-                }
-              }
-            : undefined
-        )
-        const targetId = linkedCount ? finalizedBinding.bindingId : `staged:${attachment.id}`
-        act(() =>
-          usePreviewWorkbenchStore
-            .getState()
-            .setPdfProseRegions(targetId, [{ ...region, split: 0.7 }])
-        )
-        act(() =>
-          expect(
-            hook.result.current.lifecycle.restoreFailedSend(
-              snapshot,
-              true,
-              linkedCount ? 'bound-session' : undefined
-            )
-          ).toBe(true)
-        )
-        expect(usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[targetId]).toEqual(
-          withAreas ? [region] : []
-        )
-        const captured = hook.result.current.lifecycle.captureSend()
-        expect(captured.pdfProseReadingSelections).toEqual([
-          {
-            source: linkedCount
-              ? {
-                  sourceKind: 'upload-version',
-                  sourceFileId: attachment.id,
-                  sourceVersionId: 'finalized-version'
-                }
-              : { attachmentId: attachment.id },
-            proseRegions: withAreas ? [region] : []
-          }
-        ])
-        if (linkedCount) expect(captured.pendingPdfContextAttachmentIds).toBeUndefined()
-      }
-    )
-
-    it('retains a staged selection after clearing its preview link and restoring its attachment', async () => {
-      const attachment: UploadedAttachment = {
-        id: 'staged-pdf',
-        sessionId: '.pending',
-        name: 'paper.pdf',
-        originalName: 'paper.pdf',
-        path: '/uploads/.pending/paper.pdf',
-        mimeType: 'application/pdf',
-        size: 3
-      }
-      const hook = renderController(
-        uploads(vi.fn().mockResolvedValue(attachment)),
-        undefined,
-        [],
-        null
-      )
-      mounted.push(hook)
-      act(() =>
-        hook.result.current.actions.stageFiles([
-          new File(['pdf'], 'paper.pdf', { type: 'application/pdf' })
-        ])
-      )
-      await flushAsyncWork()
-      act(() => {
-        usePreviewWorkbenchStore.getState().setPendingPdfContext('project', {
-          kind: 'staged-upload',
-          attachmentId: attachment.id,
-          previewItemId: `upload:${attachment.id}`
-        })
-        usePreviewWorkbenchStore.getState().setPdfProseRegions(`staged:${attachment.id}`, [region])
-      })
-      const snapshot = hook.result.current.lifecycle.captureSend()
-      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
-      expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeUndefined()
-      act(() => hook.result.current.lifecycle.restoreFailedSend(snapshot, true))
-      act(() => hook.result.current.actions.changeDoc(textDoc('Read restored upload')))
-      expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
-        pendingPdfContextAttachmentIds: [attachment.id],
-        pdfProseReadingSelections: [
-          { source: { attachmentId: attachment.id }, proseRegions: [region] }
-        ]
-      })
-    })
   })
 
   it.each(['ordinary', 'revision'] as const)(

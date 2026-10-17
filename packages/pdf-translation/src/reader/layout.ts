@@ -1776,18 +1776,12 @@ function extractPage(page: PdfLayoutPage, runningHeaders: Set<string>): LayoutPa
   // column. Serial, uninterrupted body wraps prove exterior ink without
   // treating a long descriptive cell or scattered header as paragraph evidence.
   const nativeProseLines = [...nativeGroups.values()].map(lineOf)
-  const nativeProseTail = (
-    parts: Item[],
-    boundary: number,
-    side: 'left' | 'right' = 'right'
-  ): boolean => {
+  const nativeProseTail = (parts: Item[], boundary: number): boolean => {
     if (!parts.length) return false
     const row = lineOf(parts)
     const native = nativeGroups.get(parts[0].nativeLine)
     if (
-      (side === 'right'
-        ? row.x <= boundary + row.font * 0.5
-        : row.right >= boundary - row.font * 0.5) ||
+      row.x <= boundary + row.font * 0.5 ||
       row.right - row.x <= row.font * 16 ||
       wordCount(row.text) < 3 ||
       symbolicExpression(row.text) ||
@@ -1811,7 +1805,6 @@ function extractPage(page: PdfLayoutPage, runningHeaders: Set<string>): LayoutPa
     return [...new Set(parts.map((item) => item.fontName))].some((fontName) => {
       const peers = nativeProseLines.filter(
         (other) =>
-          (side !== 'left' || other.right < boundary - row.font * 0.5) &&
           Math.abs(other.x - row.x) < row.font * 0.5 &&
           Math.abs(other.right - row.right) < row.font &&
           Math.abs(other.baseline - row.baseline) < row.font * 4 &&
@@ -2878,21 +2871,7 @@ function extractPage(page: PdfLayoutPage, runningHeaders: Set<string>): LayoutPa
       cells = cells.flatMap((cell) => {
         const native = [...Map.groupBy(cell, (item) => item.nativeLine).values()]
         if (native.length < 2) return [cell]
-        const exterior = native.filter((parts) => {
-          if (nativeProseTail(parts, numericEnd)) return true
-          const font = Math.max(...parts.map((item) => item.font)),
-            right = Math.max(...parts.map((item) => item.right))
-          // A larger body column can nearly touch a small-cap table stub.
-          // Require its complete serial body wraps and a separate native owner
-          // for every remaining item; whitespace alone never splits a cell.
-          return (
-            font > tableRow.font * 1.1 &&
-            nativeProseTail(parts, tableRow.cells[0].x, 'left') &&
-            native
-              .filter((other) => other !== parts)
-              .every((other) => other.every((item) => item.x > right + font * 0.5))
-          )
-        })
+        const exterior = native.filter((parts) => nativeProseTail(parts, numericEnd))
         if (!exterior.length) return [cell]
         const inside = cell.filter((item) => !exterior.some((parts) => parts.includes(item)))
         return [inside, ...exterior]

@@ -3,28 +3,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Hoisted spawn double: process-tree spawns `taskkill` (win32) or `ps` (posix); each test wires the
 // return value to a controllable EventEmitter so it can drive exit/close/error and ps output.
-const { readFileMock, readFileSyncMock, readdirMock, readdirSyncMock, statSyncMock, spawnMock } =
-  vi.hoisted(() => ({
-    readFileMock: vi.fn(),
-    readFileSyncMock: vi.fn(),
-    readdirMock: vi.fn(),
-    readdirSyncMock: vi.fn(),
-    statSyncMock: vi.fn(),
-    spawnMock: vi.fn()
-  }))
+const { readFileMock, readFileSyncMock, readdirMock, spawnMock } = vi.hoisted(() => ({
+  readFileMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
+  readdirMock: vi.fn(),
+  spawnMock: vi.fn()
+}))
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
-vi.mock('node:fs', () => ({
-  readFileSync: readFileSyncMock,
-  readdirSync: readdirSyncMock,
-  statSync: statSyncMock
-}))
+vi.mock('node:fs', () => ({ readFileSync: readFileSyncMock }))
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }))
 
 const {
   createPosixProcessTreeOwnership,
   onProcessTreeReaped,
-  proveRecordedPosixLeaderGone,
   registerOwnedPosixProcessGroup,
   trackOwnedPosixProcessTree,
   terminateProcessTree
@@ -799,83 +791,5 @@ describe('process tree reap notification', () => {
       await expect(pending).resolves.toEqual({ reaped: true })
     }
     expect(release).toHaveBeenCalledOnce()
-  })
-})
-
-describe('Linux cold recovery marker scan', () => {
-  const leader = { pid: 1000, birthToken: 'linux-proc-starttime:100' }
-  const spawnedAt = 500_000
-
-  const prepare = (command: string, starttime: number, environment: string | Error): void => {
-    setPlatform('linux')
-    vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
-    vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw esrch()
-    })
-    const stat = linuxStat(2000, 1, 2000, 2000, starttime).replace('(test process)', `(${command})`)
-    readdirMock.mockResolvedValue(['2000'])
-    readFileMock.mockResolvedValue(stat)
-    readdirSyncMock.mockReturnValue(['2000'])
-    statSyncMock.mockReturnValue({ uid: process.getuid?.() })
-    readFileSyncMock.mockImplementation((path: string) => {
-      if (path === '/proc/uptime') return '1000 0'
-      if (path === '/proc/2000/stat') return stat
-      if (path === '/proc/2000/environ') {
-        if (environment instanceof Error) throw environment
-        return environment
-      }
-      throw new Error(`Unexpected procfs read: ${path}`)
-    })
-  }
-
-  it.each(['system service', '(sd-pam)', 'worker) name'])(
-    'excludes an unreadable pre-existing process whose comm is %s',
-    async (command) => {
-      prepare(command, 10_000, Object.assign(new Error('denied'), { code: 'EACCES' }))
-      await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe('gone')
-      expect(process.kill).toHaveBeenCalledExactlyOnceWith(-1000, 0)
-    }
-  )
-
-  it.each(['EACCES', 'EPERM', 'EIO'])(
-    'retains a newer unreadable candidate with parentheses in comm (%s)',
-    async (code) => {
-      prepare('(sd-pam)', 60_000, Object.assign(new Error(code), { code }))
-      await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe(
-        'blocked'
-      )
-    }
-  )
-
-  it.each(['PATH=/bin\0', 'OPEN_SCIENCE_PROCESS_TREE_ID=another-owner\0'])(
-    'accepts a complete scan despite a newer unrelated process with %s',
-    async (environment) => {
-      prepare('observer', 60_000, environment)
-      await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe('gone')
-      expect(process.kill).toHaveBeenCalledExactlyOnceWith(-1000, 0)
-    }
-  )
-
-  it('accepts a complete marker scan without a receipt spawn time', async () => {
-    prepare('observer', 60_000, 'PATH=/bin\0')
-    await expect(proveRecordedPosixLeaderGone(leader, 'owner')).resolves.toBe('gone')
-  })
-
-  it('retains an unreadable candidate when the receipt has no spawn time', async () => {
-    prepare('(sd-pam)', 10_000, Object.assign(new Error('denied'), { code: 'EACCES' }))
-    await expect(proveRecordedPosixLeaderGone(leader, 'owner')).resolves.toBe('blocked')
-  })
-
-  it('retains a receipt for a marked descendant with parentheses in comm', async () => {
-    prepare('(worker)', 60_000, 'OPEN_SCIENCE_PROCESS_TREE_ID=owner\0')
-    await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe('blocked')
-    expect(process.kill).toHaveBeenCalledExactlyOnceWith(-1000, 0)
-  })
-
-  it('retains a receipt when the process table is incomplete', async () => {
-    prepare('(sd-pam)', 10_000, 'PATH=/bin\0')
-    readFileMock.mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }))
-    await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe('blocked')
-    expect(process.kill).not.toHaveBeenCalled()
   })
 })

@@ -11,9 +11,6 @@ import {
 } from '@/components/action-menu/action-menu-model'
 import type { ChatSession } from '@/stores/session-store'
 import { useUpdateStore } from '@/stores/update-store'
-import { useComputeStore } from '@/stores/compute-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -200,8 +197,7 @@ type SidebarProject = { id: string; name: string; description: string }
 
 const mountProjectSidebar = async (
   otherProjects: readonly SidebarProject[],
-  onOpenProject: (projectId: string) => void = vi.fn(),
-  onOpenSession: (sessionId: string) => void = vi.fn()
+  onOpenProject: (projectId: string) => void = vi.fn()
 ): Promise<{
   container: HTMLElement
   cleanup: () => void
@@ -234,7 +230,7 @@ const mountProjectSidebar = async (
         onNewConversation={vi.fn()}
         isFilesOpen={false}
         onOpenFiles={vi.fn()}
-        onOpenSession={onOpenSession}
+        onOpenSession={vi.fn()}
         onOpenProject={onOpenProject}
         onRenameSession={vi.fn()}
         canDownloadArtifacts
@@ -339,9 +335,6 @@ const getTextContent = (node: ReactNode): string => {
 }
 
 beforeEach(() => {
-  useComputeStore.setState({ pendingApprovals: [] })
-  useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
-  useSkillImportStore.setState(createInitialSkillImportState())
   useUpdateStore.setState({
     status: { state: 'up-to-date', current: '0.2.0', latest: '0.2.0' },
     isDialogOpen: false
@@ -2792,78 +2785,6 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('>Active<')
     expect(html).toContain('Session status: Waiting for your answer')
-  })
-
-  it('keeps a remote approval in Active with its permission status until it settles', async () => {
-    const session = createSession({
-      id: 'remote-session',
-      title: 'Remote analysis',
-      status: 'idle',
-      updatedAt: 1
-    })
-    useComputeStore.setState({
-      pendingApprovals: [
-        {
-          id: 'remote-approval',
-          sessionId: session.id,
-          providerId: 'ssh:cluster',
-          providerName: 'Cluster',
-          operation: 'call_command',
-          shape: 'command',
-          intent: 'Run analysis',
-          willPersistUnencrypted: false,
-          commandPreview: 'python analysis.py',
-          commandFull: 'python analysis.py'
-        }
-      ]
-    })
-
-    const onOpenSession = vi.fn()
-    const originalApi = window.api
-    window.api = { ...originalApi, platform: 'linux' } as never
-    const sidebar = await mountProjectSidebar([], vi.fn(), onOpenSession)
-    try {
-      await sidebar.rerenderSessions([
-        createSession({
-          id: 'older-result',
-          title: 'Earlier result',
-          status: 'idle',
-          updatedAt: 1
-        }),
-        session
-      ])
-      expect(sidebar.container.innerHTML).toContain('>Active<')
-      expect(sidebar.container.innerHTML).toContain('Session status: Waiting for permission')
-      await act(async () =>
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: '1',
-            ctrlKey: true,
-            bubbles: true,
-            cancelable: true
-          })
-        )
-      )
-      expect(onOpenSession).toHaveBeenLastCalledWith(session.id)
-
-      await act(async () => useComputeStore.getState().dismissApproval('remote-approval'))
-      expect(sidebar.container.innerHTML).not.toContain('>Active<')
-      expect(sidebar.container.innerHTML).toContain('Session status: Idle')
-      await act(async () =>
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: '1',
-            ctrlKey: true,
-            bubbles: true,
-            cancelable: true
-          })
-        )
-      )
-      expect(onOpenSession).toHaveBeenLastCalledWith('older-result')
-    } finally {
-      sidebar.cleanup()
-      window.api = originalApi
-    }
   })
 
   it('moves a recently completed idle session to Today when its Active grace period expires', async () => {

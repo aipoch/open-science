@@ -17,10 +17,7 @@ export function serializeWorkerResult(result) {
     JSON.stringify(
       result,
       (key, value) =>
-        key === 'sourceTokens' ||
-        (omitOrigins && (key === 'sourceItems' || key === 'sourceSegments'))
-          ? undefined
-          : value,
+        key === 'sourceTokens' || (omitOrigins && key === 'sourceItems') ? undefined : value,
       2
     ) + '\n'
   const text = serialize(false)

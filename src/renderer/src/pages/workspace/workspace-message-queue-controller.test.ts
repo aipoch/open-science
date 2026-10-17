@@ -6,10 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpNativeFollowUpWorkflow } from '../../../../main/acp/native-follow-up-workflow'
 
 import type { ChatSession } from '@/stores/session-store'
-import {
-  createInitialPreviewWorkbenchState,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
@@ -197,7 +193,6 @@ const mounted: Hook[] = []
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
   useProjectStore.setState(createInitialProjectState())
-  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   setWorkspaceSpecialistBarrier('session-a', false)
   setWorkspacePresentationRevealing('session-a', false)
   vi.restoreAllMocks()
@@ -2009,21 +2004,7 @@ describe('workspace message queue controller', () => {
         sourceVersionId: 'version-1'
       }
     ]
-    queued.snapshot.pdfProseReadingSelections = [
-      {
-        source: { attachmentId: 'upload-1' },
-        proseRegions: [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
-      }
-    ]
     act(() => hook.result.current.lifecycle.enqueue(queued))
-    // A later preview edit cannot replace the queued send's captured reading policy.
-    act(() =>
-      usePreviewWorkbenchStore
-        .getState()
-        .setPdfProseRegions('staged:upload-1', [
-          { ...queued.snapshot.pdfProseReadingSelections![0].proseRegions[0], split: 0.6 }
-        ])
-    )
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
 
@@ -2045,7 +2026,6 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        pdfProseReadingSelections: queued.snapshot.pdfProseReadingSelections,
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
           {

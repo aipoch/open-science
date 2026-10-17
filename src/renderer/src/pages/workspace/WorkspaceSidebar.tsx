@@ -41,10 +41,6 @@ import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 import {
-  useSessionPendingInteractions,
-  type SessionPendingInteractionFacts
-} from '@/hooks/useSessionPendingInteractions'
-import {
   ActionMenuItems,
   ActionMenuProvider,
   ActionMenuTarget,
@@ -135,7 +131,6 @@ type WorkspaceSidebarProps = {
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
-  pendingInteractionFactsBySession?: ReadonlyMap<string, SessionPendingInteractionFacts>
   onViewReplay?: (session: ChatSession) => void
   onDiscussSession?: (session: ChatSession) => Promise<void>
   rowActions?: SessionRowCallbacks
@@ -232,7 +227,6 @@ const sessionStatusLabelKeys = {
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
-const EMPTY_PENDING_INTERACTION_FACTS = new Map<string, SessionPendingInteractionFacts>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
 const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
 const OPEN_DIALOG_SELECTOR =
@@ -240,14 +234,10 @@ const OPEN_DIALOG_SELECTOR =
 
 const getPresentedSessionStatus = (
   session: ChatSession,
-  credentialPendingSessionIds: ReadonlySet<string>,
-  pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
+  credentialPendingSessionIds: ReadonlySet<string>
 ): SessionStatus => {
   const projection = projectPresentedSessionActionability(session, {
-    ...pendingInteractionFactsBySession.get(session.id),
-    credentialPending:
-      credentialPendingSessionIds.has(session.id) ||
-      pendingInteractionFactsBySession.get(session.id)?.credentialPending === true
+    credentialPending: credentialPendingSessionIds.has(session.id)
   })
   return projection.activity === 'inactive' && projection.attention
     ? 'error'
@@ -256,14 +246,10 @@ const getPresentedSessionStatus = (
 
 const isLiveSession = (
   session: ChatSession,
-  credentialPendingSessionIds: ReadonlySet<string>,
-  pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
+  credentialPendingSessionIds: ReadonlySet<string>
 ): boolean => {
   const activity = projectPresentedSessionActionability(session, {
-    ...pendingInteractionFactsBySession.get(session.id),
-    credentialPending:
-      credentialPendingSessionIds.has(session.id) ||
-      pendingInteractionFactsBySession.get(session.id)?.credentialPending === true
+    credentialPending: credentialPendingSessionIds.has(session.id)
   }).activity
   return activity === 'running' || activity === 'waiting'
 }
@@ -285,8 +271,7 @@ const startOfLocalDay = (timestamp: number): number => {
 const getSessionSections = (
   sessions: ChatSession[],
   now: number,
-  credentialPendingSessionIds: ReadonlySet<string>,
-  pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
+  credentialPendingSessionIds: ReadonlySet<string>
 ): SidebarSessionSection[] => {
   const todayStartedAt = startOfLocalDay(now)
   const yesterday = new Date(todayStartedAt)
@@ -307,7 +292,7 @@ const getSessionSections = (
     if (session.pinned) {
       pinned.push(session)
     } else if (
-      isLiveSession(session, credentialPendingSessionIds, pendingInteractionFactsBySession) ||
+      isLiveSession(session, credentialPendingSessionIds) ||
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
@@ -722,7 +707,6 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     onOpenProject,
     sessions,
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
-    pendingInteractionFactsBySession = EMPTY_PENDING_INTERACTION_FACTS,
     activeSessionId,
     canCreateConversation,
     canMutateConversations,
@@ -769,12 +753,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
   } = props
   const { t } = useTranslation()
   const rowActions = props.rowActions ?? sessionRowCallbacks(props)
-  const sections = getSessionSections(
-    sessions,
-    now,
-    credentialPendingSessionIds,
-    pendingInteractionFactsBySession
-  )
+  const sections = getSessionSections(sessions, now, credentialPendingSessionIds)
   const shortcutNumberBySessionId = new Map(
     sections
       .flatMap((section) => section.items)
@@ -1257,8 +1236,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                     {section.items.map((session) => {
                       const presentedStatus = getPresentedSessionStatus(
                         session,
-                        credentialPendingSessionIds,
-                        pendingInteractionFactsBySession
+                        credentialPendingSessionIds
                       )
                       return (
                         <SessionRow
@@ -1419,7 +1397,6 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
-  const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
@@ -1480,12 +1457,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       const shortcutNumber = Number(event.key)
       if (!Number.isInteger(shortcutNumber) || shortcutNumber < 1 || shortcutNumber > 9) return
 
-      const session = getSessionSections(
-        sessions,
-        now,
-        credentialPendingSessionIds,
-        pendingInteractionFactsBySession
-      )
+      const session = getSessionSections(sessions, now, credentialPendingSessionIds)
         .flatMap((section) => section.items)
         .at(shortcutNumber - 1)
       if (!session) return
@@ -1508,19 +1480,11 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', hideSessionShortcuts)
     }
-  }, [
-    credentialPendingSessionIds,
-    isMac,
-    now,
-    onOpenSession,
-    pendingInteractionFactsBySession,
-    sessions
-  ])
+  }, [credentialPendingSessionIds, isMac, now, onOpenSession, sessions])
 
   return (
     <WorkspaceSidebarConnectedView
       {...props}
-      pendingInteractionFactsBySession={pendingInteractionFactsBySession}
       packageBusy={packageBusy}
       now={now}
       showSessionShortcuts={showSessionShortcuts}

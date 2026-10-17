@@ -444,3 +444,20 @@ it('offers only quit when main cannot perform recovery', async () => {
   expect(quit).toHaveBeenCalledOnce()
   expect(recover).not.toHaveBeenCalled()
 })
+
+it('describes preparation failure without claiming an unknown installation result', () => {
+  useUpdateStore.setState({
+    status: {
+      state: 'ready',
+      current: '1',
+      latest: '2',
+      reason: 'install-failed',
+      error: 'Save failed',
+      recovery: r()
+    }
+  })
+  render()
+  expect(document.body.textContent).toContain('Update preparation failed')
+  expect(document.body.textContent).not.toContain('Installation result is unknown')
+  expect(buttons('Cancel')).toHaveLength(1)
+})

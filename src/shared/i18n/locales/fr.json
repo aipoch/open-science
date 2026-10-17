@@ -147,6 +147,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés."
   },
   "renderer": {
+    "Update preparation failed": "Échec de la préparation de la mise à jour",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "L’application reste ouverte. Résolvez le problème et réessayez, ou annulez pour continuer à travailler.",
     "Select one or more options": "Sélectionnez une ou plusieurs options",
     "Your conversation is preserved. Try Resume again.": "Votre conversation est conservée. Réessayez de la reprendre.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "L’agent n’a pas répondu à temps. Votre conversation est conservée. Réessayez de la reprendre.",
@@ -168,7 +170,6 @@
     "Search PDC studies and versions by name or identifier.": "Rechercher des études et versions PDC par nom ou identifiant.",
     "Retrieve PDC study metadata and available versions.": "Récupérer les métadonnées et les versions disponibles des études PDC.",
     "Map PDC aliquots to samples, cases and external references.": "Associer les aliquotes PDC aux échantillons, aux cas et aux références externes.",
-    "Retrieve PDC case demographics, diagnoses and sample references.": "Récupérer les données démographiques, les diagnostics et les références des échantillons des cas PDC.",
     "Discover PDC study files and quantitative reports without downloading files.": "Rechercher des fichiers d’études et des rapports quantitatifs PDC sans télécharger de fichiers.",
     "Query linkage disequilibrium between two variants in a specified population.": "Consulter le déséquilibre de liaison entre deux variants dans une population donnée.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "Rechercher des variants proches présentant un fort déséquilibre de liaison dans une population donnée.",
@@ -7588,21 +7589,6 @@
     "Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.": "Les autres connexions seront fermées. Après la mise à jour, fermer cette application arrêtera aussi le travail en arrière-plan. Vos paramètres et emplacements de données seront conservés.",
     "Your separate installation will not be updated. Check data compatibility before using it again.": "Votre installation distincte ne sera pas mise à jour. Vérifiez la compatibilité des données avant de la réutiliser.",
     "Continue opening Open-Science?": "Continuer à ouvrir Open-Science ?",
-    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Les tâches en cours seront arrêtées et les autres connexions fermées. Le travail non enregistré risque d’être perdu. Vos paramètres et emplacements de données seront conservés. Fermer cette application arrêtera ensuite aussi le travail en arrière-plan.",
-    "Search incomplete. Some pages could not be read.": "La recherche est incomplète. Certaines pages n’ont pas pu être lues.",
-    "Set two-column body": "Définir le corps sur deux colonnes",
-    "Applies to your next message. Select body text only; exclude tables.": "S’applique à votre prochain message. Sélectionnez uniquement le texte du corps et excluez les tableaux.",
-    "Redrawing replaces the body area on that page.": "Redessiner remplacera la zone de texte principal sur cette page.",
-    "Body areas: {{count}}_one": "{{count}} zone de texte principal",
-    "Body areas: {{count}}_many": "{{count}} zones de texte principal",
-    "Body areas: {{count}}_other": "{{count}} zones de texte principal",
-    "Clear this page": "Effacer cette page",
-    "Drag across both columns, then confirm the divider.": "Faites glisser sur les deux colonnes, puis confirmez la séparation.",
-    "Two-column body": "Corps sur deux colonnes",
-    "Column divider": "Séparation des colonnes",
-    "Save body area": "Enregistrer la zone de texte principal",
-    "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
-    "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
-    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
+    "Running tasks will stop and other connections will close. Unsaved work may be lost. Your settings and data locations will be kept. Closing this app will then stop background work.": "Les tâches en cours seront arrêtées et les autres connexions fermées. Le travail non enregistré risque d’être perdu. Vos paramètres et emplacements de données seront conservés. Fermer cette application arrêtera ensuite aussi le travail en arrière-plan."
   }
 }

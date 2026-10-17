@@ -22,8 +22,7 @@ import {
   archiveTar,
   collectRuntimeArchives,
   packRuntimeArchive,
-  sha256,
-  runtimeArchiveVersion
+  sha256
 } from './runtime-archives.mjs'
 
 const roots: string[] = []
@@ -98,32 +97,6 @@ describe('standalone runtime archives', () => {
     for (const target of runtimeTargets)
       expect(archiveStem('1.2.3', target)).toBe(`open-science-cli-1.2.3-${target.id}`)
   })
-  it('derives the desktop nightly version and rejects malformed archive versions', () => {
-    expect(runtimeArchiveVersion('1.2.3', sha, true)).toBe('1.2.3-nightly.gaaaaaaa')
-    expect(runtimeArchiveVersion('1.2.3', sha)).toBe('1.2.3')
-    for (const version of [
-      '1.2.3-nightly.aaaaaaa',
-      '1.2.3-nightly.g123',
-      '1.2.3/../x',
-      '1.2.3-beta.1'
-    ])
-      expect(() => archiveStem(version, currentRuntimeTarget())).toThrow()
-  })
-  it('packs a nightly only from a matching backend and preserves the source revision', async () => {
-    const options = await fixture()
-    await expect(packRuntimeArchive({ ...options, nightly: true })).rejects.toThrow('Stale backend')
-    const manifest = join(options.source, 'package.json')
-    const backend = JSON.parse(await readFile(manifest, 'utf8'))
-    const version = runtimeArchiveVersion('1.2.3', sha, true)
-    await writeFile(manifest, JSON.stringify({ ...backend, version }))
-    const report = await packRuntimeArchive({ ...options, nightly: true })
-    expect(report).toMatchObject({
-      version,
-      sourceSha: sha,
-      filename: archiveFilename(version, options.target)
-    })
-    expect(report.sha256).toBe(await sha256(join(options.output, report.filename)))
-  })
   it('roundtrips the launcher, hidden files, arguments, cwd and exit status', async () => {
     const options = await fixture()
     await writeFile(
@@ -192,49 +165,46 @@ describe('standalone runtime archives', () => {
     expect(archiveLauncher('win32')).toContain('"%~dp0backend\\cli.mjs" %*')
     expect(archiveLauncher('win32')).toContain('exit /b %errorlevel%')
   })
-  it.each(['1.2.3', '1.2.3-nightly.gaaaaaaa'])(
-    'requires the complete %s archive set and rejects wrong SHA, corruption and falsified metadata',
-    async (version) => {
-      const root = await mkdtemp(join(tmpdir(), 'archive-set-'))
-      roots.push(root)
-      for (const target of runtimeTargets) {
-        const stem = archiveStem(version, target)
-        const metadata = {
-          version,
-          target: target.id,
-          sourceSha: sha,
-          nodeVersion: '22.23.3'
-        }
-        const filename = archiveFilename(version, target)
-        if (target.os === 'win32')
-          await writeFile(
-            join(root, filename),
-            zipSync({ [`${stem}/release.json`]: strToU8(JSON.stringify(metadata)) })
-          )
-        else {
-          await mkdir(join(root, stem))
-          await writeFile(join(root, stem, 'release.json'), JSON.stringify(metadata))
-          execFileSync(archiveTar, ['-czf', join(root, filename), '-C', root, stem])
-        }
-        await writeFile(
-          join(root, `${target.id}.json`),
-          JSON.stringify({ ...metadata, filename, sha256: await sha256(join(root, filename)) })
-        )
+  it('requires all five archives and rejects wrong SHA, corruption and falsified embedded metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'archive-set-'))
+    roots.push(root)
+    for (const target of runtimeTargets) {
+      const stem = archiveStem('1.2.3', target)
+      const metadata = {
+        version: '1.2.3',
+        target: target.id,
+        sourceSha: sha,
+        nodeVersion: '22.23.3'
       }
-      expect(await collectRuntimeArchives(root, version, sha)).toHaveLength(5)
-      await expect(collectRuntimeArchives(root, version, 'b'.repeat(40))).rejects.toThrow(
-        'source commit'
+      const filename = archiveFilename('1.2.3', target)
+      if (target.os === 'win32')
+        await writeFile(
+          join(root, filename),
+          zipSync({ [`${stem}/release.json`]: strToU8(JSON.stringify(metadata)) })
+        )
+      else {
+        await mkdir(join(root, stem))
+        await writeFile(join(root, stem, 'release.json'), JSON.stringify(metadata))
+        execFileSync(archiveTar, ['-czf', join(root, filename), '-C', root, stem])
+      }
+      await writeFile(
+        join(root, `${target.id}.json`),
+        JSON.stringify({ ...metadata, filename, sha256: await sha256(join(root, filename)) })
       )
-      const target = runtimeTargets[0]
-      const reportPath = join(root, `${target.id}.json`)
-      const report = JSON.parse(await readFile(reportPath, 'utf8'))
-      await writeFile(reportPath, JSON.stringify({ ...report, nodeVersion: '0.0.0' }))
-      await expect(collectRuntimeArchives(root, version, sha)).rejects.toThrow('metadata mismatch')
-      await writeFile(reportPath, JSON.stringify(report))
-      await writeFile(join(root, report.filename), 'corrupt')
-      await expect(collectRuntimeArchives(root, version, sha)).rejects.toThrow('checksum mismatch')
-      await rm(reportPath)
-      await expect(collectRuntimeArchives(root, version, sha)).rejects.toThrow('ENOENT')
     }
-  )
+    expect(await collectRuntimeArchives(root, '1.2.3', sha)).toHaveLength(5)
+    await expect(collectRuntimeArchives(root, '1.2.3', 'b'.repeat(40))).rejects.toThrow(
+      'source commit'
+    )
+    const target = runtimeTargets[0]
+    const reportPath = join(root, `${target.id}.json`)
+    const report = JSON.parse(await readFile(reportPath, 'utf8'))
+    await writeFile(reportPath, JSON.stringify({ ...report, nodeVersion: '0.0.0' }))
+    await expect(collectRuntimeArchives(root, '1.2.3', sha)).rejects.toThrow('metadata mismatch')
+    await writeFile(reportPath, JSON.stringify(report))
+    await writeFile(join(root, report.filename), 'corrupt')
+    await expect(collectRuntimeArchives(root, '1.2.3', sha)).rejects.toThrow('checksum mismatch')
+    await rm(reportPath)
+    await expect(collectRuntimeArchives(root, '1.2.3', sha)).rejects.toThrow('ENOENT')
+  })
 })

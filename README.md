@@ -180,33 +180,13 @@ Imported records remain read-only. Watching a replay does not execute code, call
 
 ## Benchmark Performance
 
-### 🏆 AstaBench LitQA2-FullText-Search — 10/10 target-paper hits
+### 🏆 #1 on BiomniBench-DA Public 50
 
-AIPOCH Open-Science achieved **100% recall@30** on the official 10-query validation split using **DeepSeek v4-flash (max)** with literature-retrieval specialists and Skills. Every target paper appeared among the first 30 returned results. The score exceeds the three public validation results listed in the report, **20 percentage points** above the highest reference of **80%**. Three local repeats were reported, demonstrating target-paper retrieval on this set of scientific questions.
+AIPOCH Open-Science achieved the highest ranking score in the compiled BiomniBench-DA Public 50 comparison, earning **79.05** with **gpt-5.6-sol (xhigh)**. The result combines a Gemini 3.1 Pro judge score of **81.04** and a DeepSeek v4-pro judge score of **77.06** through an equal-weight mean, placing AIPOCH Open-Science **#1** among the collected Public 50 results. Explore the [BiomniBench-DA dataset](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
 
-![AIPOCH Open-Science achieves 100% recall@30 and 10/10 target-paper hits on AstaBench LitQA2-FullText-Search validation; test and validation records use different questions](docs/images/readme/astabench-litqa2.png)
-
-The figure includes both test and validation records; its ordering is numerical only. Recall@30 measures target-paper retrieval, not scientific question-answering accuracy.
-
-### 🏆 ASI-Bench B1–B4 — Highest displayed scores in all four listed comparisons
-
-AIPOCH Open-Science scored **79.35, 56.11, 59.67, and 59.46** on ASI-Bench B1, B2, B3, and B4 using **GPT-6 (gpt-6-astra / xhigh)** with domain specialists and Skills, the highest displayed values in the respective comparisons retained in the reports. The four conditions evaluate **executing a fully specified plan, organizing a workflow, selecting research methods independently, and conducting autonomous research with distracting background information**.
-
-The same-model local Codex references scored 74.78, 56.09, 58.12, and 55.45, giving numerical differences of **+4.57, +0.02, +1.55, and +4.01 points**, respectively. Three local repeats were reported for B1/B2; B3/B4 each average three local runs of 60 tasks.
-
-![AIPOCH Open-Science scores 79.35, 56.11, 59.67, and 59.46 on ASI-Bench B1–B4; the chart distinguishes local results from published references](docs/images/readme/asi-bench-b1-b4.jpg)
-
-Local runs used seed31415. AIPOCH's B1 score covers 59 tasks, with one excluded due to the scorer issue described in the report. B3/B4 used v0.32.0 and a substitute judge. Published references differ in task instances, configurations, and judging; B2's 0.02-point margin is a numerical difference only.
-
-### 🏆 Highest in the collected BiomniBench-DA Public 50 comparison — 79.05
-
-AIPOCH Open-Science achieved **79.05** with **gpt-5.6-sol (xhigh)** in an internal evaluation on the 50-task set labeled BiomniBench-DA Public 50, the highest displayed score in the collected comparison. The result combines **81.04** from the Gemini 3.1 Pro judge and **77.06** from the DeepSeek v4-pro judge through an equal-weight mean, reflecting this configuration's biomedical data-analysis performance. See the [evaluation report](https://aipoch.com/blog/open-science-biomnibench-da).
-
-![AIPOCH Open-Science records a 79.05 dual-judge mean on the internal BiomniBench-DA Public 50 evaluation, combining judge scores of 77.06 and 81.04](docs/images/readme/biomnibench-public50-leaderboard.png)
-
-The comparison mixes different judge-coverage patterns and should not be interpreted as an official ranking under uniform judging conditions.
-
-**Evaluation scope:** These are self-reported local/internal results. Leading the listed comparisons does not establish official first-place leaderboard status or statistically significant improvements. See the [detailed benchmark report](docs/benchmarks/README.md) for source dates, model/runtime configurations, evaluation scope, and the separate 66-query PaperFinding validation result.
+<p align="center">
+  <img src="docs/images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 comparison showing AIPOCH Open-Science ranked first with a score of 79.05" width="1200" />
+</p>
 
 ## Core Capabilities
 

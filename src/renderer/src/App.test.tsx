@@ -3,6 +3,7 @@ import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
 import { createRoot, type Root } from 'react-dom/client'
 import { i18next } from './i18n'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -485,6 +486,7 @@ describe('App startup routing', () => {
   let canvasContextSpy: { mockRestore: () => void }
 
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     useStorageInfoStore.setState({
       status: null,
       info: null,
@@ -1164,6 +1166,37 @@ describe('App startup routing', () => {
     await act(async () => root.render(<App />))
     expect(mocks.presentationProps.update?.active).toBe(false)
     expect(document.querySelector('[data-testid="update-dialog"]')).not.toBeNull()
+  })
+
+  it('keeps update presentation active through planned runtime shutdown', async () => {
+    mocks.settings.isLoaded = true
+    mocks.update.isDialogOpen = true
+    mocks.update.status.state = 'applying'
+    await render()
+    await vi.waitFor(() => expect(mocks.presentationProps.update?.active).toBe(true))
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: true })
+    })
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+
+    mocks.update.status.state = 'error'
+    await act(async () => root.render(<App />))
+    expect(mocks.presentationProps.update?.active).toBe(false)
+  })
+
+  it('prioritizes unexpected runtime disconnection even while applying an update', async () => {
+    mocks.settings.isLoaded = true
+    mocks.update.isDialogOpen = true
+    mocks.update.status.state = 'applying'
+    await render()
+    await vi.waitFor(() => expect(mocks.presentationProps.update?.active).toBe(true))
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: false })
+    })
+    expect(mocks.presentationProps.update?.active).toBe(false)
   })
 
   it('closes the update dialog before underlying surfaces', async () => {

@@ -97,10 +97,6 @@ export type ChatSession = Omit<
   // Transient independent facts for the blocking lane. Plan remains owned by its durable
   // projection, while Side chat remains an overlay that never settles these facts.
   interactionState?: SessionInteractionState
-  // Pending Main runtime requests are live ownership facts, independent of durable replay waits.
-  liveInteractionState?: Pick<SessionInteractionState, 'permission' | 'elicitation'> & {
-    presentationOnly?: true
-  }
   // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
   contentLoaded?: false
   activeMessageCount?: number
