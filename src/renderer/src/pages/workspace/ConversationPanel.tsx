@@ -1,3 +1,4 @@
+import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -993,6 +994,11 @@ const ConversationPanel = ({
   )
   const resumeDiagnostic =
     operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
+  const authenticationRequired = [
+    actionError,
+    composerError,
+    showLegacyRunError ? legacyDisplayState?.error : undefined
+  ].some(isAgentAuthenticationRequired)
   const resolvedActionError =
     (isClaudeCliCompatibilityError(actionError ?? '')
       ? t(
@@ -1710,7 +1716,9 @@ const ConversationPanel = ({
                     session={activeSession}
                   />
                 ) : null}
-                {composerError && composerError !== actionError ? (
+                {composerError &&
+                !isAgentAuthenticationRequired(composerError) &&
+                composerError !== actionError ? (
                   <div role="alert" className="mb-2">
                     <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
@@ -1730,7 +1738,19 @@ const ConversationPanel = ({
                     onResume={() => void handleResume()}
                   />
                 ) : null}
-                {activeSession?.compacting ? (
+                {authenticationRequired ? (
+                  <ErrorNotice
+                    className="mb-2"
+                    title={t('Sign in to continue this conversation')}
+                    description={t(
+                      'The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.'
+                    )}
+                    primaryButton={{
+                      label: t('Model settings'),
+                      onClick: () => openSettingsToPanel('model')
+                    }}
+                  />
+                ) : activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
                   // while the agent context is reset and the conversation is replayed as text.
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">

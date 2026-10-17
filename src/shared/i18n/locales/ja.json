@@ -7273,6 +7273,8 @@
     "Save body area": "本文領域を保存",
     "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
-    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
+    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
+    "Sign in to continue this conversation": "ログインしてこの会話を続ける",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。"
   }
 }

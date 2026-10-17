@@ -7273,6 +7273,8 @@
     "Save body area": "保存正文区域",
     "Body areas are unavailable on rotated pages.": "旋转页面无法设置正文区域。",
     "You can configure up to 32 pages.": "最多可配置 32 页。",
-    "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。"
+    "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。",
+    "Sign in to continue this conversation": "登录后继续此对话",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。"
   }
 }

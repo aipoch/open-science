@@ -7603,6 +7603,8 @@
     "Save body area": "Enregistrer la zone de texte principal",
     "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
     "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
-    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
+    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message.",
+    "Sign in to continue this conversation": "Se connecter pour poursuivre cette conversation",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés."
   }
 }
