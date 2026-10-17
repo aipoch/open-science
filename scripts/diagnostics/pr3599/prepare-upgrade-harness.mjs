@@ -61,6 +61,7 @@ const checkStart = text.indexOf('    const checked = await withTimeout(')
 const checkEnd = text.indexOf('    await onDownloaded()', checkStart)
 if (checkStart < 0 || checkEnd < 0) throw new Error('Missing native update button boundary')
 text = text.slice(0, checkStart) + `    await desktopButton(dirname(executable), 'open-update', '^New version: Update [(]v' + expectedVersion.replaceAll('.', '[.]') + '[)]$', true)
+    await exerciseDownloadFaults({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), expectedVersion)
     await desktopButton(dirname(executable), 'download-update', '^Download update(?: [(]|$)', true)
     await desktopButton(dirname(executable), 'download-ready', '^Restart to update$', false)
 ` + text.slice(checkEnd)
@@ -94,7 +95,47 @@ replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-sci
 replace('  await cleanup(() => profileGuard.cleanup(primaryError))', '  if (!primaryError) await cleanup(() => profileGuard.cleanup(primaryError))')
 replace('  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))', "  await evidence('retained-installation', { installDirectory, installed, reason: 'Upgrade acceptance retains the isolated installation for inspection; standalone AppContainer uninstall requires separate interactive elevation acceptance.', standaloneUninstallAttempted: false })")
 replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))', "  await evidence('final-state', { root, independentHarnessPid: process.pid, primaryError: primaryError?.message, cleanupErrors: cleanupErrors.map((e) => e.message), processes: await snapshotInstallation(installDirectory), directoryRetained: true })")
+replace('      const path = byRoute.get(pathname)', "      if (pathname === currentInstallerRoute && request.method !== 'HEAD' && downloadFault.mode !== 'none') {\n        const mode = downloadFault.mode\n        const event = { mode, pathname, range: request.headers.range, at: new Date().toISOString(), closed: false }\n        downloadFault.events.push(event)\n        response.once('close', () => { event.closed = true; downloadFault.held.delete(response) })\n        if (mode === 'http503') { response.writeHead(503, { 'Content-Type': 'text/plain' }).end('PR3599 isolated download failure'); return }\n        const file = byRoute.get(pathname)\n        const size = (await stat(file)).size\n        if (mode === 'hold') {\n          downloadFault.held.add(response)\n          response.writeHead(200, { 'Content-Length': size, 'Accept-Ranges': 'bytes' })\n          response.flushHeaders()\n          return\n        }\n        if (mode !== 'corrupt') throw new Error('Unknown controlled download fault')\n        const range = request.headers.range ? parseSingleRange(request.headers.range, size) : undefined\n        const start = range?.start ?? 0, end = range?.end ?? size - 1\n        response.writeHead(range ? 206 : 200, { 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size } : {}) })\n        const { Transform } = await import('node:stream')\n        let changed = false\n        const corruption = new Transform({ transform(chunk, encoding, callback) {\n          if (!changed && chunk.length) { chunk = Buffer.from(chunk); chunk[0] ^= 1; changed = true }\n          callback(null, chunk)\n        } })\n        const stream = createReadStream(file, { start, end })\n        response.once('close', () => stream.destroy())\n        stream.pipe(corruption).pipe(response)\n        return\n      }\n      const path = byRoute.get(pathname)")
 const helpers = String.raw`
+
+const downloadFault = { mode: 'none', held: new Set(), events: [] }
+async function exerciseDownloadFaults(connection, installDirectory, expectedVersion) {
+  const appPath = join(installDirectory, 'resources/app.asar')
+  const before = createHash('sha256').update(await readFile(appPath)).digest('hex')
+  const stillUsable = async (phase) => {
+    const response = await fetchWithTimeout(connection.endpoint + '/api/bootstrap?' + connection.auth)
+    if (!response.ok) throw new Error('Backend unavailable after ' + phase)
+    const after = createHash('sha256').update(await readFile(appPath)).digest('hex')
+    if (after !== before) throw new Error('Installation changed during ' + phase)
+    const processes = await snapshotInstallation(installDirectory)
+    if (!processes.some(p => p.pid === seededData.mcp.pid)) throw new Error('MCP exited during ' + phase)
+    await evidence('download-fault-' + phase, { before, after, backendStatus: response.status, mcpPid: seededData.mcp.pid, processes, events: downloadFault.events })
+  }
+  downloadFault.mode = 'hold'
+  await desktopButton(installDirectory, 'cancel-download-start', '^Download update(?: [(]|$)', true)
+  await waitFor('an actual held installer HTTP request', async () => downloadFault.held.size > 0 || undefined, UPDATE_TIMEOUT_MS)
+  await desktopButton(installDirectory, 'cancel-download', '^Cancel$', true)
+  await waitFor('all cancelled installer HTTP requests to close', async () => downloadFault.held.size === 0 || undefined, UPDATE_TIMEOUT_MS)
+  await stillUsable('cancelled')
+  downloadFault.mode = 'http503'
+  await desktopButton(installDirectory, 'reopen-after-download-cancel', '^New version: Update [(]v' + expectedVersion.replaceAll('.', '[.]') + '[)]$', true)
+  for (const mode of ['http503', 'corrupt']) {
+    downloadFault.mode = mode
+    await desktopButton(installDirectory, mode + '-download-start', '^Download update(?: [(]|$)', true)
+    const pattern = mode === 'http503' ? /503/ : /sha512|checksum/i
+    const windows = await waitFor('the actual ' + mode + ' download rejection', async () => {
+      const windows = await readRecordedWindows(await snapshotInstallation(installDirectory))
+      await evidence('download-fault-' + mode + '-windows', windows)
+      if (windows.some(window => window.text.some(text => pattern.test(text)))) return windows
+    }, UPDATE_TIMEOUT_MS)
+    await desktopButton(installDirectory, mode + '-retry-enabled', '^Download update(?: [(]|$)', false)
+    if (!downloadFault.events.some(event => event.mode === mode)) throw new Error('No actual HTTP fault request observed')
+    await stillUsable(mode)
+  }
+  downloadFault.mode = 'none'
+  await evidence('download-fault-sequence', { events: downloadFault.events, finalMode: downloadFault.mode, goodTransferMetricsScope: 'Final successful download only; fault requests retained separately above' })
+}
+
 const rememberedProcesses = []
 let seededData
 async function desktopButton(installDirectory, step, pattern, invoke) {
