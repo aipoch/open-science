@@ -305,6 +305,30 @@ test('captures all runtime update states in isolated Electron (presentation-only
         const footer = page.getByTestId('runtime-update-dialog').locator(':scope > div').last()
         expect(await footer.getByRole('button').count()).toBeLessThanOrEqual(2)
       }
+      if (id === 'S23') {
+        const desktopState = async (closing: boolean, phase = 'disconnected'): Promise<void> => {
+          await application!.evaluate(
+            ({ BrowserWindow }, state) => {
+              BrowserWindow.getAllWindows()[0].webContents.send(
+                'desktop-runtime:state-changed',
+                state
+              )
+            },
+            { phase, epoch: 0, closing }
+          )
+        }
+        await desktopState(true)
+        await expect(page.locator('[data-runtime-update-state="S23"]')).toBeVisible()
+        await expect(page.getByRole('dialog')).toHaveCount(1)
+        await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
+        await capture('S23-planned-runtime-disconnect')
+        await desktopState(false)
+        await expect(page.getByRole('alertdialog', { name: '桌面连接已断开' })).toBeVisible()
+        await expect(page.getByTestId('runtime-update-dialog')).not.toBeVisible()
+        await desktopState(false, 'connected')
+        await expect(page.locator('[data-runtime-update-state="S23"]')).toBeVisible()
+      }
       await capture(id)
       if (['S13', 'S14', 'S23', 'S24', 'S25'].includes(id)) {
         await page.keyboard.press('Escape')
