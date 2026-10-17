@@ -9,12 +9,32 @@ let smoke = await readFile(join(source, 'scripts/windows-installer-smoke.mjs'), 
 const probeStart = smoke.indexOf('const launchAndProbe = async')
 const probeEnd = smoke.indexOf('const assertDatabaseDowngradeBlocked =', probeStart)
 if (probeStart < 0 || probeEnd < 0) throw new Error('Unexpected installed-app probe boundary')
-const probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProcessTree(child)', `    const records = await snapshotInstallation(installDirectory)
+let probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProcessTree(child)', `    const records = await snapshotInstallation(installDirectory)
     let windows
     try { windows = await readRecordedWindows(records) } catch (error) { windows = { captureError: error.message } }
     await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-failure.json'), JSON.stringify({ error: error.message, records, windows }, null, 2))
     const cleanup = await waitForRecordedExit(records, { force: true, timeoutMs: 10000 })
     await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-forced-cleanup.json'), JSON.stringify(cleanup, null, 2))`)
+const prepareBoundary = '    await requestPackagedAppShutdown(endpoint, auth)'
+if (probe.split(prepareBoundary).length !== 2) throw new Error('Unexpected profile preparation boundary')
+probe = probe.replace(prepareBoundary, () => `    if (expectedVersion === '1.0.0') {
+      // Explicitly authorized fixture preparation; no provider and no update API calls.
+      const prepared = await fetchWithTimeout(endpoint + '/rpc/settings%3Amark-onboarding-complete?' + auth, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: bootstrap.rpcProtocolVersion, args: [] })
+      })
+      const payload = await prepared.json()
+      if (!prepared.ok || payload.ok !== true || !Number.isFinite(payload.result?.onboardingCompletedAt)) throw new Error('Synthetic profile preparation failed')
+      await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'synthetic-profile-preparation.json'), JSON.stringify({
+        command: 'settings:mark-onboarding-complete', configRoot, expectedVersion,
+        onboardingCompletedAt: payload.result.onboardingCompletedAt, dataRoot: payload.result.dataRoot,
+        userAuthorized: true, realModelConfigured: false, onboardingFlowValidated: false
+      }, null, 2))
+    }
+    const probeProcesses = await snapshotInstallation(installDirectory)
+    await requestPackagedAppShutdown(endpoint, auth)`)
+probe = probe.replace('    if (verifyLedger)', `    await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'probe-normal-exit-' + expectedVersion + '.json'), JSON.stringify(await waitForRecordedExit(probeProcesses), null, 2))
+    if (verifyLedger)`)
 smoke = smoke.slice(0, probeStart) + probe + smoke.slice(probeEnd)
 // A shutdown timeout remains a failure; the enclosing catch owns verified, recorded cleanup.
 const shutdownCleanup = 'timeoutMs = SHUTDOWN_TIMEOUT_MS,\n  terminate = terminateProcessTree'
@@ -96,7 +116,7 @@ async function verifyOccupiedInstallation(connection, installDirectory, env) {
     const rejection = await waitFor('the real occupied-installation error in the product', async () => {
       const windows = await readRecordedWindows(await snapshotInstallation(installDirectory))
       await evidence('occupied-installation-windows', windows)
-      if (windows.some((window) => window.text.some((text) => text.includes('Another process is using this installation.')))) return windows
+      if (windows.some((window) => window.text.includes('Application files are in use') && window.text.includes('Stop the other service from the app or terminal that started it, then recheck.'))) return windows
     }, UPDATE_TIMEOUT_MS)
     const after = createHash('sha256').update(await readFile(join(installDirectory, 'resources/app.asar'))).digest('hex')
     if (before !== after) throw new Error('The occupied installation was modified')
@@ -110,6 +130,8 @@ async function verifyOccupiedInstallation(connection, installDirectory, env) {
     await evidence('occupied-installation-release', { pid: blocker.pid, exitCode: code, forced: false })
     if (code !== 0) throw new Error('Installation lock fixture did not exit normally')
   }
+  await desktopButton(installDirectory, 'occupied-recheck', '^Retry$', true)
+  await desktopButton(installDirectory, 'occupied-retry-ready', '^Restart to update$', false)
 }
 async function seedUpgradeData(connection, installDirectory) {
   const rpc = (channel, ...args) => invokeWebRpc({ ...connection, channel, args })
@@ -183,6 +205,7 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   if (session?.title !== seededData.session.title || session?.messages?.[0]?.content !== seededData.session.messages[0].content) throw new Error('Upgrade did not preserve the synthetic session transcript')
   const settings = await rpc('settings:get-settings')
   if (settings.closePreference !== 'quit') throw new Error('Upgrade did not preserve the close preference')
+  if (!Number.isFinite(settings.onboardingCompletedAt)) throw new Error('Upgrade lost the prepared profile setup marker')
   await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
   const reconnected = await waitFor('the updated MCP resolving the preserved synthetic credential', async () => {
     const events = (await readFile(seededData.marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
