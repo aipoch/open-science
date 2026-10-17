@@ -1,0 +1,19 @@
+{
+  "ownerPaths": [
+    "src/main/run-observation/managed-coordinator.ts",
+    "src/main/run-observation/managed-coordinator.test.ts"
+  ],
+  "interfacePaths": ["src/main/run-observation/managed-coordinator.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/run-observation/managed-coordinator.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-status.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

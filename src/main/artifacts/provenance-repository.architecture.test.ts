@@ -215,6 +215,8 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'readPublishedVersionForWrite',
+        'resolvePublishedSessionVersionsByContent',
         'saveVersion',
         'withSessionMutation',
         'activateFinalizedRun',
@@ -310,6 +312,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(mutableFields(facade)).toEqual([])
     expect(topLevelValues(facadeFile)).toEqual(
       [
+        'assertExpectedArtifactContent',
         'SAFE_SEGMENT_PATTERN',
         'assertSafeSegment',
         'hasServerInferredProducer',
@@ -417,6 +420,10 @@ describe('Artifact Provenance repository architecture', () => {
     const module = manifest.modules.artifact_provenance
 
     expectBoundaryPaths(manifest, 'artifact_provenance', [
+      'src/main/artifacts/session-version-content-reader.test.ts',
+      'src/main/artifacts/session-version-content-reader.ts',
+      'src/main/artifacts/session-version-content-reader.test.ts',
+      'src/main/artifacts/session-version-content-reader.ts',
       'src/main/artifacts/artifact-provenance-graph.ts',
       'src/main/artifacts/artifact-reproducibility-export.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.ts',
@@ -619,6 +626,39 @@ describe('Artifact Provenance repository architecture', () => {
     )
     expect(module.testFiles.consumer).toEqual(
       expect.arrayContaining([
+        'src/main/run-observation/capture-package.integration.test.ts',
+        'src/main/run-observation/recorded-reader.test.ts',
+        'src/main/run-observation/managed-coordinator.test.ts',
+        'src/main/project-recordings/managed-adapter.test.ts',
+        'src/main/run-observation-external-port.test.ts',
+        'src/main/browser-recordings/external-port.test.ts',
+        'src/main/runtime-view/browser-host.integration.test.ts',
+        'src/main/replay-viewer/http-host.integration.test.ts',
+        'src/main/run-observation/managed-port.test.ts',
+        'src/main/run-observation/managed-status.test.ts',
+        'src/main/browser-recordings/owner.test.ts',
+        'src/main/run-observation/media-collector.test.ts',
+        'src/main/project-recordings/recorder.test.ts',
+        'src/main/managed-runtime-views.integration.test.ts',
+        'src/main/observation-desktop/bridge.test.ts',
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/handoff.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/composition/session-packages.test.ts',
+        'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+        'src/main/notebook/managed-auxiliary-output.test.ts',
+        'src/main/notebook/managed-execution-collection.integration.test.ts',
+        'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+        'src/main/notebook/managed-execution-output.test.ts',
+        'src/main/notebook/managed-execution-service.test.ts',
+        'src/main/notebook/managed-nested-generation.integration.test.ts',
+        'src/main/notebook/managed-output-publication.integration.test.ts',
+        'src/main/notebook/research-material-authority.test.ts',
+        'src/main/notebook/screened-auxiliary-output.test.ts',
+        'src/main/notebook/session-operation-owner.integration.test.ts',
+        'src/main/research-execution-profiles/ipc.test.ts',
+        'src/main/session-package/headless.test.ts',
+        'src/main/session-package/research-reproduction.integration.test.ts',
         'src/main/storage/wsl-npm-migration.integration.test.ts',
         'src/main/composition/notebook-environment.test.ts',
         'src/main/literature/command-owner.test.ts',

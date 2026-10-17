@@ -511,6 +511,16 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
     })
     const firstRequests: string[] = []
     const secondRequests: string[] = []
+    // The local proxy owns both responses. Keep public DNS availability out of this command-owner
+    // test while exercising the real policy, approval callbacks, concurrent curl and sandbox.
+    const actualDns = await vi.importActual<typeof import('node:dns/promises')>('node:dns/promises')
+    const dnsFixture = vi
+      .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
+      .mockImplementation((hostname, options) =>
+        hostname === 'example.com' || hostname === 'example.org'
+          ? Promise.resolve([{ address: '93.184.216.34', family: 4 }])
+          : actualDns.lookup(hostname, options)
+      )
 
     try {
       await sandbox.initialize()
@@ -543,6 +553,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       expect(firstRequests).toEqual(['example.com'])
       expect(secondRequests).toEqual(['example.org'])
     } finally {
+      dnsFixture.mockRestore()
       await sandbox.dispose()
       await new Promise<void>((resolveClose, reject) =>
         server.close((error) => (error ? reject(error) : resolveClose()))

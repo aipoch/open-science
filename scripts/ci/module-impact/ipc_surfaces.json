@@ -37,7 +37,8 @@
     "src/main/navigation-policy.ts",
     "src/main/source-preview-webview.test.ts",
     "src/main/source-preview-webview.ts",
-    "src/main/window-ipc.ts"
+    "src/main/window-ipc.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -108,7 +109,8 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts"
+    "src/main/websocket-frame-sender.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -1066,7 +1068,15 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/compute/compute-service.architecture.test.ts",
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

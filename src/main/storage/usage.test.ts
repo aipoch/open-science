@@ -25,7 +25,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 import { availableBytes, computeStorageUsage } from './usage'
-import { RELOCATABLE_DATA_DIRS } from './data-directories'
+import { MANAGED_EXECUTION_DATA_DIRS, RELOCATABLE_DATA_DIRS } from './data-directories'
 import { STORAGE_USAGE_CATEGORY_KEYS } from '../../shared/storage'
 
 let dataRoot: string
@@ -172,9 +172,22 @@ describe('computeStorageUsage', () => {
   })
 
   it('accounts for every relocatable data directory', () => {
-    expect(STORAGE_USAGE_CATEGORY_KEYS.filter((key) => key !== 'runtime').sort()).toEqual(
-      [...RELOCATABLE_DATA_DIRS].sort()
-    )
+    expect(
+      [
+        ...STORAGE_USAGE_CATEGORY_KEYS.filter((key) => key !== 'runtime'),
+        ...MANAGED_EXECUTION_DATA_DIRS
+      ].sort()
+    ).toEqual([...RELOCATABLE_DATA_DIRS].sort())
+  })
+
+  it('counts managed preparation and all request receipts under Notebook storage', async () => {
+    await writeSized(join(dataRoot, 'notebooks', 'run.json'), 10)
+    for (const directory of MANAGED_EXECUTION_DATA_DIRS)
+      await writeSized(join(dataRoot, directory, 'owned.json'), 20)
+    const usage = await computeStorageUsage(dataRoot)
+    const expectedBytes = 10 + MANAGED_EXECUTION_DATA_DIRS.length * 20
+    expect(usage.categories.find(({ key }) => key === 'notebooks')?.bytes).toBe(expectedBytes)
+    expect(usage.totalBytes).toBe(expectedBytes)
   })
 
   it('labels default-python/-r as python/r and the shared pkgs cache as conda', async () => {

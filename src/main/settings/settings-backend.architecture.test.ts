@@ -619,6 +619,7 @@ describe('Settings backend ownership architecture', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
       'capabilitiesCall',
       'artifactsCall',
+      'managedExecutionCall',
       'lineageCall',
       'framesCall',
       'sessionsCall',
@@ -1110,6 +1111,10 @@ describe('Settings backend ownership architecture', () => {
     )
     expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual(
       expect.arrayContaining([
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/composition/session-packages.test.ts',
+        'src/main/composition/handoff.test.ts',
         'src/main/composition/notebook-environment.test.ts',
         'src/main/acp/backend-generation-owner.test.ts',
         'src/main/acp/runtime-provider-session-composition.test.ts',
@@ -1162,6 +1167,7 @@ describe('Settings backend ownership architecture', () => {
     )
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual(
       expect.arrayContaining([
+        'src/main/session-package/research-reproduction.integration.test.ts',
         'src/main/storage/wsl-npm-migration.integration.test.ts',
         'src/main/composition/notebook-environment.test.ts',
         'src/main/literature/command-owner.test.ts',

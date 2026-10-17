@@ -184,5 +184,13 @@
   "packages/reproducibility/src/contracts.ts": ["scripts/electron-vite-config.test.ts"],
   "packages/reproducibility/src/comparison-contracts.ts": ["scripts/electron-vite-config.test.ts"],
   "packages/reproducibility/src/execution-context.ts": ["scripts/electron-vite-config.test.ts"],
-  "packages/resilient-download/test/transport.mjs": ["scripts/check-resilient-download-package.mjs"]
+  "packages/resilient-download/test/transport.mjs": [
+    "scripts/check-resilient-download-package.mjs"
+  ],
+  "src/main/notebook/node-local-service-preload.mjs": [
+    "src/main/notebook/managed-research-environment.ts"
+  ],
+  "src/main/run-observation/electron-capture.ts": [
+    "src/main/run-observation/electron-capture.integration.test.ts"
+  ]
 }
