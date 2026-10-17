@@ -9,6 +9,8 @@ export type ReadingOptions<Reference extends DocumentReference> = {
   index: LiteratureIndex
   /** Resolve current authority first, then return a loader for verified bounded text. */
   authorize(reference: Reference): Promise<() => Promise<TextExtraction>>
+  /** Stable identity for every extraction-affecting option owned by the caller. */
+  extractionFingerprint?(reference: Reference): string
   log?(message: string, fields: Record<string, unknown>): void
   onIndexError?(error: unknown): void
 }
@@ -48,7 +50,7 @@ export type SearchDocumentsResult = {
     }
 )
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
-  .update('open-science-pdfjs-verified-bytes-v2')
+  .update('open-science-pdfjs-verified-bytes-native-v4')
   .digest('hex')
 const DOCUMENT_BATCH_CHARS = 16_000
 const INDEX_CHUNK_CHARS = 5_000
@@ -61,6 +63,8 @@ const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{S
 
 type ExtractedDocument = Readonly<{
   context: DocumentReference
+  extractionId: string
+  extractorFingerprint: string
   text: string
   pageCount: number
   truncated: boolean
@@ -156,10 +160,14 @@ const fallbackSearch = (
     .map((passage, index) => ({ ...passage, lexicalRank: index + 1 }))
 }
 
-const encodeCursor = (documentId: string, offset: number): string =>
-  Buffer.from(JSON.stringify({ documentId, offset })).toString('base64url')
+const encodeCursor = (documentId: string, extractionId: string, offset: number): string =>
+  Buffer.from(JSON.stringify({ documentId, extractionId, offset })).toString('base64url')
 
-const cursorOffset = (cursor: string | undefined, documentId: string): number => {
+const cursorOffset = (
+  cursor: string | undefined,
+  documentId: string,
+  extractionId: string
+): number => {
   if (!cursor) return 0
   let value: unknown
   try {
@@ -174,13 +182,17 @@ const cursorOffset = (cursor: string | undefined, documentId: string): number =>
       'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
     )
   }
-  const { documentId: cursorDocumentId, offset } = value as Record<string, unknown>
+  const {
+    documentId: cursorDocumentId,
+    extractionId: cursorExtractionId,
+    offset
+  } = value as Record<string, unknown>
   if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) {
     throw new Error(
       'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
     )
   }
-  if (cursorDocumentId !== documentId)
+  if (cursorDocumentId !== documentId || cursorExtractionId !== extractionId)
     throw new Error(
       'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
     )
@@ -188,7 +200,7 @@ const cursorOffset = (cursor: string | undefined, documentId: string): number =>
 }
 
 export class LiteratureReader<Reference extends DocumentReference = DocumentReference> {
-  private readonly extracted = new Map<string, Promise<Omit<ExtractedDocument, 'context'>>>()
+  private readonly extracted = new Map<string, Promise<TextExtraction>>()
   private readonly extractedChars = new Map<string, number>()
   private readonly indexBuilds = new Map<string, Promise<void>>()
 
@@ -231,22 +243,27 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
   private async resolveDocument(context: Reference): Promise<ExtractedDocument> {
     // Authority is rechecked even on a cache hit; a checksum is not an access grant.
     const extract = await this.options.authorize(context)
-    const cached = this.extracted.get(context.checksum)
+    const extractorFingerprint =
+      this.options.extractionFingerprint?.(context) ?? EXTRACTOR_FINGERPRINT
+    const extractionId = createHash('sha256')
+      .update(`${context.checksum}:${extractorFingerprint}`)
+      .digest('hex')
+    const cached = this.extracted.get(extractionId)
     const extraction = cached ?? extract()
-    if (cached) this.extracted.delete(context.checksum)
-    this.extracted.set(context.checksum, extraction)
+    if (cached) this.extracted.delete(extractionId)
+    this.extracted.set(extractionId, extraction)
     this.trimExtractedCache()
     try {
       const resolved = await extraction
-      if (this.extracted.get(context.checksum) === extraction) {
-        this.extractedChars.set(context.checksum, resolved.text.length)
+      if (this.extracted.get(extractionId) === extraction) {
+        this.extractedChars.set(extractionId, resolved.text.length)
         this.trimExtractedCache()
       }
-      return { context, ...resolved }
+      return { context, extractionId, extractorFingerprint, ...resolved }
     } catch (error) {
-      if (this.extracted.get(context.checksum) === extraction) {
-        this.extracted.delete(context.checksum)
-        this.extractedChars.delete(context.checksum)
+      if (this.extracted.get(extractionId) === extraction) {
+        this.extracted.delete(extractionId)
+        this.extractedChars.delete(extractionId)
       }
       throw error
     }
@@ -267,7 +284,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
   }
 
   private readBatch(document: ExtractedDocument, cursor: string | undefined): ReadDocumentResult {
-    const offset = cursorOffset(cursor, document.context.bindingId)
+    const offset = cursorOffset(cursor, document.context.bindingId, document.extractionId)
     if (offset > document.text.length)
       throw new Error(
         'Literature read cursor is out of range. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
@@ -276,7 +293,9 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     const content = document.text.slice(offset, end)
     const pages = pageRangeForOffsets(document.text, offset, end)
     const nextCursor =
-      end < document.text.length ? encodeCursor(document.context.bindingId, end) : null
+      end < document.text.length
+        ? encodeCursor(document.context.bindingId, document.extractionId, end)
+        : null
     this.options.log?.('Literature document batch read', {
       scope: 'full-document',
       pageCount: document.pageCount,
@@ -316,9 +335,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       }>
     >()
     for (const document of documents) {
-      const extractionId = createHash('sha256')
-        .update(`${document.context.checksum}:${EXTRACTOR_FINGERPRINT}`)
-        .digest('hex')
+      const extractionId = document.extractionId
       const associations = byExtractionId.get(extractionId) ?? []
       associations.push(document)
       byExtractionId.set(extractionId, associations)
@@ -445,7 +462,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       await index.replace({
         extractionId: descriptor.extractionId,
         documentChecksum: descriptor.document.context.checksum,
-        extractorFingerprint: EXTRACTOR_FINGERPRINT,
+        extractorFingerprint: descriptor.document.extractorFingerprint,
         chunks: descriptor.chunks
       })
       this.options.log?.('Literature index prepared', {

@@ -5,6 +5,7 @@ import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../../../../shared/acp'
 import {
   cropPdfCanvasRegion,
   normalizedPdfRect,
+  pdfProseRegionFromRect,
   pointInPage,
   textInPdfRect
 } from './pdf-region-evidence'
@@ -12,6 +13,33 @@ import {
 afterEach(() => vi.restoreAllMocks())
 
 describe('PDF region Evidence geometry', () => {
+  it('maps an unrotated CropBox to reader bounds without adding its PDF origin or zoom', () => {
+    // CropBox [40, 70, 640, 870]: its displayed size is 600 by 800 at scale 1.
+    const cropWidth = 640 - 40
+    const cropHeight = 870 - 70
+    for (const zoom of [1, 1.75]) {
+      const page = new DOMRect(120, 80, cropWidth * zoom, cropHeight * zoom)
+      const rect = normalizedPdfRect(
+        pointInPage(120 + 60 * zoom, 80 + 160 * zoom, page),
+        pointInPage(120 + 540 * zoom, 80 + 720 * zoom, page)
+      )!
+      const region = pdfProseRegionFromRect(3, 0, rect, 0.4)!
+      expect(region).toMatchObject({ page: 3, left: 0.1, top: 0.2, right: 0.9 })
+      expect(region.bottom).toBeCloseTo(0.9)
+      expect(region.split).toBeCloseTo(0.42)
+    }
+  })
+
+  it('rejects rotated pages and invalid or edge column dividers', () => {
+    const rect = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 }
+    for (const rotation of [90, 180, 270])
+      expect(pdfProseRegionFromRect(1, rotation, rect, 0.5)).toBeUndefined()
+    for (const split of [0, 1, NaN, Infinity])
+      expect(pdfProseRegionFromRect(1, 0, rect, split)).toBeUndefined()
+    expect(pdfProseRegionFromRect(0, 0, rect, 0.5)).toBeUndefined()
+    expect(pdfProseRegionFromRect(1, 0, { ...rect, width: 1 }, 0.5)).toBeUndefined()
+  })
+
   it('stores drag geometry in page-normalized coordinates independent of zoom', () => {
     const page = { left: 100, top: 50, width: 800, height: 1_000 } as DOMRect
 

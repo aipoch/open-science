@@ -45,15 +45,23 @@ describe('preview registry Office routing', () => {
   it('forwards the PDF reading-position observer to the PDF renderer', () => {
     const onPdfReadingPositionChange = vi.fn()
     const onPdfTranslationChange = vi.fn()
+    const pdfProseRegions = [{ page: 1, left: 0, top: 0, right: 1, bottom: 1, split: 0.5 }]
+    const onPdfProseRegionsChange = vi.fn()
 
     const rendered = renderPreviewFile({
       item: createItem('pdf'),
       onPdfReadingPositionChange,
+      pdfProseRegions,
+      pdfProseRegionIdentityKey: 'scope/binding',
+      onPdfProseRegionsChange,
       onPdfTranslationChange
     })
 
     expect(rendered?.props.onPdfReadingPositionChange).toBe(onPdfReadingPositionChange)
     expect(rendered?.props.onPdfTranslationChange).toBe(onPdfTranslationChange)
+    expect(rendered?.props.pdfProseRegions).toBe(pdfProseRegions)
+    expect(rendered?.props.pdfProseRegionIdentityKey).toBe('scope/binding')
+    expect(rendered?.props.onPdfProseRegionsChange).toBe(onPdfProseRegionsChange)
   })
 
   it('forwards annotation ports to the PDF renderer', () => {

@@ -95,7 +95,7 @@ import {
   sanitizePdfDocumentSource,
   type PdfDocumentSource
 } from '../../../../../../shared/pdf-document-source'
-import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
+import { joinPdfTextItems, type PdfProseRegion } from '../../../../../../shared/pdf-text'
 import { TagSelection } from '../../../settings/ResourceTagControls'
 import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 
@@ -137,6 +137,7 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import {
   cropPdfCanvasRegion,
   normalizedPdfRect,
+  pdfProseRegionFromRect,
   pointInPage,
   textInPdfRect
 } from '../pdf-region-evidence'
@@ -201,7 +202,7 @@ type DocumentState =
     }
   | { requestKey: string; status: 'error'; error: unknown }
 type PdfCursorMode = 'select' | 'hand' | 'area' | 'area-annotation' | 'text-annotation'
-type PdfRegionIntent = 'agent' | 'annotation'
+type PdfRegionIntent = 'agent' | 'annotation' | 'prose'
 type PdfPanGesture = Readonly<{
   pointerId: number
   clientX: number
@@ -1004,6 +1005,7 @@ const PdfSearchControls = ({
   query,
   current,
   total,
+  incomplete,
   onQueryChange,
   onFindAgain,
   onClose,
@@ -1013,6 +1015,7 @@ const PdfSearchControls = ({
   query: string
   current: number
   total: number
+  incomplete: boolean
   onQueryChange: (query: string) => void
   onFindAgain: (previous: boolean) => void
   onClose: () => void
@@ -1020,9 +1023,10 @@ const PdfSearchControls = ({
   onScopeChange?: (translated: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const coverageNoticeId = useId()
   return (
     <TooltipProvider delayDuration={250} skipDelayDuration={300}>
-      <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+      <div className="absolute top-3 right-3 z-40 flex h-8 max-w-[calc(100%-1.5rem)] items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
         {onScopeChange ? (
           <Button
             size="sm"
@@ -1042,6 +1046,7 @@ const PdfSearchControls = ({
           data-preview-escape-boundary
           value={query}
           aria-label={t('Search document')}
+          aria-describedby={incomplete ? coverageNoticeId : undefined}
           placeholder={t('Search document')}
           className="h-7 w-44 bg-transparent px-1 text-xs text-text-000 outline-none placeholder:text-text-400"
           onChange={(event) => onQueryChange(event.currentTarget.value)}
@@ -1104,6 +1109,15 @@ const PdfSearchControls = ({
           </TooltipTrigger>
           <TooltipContent className="z-[120]">{t('Close search')}</TooltipContent>
         </Tooltip>
+        {incomplete ? (
+          <ErrorNotice
+            id={coverageNoticeId}
+            role="status"
+            level="warning"
+            className="absolute top-full left-0 mt-2"
+            description={t('Search incomplete. Some pages could not be read.')}
+          />
+        ) : null}
       </div>
     </TooltipProvider>
   )
@@ -1299,6 +1313,8 @@ const PdfEvidenceLayer = ({
   onSelectAnnotation,
   onSelectBookmark,
   onAnnotationError,
+  proseRegions,
+  onProseRegionsChange,
   onSelected
 }: {
   pageNumber: number
@@ -1316,12 +1332,18 @@ const PdfEvidenceLayer = ({
   onSelectAnnotation?: (id: string) => void
   onSelectBookmark?: (id?: string) => void
   onAnnotationError?: PreviewFileRendererProps['onAnnotationError']
+  proseRegions?: readonly PdfProseRegion[]
+  onProseRegionsChange?: PreviewFileRendererProps['onPdfProseRegionsChange']
   onSelected: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const pdfAnnotations = usePdfAnnotations()
   const [start, setStart] = useState<Readonly<{ x: number; y: number }>>()
   const [end, setEnd] = useState<Readonly<{ x: number; y: number }>>()
+  const [proseDraft, setProseDraft] = useState<{
+    rect: NonNullable<ReturnType<typeof normalizedPdfRect>>
+    splitRatio: number
+  }>()
   const [reveal, setReveal] = useState<Readonly<{ id: string; sequence: number }>>()
   const [preparedAnnotation, setPreparedAnnotation] = useState<PdfAnnotation>()
   const [preparedBookmark, setPreparedBookmark] = useState<BookmarkRevealTarget>()
@@ -1514,10 +1536,17 @@ const PdfEvidenceLayer = ({
   }, [reveal])
 
   const draft = start && end ? normalizedPdfRect(start, end) : regionDraft?.rect
+  const pageProseRegions = proseRegions?.filter((region) => region.page === pageNumber) ?? []
+  const proseLimitReached = (proseRegions?.length ?? 0) >= 32 && pageProseRegions.length === 0
   const addRegion = (element: HTMLDivElement, rect: NonNullable<typeof draft>): void => {
     const page = element.getBoundingClientRect()
     setStart(undefined)
     setEnd(undefined)
+    if (intent === 'prose') {
+      if (pageRotation === 0 && onProseRegionsChange && !proseLimitReached)
+        setProseDraft({ rect, splitRatio: 0.5 })
+      return
+    }
     const text = textInPdfRect(textLayer.current, page, rect, ANNOTATION_LIMITS.quote)
     if (intent === 'annotation' && bookmarkSource) {
       setRegionDraft({
@@ -1602,6 +1631,132 @@ const PdfEvidenceLayer = ({
   return (
     <>
       <div ref={highlightLayer} className="pointer-events-none absolute inset-0 z-40">
+        {pageRotation === 0
+          ? pageProseRegions.map((region, index) => (
+              <div
+                key={`prose-${index}`}
+                data-pdf-prose-region={pageNumber}
+                className="absolute border-2 border-dashed border-primary bg-primary/5"
+                style={{
+                  left: `${region.left * 100}%`,
+                  top: `${region.top * 100}%`,
+                  width: `${(region.right - region.left) * 100}%`,
+                  height: `${(region.bottom - region.top) * 100}%`
+                }}
+              >
+                <span className="absolute left-0 top-0 bg-background/95 px-1 text-xs text-primary">
+                  {t('Two-column body')}
+                </span>
+                <span
+                  data-pdf-prose-split
+                  className="absolute inset-y-0 border-l-2 border-dashed border-primary"
+                  style={{
+                    left: `${((region.split - region.left) / (region.right - region.left)) * 100}%`
+                  }}
+                />
+              </div>
+            ))
+          : null}
+        {proseDraft ? (
+          <>
+            <div
+              data-pdf-prose-draft
+              className="absolute border-2 border-primary bg-primary/10"
+              style={{
+                left: `${proseDraft.rect.x * 100}%`,
+                top: `${proseDraft.rect.y * 100}%`,
+                width: `${proseDraft.rect.width * 100}%`,
+                height: `${proseDraft.rect.height * 100}%`
+              }}
+            >
+              <span
+                data-pdf-prose-split
+                className="absolute inset-y-0 border-l-2 border-primary"
+                style={{ left: `${proseDraft.splitRatio * 100}%` }}
+              />
+            </div>
+            <Popover
+              open
+              onOpenChange={(open) => {
+                if (!open) onSelected()
+              }}
+            >
+              <PopoverAnchor asChild>
+                <span
+                  className="absolute size-px"
+                  style={{
+                    left: `${(proseDraft.rect.x + proseDraft.rect.width) * 100}%`,
+                    top: `${(proseDraft.rect.y + proseDraft.rect.height) * 100}%`
+                  }}
+                />
+              </PopoverAnchor>
+              <PopoverContent
+                data-pdf-prose-editor
+                aria-label={t('Two-column body')}
+                align="end"
+                collisionPadding={12}
+                className="pointer-events-auto w-80 max-w-[calc(100vw-1.5rem)] space-y-3"
+              >
+                <p className="text-sm font-medium">{t('Two-column body')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('Applies to your next message. Select body text only; exclude tables.')}
+                </p>
+                <label className="flex items-center gap-2 text-xs">
+                  <span>{t('Column divider')}</span>
+                  <input
+                    type="range"
+                    min={5}
+                    max={95}
+                    step={1}
+                    value={Math.round(proseDraft.splitRatio * 100)}
+                    className="min-w-0 flex-1 accent-primary"
+                    onChange={(event) =>
+                      setProseDraft({ ...proseDraft, splitRatio: Number(event.target.value) / 100 })
+                    }
+                  />
+                </label>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" size="sm" onClick={onSelected}>
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const region = pdfProseRegionFromRect(
+                        pageNumber,
+                        pageRotation,
+                        proseDraft.rect,
+                        proseDraft.splitRatio
+                      )
+                      if (!region || !onProseRegionsChange || proseLimitReached) return
+                      onProseRegionsChange(
+                        [
+                          ...(proseRegions ?? []).filter(
+                            (candidate) => candidate.page !== pageNumber
+                          ),
+                          region
+                        ].sort((left, right) => left.page - right.page)
+                      )
+                      onSelected()
+                    }}
+                  >
+                    {t('Save body area')}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </>
+        ) : null}
+        {intent === 'prose' && (pageRotation !== 0 || proseLimitReached) ? (
+          <div
+            className="absolute inset-x-2 top-2 rounded-md border border-border bg-background p-2 text-xs text-foreground"
+            role="status"
+          >
+            {pageRotation !== 0
+              ? t('Body areas are unavailable on rotated pages.')
+              : t('You can configure up to 32 pages.')}
+          </div>
+        ) : null}
         {matching.flatMap((annotation) => {
           const boxes =
             annotation.selector.kind === 'text'
@@ -1865,12 +2020,12 @@ const PdfEvidenceLayer = ({
           </Popover>
         ) : null}
       </div>
-      {intent ? (
+      {intent && (intent !== 'prose' || (pageRotation === 0 && !proseLimitReached)) ? (
         <div
           data-pdf-region-selection="true"
           className="absolute inset-0 z-30 cursor-crosshair touch-none"
           onPointerDown={(event) => {
-            if (regionDraft || event.button !== 0 || !event.isPrimary) return
+            if (regionDraft || proseDraft || event.button !== 0 || !event.isPrimary) return
             event.currentTarget.setPointerCapture(event.pointerId)
             const point = pointInPage(
               event.clientX,
@@ -1934,6 +2089,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onNavigate,
   linksEnabled,
   regionSelectionIntent,
+  pdfProseRegionIdentityKey,
+  proseRegions,
+  onProseRegionsChange,
   quickTextMark,
   onRegionSelected,
   geometry,
@@ -1959,6 +2117,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onNavigate: (destination: PdfLinkDestination) => void
   linksEnabled: boolean
   regionSelectionIntent?: PdfRegionIntent
+  pdfProseRegionIdentityKey?: string
+  proseRegions?: readonly PdfProseRegion[]
+  onProseRegionsChange?: PreviewFileRendererProps['onPdfProseRegionsChange']
   quickTextMark?: PdfTextMarkStyle
   onRegionSelected: () => void
   geometry?: Readonly<{ width: number; height: number }>
@@ -2021,7 +2182,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           return
         }
         pageRef.current = acquiredPage
-        setPageRotation(acquiredPage.getViewport({ scale: 1 }).rotation)
+        setPageRotation(acquiredPage.getViewport({ scale: 1 }).rotation ?? 0)
         setPageEpoch((epoch) => epoch + 1)
       })
       .catch((error: unknown) => {
@@ -2312,9 +2473,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       )}
       {isNearViewport &&
       status === 'ready' &&
-      (pdfEvidenceSource || pdfBookmarkSource || pdfRevealSource) ? (
+      (pdfEvidenceSource || pdfBookmarkSource || pdfRevealSource || onProseRegionsChange) ? (
         <PdfEvidenceLayer
-          key={regionSelectionIntent ?? 'viewing'}
+          key={`${regionSelectionIntent ?? 'viewing'}:${pdfProseRegionIdentityKey ?? ''}`}
           pageNumber={pageNumber}
           pageRotation={pageRotation}
           source={pdfEvidenceSource ?? pdfRevealSource}
@@ -2330,6 +2491,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           onSelectAnnotation={onSelectEvidence}
           onSelectBookmark={onSelectBookmark}
           onAnnotationError={annotationProps?.onAnnotationError}
+          proseRegions={proseRegions}
+          onProseRegionsChange={onProseRegionsChange}
           onSelected={onRegionSelected}
         />
       ) : null}
@@ -2350,6 +2513,9 @@ export const PdfPreviewContent = ({
   mtimeMs,
   onReadingPositionChange,
   onPdfTranslationChange,
+  pdfProseRegions,
+  pdfProseRegionIdentityKey,
+  onPdfProseRegionsChange,
   annotationProps,
   pdfEvidenceSource,
   pdfBookmarkSource,
@@ -2377,6 +2543,9 @@ export const PdfPreviewContent = ({
   size?: number
   mtimeMs?: number
   onPdfTranslationChange?: PreviewFileRendererProps['onPdfTranslationChange']
+  pdfProseRegions?: PreviewFileRendererProps['pdfProseRegions']
+  pdfProseRegionIdentityKey?: string
+  onPdfProseRegionsChange?: PreviewFileRendererProps['onPdfProseRegionsChange']
   onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
@@ -2441,6 +2610,7 @@ export const PdfPreviewContent = ({
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
   const [cursorMode, setCursorMode] = useState<PdfCursorMode>('select')
+  const [proseSelection, setProseSelection] = useState(false)
   const [textMarkStyle, setTextMarkStyle] = useState<PdfTextMarkStyle>({
     kind: 'highlight',
     color: 'yellow'
@@ -2527,6 +2697,7 @@ export const PdfPreviewContent = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<readonly PdfSearchPageMatches[]>([])
   const [searchResultCount, setSearchResultCount] = useState(0)
+  const [searchIncomplete, setSearchIncomplete] = useState(false)
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
   const [textLayerEpoch, setTextLayerEpoch] = useState(0)
   const searchTextCacheRef = useRef(new PdfSearchTextCache())
@@ -2557,6 +2728,7 @@ export const PdfPreviewContent = ({
     setFocusedTranslation(false)
     setZoom(1)
     setCursorMode('select')
+    setProseSelection(false)
     setPanning(false)
     setReadingMode('original')
     setHistoryError(false)
@@ -2574,6 +2746,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useLayoutEffect(
@@ -3052,6 +3225,7 @@ export const PdfPreviewContent = ({
     setSearchedDocument(searchDocument)
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
   }
   useEffect(() => {
@@ -3292,6 +3466,7 @@ export const PdfPreviewContent = ({
     let canceled = false
     const timer = setTimeout(() => {
       void (async () => {
+        setSearchIncomplete(false)
         const normalizedQuery = searchQuery.toLocaleLowerCase()
         const matches: PdfSearchPageMatches[] = []
         let matchCount = 0
@@ -3311,6 +3486,8 @@ export const PdfPreviewContent = ({
               }
             })
           } catch {
+            if (canceled) return
+            setSearchIncomplete(true)
             continue
           }
           if (canceled) return
@@ -3539,6 +3716,7 @@ export const PdfPreviewContent = ({
 
   const zoomBy = (delta: number): void => updateZoom((current) => clampZoom(current + delta))
   const changeCursorMode = useCallback((mode: PdfCursorMode): void => {
+    setProseSelection(false)
     panGestureRef.current = undefined
     setPanning(false)
     window.getSelection()?.removeAllRanges()
@@ -3559,6 +3737,7 @@ export const PdfPreviewContent = ({
     setSearchQuery('')
     setSearchResults([])
     setSearchResultCount(0)
+    setSearchIncomplete(false)
     setSelectedSearchIndex(0)
     searchTextCacheRef.current.clear()
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
@@ -3572,6 +3751,7 @@ export const PdfPreviewContent = ({
     })
   }, [])
   const changeRendition = (next: PdfRendition): void => {
+    setProseSelection(false)
     pendingLinkRef.current = undefined
     captureViewportAnchor()
     if (next !== 'original' && !pairedDocument) return
@@ -4123,6 +4303,7 @@ export const PdfPreviewContent = ({
     <Tabs.Root
       value={readingMode}
       onValueChange={(value) => {
+        setProseSelection(false)
         setReadingMode(value === 'figures' ? 'figures' : value === 'notes' ? 'notes' : 'original')
         if (value !== 'original') setRendition('original')
         if (value === 'figures') setFiguresVisited(true)
@@ -4138,7 +4319,7 @@ export const PdfPreviewContent = ({
         data-pdf-preview-root
         data-pdf-tool-active={
           readingMode === 'original' &&
-          ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
+          (proseSelection || ['area', 'area-annotation', 'text-annotation'].includes(cursorMode))
         }
         data-preview-escape-boundary={
           floatingNavigation || floatingNotes || (source === 'literature' && selectedBookmarkId)
@@ -4187,7 +4368,8 @@ export const PdfPreviewContent = ({
           if (
             event.key === 'Escape' &&
             !event.nativeEvent.isComposing &&
-            (cursorMode === 'area' ||
+            (proseSelection ||
+              cursorMode === 'area' ||
               cursorMode === 'area-annotation' ||
               cursorMode === 'text-annotation')
           ) {
@@ -4497,6 +4679,63 @@ export const PdfPreviewContent = ({
             {presentation === 'search' ? translationRenditionControl : null}
           </div>
         ) : null}
+        {onPdfProseRegionsChange &&
+        pageCount >= 2 &&
+        presentation !== 'search' &&
+        readingMode === 'original' &&
+        effectiveRendition !== 'translated' ? (
+          <div
+            data-pdf-prose-controls
+            className="shrink-0 space-y-1 border-b border-border bg-background px-3 py-2"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={proseSelection ? 'secondary' : 'outline'}
+                size="sm"
+                aria-pressed={proseSelection}
+                onClick={() => {
+                  if (proseSelection) finishRegionSelection()
+                  else {
+                    changeCursorMode('select')
+                    setProseSelection(true)
+                  }
+                }}
+              >
+                {proseSelection ? t('Cancel') : t('Set two-column body')}
+              </Button>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {t('Body areas: {{count}}', {
+                  count: pdfProseRegions?.length ?? 0,
+                  defaultValue_one: 'Body area: {{count}}'
+                })}
+              </span>
+              {(pdfProseRegions ?? []).some((region) => region.page === currentPage) ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    finishRegionSelection()
+                    onPdfProseRegionsChange(
+                      (pdfProseRegions ?? []).filter((region) => region.page !== currentPage)
+                    )
+                  }}
+                >
+                  {t('Clear this page')}
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t('Applies to your next message. Select body text only; exclude tables.')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {proseSelection
+                ? t('Drag across both columns, then confirm the divider.')
+                : pdfProseRegions?.length === 0
+                  ? t('Native reading order will be used for your next message.')
+                  : t('Redrawing replaces the body area on that page.')}
+            </p>
+          </div>
+        ) : null}
         <div ref={readerRef} className="@container/pdf-reader relative min-h-0 flex-1">
           <Tabs.Content value="original" forceMount asChild>
             <div
@@ -4691,12 +4930,17 @@ export const PdfPreviewContent = ({
                                     cursorMode === 'text-annotation' ? textMarkStyle : undefined
                                   }
                                   regionSelectionIntent={
-                                    cursorMode === 'area'
-                                      ? 'agent'
-                                      : cursorMode === 'area-annotation'
-                                        ? 'annotation'
-                                        : undefined
+                                    proseSelection
+                                      ? 'prose'
+                                      : cursorMode === 'area'
+                                        ? 'agent'
+                                        : cursorMode === 'area-annotation'
+                                          ? 'annotation'
+                                          : undefined
                                   }
+                                  pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                                  proseRegions={pdfProseRegions}
+                                  onProseRegionsChange={onPdfProseRegionsChange}
                                   onRegionSelected={finishRegionSelection}
                                 />
                                 {currentTranslation && comparing && showParagraphMarkers ? (
@@ -4821,6 +5065,7 @@ export const PdfPreviewContent = ({
                           pairedDocument
                             ? (translated) => {
                                 setSearchQuery('')
+                                setSearchIncomplete(false)
                                 setSearchTranslated(translated)
                                 if (effectiveRendition !== 'compare')
                                   setRendition(translated ? 'translated' : 'original')
@@ -4830,10 +5075,12 @@ export const PdfPreviewContent = ({
                         query={searchQuery}
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
+                        incomplete={searchIncomplete}
                         onQueryChange={(query) => {
                           setSearchQuery(query)
                           setSearchResults([])
                           setSearchResultCount(0)
+                          setSearchIncomplete(false)
                           setSelectedSearchIndex(0)
                         }}
                         onFindAgain={findAgain}
@@ -5716,6 +5963,9 @@ const PdfPreviewRendererContent = (
       mtimeMs={props.item.mtimeMs}
       onReadingPositionChange={props.onPdfReadingPositionChange}
       onPdfTranslationChange={props.onPdfTranslationChange}
+      pdfProseRegions={props.pdfProseRegions}
+      pdfProseRegionIdentityKey={props.pdfProseRegionIdentityKey}
+      onPdfProseRegionsChange={props.onPdfProseRegionsChange}
       annotationProps={props}
       pdfEvidenceSource={pdfEvidenceSource}
       structureSource={props.structureSource}

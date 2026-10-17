@@ -5,6 +5,7 @@ import {
 } from '@/components/SessionPackageOperation'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionPendingInteractions } from '@/hooks/useSessionPendingInteractions'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { composerContextRowClassName } from './SessionDiscussionBar'
@@ -867,6 +868,11 @@ const ConversationPanel = ({
     (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
   const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
   const isImported = Boolean(activeSession?.packageOrigin)
+  const pendingInteractionFactsBySession = useSessionPendingInteractions()
+  const pendingInteractionFacts =
+    activeSession && !isImported
+      ? pendingInteractionFactsBySession.get(activeSession.id)
+      : undefined
   const activeBranchPlan = selectActiveBranchPlan(activeSession)
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
@@ -875,7 +881,8 @@ const ConversationPanel = ({
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
-  const effectiveCanSend = canSendMessage && !isStopping && !isResuming
+  const effectiveCanSend =
+    canSendMessage && !pendingInteractionFacts?.rootPermissionPending && !isStopping && !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -1120,11 +1127,17 @@ const ConversationPanel = ({
     : pendingPermissions.filter((request) => !request.delegated)
   const rootPermissionPending =
     rootPermissionRequests.length > 0 ? true : pendingPermissions.length > 0 ? false : undefined
+  const presentedRootPermissionPending =
+    pendingInteractionFacts?.rootPermissionPending || rootPermissionPending
   const actionability = activeSession
     ? projectSessionActionability(activeSession, {
-        rootPermissionPending,
+        rootPermissionPending: presentedRootPermissionPending,
         credentialPending: pendingCredentialRequest ? true : undefined,
-        presentedWaitReason: pendingCredentialRequest ? 'waiting-for-user' : undefined,
+        presentedWaitReason: pendingInteractionFacts?.rootPermissionPending
+          ? 'waiting-permission'
+          : pendingCredentialRequest
+            ? 'waiting-for-user'
+            : undefined,
         elicitationPending: pendingElicitation ? true : undefined,
         planPending:
           pendingPlan !== undefined
@@ -1134,9 +1147,14 @@ const ConversationPanel = ({
               : undefined
       })
     : undefined
-  const blockingInteraction =
-    actionability?.blockingInteraction ??
-    (rootPermissionRequests.length > 0
+  // Independent approvals keep their decision controls in the application dialog. Keep the
+  // draft visible behind that dialog rather than mounting an empty ACP permission panel.
+  const permissionInApplicationDialog =
+    pendingInteractionFacts?.rootPermissionPending &&
+    rootPermissionRequests.length === 0 &&
+    activeSession?.runtimeContext?.permission?.state !== 'pending'
+  const visibleBlockingInteraction =
+    rootPermissionRequests.length > 0
       ? 'permission'
       : pendingCredentialRequest
         ? 'credential'
@@ -1144,7 +1162,10 @@ const ConversationPanel = ({
           ? 'elicitation'
           : pendingPlan
             ? 'plan'
-            : undefined)
+            : undefined
+  const blockingInteraction = permissionInApplicationDialog
+    ? visibleBlockingInteraction
+    : (actionability?.blockingInteraction ?? visibleBlockingInteraction)
   const hasPendingPermission = blockingInteraction === 'permission'
   const hasPendingCredential = blockingInteraction === 'credential'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
@@ -1555,6 +1576,7 @@ const ConversationPanel = ({
               bindings={sessionTools.menuBindings}
               createSideChat={sideChatController.createDraft}
               credentialPending={pendingCredentialRequest !== undefined}
+              rootPermissionPending={presentedRootPermissionPending}
               disabledReason={openSideChatReason}
             />
           )}

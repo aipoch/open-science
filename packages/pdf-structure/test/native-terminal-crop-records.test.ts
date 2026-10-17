@@ -59,7 +59,37 @@ it('recovers a fully ruled terminal column omitted by the detector', () => {
   ])
   expect(result.grid[0]).toHaveLength(11)
   expect(result.clipped).toEqual([])
-  expect(result.unassigned).toEqual([])
+  // These fused header runs have no native word measurements. Keep their
+  // complete text instead of splitting words or selecting a leaf by overlap.
+  const intactHeaders = [
+    'Reference methods',
+    'Candidate methods',
+    'Beta Gamma',
+    'Candidate A Candidate B'
+  ]
+  expect(result.unassigned).toEqual(intactHeaders)
+  expect(result.grid.slice(2)).toEqual([
+    ['(i)', '3.25', '4', '2.5', '4', '4', '2.25', '3', '4', '4.25', '5'],
+    ['(ii)', '1', '3', '3', '4', '3', '3', '2', '4', '4', '5'],
+    ['(iii)', '1.75', '3.75', '1.5', '0.75', '1.5', '0', '2.25', '5', '4', '4'],
+    ['(iv)', '3.5', '2.75', '2.5', '1.5', '2', '0', '2.25', '4.25', '3', '4.25'],
+    ['(v)', '0.25', '5', '0.25', '2', '2.25', '3', '1.25', '5', '4.25', '4.25']
+  ])
+  const assignedHeaders = result.cells
+    .filter((cell: { row: number }) => cell.row < 2)
+    .flatMap((cell: { sourceTokens: { rect: number[] }[] }) => cell.sourceTokens)
+  for (const text of intactHeaders) {
+    const source = f.tokens.find((token: { text: string }) => token.text === text)
+    expect(
+      assignedHeaders.some(
+        (token: { rect: number[] }) =>
+          token.rect[0] >= source.rect[0] &&
+          token.rect[2] <= source.rect[2] &&
+          token.rect[1] === source.rect[1] &&
+          token.rect[3] === source.rect[3]
+      )
+    ).toBe(false)
+  }
   expect(result.repairs).toContain('ruled-terminal-column-recovered')
   expect(f).toEqual(original)
 })

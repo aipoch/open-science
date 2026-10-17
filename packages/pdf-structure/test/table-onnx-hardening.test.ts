@@ -8,9 +8,13 @@ const { refineTable } = await import(
 const { resolveTableCellMerges } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-merges.mjs')).href
 )
-const { populateTableCellText, reconcileFragmentedCountHeaders } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
-)
+const {
+  populateTableCellText,
+  recoverDenseNumericColumnRects,
+  recoverDenseNumericContinuationRows,
+  recoverDenseGroupedHeaderSpans,
+  reconcileFragmentedCountHeaders
+} = await import(pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href)
 
 const token = (text: string, rect: number[]): object => ({
   text,
@@ -44,6 +48,400 @@ const textCell = (
   rect,
   origin,
   items: []
+})
+
+it('rebuilds shifted dense metric cuts from repeated two-stub numeric rows', () => {
+  const columnRects = Array.from({ length: 17 }, (_, column) => [
+    column * 20,
+    0,
+    (column + 1) * 20,
+    100
+  ])
+  const rows = [
+    { rect: [0, 0, 340, 20] },
+    { rect: [0, 20, 340, 40] },
+    { rect: [0, 40, 340, 60] },
+    { rect: [0, 60, 340, 80] }
+  ]
+  const items = rows.slice(1).flatMap((row, index) => {
+    const baseline = (row.rect[1] + row.rect[3]) / 2
+    return [
+      token(`Model-${index}`, [2, baseline - 5, 12, baseline + 5]),
+      token(index % 2 ? 'MT' : 'ST', [22, baseline - 5, 28, baseline + 5]),
+      ...Array.from({ length: 15 }, (_, value) => {
+        const left = 42 + value * 20
+        return token(`${index + value + 1}.0`, [left, baseline - 5, left + 8, baseline + 5])
+      })
+    ]
+  })
+  // Shift two model cuts so the old geometry would merge neighboring values.
+  columnRects[10][0] += 8
+  columnRects[11][2] -= 8
+  const repaired = recoverDenseNumericColumnRects({ items, rows, columnRects, headerRows: [0] })
+  expect(repaired).toBeDefined()
+  expect(repaired).toHaveLength(17)
+  expect(
+    repaired?.every(
+      (rect, index) => rect[0] < rect[2] && (index === 0 || rect[0] >= repaired[index - 1][2])
+    )
+  ).toBe(true)
+})
+
+it('reassigns a fused numeric baseline to the neighboring dense row', () => {
+  const rows = [
+    { rect: [0, 0, 160, 20] },
+    { rect: [0, 20, 160, 40] },
+    { rect: [0, 40, 160, 60] },
+    { rect: [0, 60, 160, 80] }
+  ]
+  const columnRects = Array.from({ length: 8 }, (_, column) => [
+    column * 20,
+    0,
+    (column + 1) * 20,
+    80
+  ])
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      items: []
+    }))
+  )
+  const sourceItem = {
+    pageNumber: 1,
+    index: 42,
+    text: '0.70 1.04'
+  }
+  const first = {
+    text: '0.70',
+    horizontal: true,
+    baseline: 48,
+    height: 10,
+    rect: [40, 42, 59, 52],
+    sourceItem
+  }
+  const second = {
+    text: '1.04',
+    horizontal: true,
+    baseline: 48,
+    height: 10,
+    rect: [60, 42, 79, 52],
+    sourceItem
+  }
+  const assignments = new Map([
+    [first, cells.find((cell) => cell.row === 3 && cell.column === 2)],
+    [second, cells.find((cell) => cell.row === 3 && cell.column === 3)]
+  ])
+  const repairs: string[] = []
+  const recovered = recoverDenseNumericContinuationRows({
+    items: [first, second],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs
+  })
+  expect(recovered).toBe(1)
+  expect(assignments.get(first)?.row).toBe(2)
+  expect(assignments.get(second)?.row).toBe(2)
+  expect(repairs).toContain('dense-numeric-continuation-row-reassigned')
+})
+
+it('reassigns split single-value baselines only with a numbered dense stub', () => {
+  const rows = [
+    { rect: [0, 0, 160, 20] },
+    { rect: [0, 20, 160, 40] },
+    { rect: [0, 40, 160, 60] },
+    { rect: [0, 60, 160, 80] }
+  ]
+  const columnRects = Array.from({ length: 8 }, (_, column) => [
+    column * 20,
+    0,
+    (column + 1) * 20,
+    80
+  ])
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      items: []
+    }))
+  )
+  const make = (
+    text: string,
+    column: number
+  ): {
+    text: string
+    horizontal: boolean
+    baseline: number
+    height: number
+    rect: number[]
+    sourceItem: { pageNumber: number; index: number; text: string }
+  } => ({
+    text,
+    horizontal: true,
+    baseline: 48,
+    height: 10,
+    rect: [column * 20 + 2, 42, column * 20 + 10, 52],
+    sourceItem: { pageNumber: 1, index: column + 10, text }
+  })
+  const stub = make('1', 1)
+  const anchors = [4, 5, 6, 7].map((column) => make(`${column}.0`, column))
+  const split = [make('0.70', 2), make('1.04', 3)]
+  const assignments = new Map([
+    [stub, cells.find((cell) => cell.row === 2 && cell.column === 1)],
+    ...anchors.map((item) => [
+      item,
+      cells.find((cell) => cell.row === 2 && cell.column === Number(item.text[0]))
+    ]),
+    [split[0], cells.find((cell) => cell.row === 3 && cell.column === 2)],
+    [split[1], cells.find((cell) => cell.row === 3 && cell.column === 3)]
+  ])
+  const repairs: string[] = []
+  expect(
+    recoverDenseNumericContinuationRows({
+      items: [stub, ...anchors, ...split],
+      cells,
+      rows,
+      columnRects,
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBeGreaterThanOrEqual(2)
+  expect(assignments.get(split[0])?.row).toBe(2)
+  expect(assignments.get(split[1])?.row).toBe(2)
+  expect(repairs).toContain('dense-numeric-baseline-row-reassigned')
+})
+
+function denseGroupedHeaderFixture(): {
+  cells: (Omit<TextCell, 'origin' | 'items'> & { text: string; sourceRects?: number[][] })[]
+  headerRows: number[]
+} {
+  const leaves = Array.from({ length: 15 }, (_, index) => {
+    const column = index + 2,
+      rect = [column * 30, 20, (column + 1) * 30, 40]
+    return {
+      row: 1,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect,
+      text: ['SR↑0.5', 'Sim↑', 'RI↑'][index % 3],
+      sourceRects: [rect]
+    }
+  })
+  const labels = ['BDP', 'BDQ', 'BPQ', 'DPQ', 'BDPQ']
+  const parents = labels.map((text, group) => {
+    const center = (group * 3 + 3.5) * 30
+    return {
+      row: 0,
+      column: [2, 5, 9, 12, 15][group],
+      rowSpan: 1,
+      colSpan: group === 4 ? 2 : 3,
+      rect: [center - 10, 0, center + 10, 20],
+      text,
+      sourceRects: [[center - 10, 0, center + 10, 20]]
+    }
+  })
+  return {
+    cells: [
+      { row: 0, column: 0, rowSpan: 2, colSpan: 1, rect: [0, 0, 30, 40], text: 'Model' },
+      { row: 0, column: 1, rowSpan: 2, colSpan: 1, rect: [30, 0, 60, 40], text: 'T' },
+      ...parents,
+      { row: 0, column: 8, rowSpan: 1, colSpan: 1, rect: [240, 0, 270, 20], text: '' },
+      ...leaves
+    ],
+    headerRows: [0, 1]
+  }
+}
+
+it('rebuilds shifted dense grouped metric parent spans from printed three-leaf groups', () => {
+  const fixture = denseGroupedHeaderFixture()
+  const issues = new Set(['conflicting-spanning-cells', 'unresolved-spanning-cells'])
+  const repairs: string[] = []
+  expect(
+    recoverDenseGroupedHeaderSpans({
+      cells: fixture.cells,
+      headerRows: fixture.headerRows,
+      issues,
+      repairs
+    })
+  ).toBe(5)
+  expect(
+    fixture.cells
+      .filter((cell) => cell.row === 0 && cell.text)
+      .sort((a, b) => a.column - b.column)
+      .slice(2)
+      .map((cell) => [cell.column, cell.colSpan, cell.text])
+  ).toEqual([
+    [2, 3, 'BDP'],
+    [5, 3, 'BDQ'],
+    [8, 3, 'BPQ'],
+    [11, 3, 'DPQ'],
+    [14, 3, 'BDPQ']
+  ])
+  expect(issues.size).toBe(0)
+  expect(repairs).toContain('dense-grouped-header-spans-recovered')
+  const secondRepairs: string[] = []
+  expect(
+    recoverDenseGroupedHeaderSpans({
+      cells: fixture.cells,
+      headerRows: fixture.headerRows,
+      issues,
+      repairs: secondRepairs
+    })
+  ).toBe(0)
+  expect(secondRepairs).toEqual([])
+})
+
+it.each(['non-three-leaf-pattern', 'parent-source-center-outside-group'])(
+  'leaves dense grouped headers unchanged without strict source proof: %s',
+  (variant) => {
+    const fixture = denseGroupedHeaderFixture()
+    if (variant === 'non-three-leaf-pattern')
+      fixture.cells.find((cell) => cell.row === 1)!.text = 'Value'
+    else {
+      const parent = fixture.cells.find((cell) => cell.text === 'BPQ')!
+      parent.sourceRects = [[0, 0, 10, 20]]
+    }
+    const before = fixture.cells.map((cell) => ({
+      row: cell.row,
+      column: cell.column,
+      colSpan: cell.colSpan
+    }))
+    const repairs: string[] = []
+    expect(
+      recoverDenseGroupedHeaderSpans({
+        cells: fixture.cells,
+        headerRows: fixture.headerRows,
+        issues: new Set(['conflicting-spanning-cells']),
+        repairs
+      })
+    ).toBe(0)
+    expect(
+      fixture.cells.map((cell) => ({ row: cell.row, column: cell.column, colSpan: cell.colSpan }))
+    ).toEqual(before)
+    expect(repairs).toEqual([])
+  }
+)
+
+function denseNumericFixture({
+  bodyRows = 4,
+  columns = 17,
+  valuesPerRow = columns - 2
+}: { bodyRows?: number; columns?: number; valuesPerRow?: number } = {}): {
+  cells: TextCell[]
+  items: object[]
+  rows: { rect: number[] }[]
+  columnRects: number[][]
+} {
+  const columnRects = Array.from({ length: columns }, (_, column) => [
+    column * 20,
+    0,
+    (column + 1) * 20,
+    (bodyRows + 1) * 20
+  ])
+  const rows = Array.from({ length: bodyRows + 1 }, (_, row) => ({
+    rect: [0, row * 20, columns * 20, (row + 1) * 20]
+  }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) =>
+      textCell(rowIndex, column, [rect[0], row.rect[1], rect[2], row.rect[3]])
+    )
+  )
+  const items = rows.slice(1).flatMap((row, rowIndex) => {
+    const baseline = (row.rect[1] + row.rect[3]) / 2
+    return [
+      token(`Model-${rowIndex}`, [2, baseline - 5, 12, baseline + 5]),
+      token('ST', [22, baseline - 5, 28, baseline + 5]),
+      ...Array.from({ length: valuesPerRow }, (_, value) => {
+        const left = 42 + value * 20
+        return token(`${rowIndex + value + 1}.0`, [left, baseline - 5, left + 8, baseline + 5])
+      })
+    ]
+  })
+  return { cells, items, rows, columnRects }
+}
+
+it('populates every leaf from a complete dense two-stub table', () => {
+  const fixture = denseNumericFixture()
+  const issues = new Set(['overlapping-predicted-columns'])
+  const repairs: string[] = []
+  const unassigned = populateTableCellText({
+    ...fixture,
+    pageItems: fixture.items,
+    headerRows: [0],
+    rules: [],
+    bottom: 100,
+    issues,
+    repairs
+  })
+  expect(unassigned).toEqual([])
+  expect(fixture.cells.find((cell) => cell.row === 1 && cell.column === 9)?.text).toBe('8.0')
+  expect(fixture.cells.find((cell) => cell.row === 1 && cell.column === 16)?.text).toBe('15.0')
+  expect(repairs).toContain('source-dense-numeric-columns-recovered')
+})
+
+it('splits a fused numeric source run through populated cells', () => {
+  const cells = Array.from({ length: 16 }, (_, index) => {
+    const row = Math.floor(index / 8)
+    const column = index % 8
+    return textCell(row, column, [column * 20, row * 20, (column + 1) * 20, (row + 1) * 20])
+  })
+  // Leave the fused run ambiguous to the normal owner pass; the numeric
+  // fallback below must prove the contiguous two-cell sequence.
+  cells[8].rect = [-100, 20, -1, 40]
+  cells[14].rect = [120, 20, 140, 40]
+  cells[15].rect = [140, 20, 160, 40]
+  const items = [token('Model', [-95, 25, -85, 35]), token('0.60 1.31', [120, 25, 160.5, 35])]
+  const issues = new Set<string>()
+  const repairs: string[] = []
+  const unassigned = populateTableCellText({
+    cells,
+    items,
+    pageItems: items,
+    rows: [{ rect: [0, 0, 160, 20] }, { rect: [0, 20, 160, 40] }],
+    columnRects: Array.from({ length: 8 }, (_, column) => [column * 20, 0, (column + 1) * 20, 40]),
+    headerRows: [0],
+    rules: [],
+    bottom: 40,
+    issues,
+    repairs
+  })
+  expect(unassigned).toEqual([])
+  expect(cells.find((cell) => cell.row === 1 && cell.column === 6)?.text).toBe('0.60')
+  expect(cells.find((cell) => cell.row === 1 && cell.column === 7)?.text).toContain('1.31')
+  expect(
+    repairs.some(
+      (repair) =>
+        repair === 'wide-source-run-split' || repair === 'unassigned-dense-numeric-run-recovered'
+    )
+  ).toBe(true)
+})
+
+it.each([
+  ['short table', denseNumericFixture({ columns: 7, valuesPerRow: 5 }), undefined],
+  ['incomplete row', denseNumericFixture({ valuesPerRow: 14 }), undefined],
+  ['too few repeated rows', denseNumericFixture({ bodyRows: 2 }), undefined]
+])('does not infer dense cuts for a %s', (_name, fixture, expected) => {
+  expect(
+    recoverDenseNumericColumnRects({
+      items: fixture.items,
+      rows: fixture.rows,
+      columnRects: fixture.columnRects,
+      headerRows: [0]
+    })
+  ).toBe(expected)
 })
 
 it.each([

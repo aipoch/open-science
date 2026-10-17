@@ -17,6 +17,19 @@ alignment = pysam.AlignmentFile("inputs/reads.cram", "rc",
     })
   })
 
+  it('captures a positional CRAM reference only with explicit null placeholders', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import pysam\npysam.AlignmentFile("inputs/reads.cram", "rc", None, None, None, "inputs/reference.fa")'
+      )
+    ).toMatchObject({
+      reads: ['inputs/reads.cram', 'inputs/reference.fa'],
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
   it('records a CRAM output separately from its explicit reference input', async () => {
     expect(
       await analyzeNotebookSourceFileAccess(

@@ -3,13 +3,14 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 
-const { findCaptionCandidates } = await import(
+const { findCaptionCandidates, captionKind } = await import(
   pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
 )
 const {
   associateFigures,
   deduplicateFigureCaptions,
   associateAdjacentFigure,
+  associateUnnumberedFigure,
   resolveFigureCaption,
   associateGraphicalAbstract
 } = await import(pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href)
@@ -32,6 +33,16 @@ const graphic = (
   kind,
   normalizedRect,
   imageHash
+})
+
+it.each([
+  'Figure 12 of Example et al. (2018a). For both panels, the measurements agree.',
+  'Fig. 7 (left). The next predictions also have no close contacts.',
+  'Fig. 3 all three samples were placed into the crucible simultaneously.',
+  'Figure 3 details the mechanisms of long-horizon environment reconstruction.',
+  'Figure 5 highlights the computational inefficiencies of SMC-ABC in the context of our problem.'
+])('rejects prose figure references as captions: %s', (text) => {
+  expect(captionKind(text)).toBeUndefined()
 })
 
 it('keeps external labels when quantized raster bounds only graze the caption', () => {
@@ -78,6 +89,33 @@ it('ignores a tiny footer path that overlaps a publisher URL', () => {
   ])
   expect(figure.rect).toEqual([60, 80, 540, 640])
   expect(figure.reason).toBeUndefined()
+})
+
+it('does not classify dense fenced prompt text as an unnumbered figure', () => {
+  const graphicsBounds = Array.from({ length: 16 }, (_, index) => {
+    const y = 0.1 + index * 0.045
+    return [graphic('path', [0.1, y, 0.11, y + 0.03]), graphic('path', [0.89, y, 0.9, y + 0.03])]
+  }).flat()
+  const lines = Array.from({ length: 32 }, (_, index) => ({
+    text: index === 0 ? 'Please solve the problem:' : '(goal (and p0 p1))',
+    x: 72,
+    y: 80 + index * 16,
+    width: 160,
+    height: 10,
+    fontSize: 10
+  }))
+  expect(associateUnnumberedFigure({ ...page, lines, graphicsBounds }, [])).toEqual([])
+})
+
+it('retains dense path-only plots without code-text evidence', () => {
+  const graphicsBounds = Array.from({ length: 20 }, (_, index) => {
+    const x = 0.12 + (index % 5) * 0.17
+    const y = 0.2 + Math.floor(index / 5) * 0.1
+    return graphic('path', [x, y, x + 0.08, y + 0.02])
+  })
+  const [figure] = associateUnnumberedFigure({ ...page, graphicsBounds }, [])
+  expect(figure.graphicsCount).toBe(20)
+  expect(figure.rect[0]).toBeGreaterThan(0)
 })
 
 it('stops a lower figure from claiming graphics above an intervening figure caption', () => {
@@ -847,6 +885,32 @@ it('keeps all raster panels across a shared native axis-title line below a table
   expect(figure.rect[1]).toBeGreaterThan(257)
   expect(figure.rect[3]).toBeGreaterThan(602)
   expect(figure.rect[3]).toBeLessThan(figure.caption.rect[1])
+})
+
+it('recovers a native panel grid when a table detector crop covers the plate', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Six native panels.'],
+    rect: [90, 680, 510, 700]
+  }
+  const panels = [
+    [100, 360, 250, 500],
+    [100, 520, 250, 640],
+    [270, 360, 420, 500],
+    [270, 520, 420, 640],
+    [440, 360, 590, 500],
+    [440, 520, 590, 640]
+  ].map((rect) =>
+    graphic(
+      'path',
+      rect.map((value, index) => value / (index % 2 ? 800 : 600))
+    )
+  )
+  const source = { ...page, graphicsBounds: panels }
+  const [figure] = associateFigures(source, [caption], [[80, 350, 590, 680]])
+  expect(figure.rect).toBeDefined()
+  expect(figure.graphicsCount).toBe(6)
+  expect(figure.rect[3]).toBeLessThan(caption.rect[1])
 })
 
 it('includes split at-risk counts, left group labels and panel letters in stacked plots', () => {

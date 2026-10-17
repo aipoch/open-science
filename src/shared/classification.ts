@@ -1,12 +1,19 @@
 import type { ValidateProviderResult } from './settings'
+import type { AcpMessageImage } from './acp-image-contract'
 
 /** Classification endpoints are not chat providers and never enter conversation model catalogs. */
 export const TYPESAFE_MODEL_ID = 'jev-latest'
 export type ClassificationAdapter = 'typesafe' | 'openrouter' | 'opencode' | 'custom'
 export type ClassificationModel = { id: string; label: string }
 export const CLASSIFICATION_MODELS = {
-  typesafe: [{ id: TYPESAFE_MODEL_ID, label: 'Jev Latest' }],
-  openrouter: [{ id: 'typesafe/jev-1.13', label: 'Jev 1.13' }],
+  typesafe: [
+    { id: TYPESAFE_MODEL_ID, label: 'Jev Latest' },
+    { id: 'jev-preview', label: 'Jev Preview' }
+  ],
+  openrouter: [
+    { id: 'typesafe/jev-1.13', label: 'Jev 1.13' },
+    { id: 'typesafe/jev-1.14', label: 'Jev 1.14' }
+  ],
   opencode: [
     { id: 'jev-1.13', label: 'Jev 1.13' },
     { id: 'jev-1.13-free', label: 'Jev 1.13 Free' }
@@ -96,6 +103,8 @@ export type ClassificationCandidate = {
 }
 export type ClassifySkills = (input: {
   text: string
+  /** Current-turn images only; loaded within the classifier's cancellation/deadline scope. */
+  loadImages?: (signal: AbortSignal) => Promise<readonly AcpMessageImage[]>
   catalog: ClassificationCandidate[]
   signal: AbortSignal
   usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>

@@ -171,11 +171,11 @@ Before committing:
 - Register new tests in the appropriate `testFiles` category: `owner` for the module's behavior,
   `contract` for its interfaces, or `consumer` for downstream behavior depending on it. Within one
   module, list a test in only one category; the same test may provide evidence for multiple modules.
-- Check upstream modules when adding a test or changing imports, re-exports or mocks. The
-  consumer-coverage guard follows transitive dependencies: registering a test only in its owning
-  module may leave several upstream modules without evidence. For each reported
-  `<module-id> -> <test-path>` gap, add the test to that module's appropriate category, normally
-  `testFiles.consumer` for a downstream test. Do not remove valid dependency edges to silence it.
+- After changing tests, imports, mocks or runtime-loading declarations, run
+  `npm run generate:module-consumers`, then `npm run check:module-consumers`.
+  The generated index records additional reachable tests without repeated manual registrations.
+  Preserve explicit consumer contracts, including IPC, event and filesystem relationships;
+  static reachability alone does not prove behavioral coverage or justify removing a contract.
 - Keep public boundaries in `interfacePaths`, including test files that export helpers used by other
   tests. Keep `consumerModules` accurate for module-to-module relationships; it does not replace
   explicit test evidence. Native/worker loading edges use `scripts/ci/module-runtime-consumers.json`.

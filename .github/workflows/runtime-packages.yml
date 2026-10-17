@@ -15,6 +15,10 @@ on:
         type: boolean
         default: false
         description: Manual dry-run of extraction and signatures only; allows a prior desktop run.
+      nightly:
+        type: boolean
+        default: false
+        description: Reuse this run's nightly desktop payload with matching version and ad-hoc macOS signatures.
       target:
         type: string
         default: all
@@ -34,11 +38,13 @@ jobs:
         env:
           DISTRIBUTION: ${{ inputs.distribution }}
           TARGET: ${{ inputs.target }}
+          NIGHTLY: ${{ inputs.nightly }}
           DESKTOP_RUN: ${{ inputs.desktop_run_id }}
           VERIFY_DESKTOP_ONLY: ${{ inputs.verify_desktop_only }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
+          if (process.env.NIGHTLY === 'true' && (process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID || process.env.DISTRIBUTION !== 'archive' || process.env.VERIFY_DESKTOP_ONLY === 'true' || !['schedule', 'workflow_dispatch'].includes(process.env.GITHUB_EVENT_NAME))) throw new Error('Nightly archives require same-run desktop artifacts and a Nightly build event');
           const verifyOnly = process.env.VERIFY_DESKTOP_ONLY === 'true';
           if (verifyOnly && (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !/^[1-9][0-9]*$/.test(process.env.DESKTOP_RUN) || process.env.DISTRIBUTION !== 'archive')) throw new Error('Desktop verification requires manual archive dispatch and a source run');
           if (process.env.DESKTOP_RUN && process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID && !verifyOnly) throw new Error('Desktop inputs must belong to this release run');
@@ -64,6 +70,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
+      OPEN_SCIENCE_RUNTIME_NIGHTLY: ${{ inputs.nightly }}
       MACOSX_DEPLOYMENT_TARGET: '12.0'
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     defaults:
@@ -187,6 +194,8 @@ jobs:
           retention-days: 5
 
   publication-check:
+    env:
+      OPEN_SCIENCE_RUNTIME_NIGHTLY: ${{ inputs.nightly }}
     if: ${{ !inputs.verify_desktop_only && inputs.target == 'all' }}
     needs: verify
     runs-on: ubuntu-latest

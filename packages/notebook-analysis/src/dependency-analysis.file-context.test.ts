@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +8,8 @@ import { Parser } from 'web-tree-sitter'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from './analysis-test-support'
-import { NotebookDependencyAnalyzer } from './analysis-test-support'
+import { NotebookDependencyAnalyzer, projectNotebookDependencies } from './analysis-test-support'
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
@@ -109,6 +111,97 @@ const fileContext = async (
   })
 }
 
+describe('directory observations and analyzer revision review regressions', () => {
+  it.each([
+    'import os\nentries = list(os.walk("inputs"))',
+    'from os import walk\nentries = list(walk("inputs"))',
+    'import os\ndef listing():\n    return list(os.walk("inputs"))\nentries = listing()',
+    'import os\ndef listing():\n    return list(os.walk("inputs", onerror=handler))\nentries = listing()'
+  ])('retains uncertainty for data-producing directory walks: %s', async (source) => {
+    const result = await analyzePythonNotebookSource(source)
+    const fileAccess = await analyzeNotebookSourceFileAccess('python', source)
+    const projection = projectNotebookDependencies([
+      {
+        run: {
+          runId: 'walk-run',
+          cellId: 'walk-cell',
+          kernelKind: 'python',
+          kernelEpochId: 'epoch-1',
+          environment: 'default-python',
+          script: source,
+          status: 'completed',
+          workingFiles: []
+        },
+        facts: result.facts,
+        fileAccess
+      }
+    ])
+    expect(projection.stalenessByRunId['walk-run'].state).toBe('unknown')
+    expect(fileAccess).toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('preserves the console-only directory diagnostic boundary', async () => {
+    const source = 'import os\nfor root, dirs, files in os.walk("inputs"):\n    print(root, files)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('reanalyzes facts cached under the earlier compact analyzer revision', async () => {
+    const script = 'path = "inputs/current.json"'
+    const parse = vi.spyOn(Parser.prototype, 'parse')
+    const context = await fileContext(
+      'python',
+      [script],
+      [],
+      true,
+      (json) => {
+        const cache = JSON.parse(json)
+        const previousRevision = 'scientific-lineage-hardening-20261013'
+        cache.analyzerRevision = previousRevision
+        cache.runs['run-0'].checksum = createHash('sha256')
+          .update(
+            JSON.stringify([
+              1,
+              previousRevision,
+              'python',
+              'default-python',
+              'epoch-1',
+              null,
+              null,
+              null,
+              null,
+              script,
+              null,
+              null,
+              null
+            ])
+          )
+          .digest('hex')
+        cache.runs['run-0'].fileContext.staticStrings = [
+          { name: 'path', value: 'inputs/stale.json' }
+        ]
+        return JSON.stringify(cache)
+      },
+      'epoch-1',
+      undefined,
+      () => parse.mockClear()
+    )
+    expect(parse).toHaveBeenCalled()
+    expect(context?.staticStrings).toContainEqual({ name: 'path', value: 'inputs/current.json' })
+    expect(context?.staticStrings).not.toContainEqual({ name: 'path', value: 'inputs/stale.json' })
+  })
+})
+
 describe('partial notebook reader inputs after cache reload', () => {
   it.each(['path', 'base::gzfile(path)', 'base::gzfile(open="rb",description=path)'])(
     'retains one R local-path prefix input without exporting its candidate: %s',
@@ -191,6 +284,473 @@ describe('partial notebook reader inputs after cache reload', () => {
     expect(
       (await analyzeNotebookSourceFileAccess('r', 'read_events("later")', context)).reads
     ).toEqual([])
+  })
+
+  it('retains a statically named writer after a helper first read', async () => {
+    const source = [
+      'read_and_export <- function(input_dir) {',
+      '  observations <- utils::read.csv(base::file.path(input_dir, "observations.csv"))',
+      '  utils::write.csv(observations, base::file.path("outputs", "observations.csv"), row.names=FALSE)',
+      '  observations',
+      '}',
+      'read_and_export("inputs")'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/observations.csv'],
+      writes: ['outputs/observations.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    [
+      'replays a zero-argument jsonlite writer helper',
+      'emit <- function() { jsonlite::write_json(list(value=1), "outputs/result.json") }; emit()',
+      { reads: [], writes: ['outputs/result.json'] }
+    ],
+    [
+      'replays a writer helper with an opaque dynamic payload and static file.path output',
+      [
+        'write_observations <- function() {',
+        '  observations <- datasets::faithful',
+        '  payload <- list(',
+        '    eruptions = unname(observations[, "eruptions"]),',
+        '    waiting = unname(observations[, "waiting"])',
+        '  )',
+        '  jsonlite::write_json(',
+        '    payload,',
+        '    path=base::file.path("outputs", "observations.json"),',
+        '    auto_unbox=TRUE,',
+        '    digits=8,',
+        '    pretty=FALSE',
+        '  )',
+        '}',
+        'write_observations()'
+      ].join('\n'),
+      { reads: [], writes: ['outputs/observations.json'] }
+    ],
+    [
+      'replays a zero-argument jsonlite reader helper',
+      'load <- function() { jsonlite::read_json("inputs/result.json") }; load()',
+      { reads: ['inputs/result.json'], writes: [] }
+    ],
+    [
+      'replays a zero-argument jsonlite fromJSON helper',
+      'load <- function() { jsonlite::fromJSON("inputs/result.json") }; load()',
+      { reads: ['inputs/result.json'], writes: [] }
+    ]
+  ])('%s', async (_label, source, expected) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      ...expected,
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    [
+      'does not replay a helper with arguments',
+      'emit <- function(path) { jsonlite::write_json(list(value=1), path) }; emit()'
+    ],
+    [
+      'does not replay a fromJSON helper with a dynamic path',
+      'load <- function(path) { jsonlite::fromJSON(path) }; load()'
+    ],
+    [
+      'does not treat inline JSON as a fromJSON file path',
+      'load <- function() { jsonlite::fromJSON("{\\"value\\":1}") }; load()'
+    ],
+    [
+      'does not replay a helper with a dynamic path',
+      'emit <- function() { jsonlite::write_json(list(value=1), paste0("outputs", "/result.json")) }; emit()'
+    ],
+    [
+      'does not replay a helper under control flow',
+      'emit <- function() { if (TRUE) jsonlite::write_json(list(value=1), "outputs/result.json") }; emit()'
+    ],
+    [
+      'does not replay a helper after rebinding',
+      'emit <- function() { jsonlite::write_json(list(value=1), "outputs/result.json") }; emit <- function() NULL; emit()'
+    ],
+    [
+      'does not replay a writer helper with an opaque local payload call',
+      'emit <- function() { payload <- make_payload(); jsonlite::write_json(payload, "outputs/result.json") }; emit()'
+    ]
+  ])('%s', async (_label, source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('retains file reads from Python assert messages', async () => {
+    const source = 'assert True, open("inputs/assert-message.txt").read()'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['inputs/assert-message.txt'],
+      readState: 'complete'
+    })
+  })
+
+  it.each(['file.path', 'base::file.path'])(
+    'retains a JSON helper local %s output without certifying a write',
+    async (constructor) => {
+      const source = [
+        'observations <- datasets::faithful',
+        'export_observations <- function() {',
+        `  destination <- ${constructor}("outputs", "observations.json")`,
+        '  payload <- list(values=observations)',
+        '  jsonlite::write_json(payload, path=destination, auto_unbox=TRUE)',
+        '  invisible(destination)',
+        '}',
+        'export_observations()',
+        'jsonlite::read_json("outputs/observations.json")'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['outputs/observations.json'],
+        writes: ['outputs/observations.json'],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const parsed = await analyzeRNotebookSource(source)
+      expect(parsed.facts.state).toBe('unknown')
+      expect(parsed.facts.safeCallNames ?? []).not.toContain('export_observations')
+      const context = await fileContext('r', [source])
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'export_observations()', context)).writes
+      ).toEqual([])
+    }
+  )
+
+  it.each(['fromJSON', 'read_json'])(
+    'resolves a stable outer JSON path when invoking %s',
+    async (reader) => {
+      const source = [
+        'input_path <- file.path("inputs", "measurements.json")',
+        `load_measurements <- function() { jsonlite::${reader}(input_path, simplifyVector=FALSE) }`,
+        'measurements <- load_measurements()'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/measurements.json'],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const context = await fileContext('r', [source])
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'load_measurements()', context)).reads
+      ).toEqual([])
+    }
+  )
+
+  it.each([
+    'input_path <- "inputs/old.json"; opaque(); load <- function() jsonlite::fromJSON(input_path); load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); opaque(); load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); input_path <- "inputs/new.json"; load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); input_path[1] <- "inputs/new.json"; load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); rm(load); load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); assign("load", replacement); load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); if (flag) load()',
+    'input_path <- "inputs/old.json"; if (flag) load <- function() jsonlite::fromJSON(input_path); load()',
+    'input_path <- "inputs/old.json"; load <- function() jsonlite::fromJSON(input_path); alias <- load; alias()',
+    'input_path <- "{\\"n\\":1}"; load <- function() jsonlite::fromJSON(input_path); load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); path <- dynamic; jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); opaque(); jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); jsonlite::read_json(path, simplifyVector={path <- "other"; TRUE}) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); jsonlite::read_json(path, ...) }; load()',
+    'file.path <- replacement; load <- function() { path <- file.path("inputs", "a.json"); jsonlite::read_json(path) }; load()',
+    'load <- function() { file.path <- replacement; path <- file.path("inputs", "a.json"); jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- other::file.path("inputs", "a.json"); jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("https://example.invalid", "a.json"); jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("inputs", unknown); jsonlite::read_json(path) }; load()',
+    'input_path <- "inputs/old.json"; load <- function() { info <- base::names(data); jsonlite::fromJSON(input_path) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); info <- nrow(data); jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); info <- data$value; jsonlite::read_json(path) }; load()',
+    'load <- function() { path <- file.path("inputs", "a.json"); info <- c(data); jsonlite::read_json(path) }; load()',
+    'load <- function() { ..1 <- "inputs/a.json"; jsonlite::read_json(..1) }; load()',
+    'nrow <- replacement; emit <- function() { path <- file.path("outputs", "a.json"); payload <- list(n=nrow(data)); jsonlite::write_json(payload, path) }; emit()'
+  ])('rejects uncertain JSON helper path authority: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+
+  it.each(['fromJSON', 'read_json'])(
+    'retains only the first literal %s input before an opaque helper tail',
+    async (reader) => {
+      const source = [
+        'load_centered <- function() {',
+        '  obs <- jsonlite::' + reader + '("outputs/observations.json")',
+        '  x <- as.numeric(obs$eruptions)',
+        '  jsonlite::read_json("inputs/later.json")',
+        '  jsonlite::write_json(x, "outputs/later.json")',
+        '  x - mean(x)',
+        '}',
+        'centered <- load_centered()'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['outputs/observations.json'],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const parsed = await analyzeRNotebookSource(source)
+      expect(parsed.facts.state).toBe('unknown')
+      expect(parsed.facts.safeCallNames ?? []).not.toContain('load_centered')
+      const context = await fileContext('r', [source])
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'load_centered()', context)).reads
+      ).toEqual([])
+    }
+  )
+
+  it.each(['"inputs/a.json"', 'file.path("inputs", "a.json")'])(
+    'retains a static local path prefix for a %s helper input before an opaque tail',
+    async (pathExpression) => {
+      const source = [
+        'load <- function() {',
+        `  path <- ${pathExpression}`,
+        '  value <- jsonlite::fromJSON(path)',
+        '  opaque(value)',
+        '}',
+        'load()'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/a.json'],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it.each(['TRUE', 'FALSE'])(
+    'retains a literal JSON input with simplifyVector=%s before an opaque tail',
+    async (simplifyVector) => {
+      const source = [
+        'load <- function() {',
+        `  value <- jsonlite::fromJSON("inputs/a.json", simplifyVector=${simplifyVector})`,
+        '  opaque(value)',
+        '}',
+        'load()'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['inputs/a.json'],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('retains multiple stable JSON helper inputs in one cell', async () => {
+    const source = [
+      'read_obs <- function() {',
+      '  value <- jsonlite::fromJSON("outputs/observations.json", simplifyVector=TRUE)',
+      '  list(eruptions = as.numeric(value$eruptions))',
+      '}',
+      'read_reg <- function() {',
+      '  value <- jsonlite::fromJSON("outputs/regression.json", simplifyVector=FALSE)',
+      '  list(slope = as.numeric(value$slope))',
+      '}',
+      'observations <- read_obs()',
+      'regression <- read_reg()',
+      'opaque(observations, regression)'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['outputs/observations.json', 'outputs/regression.json'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains JSON helper candidates across known scientific calls', async () => {
+    const source = [
+      'read_reg <- function() { path <- file.path("outputs", "regression.json"); jsonlite::read_json(path, simplifyVector=TRUE) }',
+      'read_obs <- function() { path <- file.path("outputs", "observations.json"); jsonlite::read_json(path, simplifyVector=TRUE) }',
+      'data(faithful, envir=environment())',
+      'n_obs <- nrow(faithful)',
+      'fit <- stats::lm(waiting ~ eruptions, data=faithful)',
+      'slope <- unname(stats::coef(fit)["eruptions"])',
+      'correlation <- stats::cor(faithful$eruptions, faithful$waiting)',
+      'regression <- read_reg()',
+      'observations <- read_obs()'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['outputs/observations.json', 'outputs/regression.json'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['stats::predict(model)', 'data <- replacement; data(faithful)', 'values["name"]'])(
+    'clears JSON helper authority after an uncertain call: %s',
+    async (call) => {
+      const source = [
+        'load <- function() { jsonlite::fromJSON("inputs/result.json") }',
+        call,
+        'load()'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: []
+      })
+    }
+  )
+
+  it.each(['jsonlite::fromJSON(txt="inputs/a.json")', 'jsonlite::read_json(path="inputs/a.json")'])(
+    'retains an exactly named first JSON input: %s',
+    async (reader) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'load <- function() { ' + reader + '; opaque() }; load()'
+        )
+      ).toMatchObject({ reads: ['inputs/a.json'], writes: [], readState: 'partial' })
+    }
+  )
+
+  it.each([
+    'load <- function(p) { jsonlite::fromJSON("inputs/a.json"); opaque() }; load()',
+    'load <- function(p=opaque()) { jsonlite::fromJSON("inputs/a.json"); opaque() }; load()',
+    'load <- function() { opaque(); jsonlite::fromJSON("inputs/a.json") }; load()',
+    'load <- function() { if (flag) jsonlite::fromJSON("inputs/a.json"); opaque() }; load()',
+    'load <- function() { path <- dynamic; jsonlite::fromJSON(path); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON(file.path("inputs", "a.json")); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("null"); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("https://example.invalid/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON(t="inputs/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::read_json(p="inputs/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json", simplifyVector=opaque()); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json", simplifyVector=flag); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json", flatten=TRUE); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json", ...); opaque() }; load()',
+    'load <- function() { jsonlite:::fromJSON("inputs/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::write_json(data,"outputs/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; load <- replacement; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; alias <- load; alias()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; opaque(); load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; if (flag) load()',
+    'if (flag) load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; load()',
+    'load <- function() { jsonlite::fromJSON("inputs/a.json"); opaque() }; load(unexpected=1)'
+  ])('rejects uncertain first JSON read authority: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+
+  it('consumes other JSON helper candidates after an opaque tail', async () => {
+    const source = [
+      'later <- function() { jsonlite::fromJSON("inputs/later.json"); opaque() }',
+      'load <- function() { jsonlite::fromJSON("inputs/first.json"); opaque() }',
+      'load()',
+      'later()',
+      'load()'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/first.json', 'inputs/later.json'],
+      writes: [],
+      readState: 'partial'
+    })
+  })
+
+  it.each(['::', 'function', '{', '<-', '='])(
+    'rejects a first JSON input with shadowed primitive %s',
+    async (primitive) => {
+      const source =
+        'load <- function() { obs <- jsonlite::fromJSON("inputs/a.json"); as.numeric(obs$x) }; load()'
+      const binding =
+        String.fromCharCode(96) + primitive + String.fromCharCode(96) + ' <- replacement'
+      expect((await analyzeNotebookSourceFileAccess('r', binding + '; ' + source)).reads).toEqual(
+        []
+      )
+      const context = await fileContext('r', [binding])
+      expect((await analyzeNotebookSourceFileAccess('r', source, context)).reads).toEqual([])
+    }
+  )
+
+  it('consumes the old JSON helper before rebinding its result', async () => {
+    const source =
+      'path <- "inputs/result.json"; load <- function() jsonlite::fromJSON(path); load <- load(); load()'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/result.json'],
+      readState: 'partial'
+    })
+  })
+
+  it.each(['::', 'function', '{', '<-', '='])(
+    'rejects a JSON helper after cached primitive %s shadowing',
+    async (primitive) => {
+      const context = await fileContext('r', [`\`${primitive}\` <- replacement`])
+      const source =
+        'input_path <- "inputs/a.json"; load <- function() jsonlite::fromJSON(input_path); load()'
+      expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+        reads: [],
+        writes: []
+      })
+    }
+  )
+
+  it.each([
+    [
+      'does not promote an unreachable writer',
+      'if (FALSE) utils::write.csv(observations, "outputs/observations.csv")',
+      'read_and_export("inputs")',
+      ['inputs/observations.csv']
+    ],
+    [
+      'does not descend into an unforced call argument',
+      '(function(unused) NULL)(utils::write.csv(observations, "outputs/observations.csv"))',
+      'read_and_export("inputs")',
+      ['inputs/observations.csv']
+    ],
+    [
+      'does not retain output when helper arguments do not match',
+      'utils::write.csv(observations, "outputs/observations.csv")',
+      'read_and_export(unknown="inputs")',
+      []
+    ],
+    [
+      'does not trust a writer after a local namespace rebind',
+      '`::` <- function(...) NULL; utils::write.csv(observations, "outputs/observations.csv")',
+      'read_and_export("inputs")',
+      ['inputs/observations.csv']
+    ],
+    [
+      'does not scan writers after an intervening statement',
+      'summary <- nrow(observations); utils::write.csv(observations, "outputs/observations.csv")',
+      'read_and_export("inputs")',
+      ['inputs/observations.csv']
+    ]
+  ])('%s', async (_label, statement, invocation, reads) => {
+    const source = [
+      'read_and_export <- function(input_dir) {',
+      '  observations <- utils::read.csv(base::file.path(input_dir, "observations.csv"))',
+      `  ${statement}`,
+      '  observations',
+      '}',
+      invocation
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads,
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
   })
 
   it('rejects a composed R reader after a cached namespace operator rebind', async () => {
@@ -3770,6 +4330,190 @@ describe('file context after mutable path collections', () => {
     expect(result.readState).toBe('partial')
   })
 
+  it.each([false, true])(
+    'replays a fresh local Path checksum with cached paths=%s',
+    async (cached) => {
+      const declaration =
+        'paths = ["outputs/variance-check.json", "outputs/centered-fit.json", "outputs/residual-audit.json"]'
+      const context = cached ? await fileContext('python', [declaration]) : undefined
+      const source = [
+        'import pathlib, hashlib',
+        ...(cached ? [] : [declaration]),
+        'def file_meta(p):',
+        '    pp = pathlib.Path(p)',
+        '    data = pp.read_bytes()',
+        '    return {"path": str(pp), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}',
+        'files = [file_meta(p) for p in paths]'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        reads: [
+          'outputs/centered-fit.json',
+          'outputs/residual-audit.json',
+          'outputs/variance-check.json'
+        ],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const after = await fileContext('python', [source])
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'python',
+            'files = [file_meta(p) for p in ["later.json"]]',
+            after
+          )
+        ).reads
+      ).toEqual([])
+    }
+  )
+
+  it.each([
+    'def str(value): return mutate(value)',
+    'str = replacement',
+    'from custom import str',
+    'import builtins; builtins.str = replacement',
+    'def len(value): return mutate(value)',
+    'pathlib.Path.open = replacement',
+    'pathlib.Path.__str__ = replacement',
+    'hashlib.sha256 = replacement'
+  ])('rejects local Path checksums after behavior shadowing: %s', async (binding) => {
+    const source = [
+      'import pathlib, hashlib',
+      binding,
+      'def file_meta(p):',
+      '    pp = pathlib.Path(p)',
+      '    data = pp.read_bytes()',
+      '    return {"path": str(pp), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}',
+      'files = [file_meta(p) for p in ["inputs/first.csv", "inputs/later.csv"]]'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      readState: 'partial'
+    })
+  })
+
+  it.each([
+    ['parameter overwrite', 'p = pathlib.Path(p)', 'data = p.read_bytes()', '{"bytes": len(data)}'],
+    ['data overwrites Path', 'pp = pathlib.Path(p)', 'pp = pp.read_bytes()', '{"bytes": len(pp)}'],
+    ['constructor alias', 'pp = Path(p)', 'data = pp.read_bytes()', '{"bytes": len(data)}'],
+    [
+      'dynamic constructor',
+      'pp = pathlib.Path(select(p))',
+      'data = pp.read_bytes()',
+      '{"bytes": len(data)}'
+    ],
+    [
+      'read arguments',
+      'pp = pathlib.Path(p)',
+      'data = pp.read_bytes(*mutate())',
+      '{"bytes": len(data)}'
+    ],
+    ['alternate reader', 'pp = pathlib.Path(p)', 'data = pp.read_text()', '{"bytes": len(data)}'],
+    ['Path escapes', 'pp = pathlib.Path(p)', 'data = pp.read_bytes()', '{"path": pp}'],
+    [
+      'opaque str argument',
+      'pp = pathlib.Path(p)',
+      'data = pp.read_bytes()',
+      '{"path": str(pp, *mutate())}'
+    ],
+    [
+      'opaque hash arguments',
+      'pp = pathlib.Path(p)',
+      'data = pp.read_bytes()',
+      '{"sha": hashlib.sha256(data).hexdigest(**mutate())}'
+    ],
+    ['opaque tail', 'pp = pathlib.Path(p)', 'data = pp.read_bytes()', '{"value": opaque(data)}'],
+    [
+      'reserved Path name',
+      'str = pathlib.Path(p)',
+      'data = str.read_bytes()',
+      '{"bytes": len(data)}'
+    ],
+    [
+      'reserved data name',
+      'pp = pathlib.Path(p)',
+      'hashlib = pp.read_bytes()',
+      '{"bytes": len(hashlib)}'
+    ],
+    [
+      'multiple targets',
+      'pp = alias = pathlib.Path(p)',
+      'data = pp.read_bytes()',
+      '{"bytes": len(data)}'
+    ],
+    ['non-dictionary return', 'pp = pathlib.Path(p)', 'data = pp.read_bytes()', 'len(data)']
+  ])(
+    'rejects unsupported local Path checksum shape: %s',
+    async (_label, construct, read, returned) => {
+      const source = [
+        'import pathlib, hashlib',
+        'from pathlib import Path',
+        'def file_meta(p):',
+        '    ' + construct,
+        '    ' + read,
+        '    return ' + returned,
+        'files = [file_meta(p) for p in ["inputs/first.csv", "inputs/later.csv"]]'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: [],
+        readState: 'partial'
+      })
+    }
+  )
+
+  it.each(['    opaque()\n', '    pp = replacement\n', '    alias = pp\n', '    assert data\n'])(
+    'rejects extra local Path helper statements: %s',
+    async (extra) => {
+      const source =
+        'import pathlib, hashlib\ndef file_meta(p):\n    pp = pathlib.Path(p)\n    data = pp.read_bytes()\n' +
+        extra +
+        '    return {"path": str(pp), "bytes": len(data)}\nfiles = [file_meta(p) for p in ["inputs/a.csv"]]'
+      expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toEqual([])
+    }
+  )
+
+  it.each(['str', 'len'])(
+    'rejects inherited %s bindings for local Path checksums',
+    async (builtin) => {
+      const source = [
+        'import pathlib, hashlib',
+        'def file_meta(p):',
+        '    pp = pathlib.Path(p)',
+        '    data = pp.read_bytes()',
+        '    return {"path": str(pp), "bytes": len(data)}',
+        'files = [file_meta(p) for p in ["inputs/a.csv"]]'
+      ].join('\n')
+      const context = await fileContext('python', [builtin + ' = replacement'])
+      expect((await analyzeNotebookSourceFileAccess('python', source, context)).reads).toEqual([])
+    }
+  )
+
+  it.each(['pathlib', 'hashlib', 'builtins', '*'])(
+    'rejects inherited %s taint for local Path checksums',
+    async (namespace) => {
+      const source = [
+        'import pathlib, hashlib',
+        'def file_meta(p):',
+        '    pp = pathlib.Path(p)',
+        '    data = pp.read_bytes()',
+        '    return {"path": str(pp), "bytes": len(data)}',
+        'files = [file_meta(p) for p in ["inputs/a.csv"]]'
+      ].join('\n')
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess('python', source, {
+            staticStrings: [],
+            staticCollections: [],
+            localFileWrappers: [],
+            pythonTaintedNamespaces: [namespace]
+          })
+        ).reads
+      ).toEqual([])
+    }
+  )
+
   it('replays bounded checksum helper inputs from a persisted static path collection', async () => {
     const context = await fileContext('python', [
       'paths = ["inputs/quakes.csv", "outputs/shallow.csv", "outputs/deep.csv"]'
@@ -3789,6 +4533,402 @@ describe('file context after mutable path collections', () => {
       writeState: 'partial',
       externalState: 'partial'
     })
+  })
+
+  it('replays bounded open/stat metadata helper inputs from a static path collection', async () => {
+    const source = [
+      'import hashlib, os',
+      'def file_meta(p):',
+      '    with open(p, "rb") as fh:',
+      '        data = fh.read()',
+      '    stat = os.stat(p)',
+      '    digest = hashlib.sha256(data).hexdigest()',
+      '    return {"path": p, "size_bytes": int(stat.st_size), "sha256": digest,',
+      '            "read_bytes": len(data), "size_match": stat.st_size == len(data),',
+      '            "mtime_utc": int(stat.st_mtime)}',
+      'paths = (os.path.join("outputs", "observations.json"),',
+      '         os.path.join("outputs", "regression.json"),',
+      '         os.path.join("outputs", "crosscheck.json"))',
+      'meta = [file_meta(p) for p in paths]'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [
+        analyzedPythonPath('outputs/crosscheck.json'),
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('replays a real metadata helper with an inline digest in a manifest comprehension', async () => {
+    const source = [
+      'import hashlib, json, os, sys',
+      'def file_meta(p):',
+      '    with open(p, "rb") as fh:',
+      '        data = fh.read()',
+      '    stat = os.stat(p)',
+      '    return {"path": p, "size_bytes": int(stat.st_size),',
+      '            "sha256": hashlib.sha256(data).hexdigest(),',
+      '            "read_bytes": len(data), "size_match": stat.st_size == len(data),',
+      '            "mtime_utc": int(stat.st_mtime)}',
+      'paths = (os.path.join("outputs", "observations.json"),',
+      '         os.path.join("outputs", "regression.json"),',
+      '         os.path.join("outputs", "crosscheck.json"))',
+      'manifest = {"files": [file_meta(p) for p in paths],',
+      '            "tolerance_notes": "metadata-only"}',
+      'out_path = os.path.join("outputs", "manifest.json")',
+      'with open(out_path, "w", encoding="utf-8") as fh:',
+      '    json.dump(manifest, fh)',
+      'print(sys.version.split()[0])'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [
+        analyzedPythonPath('outputs/crosscheck.json'),
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
+      writes: [analyzedPythonPath('outputs/manifest.json')],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('rejects metadata helpers with effectful inline hexdigest arguments', async () => {
+    const source = [
+      'import hashlib, os',
+      'def file_meta(p):',
+      '    with open(p, "rb") as fh:',
+      '        data = fh.read()',
+      '    stat = os.stat(p)',
+      '    return {"path": p, "sha256": hashlib.sha256(data).hexdigest(**mutate())}',
+      'paths = ("outputs/never-created.json",)',
+      'meta = [file_meta(p) for p in paths]'
+    ].join('\n')
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).not.toContain(
+      analyzedPythonPath('outputs/never-created.json')
+    )
+  })
+
+  it('replays the same metadata helper through a bounded for loop', async () => {
+    const source = [
+      'import hashlib, os',
+      'def file_meta(p):',
+      '    with open(p, "rb") as fh:',
+      '        data = fh.read()',
+      '    stat = os.stat(p)',
+      '    digest = hashlib.sha256(data).hexdigest()',
+      '    return {"path": p, "bytes": len(data), "sha256": digest}',
+      'paths = ("outputs/observations.json", "outputs/regression.json")',
+      'for p in paths:',
+      '    metadata = file_meta(p)'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['outputs/observations.json', 'outputs/regression.json'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('replays a Path-rebinding metadata helper with guarded for-loop bookkeeping', async () => {
+    const source = [
+      'import json, hashlib',
+      'from pathlib import Path',
+      'INPUTS = [Path("outputs/observations.json"), Path("outputs/regression.json")]',
+      'def file_meta(p):',
+      '    p = Path(p)',
+      '    data = p.read_bytes()',
+      '    h = hashlib.sha256(data).hexdigest()',
+      '    st_size = p.stat().st_size',
+      '    assert len(data) == st_size',
+      '    assert len(h) == 64 and all(c in "0123456789abcdef" for c in h)',
+      '    return {"path": str(p), "size_bytes": st_size, "sha256": h}',
+      'entries = []',
+      'for p in INPUTS:',
+      '    assert p.exists()',
+      '    m = file_meta(p)',
+      '    assert m["size_bytes"] > 0',
+      '    entries.append(m)',
+      'with open("outputs/manifest.json", "w", encoding="utf-8") as fh:',
+      '    json.dump({"files": entries}, fh)'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [
+        analyzedPythonPath('outputs/observations.json'),
+        analyzedPythonPath('outputs/regression.json')
+      ],
+      writes: ['outputs/manifest.json'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'open = replacement',
+    'os.stat = replacement',
+    'hashlib.sha256 = replacement',
+    'paths = build_paths()'
+  ])('rejects metadata helper inputs after unsafe binding changes: %s', async (mutation) => {
+    const source = [
+      'import hashlib, os',
+      'def file_meta(p):',
+      '    with open(p, "rb") as fh:',
+      '        data = fh.read()',
+      '    stat = os.stat(p)',
+      '    digest = hashlib.sha256(data).hexdigest()',
+      '    return {"path": p, "bytes": len(data), "sha256": digest}',
+      mutation,
+      ...(mutation === 'paths = build_paths()' ? [] : ['paths = ("outputs/never-created.json",)']),
+      'meta = [file_meta(p) for p in paths]'
+    ].join('\n')
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).not.toContain(
+      'outputs/never-created.json'
+    )
+  })
+
+  it.each([
+    'pathlib.Path = replacement',
+    'pathlib.Path.read_bytes = replacement',
+    'hashlib.sha256 = replacement',
+    'opaque(pathlib)',
+    'pathlib.Path = replacement\nimport pathlib'
+  ])('rejects checksum inputs after namespace mutation or escape: %s', async (mutation) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import hashlib, pathlib',
+        'def file_meta(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}',
+        mutation,
+        'files = [file_meta(p) for p in ["outputs/never-created.json"]]'
+      ].join('\n')
+    )
+    expect(result.reads).not.toContain('outputs/never-created.json')
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each(['pathlib', 'hashlib', '*'])(
+    'rejects checksum inputs with inherited %s namespace taint',
+    async (namespace) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'python',
+        [
+          'import hashlib, pathlib',
+          'def file_meta(p):',
+          '    data = pathlib.Path(p).read_bytes()',
+          '    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}',
+          'files = [file_meta(p) for p in ["outputs/never-created.json"]]'
+        ].join('\n'),
+        {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonTaintedNamespaces: [namespace]
+        }
+      )
+      expect(result.reads).not.toContain('outputs/never-created.json')
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each([
+    [
+      'pre-read argument effects',
+      'def digest(p):\n    data = pathlib.Path(p).read_text(encoding=choose_encoding())\n    return len(data)',
+      'files = [digest(p) for p in ["outputs/absent.csv"]]'
+    ],
+    [
+      'unsupported positional read arguments',
+      'def digest(p):\n    data = pathlib.Path(p).read_bytes(choose_encoding())\n    return len(data)',
+      'files = [digest(p) for p in ["outputs/absent.csv"]]'
+    ],
+    [
+      'a namespace parameter',
+      'def digest(pathlib):\n    data = pathlib.Path(pathlib).read_bytes()\n    return len(data)',
+      'files = [digest(p) for p in ["outputs/absent.csv"]]'
+    ],
+    [
+      'a local namespace binding',
+      'def digest(p):\n    pathlib = pathlib.Path(p).read_bytes()\n    return len(pathlib)',
+      'files = [digest(p) for p in ["outputs/absent.csv"]]'
+    ],
+    [
+      'a shadowed comprehension callable',
+      'def digest(p):\n    data = pathlib.Path(p).read_bytes()\n    return len(data)',
+      'files = [digest(digest) for digest in ["outputs/absent.csv"]]'
+    ]
+  ])('does not certify checksum inputs with %s', async (_label, helper, invocation) => {
+    const source = [
+      'import pathlib, hashlib, io',
+      'def fake_open(*args, **kwargs):',
+      '    return io.StringIO("memory")',
+      'def choose_encoding():',
+      '    pathlib.Path.open = fake_open',
+      '    return "utf-8"',
+      helper,
+      invocation
+    ].join('\n')
+    const result = await analyzeNotebookSourceFileAccess('python', source)
+    expect(result.reads).not.toContain('outputs/absent.csv')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('does not use a later checksum definition for an earlier invocation', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib',
+        'files = [digest(p) for p in ["outputs/absent.csv"]]',
+        'def digest(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return len(data)'
+      ].join('\n')
+    )
+    expect(result.reads).not.toContain('outputs/absent.csv')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('keeps checksum globals separate from the comprehension target scope', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib',
+        'def digest(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return len(data)',
+        'files = [digest(pathlib) for pathlib in ["outputs/observations.json"]]'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual(['outputs/observations.json'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each(['*mutate()', '**mutate_keywords()'])(
+    'rejects effectful hexdigest arguments before subsequent checksum iterations: %s',
+    async (argumentsSource) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'python',
+        [
+          'import pathlib, hashlib, io',
+          'def memory_open(*args, **kwargs):',
+          '    return io.BytesIO(b"memory")',
+          'def mutate():',
+          '    pathlib.Path.open = memory_open',
+          '    return ()',
+          'def mutate_keywords():',
+          '    pathlib.Path.open = memory_open',
+          '    return {}',
+          'def digest(p):',
+          '    data = pathlib.Path(p).read_bytes()',
+          '    return hashlib.sha256(data).hexdigest(' + argumentsSource + ')',
+          'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+        ].join('\n')
+      )
+      expect(result.reads).not.toContain('later.csv')
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each([
+    'def len(data):\n    pathlib.Path.open = memory_open\n    return data.__len__()',
+    'len = replacement',
+    'from custom import len',
+    'import builtins\nbuiltins.len = replacement'
+  ])('does not certify later checksum reads with an untrusted len: %s', async (binding) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib, io',
+        'def memory_open(*args, **kwargs):',
+        '    return io.BytesIO(b"memory")',
+        binding,
+        'def digest(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}',
+        'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+      ].join('\n')
+    )
+    expect(result.reads).not.toContain('later.csv')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('rejects a checksum helper that resolves len from its local parameter', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib',
+        'def digest(len):',
+        '    data = pathlib.Path(len).read_bytes()',
+        '    return len(data)',
+        'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+      ].join('\n')
+    )
+    expect(result.reads).not.toContain('later.csv')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('retains checksum reads when a shadowed len is never called', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib',
+        'len = replacement',
+        'def digest(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return hashlib.sha256(data).hexdigest()',
+        'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual(['first.csv', 'later.csv'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it('rejects a prior kernel binding for len in checksum helpers', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib',
+        'def digest(p):',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return len(data)',
+        'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+      ].join('\n'),
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        resolvedKernelNames: ['len']
+      }
+    )
+    expect(result.reads).not.toContain('later.csv')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('rejects checksum definitions with effectful return annotations', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      [
+        'import pathlib, hashlib, io',
+        'def memory_open(*args, **kwargs):',
+        '    return io.BytesIO(b"memory")',
+        'def mutate():',
+        '    pathlib.Path.open = memory_open',
+        '    return bytes',
+        'def digest(p) -> mutate():',
+        '    data = pathlib.Path(p).read_bytes()',
+        '    return hashlib.sha256(data).hexdigest()',
+        'files = [digest(p) for p in ["first.csv", "later.csv"]]'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([])
+    expect(result.readState).toBe('partial')
   })
 
   it('captures a single-cell MEX helper while retaining companion uncertainty', async () => {

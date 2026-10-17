@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 
 import { useSettingsStore } from '@/stores/settings-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import {
@@ -194,6 +196,9 @@ describe('WorkspacePage send gate while compacting', () => {
 
   beforeEach(() => {
     setDefaultWorkspaceAgentSettings()
+    useComputeStore.setState({ pendingApprovals: [] })
+    useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
+    useSkillImportStore.setState(createInitialSkillImportState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
@@ -659,6 +664,57 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.submit).toBe(false)
     expect(conversationProps.conversation.availability.revise).toBe(false)
     expect(conversationProps.agentControls.canChange).toBe(false)
+  })
+
+  it('blocks overlapping actions while a remote approval is pending and unlocks after settlement', async () => {
+    useComputeStore.getState().enqueueApproval({
+      id: 'remote-approval',
+      session_id: 'sess-a',
+      provider_id: 'ssh:cluster',
+      provider_name: 'Cluster',
+      shape: 'direct_ssh',
+      intent: 'Run remote analysis',
+      operation: 'call_command',
+      command_preview: 'python analysis.py',
+      command_full: 'python analysis.py'
+    })
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('start another request'))
+    })
+
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.agentControls.canChange).toBe(false)
+
+    await act(async () => useComputeStore.getState().dismissApproval('remote-approval'))
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
+    expect(conversationProps.agentControls.canChange).toBe(true)
+  })
+
+  it('releases the Composer lane after a credential request closes despite failed cancellation', async () => {
+    useSettingsStore.setState({
+      pendingCredentialRequests: [
+        {
+          id: 'closed-credential',
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works',
+          sessionId: 'sess-a',
+          closed: true,
+          responseFailed: true
+        }
+      ]
+    })
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('continue after closing'))
+    })
+
+    expect(conversationProps.permissions.credentialRequests).toEqual([])
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.agentControls.canChange).toBe(true)
   })
 
   it('unlocks a waiting Session after main confirms there is no active Plan', async () => {

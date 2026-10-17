@@ -52,6 +52,51 @@ const region = z
   })
   .strict()
   .refine((r) => r.x + r.width <= 1 && r.y + r.height <= 1, 'Region exceeds page.')
+// Offsets address the exact original PDF.js string in UTF-16 code units.
+export const pdfTableSourceSegmentSchema = z
+  .object({
+    pageNumber,
+    index: z.number().int().nonnegative().safe(),
+    text: z.string().min(1),
+    start: z.number().int().nonnegative().safe(),
+    end: z.number().int().positive().safe(),
+    region
+  })
+  .strict()
+const pdfTableSourceSegmentsSchema = z
+  .array(pdfTableSourceSegmentSchema)
+  .min(1)
+  .max(8192)
+  .refine(
+    (segments) =>
+      segments.every((segment, index) => {
+        const { text, start, end } = segment
+        const boundary = (offset: number): boolean =>
+          !(
+            offset > 0 &&
+            offset < text.length &&
+            /[\uD800-\uDBFF]/u.test(text[offset - 1]) &&
+            /[\uDC00-\uDFFF]/u.test(text[offset])
+          )
+        const previous = segments[index - 1]
+        return (
+          start < end &&
+          end <= text.length &&
+          boundary(start) &&
+          boundary(end) &&
+          text.slice(start, end).trim().length > 0 &&
+          segment.pageNumber === segment.region.page &&
+          (!previous ||
+            segment.pageNumber > previous.pageNumber ||
+            (segment.pageNumber === previous.pageNumber &&
+              (segment.index > previous.index ||
+                (segment.index === previous.index &&
+                  segment.start >= previous.end &&
+                  segment.text === previous.text))))
+        )
+      }),
+    'Invalid or overlapping table source segments.'
+  )
 const cell = z
   .object({
     row: z.number().int().nonnegative(),
@@ -61,6 +106,7 @@ const cell = z
     text: z.string(),
     textRuns: pdfTextRunsSchema.optional(),
     sourceItems: pdfTableSourceItemsSchema.optional(),
+    sourceSegments: pdfTableSourceSegmentsSchema.optional(),
     regions: z.array(region)
   })
   .strict()
@@ -68,6 +114,26 @@ const cell = z
     (value) => !value.textRuns || value.textRuns.map((run) => run.text).join('') === value.text,
     'Formatted cell text differs from plain text.'
   )
+  .refine((value) => {
+    if (!value.sourceSegments) return true
+    if (value.sourceItems || value.sourceSegments.length !== value.regions.length) return false
+    const remaining = [...value.regions]
+    for (const { region: source } of value.sourceSegments) {
+      const matches = remaining
+        .map((r, index) => ({ r, index }))
+        .filter(
+          ({ r }) =>
+            r.page === source.page &&
+            r.x === source.x &&
+            r.y === source.y &&
+            r.width === source.width &&
+            r.height === source.height
+        )
+      if (matches.length !== 1) return false
+      remaining.splice(matches[0].index, 1)
+    }
+    return remaining.length === 0
+  }, 'Table source segments must exclusively account for every cell region.')
 const tableNotes = z.array(z.object({ text: z.string(), regions: z.array(region).min(1) }).strict())
 const table = z
   .object({
@@ -296,6 +362,8 @@ export const parsePdfStructureResult = (
   }
   const processed = new Set(result.processedPages)
   const sourceTexts = new Map<string, string>()
+  const sourceRanges = new Map<string, Array<{ start: number; end: number }>>()
+  const wholeSources = new Set<string>()
   for (const element of result.elements) {
     const tables =
       element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
@@ -307,7 +375,7 @@ export const parsePdfStructureResult = (
     if (regions.some(({ page }) => !processed.has(page)))
       throw new Error('PDF element refers to an unprocessed page.')
     for (const cell of tables.flatMap((table) => table.cells)) {
-      for (const item of cell.sourceItems ?? []) {
+      for (const item of cell.sourceSegments ?? cell.sourceItems ?? []) {
         if (
           !processed.has(item.pageNumber) ||
           !cell.regions.some((r) => r.page === item.pageNumber)
@@ -317,6 +385,25 @@ export const parsePdfStructureResult = (
         if (sourceTexts.has(key) && sourceTexts.get(key) !== item.text)
           throw new Error('PDF table source item has conflicting original text.')
         sourceTexts.set(key, item.text)
+        if (
+          'start' in item &&
+          'end' in item &&
+          typeof item.start === 'number' &&
+          typeof item.end === 'number'
+        ) {
+          if (wholeSources.has(key))
+            throw new Error('PDF source has both whole and segment ownership.')
+          const { start, end } = item
+          const previous = sourceRanges.get(key) ?? []
+          if (previous.some((range) => start < range.end && range.start < end))
+            throw new Error('PDF table source segments have overlapping ownership.')
+          previous.push({ start, end })
+          sourceRanges.set(key, previous)
+        } else {
+          if (sourceRanges.has(key))
+            throw new Error('PDF source has both whole and segment ownership.')
+          wholeSources.add(key)
+        }
       }
     }
     const noteRegions = [

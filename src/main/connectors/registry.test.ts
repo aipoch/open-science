@@ -55,3 +55,17 @@ it('adds the preview capability only in the application registry', async () => {
   expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'molecule')?.group).toBe('featured')
   expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'pubmed')?.group).toBe('directory')
 })
+
+describe('PDC clinical tool host integration', () => {
+  it('exposes the package tool through the host registry and generated Skill', () => {
+    const descriptor = getDescriptor('pdc', 'pdc_list_clinical')!
+    expect(getConnectorTools('pdc')).toContain(descriptor)
+    expect(descriptor.credentialKeys).toEqual([])
+    expect(() => validateToolArguments(descriptor, descriptor.exampleArgs!)).not.toThrow()
+    expect(() => validateToolArguments(descriptor, {})).toThrow('invalid_arguments')
+    const doc = renderSkillDoc('pdc')
+    expect(doc).toContain('### pdc_list_clinical')
+    expect(doc).toContain(JSON.stringify(descriptor.exampleArgs))
+    expect(doc).toContain('completeness: "unknown"')
+  })
+})

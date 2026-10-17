@@ -2380,6 +2380,46 @@ def unused_reader():
       .filter((item) => item.runId === callId)
       .flatMap((item) => item.names)
 
+  it.each([
+    [
+      'module-qualified partial',
+      'import functools\nbound = functools.partial(integrand, offset=1.0)'
+    ],
+    ['imported partial', 'from functools import partial\nbound = partial(integrand, offset=1.0)']
+  ])('replays a closed partial callback identity: %s', async (_label, binding) => {
+    const wrappedHelpers = `def calibrate():\n    with open(CALIBRATION_PATH, "r") as f:\n        return float(f.read())\ndef integrand(t, offset):\n    return t + calibrate() + offset`
+    const projection = await projectPythonScripts([
+      setup,
+      wrappedHelpers,
+      `${binding}\nresult = quad(bound, a, b)`,
+      rebind
+    ])
+    expect(capturedNames(projection, 'run-3', 'run-4')).toContain('CALIBRATION_PATH')
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+  })
+
+  it('keeps a partial with dynamic bound arguments opaque', async () => {
+    const wrappedHelpers = `def calibrate():\n    with open(CALIBRATION_PATH, "r") as f:\n        return float(f.read())\ndef integrand(t, offset):\n    return t + calibrate() + offset`
+    const projection = await projectPythonScripts([
+      setup,
+      wrappedHelpers,
+      'import functools\nOFFSET = 1.0\nbound = functools.partial(integrand, offset=OFFSET)\nresult = quad(bound, a, b)',
+      rebind
+    ])
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+
+  it('does not treat a locally rebound functools namespace as trusted', async () => {
+    const wrappedHelpers = `def calibrate():\n    with open(CALIBRATION_PATH, "r") as f:\n        return float(f.read())\ndef integrand(t, offset):\n    return t + calibrate() + offset`
+    const projection = await projectPythonScripts([
+      setup,
+      wrappedHelpers,
+      'functools = replacement\nbound = functools.partial(integrand, offset=1.0)\nresult = quad(bound, a, b)',
+      rebind
+    ])
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+
   it.each(calls)(
     'retains the late-bound helper input without certifying quad: %s',
     async (call) => {
