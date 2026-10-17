@@ -269,6 +269,9 @@ async function startDesktop(): Promise<void> {
       ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: preservedStartupOptions.profilePath } }
       : {})
   })
+  // Selecting paths does not open Chromium databases; scope the lock before credential preflight.
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
   if (
     !(!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1') &&
     !app.requestSingleInstanceLock()
@@ -307,8 +310,6 @@ async function startDesktop(): Promise<void> {
       bootstrapLease.release()
     }
   }
-  app.setPath('userData', profilePath)
-  app.setPath('sessionData', profilePath)
   const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
   let startupBlocked = false

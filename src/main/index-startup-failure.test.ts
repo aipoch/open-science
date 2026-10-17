@@ -262,6 +262,20 @@ it('releases credential preflight and exits without yielding or initializing the
     f.dialog.showErrorBox.mock.invocationCallOrder[0]
   )
 })
+it('selects the requested profile before checking its single-instance lock', async () => {
+  let selectedPaths: unknown
+  f.app.requestSingleInstanceLock.mockImplementation(() => {
+    selectedPaths = f.app.setPath.mock.calls.map((call) => [...call])
+    return false
+  })
+  await import('./index')
+  expect(selectedPaths).toEqual([
+    ['userData', '/test/profile'],
+    ['sessionData', '/test/profile']
+  ])
+  expect(f.inventory).not.toHaveBeenCalled()
+  expect(f.app.whenReady).not.toHaveBeenCalled()
+})
 it('a secondary desktop never starts or stops a business runtime', async () => {
   f.app.requestSingleInstanceLock.mockReturnValue(false)
   await import('./index')

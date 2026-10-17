@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module'
 import { createServer, request, type ServerResponse } from 'node:http'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import type { Socket } from 'node:net'
 import { expect, it, vi } from 'vitest'
 
@@ -114,7 +115,9 @@ it.each(
 
 it('keeps cancellation attached after Electron closes the request upload side', async () => {
   const { EventEmitter } = await import('node:events')
-  const { cancelRequest } = require('electron-updater/out/differentialDownloader/cancelRequest')
+  const {
+    configureRequestCancellation
+  } = require('electron-updater/out/differentialDownloader/cancelRequest')
   const token = new CancellationToken()
   let aborted = false
   let failure: Error | undefined
@@ -124,10 +127,10 @@ it('keeps cancellation attached after Electron closes the request upload side', 
     }
   })
   expect(
-    cancelRequest(req, token, (error: Error) => {
+    configureRequestCancellation(req, token, (error: Error) => {
       failure = error
     })
-  ).toBe(true)
+  ).toBeTypeOf('function')
   req.emit('close')
   token.cancel()
   expect(aborted).toBe(true)
@@ -137,7 +140,9 @@ it('keeps cancellation attached after Electron closes the request upload side', 
 
 it('removes cancellation after the response finishes without aborting a completed request', async () => {
   const { EventEmitter } = await import('node:events')
-  const { cancelRequest } = require('electron-updater/out/differentialDownloader/cancelRequest')
+  const {
+    configureRequestCancellation
+  } = require('electron-updater/out/differentialDownloader/cancelRequest')
   const token = new CancellationToken()
   let aborted = false
   const req = Object.assign(new EventEmitter(), {
@@ -146,7 +151,7 @@ it('removes cancellation after the response finishes without aborting a complete
     }
   })
   const response = new EventEmitter()
-  cancelRequest(req, token, () => {
+  configureRequestCancellation(req, token, () => {
     throw new Error('Completed request rejected')
   })
   req.emit('response', response)
@@ -154,4 +159,110 @@ it('removes cancellation after the response finishes without aborting a complete
   expect(token.listenerCount('cancel')).toBe(0)
   token.cancel()
   expect(aborted).toBe(false)
+})
+
+it.each(
+  ['single', 'multipart', 'metadata']
+    .flatMap((mode) =>
+      [
+        'success',
+        'pre-cancelled',
+        'http503',
+        'invalid-range',
+        'invalid-content-type',
+        'interrupted'
+      ].map((scenario) => ({ mode, scenario }))
+    )
+    .filter(({ mode, scenario }) => scenario !== 'invalid-content-type' || mode === 'multipart')
+)('settles $mode $scenario and releases request cancellation', async ({ mode, scenario }) => {
+  const root = await mkdtemp(join(tmpdir(), 'update-range-result-'))
+  const payload = Buffer.from('0123456789abcdef')
+  const sockets = new Set<Socket>()
+  let responseFinished!: () => void
+  const responseClosed = new Promise<void>((resolve) => {
+    responseFinished = resolve
+  })
+  const server = createServer((_request, response) => {
+    response.once('close', responseFinished)
+    if (scenario === 'http503' || scenario === 'invalid-range') {
+      response.writeHead(scenario === 'http503' ? 503 : 200, { 'Content-Length': 5 })
+      response.flushHeaders()
+      return
+    }
+    if (scenario === 'invalid-content-type') {
+      response.writeHead(206, { 'Content-Type': 'text/plain', 'Content-Length': 5 })
+      response.flushHeaders()
+      return
+    }
+    const multipart =
+      '--result\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-7/16\r\n\r\n01234567\r\n--result\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 8-15/16\r\n\r\n89abcdef\r\n--result--\r\n'
+    const body = mode === 'multipart' ? Buffer.from(multipart) : payload
+    response.writeHead(206, {
+      'Content-Type':
+        mode === 'multipart' ? 'multipart/byteranges; boundary=result' : 'application/octet-stream',
+      'Content-Length': body.length,
+      'Accept-Ranges': 'bytes'
+    })
+    if (scenario === 'interrupted') {
+      response.write(body.subarray(0, 3))
+      setImmediate(() => response.destroy())
+    } else response.end(body)
+  })
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Missing loopback port')
+  const token = new CancellationToken()
+  await writeFile(join(root, 'old'), '')
+  const downloader = new DifferentialDownloader(
+    { size: payload.length, sha512: createHash('sha512').update(payload).digest('base64') },
+    {
+      createRequest: request,
+      addErrorAndTimeoutHandlers: (
+        req: ReturnType<typeof request>,
+        reject: (error: Error) => void
+      ) => req.on('error', reject)
+    },
+    {
+      oldFile: join(root, 'old'),
+      newFile: join(root, 'new'),
+      newUrl: new URL(`http://127.0.0.1:${address.port}/update`),
+      cancellationToken: token,
+      isUseMultipleRangeRequest: mode === 'multipart',
+      logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      onProgress: vi.fn()
+    }
+  )
+  try {
+    if (scenario === 'pre-cancelled') token.cancel()
+    const operation =
+      mode === 'metadata'
+        ? downloader.readRemoteBytes(0, 15)
+        : downloader.downloadFile(
+            mode === 'multipart'
+              ? [
+                  { kind: 1, start: 0, end: 8 },
+                  { kind: 1, start: 8, end: 16 }
+                ]
+              : [{ kind: 1, start: 0, end: 16 }]
+          )
+    if (scenario === 'success') {
+      const result = await operation
+      expect(mode === 'metadata' ? result : await readFile(join(root, 'new'))).toEqual(payload)
+    } else
+      await expect(operation).rejects.toThrow(
+        scenario === 'pre-cancelled' ? 'cancelled' : undefined
+      )
+    if (scenario !== 'pre-cancelled') await responseClosed
+    expect(token.listenerCount('cancel')).toBe(0)
+    await rm(root, { recursive: true })
+  } finally {
+    token.cancel()
+    for (const socket of sockets) socket.destroy()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
 })

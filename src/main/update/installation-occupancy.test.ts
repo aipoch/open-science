@@ -13,8 +13,10 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   realpath: vi.fn(),
   readlink: vi.fn(),
-  readFile: vi.fn()
+  readFile: vi.fn(),
+  arguments: vi.fn()
 }))
+vi.mock('@aipoch/process-tree-native', () => ({ getDarwinProcessArguments: mocks.arguments }))
 vi.mock('node:fs', () => ({
   realpathSync: mocks.realpath,
   readlinkSync: mocks.readlink,
@@ -166,7 +168,15 @@ describe('current macOS Crashpad ownership', () => {
   })
   const snapshot = (comm: string, args: string): void => {
     mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: comm })
-    mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: args })
+    mocks.arguments.mockImplementation((pid: number) => {
+      const row = args.split('\n').find((line) => line.startsWith(`${pid} `))
+      return row
+        ? row
+            .slice(String(pid).length + 1)
+            .split(' --')
+            .map((arg, i) => (i ? '--' + arg : arg))
+        : null
+    })
   }
 
   it('recognizes its reparented handler without trusting its PPID or process name', () => {
@@ -191,6 +201,17 @@ describe('current macOS Crashpad ownership', () => {
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
   })
 
+  it('preserves option-like text inside the Crashpad database path', () => {
+    const path = '/profiles/current --backup/Crashpad'
+    snapshot(`101 ${executable}`, '')
+    mocks.arguments.mockReturnValue([
+      executable,
+      '--database=' + path,
+      '--annotation=openScienceInstance=current-launch'
+    ])
+    expect(inspectOwnedCrashpadProcesses({ ...options, crashDumpsPath: path })).toEqual([101])
+  })
+
   it('requires the actual executable independently of matching arguments', () => {
     snapshot(`101 ${executable}-other`, `101 ${command()}`)
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
@@ -212,6 +233,12 @@ describe('current macOS Crashpad ownership', () => {
     ).toEqual([101])
   })
 
+  it('rejects unreadable native arguments without falling back to flattened ps text', () => {
+    snapshot(`101 ${executable}`, `101 ${command()}`)
+    mocks.arguments.mockReturnValue(null)
+    expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
+  })
+
   it('keeps disappeared or unreadable candidates out of the allow list', () => {
     snapshot('101 /gone', `101 ${command()}`)
     mocks.realpath.mockImplementation((path: string) => {
@@ -221,8 +248,7 @@ describe('current macOS Crashpad ownership', () => {
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
   })
 
-  it.each([0, 1])('fails closed if process snapshot %s fails', (step) => {
-    if (step) mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: `101 ${executable}` })
+  it('fails closed if the process snapshot fails', () => {
     mocks.spawnSync.mockReturnValueOnce({ status: null, stdout: '', error: new Error('timeout') })
     expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
   })
@@ -354,15 +380,16 @@ describe('Linux desktop helper ownership', () => {
     expect(inspectOwnedLinuxZygoteProcesses()).toEqual([])
     expect(mocks.spawnSync).not.toHaveBeenCalled()
   })
-  it.each(['current', 'old', 'other-executable', 'unreadable'])(
+  it.each(['current', 'special-path', 'old', 'other-executable', 'unreadable'])(
     'checks the Linux crash reporter executable and launch identity (%s)',
     (kind) => {
       const handler = join('/opt/Science', 'chrome_crashpad_handler')
+      const database =
+        kind === 'special-path' ? '/profile/current --backup/Crashpad' : '/profile/Crashpad'
       mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: '11 chrome_crashpad' })
-      mocks.spawnSync.mockReturnValueOnce({
-        status: 0,
-        stdout: `11 ${handler} --database=/profile/Crashpad --annotation=openScienceInstance=${kind === 'old' ? 'old' : 'current'}`
-      })
+      mocks.readFile.mockReturnValue(
+        `${handler}\0--database=${database}\0--annotation=openScienceInstance=${kind === 'old' ? 'old' : 'current'}\0`
+      )
       mocks.readlink.mockImplementation(() => {
         if (kind === 'unreadable') throw new Error('EACCES')
         return kind === 'other-executable' ? '/usr/bin/node' : handler
@@ -370,10 +397,10 @@ describe('Linux desktop helper ownership', () => {
       expect(
         inspectOwnedCrashpadProcesses({
           installationRoot: '/opt/Science',
-          crashDumpsPath: '/profile/Crashpad',
+          crashDumpsPath: database,
           instanceId: 'current'
         })
-      ).toEqual(kind === 'current' ? [11] : [])
+      ).toEqual(kind === 'current' || kind === 'special-path' ? [11] : [])
     }
   )
 })

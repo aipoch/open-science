@@ -1,3 +1,4 @@
+import { getDarwinProcessArguments } from '@aipoch/process-tree-native'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
@@ -265,7 +266,6 @@ export function inspectOwnedCrashpadProcesses(options: {
   const database = canonical(options.crashDumpsPath)
   if (!executable || !database || !options.instanceId) return []
   const commands = read('comm')
-  const argumentsByPid = read('args')
   return [...commands].flatMap(([pid, command]) => {
     if (process.platform === 'linux') {
       try {
@@ -275,14 +275,22 @@ export function inspectOwnedCrashpadProcesses(options: {
       }
     }
     if (canonical(command) !== executable) return []
-    const args = argumentsByPid.get(pid)?.split(' --')
-    if (!args || canonical(args.shift()!) !== executable) return []
-    const databases = args.filter((arg) => arg.startsWith('database='))
-    const instances = args.filter((arg) => arg.startsWith('annotation=openScienceInstance='))
+    let args: string[] | null
+    try {
+      args =
+        process.platform === 'darwin'
+          ? getDarwinProcessArguments(pid)
+          : readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
+    } catch {
+      return []
+    }
+    if (!args?.length || canonical(args[0]) !== executable) return []
+    const databases = args.filter((arg) => arg.startsWith('--database='))
+    const instances = args.filter((arg) => arg.startsWith('--annotation=openScienceInstance='))
     return databases.length === 1 &&
-      canonical(databases[0].slice('database='.length)) === database &&
+      canonical(databases[0].slice('--database='.length)) === database &&
       instances.length === 1 &&
-      instances[0] === `annotation=openScienceInstance=${options.instanceId}`
+      instances[0] === `--annotation=openScienceInstance=${options.instanceId}`
       ? [pid]
       : []
   })

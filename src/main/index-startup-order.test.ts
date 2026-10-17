@@ -24,7 +24,8 @@ describe('single Node runtime production startup', () => {
   })
   it('hands a second shell to its owner before reading Chromium-locked credentials', () => {
     before('app.requestSingleInstanceLock()', 'startupCredentialCiphertexts =')
-    before('startupCredentialCiphertexts =', "app.setPath('userData', profilePath)")
+    before("app.setPath('sessionData', profilePath)", 'app.requestSingleInstanceLock()')
+    before('startupCredentialCiphertexts =', 'await app.whenReady()')
     before("app.setPath('userData', profilePath)", "app.setPath('sessionData', profilePath)")
   })
   it('installs native shutdown listeners before launching Node and protects a quit during startup', () => {
