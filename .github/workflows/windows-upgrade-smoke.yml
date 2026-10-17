@@ -182,7 +182,7 @@ jobs:
         run: |
           node validation-tools/scripts/diagnostics/pr3599/prepare-upgrade-harness.mjs candidate-source
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Get-FileHash candidate-source/scripts/pr3599-*.mjs -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/harness-hashes.json
+          Get-FileHash candidate-source/scripts/pr3599-* -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/harness-hashes.json
           git -C candidate-source status --porcelain | Set-Content evidence/source-status.txt
       - name: Exercise actual application update under an isolated standard Windows account
         env:

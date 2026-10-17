@@ -55,7 +55,7 @@ replace("const child = spawn(executable, ['--open-science-headless', '--serve=0'
 replace('  cleanupSmokeRoot,', '')
 replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = fetch }) => {')
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')
-replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow, readRecordedWindows, operateRecordedButton } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
+replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow, readRecordedWindows, operateRecordedButton, operateRecordedDraft } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
 replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
 replace('    await onDownloaded()', "    await onDownloaded()\n    if (process.env.PR3599_BASELINE === 'pr') await verifyOccupiedInstallation({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), env)")
 const checkStart = text.indexOf('    const checked = await withTimeout(')
@@ -151,6 +151,37 @@ async function exerciseDownloadFaults(connection, installDirectory, expectedVers
 
 const rememberedProcesses = []
 let seededData
+const composerDraft = { marker: 'PR3599 unsent draft must survive signed update', seed: null, restored: [] }
+async function seedComposerDraft(installDirectory) {
+  try {
+    await desktopButton(installDirectory, 'open-project-for-draft', '^PR3599 upgrade preservation$', true)
+    const result = await waitFor('the real editable composer', async () => {
+      const read = await operateRecordedDraft(await snapshotInstallation(installDirectory))
+      if (!read.found) return
+      return operateRecordedDraft(await snapshotInstallation(installDirectory), composerDraft.marker)
+    }, 30000)
+    if (result.text !== composerDraft.marker) throw new Error('Composer did not accept the synthetic unsent draft')
+    composerDraft.seed = { status: 'PASS', result }
+  } catch (error) {
+    composerDraft.seed = { status: 'BLOCKED', error: error.message, windows: await readRecordedWindows(await snapshotInstallation(installDirectory)) }
+  }
+  await evidence('composer-draft-seed', composerDraft)
+}
+async function inspectRestoredDraft(installDirectory, prefix) {
+  if (composerDraft.seed?.status !== 'PASS') return
+  try {
+    let result = await operateRecordedDraft(await snapshotInstallation(installDirectory))
+    if (!result.found) {
+      await desktopButton(installDirectory, prefix + 'open-project-for-restored-draft', '^PR3599 upgrade preservation$', true)
+      result = await waitFor('the restored composer', async () => {
+        const read = await operateRecordedDraft(await snapshotInstallation(installDirectory))
+        return read.found ? read : undefined
+      }, 30000)
+    }
+    composerDraft.restored.push({ prefix, status: result.text === composerDraft.marker ? 'PASS' : 'FAIL', result })
+  } catch (error) { composerDraft.restored.push({ prefix, status: 'BLOCKED', error: error.message }) }
+  await evidence('composer-draft-restoration', composerDraft)
+}
 async function observeUpdateWindow(record) {
   const script = join(dirname(fileURLToPath(import.meta.url)), 'pr3599-observe-update-window.ps1')
   const output = join(process.env.PR3599_EVIDENCE_DIR, 'update-window-timeline.jsonl')
@@ -192,11 +223,11 @@ async function verifyUpdateObservations() {
   const missingWindow = samples.filter((sample) => !sample.windowPresent && !sample.processExited)
   const persistence = JSON.parse(await readFile(join(directory, 'persistence-order.json'), 'utf8'))
   const result = {
-    status: errors.length || observerErrors.length || persistence.status !== 'PASS' ? 'FAIL' : progress.length ? 'PASS' : 'BLOCKED',
+    status: errors.length || observerErrors.length || persistence.status !== 'PASS' || composerDraft.restored.some((draft) => draft.status === 'FAIL') ? 'FAIL' : progress.length ? 'PASS' : 'BLOCKED',
     sampleCount: samples.length, progress, errors, observerErrors, missingWindow, persistence,
     scope: '100ms requested accessibility sampling until the original signed Electron process exits; raw timestamps include actual sampling gaps. Installer UI after handoff is not observed.',
     continuousInstallationUi: 'NOT_FULLY_VERIFIED: sampling of old app ends at process exit; cannot prove installer UI remained visible',
-    composerDraft: 'NOT_VERIFIED: saved transcript is not an unsent composer draft',
+    composerDraft,
     authorizationTiming: 'No interactive elevation was requested for this per-user update; installer process timestamps are recorded separately'
   }
   await evidence('additional-update-observations', result)
@@ -281,6 +312,7 @@ async function seedUpgradeData(connection, installDirectory) {
   }, UPDATE_TIMEOUT_MS)
   seededData = { project, session, credentialId: credential.createdCredential.id, marker, mcp, mcpCommand: process.execPath, diagnosticFixture: "independent-node" }
   await evidence('seeded-product-data', seededData)
+  await seedComposerDraft(installDirectory)
 }
 async function evidence(name, value) {
   const directory = process.env.PR3599_EVIDENCE_DIR
@@ -331,6 +363,7 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   ready.processes = reconnected.processes
   rememberedProcesses.push(...ready.processes)
   await writePhaseEvidence('preserved-project-and-credential', { project, session, credentialId: seededData.credentialId, mcp: reconnected.latest })
+  await inspectRestoredDraft(installDirectory, prefix)
   await invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel: 'settings:set-close-preference', args: [{ preference: 'quit' }] })
   const closeRequest = await waitFor('the updated product window to accept normal close', () => closeRecordedWindow(ready.processes), UPDATE_TIMEOUT_MS)
   await writePhaseEvidence('automatic-successor-close-request', closeRequest)

@@ -131,6 +131,44 @@ if ($matchesFound.Count -eq 1) {
   return JSON.parse(output)
 }
 
+export async function operateRecordedDraft(records, value) {
+  const output = await powershell(`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+$editors = @()
+foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
+  $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)"
+  if (-not $current -or $current.CreationDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { continue }
+  $target = [Diagnostics.Process]::GetProcessById($record.pid)
+  try {
+    if ($target.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+    $window = [Windows.Automation.AutomationElement]::FromHandle($target.MainWindowHandle)
+    foreach ($element in $window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)) {
+      if ($element.Current.Name -eq 'Ask anything' -and -not $element.Current.IsOffscreen) { $editors += $element }
+    }
+  } finally { $target.Dispose() }
+}
+if ($editors.Count -gt 1) { throw 'Ambiguous composer; refusing to edit' }
+if ($editors.Count -eq 0) { Write-Output '{"found":false}'; exit 0 }
+$editor = $editors[0]
+$pattern = $null
+$text = $null
+if ($editor.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$pattern)) {
+  $valuePattern = [Windows.Automation.ValuePattern]$pattern
+  if ($env:PR3599_SET_DRAFT -eq '1') {
+    if ($valuePattern.Current.IsReadOnly -or -not $editor.Current.IsEnabled) { throw 'Composer is not editable' }
+    $valuePattern.SetValue($env:PR3599_DRAFT_TEXT)
+  }
+  $text = $valuePattern.Current.Value
+} elseif ($env:PR3599_SET_DRAFT -eq '1') { throw 'Composer does not expose an accessibility ValuePattern; no alternate injection permitted' }
+elseif ($editor.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
+  $text = ([Windows.Automation.TextPattern]$pattern).DocumentRange.GetText(-1)
+} else { throw 'Composer text is not readable through accessibility' }
+@{found=$true;text=$text;set=($env:PR3599_SET_DRAFT -eq '1')} | ConvertTo-Json -Compress
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(records), PR3599_SET_DRAFT: value === undefined ? '0' : '1', PR3599_DRAFT_TEXT: value ?? '' }, 20000)
+  return JSON.parse(output)
+}
+
 export async function readRecordedWindows(records) {
   const output = await powershell(`
 $ErrorActionPreference = 'Stop'
