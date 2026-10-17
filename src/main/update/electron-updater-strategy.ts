@@ -709,8 +709,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   // Triggered by the user's "Restart to update" click once the download is ready. On Windows,
-  // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
-  // version. Other updaters ignore isSilent.
+  // NSIS owns the visible installation progress after Electron releases its files. Updated installs
+  // skip setup/finish pages and relaunch automatically; headless callers can still install silently.
   async apply(options: UpdateApplyOptions = {}): Promise<UpdateStatus> {
     // Ignore stale/out-of-order renderer calls until electron-updater reports a completed download,
     // then claim the update synchronously so repeat clicks or concurrent renderers cannot start a
@@ -843,7 +843,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy')
-        this.updater.quitAndInstall(true, options.relaunch ?? true)
+        this.updater.quitAndInstall(
+          this.platform !== 'win32' || options.relaunch === false,
+          options.relaunch ?? true
+        )
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined

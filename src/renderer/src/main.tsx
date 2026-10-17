@@ -19,6 +19,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { startLocalePreferenceSync } from '@/stores/locale-store'
 import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
+import { configureComposerDraftStorage } from '@/pages/workspace/composer-draft-storage'
 
 const rendererBootMark = 'open-science:renderer-boot-start'
 performance.mark(rendererBootMark)
@@ -52,6 +53,7 @@ window.addEventListener('drop', (event) => event.preventDefault())
 // Load only the selected language before mounting, retaining a translated first app paint.
 const initialLocale = resolveInitialLocale()
 const startRenderer = (): void => {
+  configureComposerDraftStorage('desktop-profile', 'profile')
   initI18n(initialLocale)
   applyHtmlLang(initialLocale)
   startLocalePreferenceSync()
