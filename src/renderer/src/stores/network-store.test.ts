@@ -66,6 +66,67 @@ describe('useNetworkStore', () => {
 })
 
 describe('probeConnectivity', () => {
+  it('does not probe or report failure during planned runtime shutdown', async () => {
+    const check = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(check)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+    try {
+      useDesktopRuntimeRecoveryStore.setState({ closing: true })
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 10 })
+      systemResumed()
+      window.dispatchEvent(new Event('online'))
+      const pending = useNetworkStore
+        .getState()
+        .probeConnectivity({ announce: true, invalidate: true })
+      await vi.advanceTimersByTimeAsync(500)
+      await pending
+      expect(check).not.toHaveBeenCalled()
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+    } finally {
+      stubCheckConnectivity(async () => true)
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', closing: false })
+      await vi.advanceTimersByTimeAsync(500)
+    }
+  })
+
+  it('ignores an in-flight probe rejection after planned shutdown begins', async () => {
+    let reject!: (error: Error) => void
+    const reportRendererFailure = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        checkConnectivity: () =>
+          new Promise<boolean>((_, no) => {
+            reject = no
+          })
+      },
+      diagnostics: { reportRendererFailure }
+    }
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+    const pending = useNetworkStore.getState().probeConnectivity({ invalidate: true })
+    try {
+      useDesktopRuntimeRecoveryStore.setState({ closing: true })
+      reject(new Error('Desktop runtime is shutting down.'))
+      await pending
+      expect(useNetworkStore.getState().connectivity).toBe('unknown')
+      expect(reportRendererFailure).not.toHaveBeenCalled()
+    } finally {
+      stubCheckConnectivity(async () => true)
+      useDesktopRuntimeRecoveryStore.setState({ closing: false })
+      await vi.advanceTimersByTimeAsync(500)
+    }
+  })
+
+  it('rechecks when planned shutdown is cancelled without a connection epoch change', async () => {
+    useDesktopRuntimeRecoveryStore.setState({ closing: true })
+    const check = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(check)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'probe-failed' })
+    useDesktopRuntimeRecoveryStore.setState({ closing: false })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(check).toHaveBeenCalledOnce()
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
   it('rejects a late network result after the backend disconnects', async () => {
     let finish!: (value: boolean) => void
     stubCheckConnectivity(

@@ -7664,7 +7664,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Проверка незавершённых задач и возможности установки обновления.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Завершите работу в другом приложении и выйдите из него через меню, затем повторите проверку.",
     "Force update…": "Принудительно обновить…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "Установка началась, и её нельзя отменить. После установки приложение откроется снова.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "Установка началась, и её нельзя отменить. Это может занять несколько минут. Если система запросит разрешение, разрешите обновление, чтобы продолжить. После завершения установки приложение откроется снова.",
     "Installation result is unknown": "Результат установки неизвестен",
     "Installation starts only after shutdown has finished and its result is confirmed.": "Установка начинается только после завершения остановки и подтверждения её результата.",
     "Installing update…": "Установка обновления…",

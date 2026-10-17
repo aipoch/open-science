@@ -7197,7 +7197,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "未完了のタスクと更新のインストール条件を確認しています。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "別のアプリで作業を終え、そのアプリのメニューから終了してから再確認してください。",
     "Force update…": "強制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "インストールが開始されており、キャンセルできません。インストール後にアプリが再度開きます。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "インストールが開始されており、キャンセルできません。数分かかる場合があります。システムから許可を求められた場合は、更新を許可して続行してください。インストールが完了すると、アプリが再度開きます。",
     "Installation result is unknown": "インストール結果を確認できません",
     "Installation starts only after shutdown has finished and its result is confirmed.": "終了処理が完了し、その結果を確認してからインストールを開始します。",
     "Installing update…": "更新をインストール中…",

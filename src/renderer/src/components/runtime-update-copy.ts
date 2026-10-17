@@ -103,7 +103,7 @@ export const runtimeUpdateCopy = (
       return {
         title: t('Installing update…'),
         description: t(
-          'Installation has started and cannot be cancelled. The app will reopen after installation.'
+          'Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.'
         )
       }
     case 'S24':

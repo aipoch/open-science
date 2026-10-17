@@ -7357,7 +7357,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Unfertige Aufgaben und Installationsbedingungen werden geprüft.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Schließen Sie Ihre Arbeit in der anderen App ab und beenden Sie diese über das Anwendungsmenü. Prüfen Sie anschließend erneut.",
     "Force update…": "Update erzwingen…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "Die Installation wurde gestartet und kann nicht abgebrochen werden. Die App wird danach erneut geöffnet.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "Die Installation wurde gestartet und kann nicht abgebrochen werden. Dies kann einige Minuten dauern. Falls Ihr System eine Berechtigung anfordert, geben Sie das Update frei, um fortzufahren. Die App wird nach Abschluss der Installation erneut geöffnet.",
     "Installation result is unknown": "Installationsergebnis ist unbekannt",
     "Installation starts only after shutdown has finished and its result is confirmed.": "Die Installation beginnt erst, wenn das Herunterfahren abgeschlossen und bestätigt ist.",
     "Installing update…": "Update wird installiert…",

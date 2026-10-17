@@ -7197,7 +7197,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "正在检查未完成的任务，以及能否安装更新。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "请在另一个应用中处理工作，并从应用菜单退出，然后重新检查。",
     "Force update…": "强制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "安装已开始，不能取消。安装后应用会重新打开。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "安装已开始，不能取消，可能需要几分钟。如果系统请求授权，请允许更新以继续。安装完成后应用会重新打开。",
     "Installation result is unknown": "安装结果尚未确认",
     "Installation starts only after shutdown has finished and its result is confirmed.": "只有完成关闭操作并确认结果后，才会开始安装。",
     "Installing update…": "正在安装更新…",

@@ -7525,7 +7525,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Comprobando las tareas pendientes y si se puede instalar la actualización.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Termine su trabajo en la otra aplicación y salga desde su menú; después, vuelva a comprobarlo.",
     "Force update…": "Forzar actualización…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "La instalación ha comenzado y no se puede cancelar. La aplicación se volverá a abrir tras la instalación.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "La instalación ha comenzado y no se puede cancelar. Puede tardar unos minutos. Si el sistema solicita permiso, autorice la actualización para continuar. La aplicación se volverá a abrir cuando finalice la instalación.",
     "Installation result is unknown": "Se desconoce el resultado de la instalación",
     "Installation starts only after shutdown has finished and its result is confirmed.": "La instalación solo comienza una vez finalizado el cierre y confirmado su resultado.",
     "Installing update…": "Instalando actualización…",

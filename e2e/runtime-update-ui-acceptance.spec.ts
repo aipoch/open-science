@@ -322,6 +322,12 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
         await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        // An announced network probe holds its result for 500 ms. Check the inert background too.
+        await page.waitForTimeout(600)
+        await expect(
+          page.getByRole('button', { name: '互联网检查失败', exact: true, includeHidden: true })
+        ).toHaveCount(0)
         await capture('S23-planned-runtime-disconnect')
         await desktopState(false)
         await expect(page.getByRole('alertdialog', { name: '桌面连接已断开' })).toBeVisible()
