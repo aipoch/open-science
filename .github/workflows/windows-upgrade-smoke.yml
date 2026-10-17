@@ -12,9 +12,19 @@ on:
         description: Exact product source SHA bound to that artifact
         required: true
         type: string
+      signing_sha:
+        description: Exact reviewed diagnostic workflow commit that signed the candidate
+        default: 2235061980cba64284828e2bf93fb1a20718922a
+        required: true
+        type: string
+      baseline_run_id:
+        description: Exact signed current PR 1.0.0 artifact for the second upgrade path
+        default: '38998525919'
+        required: true
+        type: string
       baseline_tag:
         description: Lower released stable Windows version
-        default: v0.37.0
+        default: v1.0.0
         required: true
         type: string
 permissions:
@@ -22,6 +32,11 @@ permissions:
   actions: read
 jobs:
   actual-upgrade:
+    name: Upgrade ${{ matrix.baseline }} 1.0.0 to PR 1.0.1
+    strategy:
+      fail-fast: false
+      matrix:
+        baseline: [published, pr]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -43,6 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          SIGNING_SHA: ${{ inputs.signing_sha }}
           BASELINE_TAG: ${{ inputs.baseline_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -52,7 +68,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $runJson | Set-Content evidence/signing-run.json
           $run = $runJson | ConvertFrom-Json
-          if ($run.head_sha -ne $env:EXPECTED_SHA -or $run.path -ne '.github/workflows/signpath-test.yml') { throw 'Wrong artifact source' }
+          if ($run.head_sha -ne $env:SIGNING_SHA -or $run.path -ne '.github/workflows/signpath-test.yml') { throw 'Wrong artifact source' }
           $jobsJson = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN/jobs"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $jobsJson | Set-Content evidence/signing-jobs.json
@@ -65,7 +81,40 @@ jobs:
           path: current
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
+      - name: Verify product source and version-only build delta
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((Get-Content current/upgrade-product-sha.txt -Raw).Trim() -ne $env:EXPECTED_SHA) { throw 'Artifact product SHA does not match checkout' }
+          $changed = @(Get-Content current/upgrade-modified-files.txt)
+          if ($changed.Count -ne 2 -or @($changed | Where-Object { $_ -notin @('package.json','package-lock.json') }).Count) { throw 'Unexpected build modifications' }
+          Copy-Item current/upgrade-* evidence/
+      - name: Download the exact current PR 1.0.0 baseline
+        if: matrix.baseline == 'pr'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: windows-x64
+          path: previous
+          run-id: ${{ inputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify current PR baseline identity
+        if: matrix.baseline == 'pr'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN: ${{ inputs.baseline_run_id }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $json = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BASELINE_RUN"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $json | Set-Content evidence/pr-baseline-signing-run.json
+          $baseline = $json | ConvertFrom-Json
+          if ($baseline.head_sha -ne $env:EXPECTED_SHA -or $baseline.conclusion -ne 'success') { throw 'PR baseline artifact is not the exact successfully signed candidate' }
       - name: Fetch the signed lower-version baseline
+        if: matrix.baseline == 'published'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,6 +136,7 @@ jobs:
             @{role=$directory;file=$file.FullName;version=$file.VersionInfo.ProductVersion;sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash;signature=$signature.Status.ToString();publisher=$signature.SignerCertificate.Subject}
           }
           $records | ConvertTo-Json -Depth 5 | Set-Content evidence/installers.json
+          if ([version]$records[0].version -ne [version]'1.0.1' -or [version]$records[1].version -ne [version]'1.0.0') { throw 'Expected the explicitly requested 1.0.0 to 1.0.1 transition' }
           if ([version]$records[0].version -le [version]$records[1].version) { throw 'Candidate must be newer than baseline' }
       - name: Install only the existing upgrade harness dependencies
         working-directory: candidate-source
@@ -101,6 +151,8 @@ jobs:
           Get-FileHash candidate-source/scripts/pr3599-*.mjs -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/harness-hashes.json
           git -C candidate-source status --porcelain | Set-Content evidence/source-status.txt
       - name: Exercise actual application update under an isolated standard Windows account
+        env:
+          PR3599_BASELINE: ${{ matrix.baseline }}
         shell: pwsh
         run: |
           ./validation-tools/scripts/diagnostics/pr3599/run-as-standard-user.ps1 -CandidateRoot "$env:GITHUB_WORKSPACE\candidate-source" -CurrentDirectory "$env:GITHUB_WORKSPACE\current" -PreviousDirectory "$env:GITHUB_WORKSPACE\previous" -OutputDirectory "$env:GITHUB_WORKSPACE\evidence"
@@ -108,7 +160,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: pr3599-real-upgrade-evidence
+          name: pr3599-real-upgrade-${{ matrix.baseline }}
           path: evidence
           if-no-files-found: error
           retention-days: 14
+

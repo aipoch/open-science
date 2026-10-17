@@ -69,7 +69,7 @@ exit $result
 $credential = [PSCredential]::new("$env:COMPUTERNAME\$name", $secure)
 $process = $null
 try {
-  $process = Start-Process -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Credential $credential -LoadUserProfile -WorkingDirectory $root -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$childScript+'"')) -PassThru -WindowStyle Hidden
+  $process = Start-Process -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Credential $credential -LoadUserProfile -WorkingDirectory $root -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$childScript+'"')) -RedirectStandardOutput (Join-Path $root 'child.stdout.log') -RedirectStandardError (Join-Path $root 'child.stderr.log') -PassThru -WindowStyle Hidden
   $deadline = (Get-Date).AddMinutes(30)
   $lastLine = ''
   while (-not $process.WaitForExit(5000)) {

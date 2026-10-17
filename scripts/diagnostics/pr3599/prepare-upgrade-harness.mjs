@@ -13,9 +13,10 @@ const probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProc
     let windows
     try { windows = await readRecordedWindows(records) } catch (error) { windows = { captureError: error.message } }
     await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-failure.json'), JSON.stringify({ error: error.message, records, windows }, null, 2))
-    await terminateProcessTree(child)`)
+    const cleanup = await waitForRecordedExit(records, { force: true, timeoutMs: 10000 })
+    await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-forced-cleanup.json'), JSON.stringify(cleanup, null, 2))`)
 smoke = smoke.slice(0, probeStart) + probe + smoke.slice(probeEnd)
-smoke = "import { snapshotInstallation, readRecordedWindows } from './pr3599-owned-processes.mjs'\n" + smoke
+smoke = "import { snapshotInstallation, readRecordedWindows, waitForRecordedExit } from './pr3599-owned-processes.mjs'\n" + smoke
 await writeFile(join(source, 'scripts/pr3599-installer-smoke.mjs'), smoke)
 let text = await readFile(original, 'utf8')
 const replace = (before, after) => {
@@ -31,7 +32,7 @@ replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ proto
 replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
 replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
 replace('    await onDownloaded()', "    await onDownloaded()\n    if (process.env.PR3599_BASELINE === 'pr') await verifyOccupiedInstallation({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), env)")
-replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...windowsProfileEnvironment(profileDirectory), OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory }, null, 2))")
+replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...windowsProfileEnvironment(profileDirectory), OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory, independentHarnessPid: process.pid, independentHarnessExecutable: process.execPath }, null, 2))")
 replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)', "    const ownedBeforeUpdate = await snapshotInstallation(dirname(executable))\n    rememberedProcesses.push(...ownedBeforeUpdate)\n    await evidence('old-processes-before-update', ownedBeforeUpdate)\n    const closed = waitForShutdownExit(exit, child, diagnosticOutput)")
 replace('    const installerResult = await installerExit', "    await evidence('old-app-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), exitCode })\n    await evidence('old-processes-normal-exit', await waitForRecordedExit(ownedBeforeUpdate))\n    const installerResult = await installerExit")
 replace('    installerObserver.abort(', "    await evidence('old-app-failure-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), error: error.message })\n    installerObserver.abort(")
@@ -50,7 +51,7 @@ replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-sci
   })`)
 replace('  await cleanup(() => profileGuard.cleanup(primaryError))', '  if (!primaryError) await cleanup(() => profileGuard.cleanup(primaryError))')
 replace('  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))', "  if (installed && !primaryError && !cleanupErrors.length) await cleanup(() => uninstallAndVerify(installDirectory, env))")
-replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))', "  await evidence('final-state', { root, primaryError: primaryError?.message, cleanupErrors: cleanupErrors.map((e) => e.message), processes: await snapshotInstallation(installDirectory), directoryRetained: true })")
+replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))', "  await evidence('final-state', { root, independentHarnessPid: process.pid, primaryError: primaryError?.message, cleanupErrors: cleanupErrors.map((e) => e.message), processes: await snapshotInstallation(installDirectory), directoryRetained: true })")
 const helpers = String.raw`
 const rememberedProcesses = []
 let seededData
@@ -78,6 +79,7 @@ async function verifyOccupiedInstallation(connection, installDirectory, env) {
 async function seedUpgradeData(connection, installDirectory) {
   const rpc = (channel, ...args) => invokeWebRpc({ ...connection, channel, args })
   const project = await rpc('projects:create', { name: 'PR3599 upgrade preservation', description: 'Synthetic upgrade data; no user content' })
+  await rpc('settings:set-close-preference', { preference: 'quit' })
   const credential = await rpc('settings:create-device-credential', { displayName: 'PR3599 synthetic MCP', kind: 'token', secret: 'synthetic-pr3599-no-access' })
   if (!credential.createdCredential?.id || !project.id) throw new Error('Could not seed actual product data')
   const marker = join(process.env.PR3599_EVIDENCE_DIR, 'mcp-lifecycle.jsonl')
@@ -127,6 +129,8 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   const rpc = (channel, ...args) => invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel, args })
   const project = await rpc('projects:get', seededData.project.id)
   if (project?.name !== seededData.project.name || project?.description !== seededData.project.description) throw new Error('Upgrade did not preserve the project')
+  const settings = await rpc('settings:get-settings')
+  if (settings.closePreference !== 'quit') throw new Error('Upgrade did not preserve the close preference')
   await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
   const reconnected = await waitFor('the updated MCP resolving the preserved synthetic credential', async () => {
     const events = (await readFile(seededData.marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
@@ -148,3 +152,4 @@ if (text.includes("'/IM'")) throw new Error('Global image-name termination remai
 await copyFile(join(dirname(fileURLToPath(import.meta.url)), 'owned-processes.mjs'), join(source, 'scripts/pr3599-owned-processes.mjs'))
 await writeFile(join(source, 'scripts/pr3599-upgrade-certification.mjs'), text)
 console.log('Prepared candidate-bound upgrade harness with scoped cleanup and normal successor shutdown.')
+

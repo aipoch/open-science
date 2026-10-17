@@ -42,7 +42,23 @@ $records = @(Get-CimInstance Win32_Process | ForEach-Object {
 })
 ConvertTo-Json -InputObject $records -Compress
 `, {}, 15000)
-  return selectOwnedProcesses(JSON.parse(output), directory)
+  const selected = selectOwnedProcesses(JSON.parse(output), directory)
+  if (!selected.length) return selected
+  const ownership = await powershell(`
+$ErrorActionPreference = 'Stop'
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$results = @()
+foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
+  $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)"
+  if (-not $current -or $current.CreationDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { continue }
+  $owner = Invoke-CimMethod -InputObject $current -MethodName GetOwnerSid
+  if ($owner.ReturnValue -ne 0 -or $owner.Sid -ne $sid) { throw "Installation process $($record.pid) is not owned by the validation account" }
+  $results += @{pid=$record.pid;ownerSid=$owner.Sid}
+}
+ConvertTo-Json -InputObject $results -Compress
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(selected) }, 15000)
+  const owners = new Map(JSON.parse(ownership).map((p) => [p.pid, p.ownerSid]))
+  return selected.filter((p) => owners.has(p.pid)).map((p) => ({ ...p, ownerSid: owners.get(p.pid) }))
 }
 
 // Send the normal Windows close request only to a recorded installation process.
