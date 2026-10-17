@@ -65,6 +65,10 @@ foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
     }
   } finally { $target.Dispose() }
 }
+Write-Output 'null'
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
+  return JSON.parse(output)
+}
 
 export async function readRecordedWindows(records) {
   const output = await powershell(`
@@ -86,11 +90,6 @@ ConvertTo-Json -InputObject $windows -Depth 4 -Compress
 `, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
   return JSON.parse(output)
 }
-Write-Output 'null'
-`, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
-  return JSON.parse(output)
-}
-
 // Wait on verified process handles. Never turn a timeout into success, and never act on reused PIDs.
 export async function waitForRecordedExit(records, { force = false, timeoutMs = 60000 } = {}) {
   if (!records.length) return []

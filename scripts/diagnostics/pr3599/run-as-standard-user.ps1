@@ -31,8 +31,12 @@ $env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
 $env:HOME = $env:USERPROFILE
 $env:HOMEDRIVE = [IO.Path]::GetPathRoot($env:USERPROFILE).TrimEnd('\')
 $env:HOMEPATH = $env:USERPROFILE.Substring($env:HOMEDRIVE.Length)
-$env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
-$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+$env:APPDATA = [Environment]::GetFolderPath('ApplicationData', [Environment+SpecialFolderOption]::Create)
+$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData', [Environment+SpecialFolderOption]::Create)
+if (-not $env:APPDATA -or -not $env:LOCALAPPDATA) { throw 'The isolated Windows account has no usable AppData known folders' }
+foreach ($known in @($env:APPDATA,$env:LOCALAPPDATA)) {
+  if (-not $known.StartsWith($env:USERPROFILE + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Known folder escaped the isolated account profile' }
+}
 if (-not $env:USERPROFILE -or $env:USERPROFILE -eq $inheritedProfile) { throw 'The isolated account profile was not loaded separately' }
 @{identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;isAdministrator=$admin;profile=$env:USERPROFILE;inheritedProfile=$inheritedProfile;appData=$env:APPDATA;localAppData=$env:LOCALAPPDATA;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'identity.json')
 if ($admin) { throw 'Upgrade acceptance must run as an ordinary user' }
@@ -94,6 +98,14 @@ try {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs $relative)
   }
   Get-ChildItem -LiteralPath $root -Recurse -File | Select-Object FullName,Length,LastWriteTime | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'retained-file-inventory.json')
+  $accountProfile = Get-CimInstance Win32_UserProfile | Where-Object SID -eq $account.SID.Value
+  if ($accountProfile -and (Test-Path -LiteralPath $accountProfile.LocalPath)) {
+    Get-ChildItem -LiteralPath $accountProfile.LocalPath -Recurse -File -Force -Filter '*.log' -ErrorAction Continue | ForEach-Object {
+      $relative = $_.FullName.Substring($accountProfile.LocalPath.Length).TrimStart('\').Replace('\','__')
+      Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs ('account__' + $relative))
+    }
+    @{sid=$account.SID.Value;path=$accountProfile.LocalPath;loaded=$accountProfile.Loaded} | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'account-profile.json')
+  }
   if ($owned.Count -eq 0) { Remove-LocalUser -Name $name }
   else { Write-Error "The isolated account still owns $($owned.Count) processes; evidence retained and VM recycling is forced cleanup, not acceptance" }
 }

@@ -337,6 +337,21 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Prepare version-only upgrade candidate in clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          # Diagnostic artifact only: same PR code, greater stable version for real updater checks.
+          test "$(git rev-parse HEAD)" = "77f387d90b5ceca578141316cbc9a756613a89e9"
+          test "$(node -p "require('./package.json').version")" = "1.0.0"
+          npm version --no-git-tag-version --ignore-scripts 1.0.1
+          mkdir -p dist
+          git rev-parse HEAD > dist/upgrade-product-sha.txt
+          git diff --binary > dist/upgrade-version-only.patch
+          git diff --name-only > dist/upgrade-modified-files.txt
+          node -e "const fs=require('fs'); const names=fs.readFileSync('dist/upgrade-modified-files.txt','utf8').trim().split(/\r?\n/); console.log(names); if(names.some(n=>!['package.json','package-lock.json'].includes(n))) throw Error('Unexpected product modification')"
+
       # The Node secret backend compiles against libsecret/dbus headers during packaging
       # (build:backend-native); Ubuntu images do not ship them.
       - name: Install Linux secret service headers
@@ -594,6 +609,13 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: node scripts/windows-runtime-cdn.mjs check
 
+      - name: Record generated native build changes and verify product source
+        shell: bash
+        run: |
+          git diff --exit-code -- src scripts build .github
+          git diff --binary > dist/upgrade-generated-build.patch
+          git diff --name-only > dist/upgrade-generated-files.txt
+
       - name: Build & package
         id: package
         shell: bash
@@ -621,15 +643,6 @@ jobs:
             npm version --no-git-tag-version "$nightly_version"
             eb_ver=(-c.extraMetadata.version="$nightly_version")
           fi
-          # Diagnostic artifact only: same PR code, greater stable version for real updater checks.
-          test "$(git rev-parse HEAD)" = "77f387d90b5ceca578141316cbc9a756613a89e9"
-          test "$(node -p "require('./package.json').version")" = "1.0.0"
-          npm version --no-git-tag-version --ignore-scripts 1.0.1
-          mkdir -p dist
-          git rev-parse HEAD > dist/upgrade-product-sha.txt
-          git diff --binary > dist/upgrade-version-only.patch
-          git diff --name-only > dist/upgrade-modified-files.txt
-          node -e "const fs=require('fs'); const names=fs.readFileSync('dist/upgrade-modified-files.txt','utf8').trim().split(/\r?\n/); if(names.some(n=>!['package.json','package-lock.json'].includes(n))) throw Error('Unexpected product modification')"
           npm run build:e2e
           npm run build:web
           windows_signing_args=()

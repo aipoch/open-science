@@ -30,6 +30,7 @@ replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = f
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')
 replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
 replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
+replace('    await onDownloaded()', "    await onDownloaded()\n    if (process.env.PR3599_BASELINE === 'pr') await verifyOccupiedInstallation({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), env)")
 replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...windowsProfileEnvironment(profileDirectory), OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory }, null, 2))")
 replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)', "    const ownedBeforeUpdate = await snapshotInstallation(dirname(executable))\n    rememberedProcesses.push(...ownedBeforeUpdate)\n    await evidence('old-processes-before-update', ownedBeforeUpdate)\n    const closed = waitForShutdownExit(exit, child, diagnosticOutput)")
 replace('    const installerResult = await installerExit', "    await evidence('old-app-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), exitCode })\n    await evidence('old-processes-normal-exit', await waitForRecordedExit(ownedBeforeUpdate))\n    const installerResult = await installerExit")
@@ -53,6 +54,27 @@ replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErr
 const helpers = String.raw`
 const rememberedProcesses = []
 let seededData
+async function verifyOccupiedInstallation(connection, installDirectory, env) {
+  const executable = join(installDirectory, 'resources/node-runtime/node.exe')
+  const blocker = spawn(executable, ['-e', 'process.stdin.once("data",()=>process.exit(0));console.log("owned-lock-ready")'], { env, windowsHide: true })
+  const exited = new Promise((resolve, reject) => { blocker.once('exit', resolve); blocker.once('error', reject) })
+  try {
+    await withTimeout(new Promise((resolve, reject) => { blocker.stdout.once('data', resolve); blocker.once('error', reject) }), 'owned installation lock readiness', 15000)
+    const records = await snapshotInstallation(installDirectory)
+    rememberedProcesses.push(...records)
+    const result = await invokeWebRpc({ ...connection, channel: 'update:apply' })
+    await evidence('occupied-installation-blocked', { blockerPid: blocker.pid, processes: records, result })
+    if (result.reason !== 'installation-busy' || result.recovery?.installation !== 'unchanged' || result.recovery?.runtime !== 'running') throw new Error('Occupied installation was not safely blocked')
+    if (blocker.exitCode !== null) throw new Error('Product terminated the independent installation occupant')
+    const response = await fetchWithTimeout(connection.endpoint + '/api/bootstrap?' + connection.auth)
+    if (!response.ok) throw new Error('Product became unavailable after refusing occupied installation')
+  } finally {
+    blocker.stdin.end('release\n')
+    const code = await withTimeout(exited, 'owned lock fixture normal exit', 15000)
+    await evidence('occupied-installation-release', { pid: blocker.pid, exitCode: code, forced: false })
+    if (code !== 0) throw new Error('Installation lock fixture did not exit normally')
+  }
+}
 async function seedUpgradeData(connection, installDirectory) {
   const rpc = (channel, ...args) => invokeWebRpc({ ...connection, channel, args })
   const project = await rpc('projects:create', { name: 'PR3599 upgrade preservation', description: 'Synthetic upgrade data; no user content' })
