@@ -378,6 +378,10 @@ jobs:
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
 
+      - name: Prepare the existing desktop orchestration fixture directory
+        if: ${{ matrix.platform == 'win' }}
+        run: node -e "const fs=require('node:fs'),path=require('node:path');const directory=path.resolve('/tmp');fs.mkdirSync(directory,{recursive:true});console.log(JSON.stringify({fixtureDirectory:directory,productModified:false}))"
+
       - name: Verify stalled download cancellation and Windows updater regressions
         if: ${{ matrix.platform == 'win' }}
         run: >-
