@@ -5,9 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  projectSessionActionability,
+  toPersistedSession,
+  useSessionStore
+} from '../../stores/session-store'
 import { getAgentLoadingPhase } from '../../pages/workspace/agent-loading-message'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
+import * as runtimeWriterClient from './runtime-writer-client'
+import { createStoreSaver } from '../session-persistence/session-persistence'
 import {
   processIncrementalWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
@@ -137,6 +144,122 @@ describe('live runtime event ingest', () => {
 
   afterEach(() => {
     resetWorkspaceRuntimeEventOwnerForTests()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps app-owned approvals waiting across durable runtime updates until the last live request settles', () => {
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'session-1', content: 'Run risky code' })
+    const request = {
+      requestId: 'risky-code-1',
+      sessionId: 'session-1',
+      toolCallId: 'app-approval:risky-code-1',
+      title: 'Approve risky code',
+      appOwned: true as const,
+      options: [{ optionId: 'approve', name: 'Approve', kind: 'allow_once' as const }]
+    }
+    const secondRequest = { ...request, requestId: 'risky-code-2' }
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({ revision: 1, pendingPermissions: [request, secondRequest] })
+    )
+    const source = useSessionStore.getState().sessions[0]
+    expect(projectSessionActionability(source).activity).toBe('waiting')
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'running',
+        runtimeContext: { version: 1, revision: 1 },
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    expect(projectSessionActionability(useSessionStore.getState().sessions[0])).toMatchObject({
+      presentedStatus: 'waiting-permission',
+      activity: 'waiting',
+      attentionOwner: 'user'
+    })
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({ revision: 2, pendingPermissions: [secondRequest] })
+    )
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({ revision: 3, pendingPermissions: [] })
+    )
+    expect(projectSessionActionability(useSessionStore.getState().sessions[0]).activity).toBe(
+      'running'
+    )
+    expect(toPersistedSession(useSessionStore.getState().sessions[0])).not.toHaveProperty(
+      'liveInteractionState'
+    )
+  })
+
+  it('shows live approvals in an observer without changing or saving its durable Session', async () => {
+    vi.spyOn(runtimeWriterClient, 'isRuntimeWriter').mockReturnValue(false)
+    useSessionStore.getState().hydrateSessions([createSession('session-1', 'project-1', 1)])
+    const before = toPersistedSession(useSessionStore.getState().sessions[0])
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const save = createStoreSaver(
+      {
+        loadAll: vi.fn(),
+        loadOne: vi.fn(),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      },
+      useSessionStore.getState()
+    )
+
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({
+        revision: 1,
+        pendingPermissions: [
+          {
+            requestId: 'risky-code-observer',
+            sessionId: 'session-1',
+            toolCallId: 'app-approval:risky-code-observer',
+            title: 'Approve risky code',
+            appOwned: true,
+            options: []
+          }
+        ]
+      })
+    )
+
+    expect(
+      projectSessionActionability(useSessionStore.getState().sessions[0]).presentedStatus
+    ).toBe('waiting-permission')
+    expect(toPersistedSession(useSessionStore.getState().sessions[0])).toEqual(before)
+    await save(useSessionStore.getState())
+    expect(saveSession).not.toHaveBeenCalled()
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...before, updatedAt: 2, runtimeContext: { version: 1, revision: 2 } },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      updatedAt: 2
+    })
+    expect(
+      projectSessionActionability(useSessionStore.getState().sessions[0]).presentedStatus
+    ).toBe('waiting-permission')
+    await save(useSessionStore.getState())
+    expect(saveSession).not.toHaveBeenCalled()
+    const durableAfterAuthority = toPersistedSession(useSessionStore.getState().sessions[0])
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({ revision: 2, pendingPermissions: [] })
+    )
+    expect(
+      projectSessionActionability(useSessionStore.getState().sessions[0]).presentedStatus
+    ).toBe('running')
+    expect(toPersistedSession(useSessionStore.getState().sessions[0])).toEqual(
+      durableAfterAuthority
+    )
   })
 
   it('leaves snapshot-only runtimes on the legacy seam', () => {

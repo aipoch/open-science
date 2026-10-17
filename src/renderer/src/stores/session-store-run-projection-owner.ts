@@ -76,11 +76,22 @@ export type SessionRunProjectionActions = {
   appendAgentMessageChunks: (inputs: AppendAgentMessageChunkInput[]) => AppendMessageResult[]
   setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
-  setElicitationPending: (sessionId: string, pending: boolean) => void
-  setPermissionPending: (sessionId: string, options?: { rearmAuthority?: boolean }) => void
+  setElicitationPending: (
+    sessionId: string,
+    pending: boolean,
+    options?: { liveProjection?: 'writer' | 'observer' }
+  ) => void
+  setPermissionPending: (
+    sessionId: string,
+    options?: { rearmAuthority?: boolean; liveProjection?: 'writer' | 'observer' }
+  ) => void
   clearPermissionPending: (
     sessionId: string,
-    options?: { authority?: 'continuing' | 'settled'; requestId?: string }
+    options?: {
+      authority?: 'continuing' | 'settled'
+      requestId?: string
+      liveProjection?: 'writer' | 'observer'
+    }
   ) => void
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
@@ -375,10 +386,10 @@ export const createSessionRunProjectionOwner = <
       }))
     },
 
-    setElicitationPending: (sessionId, pending) => {
+    setElicitationPending: (sessionId, pending, options) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectElicitationPending(session, pending)
+          projectElicitationPending(session, pending, options?.liveProjection)
         )
       }))
     },
@@ -386,7 +397,7 @@ export const createSessionRunProjectionOwner = <
     setPermissionPending: (sessionId, options) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectPermissionPending(session, options?.rearmAuthority)
+          projectPermissionPending(session, options?.rearmAuthority, options?.liveProjection)
         )
       }))
     },
@@ -394,7 +405,12 @@ export const createSessionRunProjectionOwner = <
     clearPermissionPending: (sessionId, options) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectPermissionCleared(session, options?.authority, options?.requestId)
+          projectPermissionCleared(
+            session,
+            options?.authority,
+            options?.requestId,
+            options?.liveProjection
+          )
         )
       }))
     },

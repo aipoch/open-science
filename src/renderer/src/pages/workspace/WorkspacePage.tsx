@@ -35,6 +35,7 @@ import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSessionPendingInteractions } from '@/hooks/useSessionPendingInteractions'
 import {
   createNotebookPreviewItem,
   createProjectComputePreviewItem,
@@ -192,6 +193,7 @@ const WorkspacePage = ({
   )
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const selectedAgentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const memoryGloballyEnabled = useMemoryStore((state) => state.enabled)
@@ -747,15 +749,24 @@ const WorkspacePage = ({
   const visibleCredentialRequests = useMemo(
     () =>
       activeSession
-        ? pendingCredentialRequests.filter((request) => request.sessionId === activeSession.id)
+        ? pendingCredentialRequests.filter(
+            (request) => request.sessionId === activeSession.id && !request.closed
+          )
         : [],
     [activeSession, pendingCredentialRequests]
   )
   const activeSessionActionability = activeSession
     ? projectSessionActionability(activeSession, {
-        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id),
+        rootPermissionPending:
+          pendingInteractionFactsBySession.get(activeSession.id)?.rootPermissionPending ||
+          resolveRootPermissionPending(pendingPermissions, activeSession.id),
         credentialPending: visibleCredentialRequests.length > 0,
-        presentedWaitReason: visibleCredentialRequests.length > 0 ? 'waiting-for-user' : undefined
+        presentedWaitReason: pendingInteractionFactsBySession.get(activeSession.id)
+          ?.rootPermissionPending
+          ? 'waiting-permission'
+          : visibleCredentialRequests.length > 0
+            ? 'waiting-for-user'
+            : undefined
       })
     : undefined
   const displayedNotebookSessionId = displayedSession?.id

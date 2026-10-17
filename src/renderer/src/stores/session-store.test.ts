@@ -629,8 +629,7 @@ describe('session store', () => {
         updatedAt: 1
       } as ChatSession,
       {
-        credentialPending: true,
-        presentedWaitReason: 'waiting-for-user'
+        credentialPending: true
       }
     )
 
@@ -643,6 +642,46 @@ describe('session store', () => {
         startTurn: { allowed: false, disabledReason: 'credential-pending' },
         revise: { allowed: false, disabledReason: 'credential-pending' }
       }
+    })
+  })
+
+  it('presents an independent live approval as waiting while its Agent still owns the prompt', () => {
+    const projection = projectSessionActionability(
+      { status: 'running', agentPromptInFlight: true },
+      { rootPermissionPending: true }
+    )
+
+    expect(projection).toMatchObject({
+      presentedStatus: 'waiting-permission',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      waitReason: 'waiting-permission',
+      blockingInteraction: 'permission',
+      actions: { startTurn: { allowed: false, disabledReason: 'permission-pending' } }
+    })
+  })
+
+  it('presents a live input request before a simultaneous pending Plan', () => {
+    expect(
+      projectSessionActionability({ status: 'waiting-plan-approval' }, { elicitationPending: true })
+    ).toMatchObject({
+      presentedStatus: 'waiting-for-user',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      blockingInteraction: 'elicitation'
+    })
+  })
+
+  it('presents an explicit pending Plan before ongoing Agent work', () => {
+    expect(
+      projectSessionActionability(
+        { status: 'running', agentPromptInFlight: true },
+        { planPending: true }
+      )
+    ).toMatchObject({
+      presentedStatus: 'waiting-plan-approval',
+      activity: 'waiting',
+      blockingInteraction: 'plan'
     })
   })
 
@@ -7599,6 +7638,7 @@ describe('session store public contract', () => {
       'src/renderer/src/components/notification-inbox-presentation.ts',
       'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
+      'src/renderer/src/hooks/useSessionPendingInteractions.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
       'src/renderer/src/lib/acp/runtime-event-presentation.ts',

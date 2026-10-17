@@ -16,7 +16,7 @@ export { isSessionWaitReason }
 
 export const projectPresentedSessionActionability = (
   session: PersistedChatSession,
-  facts: Pick<SessionActionabilityFacts, 'credentialPending'> = {}
+  facts: Pick<SessionActionabilityFacts, 'credentialPending' | 'rootPermissionPending'> = {}
 ): SessionActionabilityProjection =>
   projectSessionActionability(session, {
     presentedWaitReason:
