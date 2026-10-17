@@ -165,7 +165,7 @@ async function seedUpgradeData(connection, installDirectory) {
   if (!credential.createdCredential?.id || !project.id) throw new Error('Could not seed actual product data')
   const marker = join(process.env.PR3599_EVIDENCE_DIR, 'mcp-lifecycle.jsonl')
   const fixture = join(process.env.PR3599_EVIDENCE_DIR, 'product-local-mcp.cjs')
-  await rpc('settings:add-custom-server', { id: 'pr3599-upgrade', name: 'pr3599-upgrade', displayName: 'PR3599 local upgrade MCP', transport: 'stdio', command: join(installDirectory, 'resources/node-runtime/node.exe'), args: [fixture, marker], envCredentialIds: { PR3599_TEST_SECRET: credential.createdCredential.id } })
+  await rpc('settings:add-custom-server', { id: 'pr3599-upgrade', name: 'pr3599-upgrade', displayName: 'PR3599 local upgrade MCP', transport: 'stdio', command: process.execPath, args: [fixture, marker], envCredentialIds: { PR3599_TEST_SECRET: credential.createdCredential.id } })
   await rpc('settings:set-custom-server-enabled', { id: 'pr3599-upgrade', enabled: true })
   await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
   const mcp = await waitFor('the real pre-upgrade MCP with its synthetic credential', async () => {
@@ -174,7 +174,7 @@ async function seedUpgradeData(connection, installDirectory) {
     const processes = await snapshotInstallation(installDirectory)
     if (started?.credentialMatched && processes.some((p) => p.pid === started.pid)) return started
   }, UPDATE_TIMEOUT_MS)
-  seededData = { project, session, credentialId: credential.createdCredential.id, marker, mcp }
+  seededData = { project, session, credentialId: credential.createdCredential.id, marker, mcp, mcpCommand: process.execPath, diagnosticFixture: "independent-node" }
   await evidence('seeded-product-data', seededData)
 }
 async function evidence(name, value) {
