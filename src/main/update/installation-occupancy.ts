@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { readlinkSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
@@ -160,16 +160,74 @@ export async function inspectInstallationProcessesAsync(
   return [...pids]
 }
 
-/** Crashpad is reparented to launchd on macOS and is absent from getAppMetrics().
+/** AppImage extract-and-run keeps its runtime parent alive until Electron exits.
+ * Exempt only our direct parent executing the exact outer image for our extracted executable. */
+export function inspectOwnedLinuxAppImageLauncher(): number[] {
+  if (process.platform !== 'linux' || !process.env.APPIMAGE || !process.env.APPDIR) return []
+  try {
+    if (
+      !realpathSync(process.execPath).startsWith(realpathSync(process.env.APPDIR) + sep) ||
+      readlinkSync(`/proc/${process.ppid}/exe`) !== realpathSync(process.env.APPIMAGE)
+    )
+      return []
+    return [process.ppid]
+  } catch {
+    return []
+  }
+}
+
+/** Linux zygotes are absent from getAppMetrics(), including the sandboxed nested zygote.
+ * Only accept this Desktop's zygote ancestry and exact executable, never arbitrary descendants. */
+export function inspectOwnedLinuxZygoteProcesses(): number[] {
+  if (process.platform !== 'linux') return []
+  const result = spawnSync('/bin/ps', ['-axo', 'pid=,ppid='], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    maxBuffer: 16 * 1024 * 1024
+  })
+  if (result.status !== 0)
+    throw new UpdateLifecycleError('installation-busy', 'Zygote ownership could not be inspected.')
+  const executable = realpathSync(process.execPath)
+  const candidates = result.stdout.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
+    return match ? [{ pid: Number(match[1]), parent: Number(match[2]) }] : []
+  })
+  const owned = new Set([process.pid])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const { pid, parent } of candidates) {
+      if (owned.has(pid) || !owned.has(parent)) continue
+      try {
+        if (
+          readlinkSync(`/proc/${pid}/exe`) !== executable ||
+          // Chromium may flatten argv into one space-separated process title.
+          !/(?:^|[\0\s])--type=zygote(?:[\0\s]|$)/.test(
+            readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+          )
+        )
+          continue
+        owned.add(pid)
+        changed = true
+      } catch {
+        // An unreadable or exited process has no verified ownership exemption.
+      }
+    }
+  }
+  owned.delete(process.pid)
+  return [...owned]
+}
+
+/** Crashpad is reparented on macOS/Linux and is absent from getAppMetrics().
  * Accept only the exact bundled executable, crash database and per-launch annotation.
  * A previous launch (even with the same profile), another profile, or an unannotated
  * handler remains an occupant. This is ownership evidence, not a process-name exemption. */
-export function inspectOwnedMacCrashpadProcesses(options: {
+export function inspectOwnedCrashpadProcesses(options: {
   installationRoot: string
   crashDumpsPath: string
   instanceId: string
 }): number[] {
-  if (process.platform !== 'darwin') return []
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return []
   const read = (field: string): Map<number, string> => {
     const result = spawnSync('/bin/ps', ['-axo', `pid=,${field}=`], {
       encoding: 'utf8',
@@ -198,7 +256,9 @@ export function inspectOwnedMacCrashpadProcesses(options: {
   const executable = canonical(
     join(
       options.installationRoot,
-      'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+      process.platform === 'darwin'
+        ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+        : 'chrome_crashpad_handler'
     )
   )
   const database = canonical(options.crashDumpsPath)
@@ -206,6 +266,13 @@ export function inspectOwnedMacCrashpadProcesses(options: {
   const commands = read('comm')
   const argumentsByPid = read('args')
   return [...commands].flatMap(([pid, command]) => {
+    if (process.platform === 'linux') {
+      try {
+        command = readlinkSync(`/proc/${pid}/exe`)
+      } catch {
+        return []
+      }
+    }
     if (canonical(command) !== executable) return []
     const args = argumentsByPid.get(pid)?.split(' --')
     if (!args || canonical(args.shift()!) !== executable) return []

@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { inspectOwnedMacCrashpadProcesses } from './update/installation-occupancy'
+import {
+  inspectOwnedCrashpadProcesses,
+  inspectOwnedLinuxAppImageLauncher,
+  inspectOwnedLinuxZygoteProcesses
+} from './update/installation-occupancy'
 import type { ChildProcess } from 'node:child_process'
 import {
   assertInstallationChannelCertified,
@@ -36,7 +40,7 @@ import {
   session
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
@@ -213,8 +217,13 @@ async function startDesktop(): Promise<void> {
   const allowedInstallationProcessIds = (): number[] => [
     process.pid,
     ...app.getAppMetrics().map((metric) => metric.pid),
-    ...inspectOwnedMacCrashpadProcesses({
-      installationRoot: installationRootForEntry(initialBackendPaths.entry),
+    ...inspectOwnedLinuxAppImageLauncher(),
+    ...inspectOwnedLinuxZygoteProcesses(),
+    ...inspectOwnedCrashpadProcesses({
+      installationRoot:
+        process.platform === 'linux'
+          ? dirname(process.execPath)
+          : installationRootForEntry(initialBackendPaths.entry),
       crashDumpsPath: app.getPath('crashDumps'),
       instanceId: crashReporterInstance
     })
