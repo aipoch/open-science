@@ -181,6 +181,8 @@ async function seedUpgradeData(connection, installDirectory) {
   const ownedMcp = (await snapshotInstallation(installDirectory)).filter((record) => record.pid === mcp.pid)
   if (ownedMcp.length !== 1) throw new Error('Missing exact MCP identity for occupancy comparison')
   await rpc('settings:set-custom-server-enabled', { id: 'pr3599-upgrade', enabled: false })
+  // Disabling changes the permission projection; retry owns reset of the cached connection.
+  await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
   await evidence('diagnostic-mcp-stopped-before-update', {
     diagnosticOnly: true, provesMcpCleanupDuringUpdate: false,
     records: await waitForRecordedExit(ownedMcp)
