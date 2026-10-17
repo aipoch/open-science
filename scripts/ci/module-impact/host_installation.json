@@ -980,7 +980,10 @@
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

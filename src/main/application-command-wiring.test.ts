@@ -95,21 +95,23 @@ describe('production application command wiring', () => {
     callBefore('await composeSessionAuthority({', 'composeSessionPackageSurfaces({')
   })
 
-  it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
+  it('constructs desktop and headless Session package surfaces once with shared owners and drains both before the service', () => {
     const source = domainCompact('session-packages')
     expect(source).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current, onSensitiveContentFailure: rememberSensitiveContentFailure })'
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(), onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
+    expect(occurrences(source, 'new SessionPackageHeadless(')).toBe(1)
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
+      'const sessionPackageHeadless = new SessionPackageHeadless({ service: sessionPackageService, withDataRootWrite, assertCanStart: () => { if ( packageHandoffHeld.current || isMigrationInProgress() || isMigrationPending() || sessionPackageDesktop.hasActiveTransfer() )'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active || sessionPackageHeadless.hasActiveTransfer()'
     )
     expect(source).toContain(
-      'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
+      "sessionPackageDesktopLifecycle.close = async () => { const results = await Promise.allSettled([ sessionPackageHeadless.close(), sessionPackageDesktop.close() ]) const failures = results.filter((result) => result.status === 'rejected') if (failures.length) throw new AggregateError( failures.map((result) => result.reason), 'Session package transfers did not finish closing.' ) }"
     )
+    expect(source).toContain('await sessionPackageDesktopLifecycle.close() await service.close()')
     for (const call of [
       'sessionPackageDesktop.respond(',
       'sessionPackageDesktop.export(',
@@ -577,6 +579,9 @@ describe('production application command wiring', () => {
     expect(nodeEntrySource).toContain('runtime.applicationCommands.desktop')
     expect(compact(ipcSource)).toContain('taskControls: {')
     expect(compact(ipcSource)).toContain(
+      'managedExecution: managedExecution.external, sessionPackageTransfer: sessionPackageSurfaces.sessionPackageHeadless,'
+    )
+    expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
     expect(compact(ipcSource)).toContain(
@@ -590,7 +595,7 @@ describe('production application command wiring', () => {
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, managedExecution, sessionPackages: sessionPackageTransfer, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
@@ -662,6 +667,9 @@ vi.mock('./composition/handoff', () => ({
 }))
 vi.mock('./composition/managed-files', () => ({
   composeManagedFiles: vi.fn(() => rootFixture.owners)
+}))
+vi.mock('./composition/managed-execution', () => ({
+  composeManagedExecution: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/notebook-bridge', () => ({
   composeNotebookBridge: vi.fn(() => rootFixture.owners)
@@ -777,6 +785,11 @@ it('connects committed deletion to the same credential broker used by approval s
     sessionRepository: { loadSession: vi.fn(async () => ({ memoryEnabled: false })) },
     archiveCoordinator: { withSessionAvailableById: vi.fn(async (_id, operation) => operation()) },
     notebookService: {},
+    notebookLifecycle: {},
+    notebookActivityRef: { current: undefined },
+    stopProject: vi.fn(async () => undefined),
+    recover: vi.fn(async () => undefined),
+    external: {},
     specialistDomain: {},
     notebookCommands: {},
     jobRepository: {},
@@ -834,6 +847,10 @@ it('connects committed deletion to the same credential broker used by approval s
     vi.mocked(composeConnectors).mock.invocationCallOrder.at(-1)!
   )
   expect(lifecycle.getNotebookService()).toBe(owners.notebookService)
+  await lifecycle.stopManagedProject?.('project')
+  expect(owners.stopProject).toHaveBeenCalledWith('project')
+  expect(owners.notebookActivityRef.current).toBe(owners.notebookLifecycle)
+  expect(owners.recover).toHaveBeenCalledOnce()
 
   const settings = vi.mocked(composeSettingsBootstrap).mock.calls.at(-1)![0]
   expect(settings.getSpecialistDomain()).toBe(owners.specialistDomain)

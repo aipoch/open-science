@@ -793,7 +793,19 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
-      "src/main/desktop-runtime-launcher.test.ts"
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/research-execution-profiles/store.test.ts",
+      "src/main/research-execution-profiles/store-recovery.test.ts",
+      "src/main/notebook/managed-execution-collection.integration.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/managed-execution-service.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "consumerModules": ["compute_service", "settings_provider_accounts", "settings_service_facade"],

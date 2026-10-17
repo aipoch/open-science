@@ -154,6 +154,56 @@ export class OpenScienceClient {
     this.fetch = fetchImpl
     this.sleep = sleep
     this.requestTimeoutMs = requestTimeoutMs
+    this.packages = Object.freeze(
+      Object.fromEntries(
+        ['preflightImport', 'commitImport', 'cancelImport', 'export'].map((method) => [
+          method,
+          (payload, options = {}) =>
+            this.request(`/api/v1/packages/${method}`, {
+              ...options,
+              method: 'POST',
+              body: payload
+            })
+        ])
+      )
+    )
+    this.execution = Object.freeze(
+      Object.fromEntries(
+        [
+          'runtimes',
+          'createSession',
+          'inspectMaterials',
+          'preflight',
+          'requestConfiguration',
+          'getConfiguration',
+          'prepare',
+          'execute',
+          'getOperation',
+          'cancelOperation',
+          'waitOperation',
+          'getEnvironment',
+          'releaseEnvironment',
+          'collectOutputs',
+          'discardOutputs'
+        ].map((method) => [
+          method,
+          (payload = {}, options = {}) => {
+            if (method === 'waitOperation') {
+              const waitMs = payload.timeoutMs ?? 30_000
+              if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 60_000) {
+                throw new TypeError('Wait timeoutMs must be an integer between 1 and 60000.')
+              }
+              options = { timeoutMs: Math.max(this.requestTimeoutMs, waitMs + 5_000), ...options }
+            }
+            return this.request(`/api/v1/execution/${method}`, {
+              ...options,
+              method: 'POST',
+              body: payload
+            })
+          }
+        ])
+      )
+    )
   }
 
   async health(options = {}) {

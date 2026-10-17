@@ -73,7 +73,8 @@ export function composeProjectLifecycle({
   getActiveSideChatSessions,
   sessionPersistenceCoordinator,
   clearSessionCredentials,
-  getNotebookService
+  getNotebookService,
+  stopManagedProject
 }: {
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
@@ -129,6 +130,7 @@ export function composeProjectLifecycle({
     | 'updateArchive'
   >
   getNotebookService: () => NotebookRuntimeService
+  stopManagedProject?: (projectId: string) => Promise<void>
   clearSessionCredentials: (sessionId: string) => void
 }): {
   sideChatRelay: SideChatRelayOwner
@@ -192,6 +194,7 @@ export function composeProjectLifecycle({
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
           getNotebookService().beginProjectDeletion(projectId)
+          await stopManagedProject?.(projectId)
           await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
           await owner.quiesceProject(projectId)
         })

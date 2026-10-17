@@ -169,7 +169,8 @@
     "src/shared/runtime-payload-client.test.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
-    "src/shared/runtime-startup.ts"
+    "src/shared/runtime-startup.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -255,7 +256,8 @@
     "src/shared/runtime-payload-transfer.ts",
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
-    "src/shared/runtime-startup.ts"
+    "src/shared/runtime-startup.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -324,7 +326,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx"
     ]
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "shared_contract",
   "fullTestReason": "Shared cross-process contracts have broad renderer, main, CLI and dynamic IPC consumers; retain complete validation."
 }

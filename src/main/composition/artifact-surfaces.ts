@@ -10,6 +10,7 @@ import {
   createUploadElectronSurface
 } from '../desktop-surface-declarations'
 
+import type { ArtifactFile } from '../../shared/artifacts'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
@@ -69,6 +70,7 @@ export function composeArtifactSurfaces({
   codeReconstruction,
   sessionPersistenceHandlers,
   sessionDetailsOwner,
+  onArtifactsPublished,
   translate
 }: {
   reportReproducibilityCheck:
@@ -104,6 +106,7 @@ export function composeArtifactSurfaces({
     typeof createSessionPersistenceHandlersWithAttributionAuthority
   >
   sessionDetailsOwner: ReturnType<typeof createSessionDetailsOwner>
+  onArtifactsPublished?: (artifacts: readonly ArtifactFile[]) => Promise<void>
   translate: import('../locale/main-process-messages').NativeTranslator
 }): {
   reproducibilityCommands: ArtifactReproducibilityCommands
@@ -134,6 +137,11 @@ export function composeArtifactSurfaces({
             storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
           )
       }
+      // The handler invokes this after activation and after releasing its Session mutation.
+      // Start tracked reconciliation without delaying or failing the completed publication.
+      void onArtifactsPublished?.(artifacts).catch((error) =>
+        storageLog.warn('Managed output publication reconciliation failed', errorLogFields(error))
+      )
     },
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>

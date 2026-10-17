@@ -1,3 +1,13 @@
+// Notebook-managed execution state follows Data Storage, including idempotency receipts. Prepared
+// environment directories must be owner-released before handoff because their inode is not portable.
+export const MANAGED_EXECUTION_DATA_DIRS = [
+  'research-environments',
+  'research-demos',
+  'managed-execution-requests',
+  'session-operations',
+  'managed-session-requests'
+] as const
+
 // Durable directories that follow the relocatable data root. Keep runtime separate: installed
 // environments can contain hardcoded absolute paths and must be rebuilt after a storage move.
 export const RELOCATABLE_DATA_DIRS = [
@@ -7,6 +17,7 @@ export const RELOCATABLE_DATA_DIRS = [
   'delegation',
   'literature',
   'notebooks',
+  ...MANAGED_EXECUTION_DATA_DIRS,
   'models',
   'pdf-structure',
   'execution-file-evidence',

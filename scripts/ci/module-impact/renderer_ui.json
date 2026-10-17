@@ -538,7 +538,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
-      "src/renderer/src/components/runtime-startup-gate.test.tsx"
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
+      "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],

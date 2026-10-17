@@ -1804,6 +1804,7 @@ export class SessionPackageService {
   }
 
   async readOrigin(request: SessionPackageRequest): Promise<{
+    receiptIdentity: Pick<SessionPackageReceipt, 'importId' | 'manifestChecksum'>
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
     files: SessionPackageReceipt['files']
@@ -1811,6 +1812,29 @@ export class SessionPackageService {
     literature?: import('./literature').PackageLiterature
     pdfNotes?: PackagePdfNotes
     originSessionIds: string[]
+  }> {
+    const { receipt, sourceManifest, records } = await this.readOriginRecords(request)
+    return {
+      receiptIdentity: {
+        importId: receipt.importId,
+        manifestChecksum: receipt.manifestChecksum
+      },
+      sourceManifest,
+      identities: receipt.identities,
+      files: receipt.files,
+      history: records.history,
+      literature: records.literature,
+      pdfNotes: records.pdfNotes,
+      originSessionIds: records.tables.FileOriginSession.map(
+        (row) => receipt.identities[String(row.sessionId)]
+      )
+    }
+  }
+
+  private async readOriginRecords(request: SessionPackageRequest): Promise<{
+    receipt: SessionPackageReceipt
+    sourceManifest: SessionPackageManifest
+    records: PackageRecords
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
     const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
@@ -1844,17 +1868,7 @@ export class SessionPackageService {
     const records = parseNativeRecords(
       await readPackageJson(join(directory, 'source', 'records.json'))
     )
-    return {
-      sourceManifest,
-      identities: receipt.identities,
-      files: receipt.files,
-      history: records.history,
-      literature: records.literature,
-      pdfNotes: records.pdfNotes,
-      originSessionIds: records.tables.FileOriginSession.map(
-        (row) => receipt.identities[String(row.sessionId)]
-      )
-    }
+    return { receipt, sourceManifest, records }
   }
 
   private async assertImportProject(

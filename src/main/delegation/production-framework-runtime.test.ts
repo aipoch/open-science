@@ -611,15 +611,12 @@ describe('production delegated framework runtime bridge', () => {
     let spawnedInput: AgentSpawnInput | undefined
     let spawnedAuthJson: string | undefined
     let spawnedConfigToml: string | undefined
-    let child: ChildProcessWithoutNullStreams | undefined
+    const stoppedAtSpawn = new Error('Codex authentication inspected at spawn boundary')
     const spawnSpy = vi.spyOn(codexFramework, 'spawn').mockImplementation((input) => {
       spawnedInput = input
       spawnedAuthJson = readFileSync(join(input.env.CODEX_HOME!, 'auth.json'), 'utf8')
       spawnedConfigToml = readFileSync(join(input.env.CODEX_HOME!, 'config.toml'), 'utf8')
-      child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
-        stdio: 'pipe'
-      })
-      return child
+      throw stoppedAtSpawn
     })
     const frameworks = createProductionDelegatedFrameworkRuntime({
       capacity: 1,
@@ -655,7 +652,10 @@ describe('production delegated framework runtime bridge', () => {
         reservation.slotIds[0]
       )
 
-      await vi.waitFor(() => expect(spawnedInput).toBeDefined())
+      // Drain preparation and Attempt cleanup before inspecting the captured files. Polling
+      // readiness can time out while preparation still writes into the fixture being removed.
+      await expect(running.completion).rejects.toBe(stoppedAtSpawn)
+      expect(spawnSpy).toHaveBeenCalledOnce()
       const childHome = spawnedInput!.env.CODEX_HOME!
       expect(childHome).not.toBe(sourceHome)
       expect(spawnedAuthJson).toContain('secret')
@@ -665,10 +665,8 @@ describe('production delegated framework runtime bridge', () => {
       expect(spawnedConfigToml).not.toContain('mcp_servers')
       expect(spawnedConfigToml).not.toContain('unsafe-tool')
 
-      child?.kill()
-      await expect(running.completion).rejects.toBeDefined()
+      await expect(stat(childHome)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
-      child?.kill()
       spawnSpy.mockRestore()
       await Promise.all([
         rm(dataRoot, { recursive: true, force: true }),

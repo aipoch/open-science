@@ -515,7 +515,8 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
       "src/renderer/src/stores/network-store.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/ResearchExecutionConfigurationDialog.test.tsx"
     ]
   },
   "capabilityOverlays": [],
