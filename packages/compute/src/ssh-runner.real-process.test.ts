@@ -87,15 +87,21 @@ it('retains the final protocol result in an eight-job >1 MiB poll batch', async 
 it.each(['timeout', 'abort'] as const)('reaps a real child ignoring TERM on %s', async (mode) => {
   const dir = await mkdtemp(join(tmpdir(), 'compute-termination-'))
   let pid: number | undefined
+  const controller = new AbortController()
+  let outcome: Promise<unknown> | undefined
   try {
     const script = join(dir, 'child.cjs')
     const pidFile = join(dir, 'pid')
     await writeFile(
       script,
-      `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 100);`
+      `process.on('SIGTERM', () => {});
+      const fs = require('node:fs');
+      const pidFile = ${JSON.stringify(pidFile)};
+      fs.writeFileSync(pidFile + '.tmp', String(process.pid));
+      fs.renameSync(pidFile + '.tmp', pidFile);
+      setInterval(() => {}, 100);`
     )
-    const controller = new AbortController()
-    const outcome = createSshRunner()
+    outcome = createSshRunner()
       .run({ sshBinary: process.execPath, extraArgs: [], host: script }, 'unused', {
         timeoutMs: mode === 'timeout' ? 500 : 5000,
         signal: controller.signal
@@ -118,6 +124,9 @@ it.each(['timeout', 'abort'] as const)('reaps a real child ignoring TERM on %s',
     expect(result).toMatchObject(mode === 'abort' ? { name: 'AbortError' } : { timedOut: true })
     expect(() => process.kill(pid!, 0)).toThrow()
   } finally {
+    // A readiness assertion can fail before pid is known; still reap the runner's child.
+    controller.abort()
+    await outcome
     if (pid) {
       try {
         process.kill(pid, 'SIGKILL')
