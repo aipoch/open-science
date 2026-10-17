@@ -92,7 +92,7 @@ replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-sci
     if (after.length) throw new Error('Owned installation processes remain after cleanup')
   })`)
 replace('  await cleanup(() => profileGuard.cleanup(primaryError))', '  if (!primaryError) await cleanup(() => profileGuard.cleanup(primaryError))')
-replace('  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))', "  if (installed && !primaryError && !cleanupErrors.length) await cleanup(() => uninstallAndVerify(installDirectory, env))")
+replace('  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))', "  await evidence('retained-installation', { installDirectory, installed, reason: 'Upgrade acceptance retains the isolated installation for inspection; standalone AppContainer uninstall requires separate interactive elevation acceptance.', standaloneUninstallAttempted: false })")
 replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))', "  await evidence('final-state', { root, independentHarnessPid: process.pid, primaryError: primaryError?.message, cleanupErrors: cleanupErrors.map((e) => e.message), processes: await snapshotInstallation(installDirectory), directoryRetained: true })")
 const helpers = String.raw`
 const rememberedProcesses = []

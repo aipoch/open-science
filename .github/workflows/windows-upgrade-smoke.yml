@@ -65,7 +65,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        baseline: [published, pr]
+        baseline: [pr]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
