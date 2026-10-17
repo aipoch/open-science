@@ -1,3 +1,4 @@
+import type { ManagedShellExecutionCapability } from './managed-shell-execution'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
@@ -19,6 +20,9 @@ export type NotebookShellResult = {
 }
 
 export type NotebookShellProcessRequest = {
+  /** Main-only authority; never accepted by a public request schema. */
+  managedExecution?: ManagedShellExecutionCapability
+  executionInvocationId?: string
   laneKey?: string
   runId?: string
   command: string

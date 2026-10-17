@@ -115,14 +115,22 @@ export const splitReplayReferenceText = (text: string): ReplayReferenceTextPart[
   return parts
 }
 
+// Quote rendering consumes only captured content, independent of persistence and Replay commands.
+export type SessionQuoteContent = {
+  sourceTitle: string
+  stepTitle?: string
+  phase?: 'input' | 'activity' | 'result'
+  excerpt: string
+  records?: readonly {
+    scope: 'step' | 'background'
+    text: string
+    status: 'recorded' | 'unavailable'
+    truncated: boolean
+  }[]
+}
+
 // Navigation IDs stay in application state. The Agent receives only the selected source content.
-export const selectedSessionQuote = (
-  context: Pick<
-    import('./session-replay').SessionDiscussionSnapshot,
-    'sourceTitle' | 'stepTitle' | 'phase' | 'records' | 'excerpt'
-  >,
-  limit = 4000
-): string => {
+export const selectedSessionQuote = (context: SessionQuoteContent, limit = 4000): string => {
   const selected = context.records?.filter((record) => record.scope === 'step')
   const content = selected
     ? selected

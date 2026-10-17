@@ -16,8 +16,6 @@
     "lint": "eslint --cache .",
     "pretest": "node scripts/check-prisma-client.mjs && npm run build:packages",
     "test": "vitest run",
-    "generate:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --write",
-    "check:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --check",
     "test:module": "npm run build:packages && node scripts/ci/module-test-impact.mjs module",
     "test:affected": "npm run build:packages && node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
@@ -57,7 +55,7 @@
     "start": "electron-vite preview",
     "dev": "npm run build:backend:dev -- --development && npm run stage:node-runtime -- --reuse && electron-vite dev",
     "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
-    "dev:web": "npm run build:backend:dev && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts && node scripts/dev-web.cjs",
+    "dev:web": "npm run build:backend:dev && npm run gen:web-api-map && npm run build:replay-viewer && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts && node scripts/dev-web.cjs",
     "dev:headless": "npm run dev:web --",
     "cli": "node cli/index.mjs",
     "build": "npm run build:packages -- --clean && npm run typecheck:compiled && npm run build:backend:compiled && electron-vite build && npm run build:web:compiled",
@@ -77,6 +75,7 @@
     "build:backend-native": "node scripts/native-components.mjs",
     "build:native-source": "node scripts/produce-native-components.mjs build",
     "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
+    "build:replay-viewer": "vite build --config vite.replay-viewer.config.ts",
     "publish:npm-release": "node scripts/publish-npm-release.mjs",
     "stage:npm-release": "node scripts/stage-npm-release.mjs",
     "test:npm-installed": "node scripts/test-npm-installed.mjs",
@@ -102,7 +101,7 @@
     "build:literature-packages": "node scripts/build-dev-packages.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "typecheck:compiled": "npm run typecheck:node:compiled && npm run typecheck:web:compiled",
-    "build:web:compiled": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
+    "build:web:compiled": "npm run gen:web-api-map && npm run build:replay-viewer && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "build:backend:compiled": "npm run build:backend-native && node scripts/build-backend.mjs",
     "check:packages": "node scripts/check-packages.mjs",
     "check:package-isolation": "node scripts/check-package-isolation.mjs",
@@ -116,6 +115,8 @@
     "check:reproducibility-package": "node scripts/check-reproducibility-package.mjs",
     "check:durable-files-package": "node scripts/check-durable-files-package.mjs",
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
+    "generate:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --write",
+    "check:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --check",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
     "check:test-impact-package": "node scripts/check-test-impact-package.mjs"
   },
@@ -185,7 +186,8 @@
     "@aipoch/durable-files": "file:packages/durable-files",
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
-    "@aipoch/literature-reading": "file:packages/literature-reading"
+    "@aipoch/literature-reading": "file:packages/literature-reading",
+    "semver": "^7.7.3"
   },
   "overrides": {
     "@huggingface/transformers": {
@@ -275,6 +277,7 @@
     "vite": "^7.2.6",
     "vitest": "^4.1.11",
     "zustand": "^5.0.14",
+    "@types/semver": "^7.7.0",
     "@aipoch/test-impact": "file:packages/test-impact"
   }
 }

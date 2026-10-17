@@ -42,6 +42,7 @@ export type AppendUserMessageInput = {
   attribution?: PersistedChatMessage['attribution']
   cwd?: string
   projectId?: string
+  researchMembership?: PersistedChatSession['researchMembership']
   permissionProfile?: ChatSession['permissionProfile']
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
   agentBackendId?: PersistedChatSession['agentBackendId']

@@ -61,7 +61,8 @@ describe('Project archive revision', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation'
+        '0050_literature_translation',
+        '0051_session_research_membership'
       ]
     })
     expect(

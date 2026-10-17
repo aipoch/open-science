@@ -536,9 +536,8 @@ describe('ComposerModelPicker', () => {
     expect(openSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('warns and opens settings when no model is configured', () => {
-    const openSettings = vi.fn()
-    useSettingsStore.setState({ providers: [], openSettings })
+  it('warns and opens the model settings route when no model is configured', () => {
+    useSettingsStore.setState({ providers: [] })
     render()
 
     // No picker, but a warning affordance the user can click to fix the missing model.
@@ -550,7 +549,11 @@ describe('ComposerModelPicker', () => {
     expect(warning?.textContent).toContain('No model available')
 
     act(() => warning?.click())
-    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
   })
 
   it('warns when the only provider has failed validation', () => {

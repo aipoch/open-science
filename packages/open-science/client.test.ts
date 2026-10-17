@@ -1225,3 +1225,134 @@ describe('OpenScienceClient', () => {
     )
   })
 })
+
+describe('managed execution SDK', () => {
+  it('preserves optional safe runtime diagnostics and accepts older responses without them', async () => {
+    const legacy = { available: false, runtimes: [] }
+    const current = {
+      ...legacy,
+      diagnostics: {
+        nativeServiceSupported: true,
+        issues: [
+          {
+            code: 'node_not_found',
+            message: 'No compatible Node found.',
+            action: 'Check the application runtime search locations.'
+          }
+        ]
+      }
+    }
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(response(200, { data: current }))
+      .mockResolvedValueOnce(response(200, { data: legacy }))
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test-token',
+      fetch
+    })
+    await expect(client.execution.runtimes()).resolves.toEqual(current)
+    await expect(client.execution.runtimes()).resolves.toEqual(legacy)
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:44100/api/v1/execution/runtimes',
+      'http://127.0.0.1:44100/api/v1/execution/runtimes'
+    ])
+  })
+
+  it('uses the authenticated execution namespace for all operations without submitting Agent work', async () => {
+    const fetch = vi.fn<(url: string, options: RequestInit) => Promise<Response>>(async () =>
+      response(200, { data: { status: 'running' } })
+    )
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test-token',
+      fetch
+    })
+    const methods = [
+      'runtimes',
+      'createSession',
+      'inspectMaterials',
+      'inspectOfflinePlans',
+      'executeOfflinePlan',
+      'preflight',
+      'requestConfiguration',
+      'getConfiguration',
+      'prepare',
+      'execute',
+      'getOperation',
+      'cancelOperation',
+      'waitOperation',
+      'getEnvironment',
+      'releaseEnvironment',
+      'collectOutputs',
+      'discardOutputs'
+    ]
+    expect(Object.keys(client.execution)).toEqual(methods)
+    for (const method of methods) {
+      await client.execution[method]({ requestId: 'request-1' }, { idempotencyKey: 'retry-1' })
+    }
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(
+      methods.map((method) => `http://127.0.0.1:44100/api/v1/execution/${method}`)
+    )
+    for (const [, options] of fetch.mock.calls)
+      expect(options).toMatchObject({
+        method: 'POST',
+        headers: { authorization: 'Bearer test-token', 'idempotency-key': 'retry-1' },
+        body: JSON.stringify({ requestId: 'request-1' })
+      })
+  })
+
+  it('returns a running wait snapshot and never cancels on an aborted wait', async () => {
+    const fetch = vi.fn(async (_url: string, options: RequestInit) => {
+      if (!options.signal?.aborted) return response(200, { data: { status: 'running' } })
+      throw options.signal.reason
+    })
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test-token',
+      fetch
+    })
+    const scope = { projectId: 'project', sessionId: 'session', requestId: 'run' }
+    await expect(client.execution.waitOperation({ ...scope, timeoutMs: 1 })).resolves.toEqual({
+      status: 'running'
+    })
+    await expect(
+      client.execution.waitOperation(scope, {
+        signal: AbortSignal.abort(new Error('stop waiting'))
+      })
+    ).rejects.toThrow('stop waiting')
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(() => client.execution.waitOperation({ ...scope, timeoutMs: 60_001 })).toThrow('60000')
+  })
+})
+
+describe('package transfer SDK', () => {
+  it('preflights without committing and forwards explicit mutations with authenticated retry options', async () => {
+    const fetch = vi.fn<(url: string, options: RequestInit) => Promise<Response>>(async () =>
+      response(200, { data: { preflightId: 'preview' } })
+    )
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test-token',
+      fetch
+    })
+    const request = { filePath: '/research.science', target: { projectName: 'Imported research' } }
+    await expect(
+      client.packages.preflightImport(request, { idempotencyKey: 'preflight-1' })
+    ).resolves.toEqual({ preflightId: 'preview' })
+    expect(fetch).toHaveBeenCalledOnce()
+    await client.packages.commitImport({ preflightId: 'preview' })
+    await client.packages.cancelImport({ preflightId: 'preview' })
+    await client.packages.export({ projectId: 'p', sessionId: 's', filePath: '/export.science' })
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(
+      ['preflightImport', 'commitImport', 'cancelImport', 'export'].map(
+        (method) => `http://127.0.0.1:44100/api/v1/packages/${method}`
+      )
+    )
+    expect(fetch.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify(request),
+      headers: { authorization: 'Bearer test-token', 'idempotency-key': 'preflight-1' }
+    })
+  })
+})

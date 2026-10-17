@@ -10,6 +10,7 @@ import {
   type ResolvedActionMenuEntry
 } from '@/components/action-menu/action-menu-model'
 import type { ChatSession } from '@/stores/session-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -201,9 +202,10 @@ type SidebarProject = { id: string; name: string; description: string }
 const mountProjectSidebar = async (
   otherProjects: readonly SidebarProject[],
   onOpenProject: (projectId: string) => void = vi.fn(),
-  onOpenSession: (sessionId: string) => void = vi.fn()
+  onOpenSessionCallback: (sessionId: string) => void = vi.fn()
 ): Promise<{
   container: HTMLElement
+  onOpenSession: ReturnType<typeof vi.fn>
   cleanup: () => void
   openMenu: () => void
   rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
@@ -215,6 +217,7 @@ const mountProjectSidebar = async (
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
+  const onOpenSession = vi.fn(onOpenSessionCallback)
 
   let selectedSessionId = 'session-a'
   let renderedProjects = otherProjects
@@ -256,6 +259,7 @@ const mountProjectSidebar = async (
 
   return {
     container,
+    onOpenSession,
     cleanup: () => {
       act(() => root.unmount())
       container.remove()
@@ -471,13 +475,172 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('nests discussions, keeps normal conversations, and numbers only visible rows after collapsing', async () => {
+    const source = createSession({
+      id: 'source-a',
+      title: 'Research A',
+      status: 'idle',
+      importedResearch: { importId: 'import-a' },
+      contentLoaded: false
+    })
+    const child = createSession({
+      id: 'child-a',
+      title: 'Research question',
+      status: 'idle',
+      researchMembership: {
+        sourceProjectId: 'default',
+        sourceSessionId: 'source-a',
+        sourceImportId: 'import-a',
+        sourceTitle: 'Research A'
+      }
+    })
+    const ordinary = createSession({ id: 'ordinary', title: 'Normal conversation', status: 'idle' })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      await sidebar.rerenderSessions([ordinary, source, child])
+      const group = sidebar.container.querySelector('[data-research-id="source-a"]')!
+      expect(group.querySelector('[data-session-id="child-a"]')).not.toBeNull()
+      expect(group.querySelector('[data-session-id="ordinary"]')).toBeNull()
+      expect(sidebar.container.textContent).toContain('Conversations')
+      const modifier = window.api?.platform === 'darwin' ? { metaKey: true } : { ctrlKey: true }
+      const navigateSecond = async (): Promise<void> => {
+        await act(async () =>
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', { key: '2', ...modifier, bubbles: true, cancelable: true })
+          )
+        )
+      }
+      await navigateSecond()
+      expect(sidebar.onOpenSession).toHaveBeenLastCalledWith('child-a')
+      expect(group.textContent).not.toContain('Original record · Read-only')
+      expect(group.textContent).toContain('New discussion')
+      const childButton = group.querySelector(
+        '[data-session-id="child-a"] [data-slot="session-open-button"]'
+      )!
+      expect(childButton.getAttribute('aria-keyshortcuts')).toContain('+2')
+      await sidebar.selectSession('source-a')
+      expect(
+        group.querySelector('[data-session-id="source-a"] [aria-current="page"]')
+      ).not.toBeNull()
+      const collapse = group.querySelector<HTMLButtonElement>('[aria-label="Collapse research"]')!
+      await act(async () => collapse.click())
+      expect(group.querySelector('[data-session-id="child-a"]')).toBeNull()
+      expect(group.textContent).not.toContain('New discussion')
+      const ordinaryButton = sidebar.container.querySelector(
+        '[data-session-id="ordinary"] [data-slot="session-open-button"]'
+      )!
+      expect(ordinaryButton.getAttribute('aria-keyshortcuts')).toContain('+2')
+      await navigateSecond()
+      expect(sidebar.onOpenSession).toHaveBeenLastCalledWith('ordinary')
+      await sidebar.selectSession('child-a')
+      expect(group.querySelector('[data-session-id="child-a"]')).not.toBeNull()
+      expect(group.textContent).toContain('New discussion')
+      expect(group.querySelector('[aria-label="Collapse research"]')).not.toBeNull()
+      await act(async () =>
+        group.querySelector<HTMLButtonElement>('[aria-label="Collapse research"]')!.click()
+      )
+      expect(group.querySelector('[data-session-id="child-a"]')).toBeNull()
+      await act(async () => useNavigationStore.getState().recordUserNavigation())
+      expect(group.querySelector('[data-session-id="child-a"]')).not.toBeNull()
+    } finally {
+      sidebar.cleanup()
+    }
+  })
+
+  it('keeps a grouped discussion approval visible on the collapsed research row until it settles', async () => {
+    const source = createSession({
+      id: 'approval-source',
+      title: 'Research with an approval',
+      status: 'idle',
+      importedResearch: { importId: 'approval-import' }
+    })
+    const child = createSession({
+      id: 'approval-discussion',
+      title: 'Remote research discussion',
+      status: 'idle',
+      updatedAt: 1,
+      researchMembership: {
+        sourceProjectId: 'default',
+        sourceSessionId: source.id,
+        sourceImportId: 'approval-import',
+        sourceTitle: source.title
+      }
+    })
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'research-approval',
+          sessionId: child.id,
+          providerId: 'ssh:cluster',
+          providerName: 'Cluster',
+          operation: 'call_command',
+          shape: 'command',
+          intent: 'Run analysis',
+          willPersistUnencrypted: false,
+          commandPreview: 'python analysis.py',
+          commandFull: 'python analysis.py'
+        }
+      ]
+    })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      await sidebar.rerenderSessions([source, child])
+      const group = sidebar.container.querySelector('[data-research-id="approval-source"]')!
+      const sourceRow = group.querySelector('[data-session-id="approval-source"]')!
+      const childRow = group.querySelector('[data-session-id="approval-discussion"]')!
+      expect(sourceRow.textContent).toContain('Session status: Waiting for permission')
+      expect(childRow.textContent).toContain('Session status: Waiting for permission')
+      await act(async () =>
+        group.querySelector<HTMLButtonElement>('[aria-label="Collapse research"]')!.click()
+      )
+      expect(group.querySelector('[data-session-id="approval-discussion"]')).toBeNull()
+      expect(sourceRow.textContent).toContain('Session status: Waiting for permission')
+      await act(async () => useComputeStore.getState().dismissApproval('research-approval'))
+      expect(sourceRow.textContent).toContain('Session status: Idle')
+      expect(sourceRow.textContent).not.toContain('Session status: Waiting for permission')
+    } finally {
+      sidebar.cleanup()
+    }
+  })
+
+  it('keeps the new discussion entry under research that has no saved discussions', async () => {
+    const source = createSession({
+      id: 'source-empty',
+      title: 'Research without discussions',
+      status: 'idle',
+      importedResearch: { importId: 'import-empty' }
+    })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      await sidebar.rerenderSessions([source])
+      const group = sidebar.container.querySelector('[data-research-id="source-empty"]')!
+      const children = (): Element | null => group.querySelector('[data-research-discussions]')
+      expect(children()?.textContent).toBe('New discussion')
+      expect(children()?.querySelector('[data-session-id]')).toBeNull()
+      expect(group.textContent).not.toContain('Original record · Read-only')
+
+      await act(async () =>
+        group.querySelector<HTMLButtonElement>('[aria-label="Collapse research"]')!.click()
+      )
+      expect(children()).toBeNull()
+      await act(async () =>
+        group.querySelector<HTMLButtonElement>('[aria-label="Expand research"]')!.click()
+      )
+      expect(children()?.textContent).toBe('New discussion')
+      expect(children()?.querySelector('button')?.disabled).toBe(false)
+    } finally {
+      sidebar.cleanup()
+    }
+  })
+
   it.each([true, false])(
-    'marks imported sessions with an accessible read-only icon (details loaded: %s)',
+    'identifies imported research as the original record without a second destination (details loaded: %s)',
     async (loaded) => {
       const html = await renderSidebar([
         createSession({
           id: 'import-session',
           contentLoaded: loaded ? undefined : false,
+          importedResearch: { importId: 'import-1' },
           title: 'Literature comparison',
           status: 'idle',
           packageOrigin: loaded
@@ -496,11 +659,17 @@ describe('WorkspaceSidebar accessible render', () => {
       container.innerHTML = html
       const imported = container.querySelector('[data-session-id="import-session"]')
       const icon = imported?.querySelector('[role="img"][aria-label="Read-only"]')
-      expect(icon).not.toBeNull()
-      expect(icon?.textContent).toBe('')
+      expect(icon).toBeNull()
       expect(
         imported?.querySelector('[data-slot="session-open-button"]')?.getAttribute('title')
-      ).toBe('Read-only')
+      ).toBe('Original record · Read-only')
+      expect(imported?.querySelector('[aria-label="Collapse research"]')).not.toBeNull()
+      expect(container.querySelector('[data-research-discussions]')?.textContent).toBe(
+        'New discussion'
+      )
+      expect(
+        imported?.querySelector('[data-slot="session-open-button"]')?.getAttribute('aria-current')
+      ).toBe('page')
       expect(container.querySelector('[data-session-id="local"] [role="img"]')).toBeNull()
     }
   )
@@ -700,6 +869,7 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('closes the Session preview when its actions menu opens', async () => {
+    vi.useFakeTimers()
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'menu-session', title: 'Menu Session' })
     const container = document.createElement('div')
@@ -741,6 +911,13 @@ describe('WorkspaceSidebar accessible render', () => {
         '[aria-label="Open actions for Menu Session"]'
       )
       if (!actionsTrigger) throw new Error('Session actions trigger did not render')
+      // jsdom does not model pointer/keyboard modality consistently across tests. Model the
+      // pointer-opened menu's programmatic focus return separately from a later keyboard focus.
+      let keyboardFocus = false
+      const matches = actionsTrigger.matches.bind(actionsTrigger)
+      vi.spyOn(actionsTrigger, 'matches').mockImplementation((selector) =>
+        selector === ':focus-visible' ? keyboardFocus : matches(selector)
+      )
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
@@ -762,8 +939,10 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () =>
         actionsMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       )
+      await act(async () => vi.runOnlyPendingTimersAsync())
 
       expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull()
+      expect(document.activeElement).toBe(actionsTrigger)
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
       await act(async () =>
         actionsTrigger.dispatchEvent(
@@ -771,9 +950,16 @@ describe('WorkspaceSidebar accessible render', () => {
         )
       )
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+
+      keyboardFocus = true
+      await act(async () =>
+        actionsTrigger.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      )
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
+      vi.useRealTimers()
     }
   })
 

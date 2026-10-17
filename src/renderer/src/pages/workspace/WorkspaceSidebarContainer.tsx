@@ -1,14 +1,15 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { openProjectWorkspace } from './project-workspace-entry'
 import { useShallow } from 'zustand/react/shallow'
 
 import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useResearchDemoCarriers } from '@/stores/research-demo-store'
 
 import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
@@ -36,6 +37,19 @@ const WorkspaceSidebarContainer = ({
       isProjectArchived ? NO_VISIBLE_SESSIONS : visibleProjectSessions(state.sessions, projectId)
     )
   )
+  const demoCarriers = useResearchDemoCarriers(
+    [projectId],
+    sessions.map((session) => session.id).join(',')
+  )
+  const visibleSessions = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          session.id === sidebarProps.activeSessionId ||
+          !demoCarriers[projectId]?.some((carrier) => carrier.sessionId === session.id)
+      ),
+    [sessions, projectId, demoCarriers, sidebarProps.activeSessionId]
+  )
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
   const credentialPendingSessionIds = useMemo(
     () =>
@@ -53,12 +67,15 @@ const WorkspaceSidebarContainer = ({
       )
     )
   )
-  const openProject = useNavigationStore((state) => state.openProject)
+  const [projectEntryFailed, setProjectEntryFailed] = useState(false)
   const handleOpenProject = useCallback(
     (targetProjectId: string): void => {
-      openProject(targetProjectId, 'user', onMobileClose)
+      setProjectEntryFailed(false)
+      void openProjectWorkspace(targetProjectId, onMobileClose).catch(() =>
+        setProjectEntryFailed(true)
+      )
     },
-    [onMobileClose, openProject]
+    [onMobileClose]
   )
   const loadPreviewSession = useCallback(
     (sessionId: string): Promise<void> | void => {
@@ -91,10 +108,12 @@ const WorkspaceSidebarContainer = ({
       {...sidebarProps}
       importProjectId={projectId}
       onMobileClose={onMobileClose}
-      sessions={sessions}
+      sessions={visibleSessions}
       credentialPendingSessionIds={credentialPendingSessionIds}
       otherProjects={otherProjects}
       onOpenProject={handleOpenProject}
+      projectEntryFailed={projectEntryFailed}
+      onDismissProjectEntryError={() => setProjectEntryFailed(false)}
       onPreviewSession={loadPreviewSession}
     />
   )

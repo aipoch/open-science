@@ -175,6 +175,64 @@ describe('Session projection', () => {
     storageRoot = undefined
   })
 
+  it('rebuilds research grouping from JSON, then serves it from the lightweight catalog after restart', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-research-projection-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    let projection = new SessionProjectionRepository(async () => client!)
+    let repository = new SessionRepository(storageRoot, {}, projection)
+    const membership = {
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source',
+      sourceImportId: 'import',
+      sourceTitle: 'Original title'
+    }
+    await repository.saveSession({
+      ...session('source'),
+      packageOrigin: {
+        importId: 'import',
+        sourceProjectId: 'foreign',
+        sourceSessionId: 'foreign-source',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    await repository.saveSession({ ...session('discussion'), researchMembership: membership })
+    await repository.saveSession(session('ordinary'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    // Reconstruct the previous projection version. Membership still exists only in durable JSON.
+    await client.session.updateMany({
+      data: { researchMembershipJson: null, importedResearchId: null }
+    })
+    await client.sessionProjectionState.updateMany({ data: { projectionVersion: 7 } })
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    projection = new SessionProjectionRepository(async () => client!)
+    repository = new SessionRepository(storageRoot, {}, projection)
+    expect(await projection.isReady()).toBe(false)
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const read = vi.spyOn(repository, 'loadSessionWithDiagnostics')
+    const rows = await repository.loadSessionSummaries()
+    expect(read).not.toHaveBeenCalled()
+    expect(rows.find(({ id }) => id === 'source')?.importedResearch).toEqual({ importId: 'import' })
+    expect(rows.find(({ id }) => id === 'discussion')?.researchMembership).toEqual(membership)
+    expect(rows.find(({ id }) => id === 'ordinary')?.researchMembership).toBeUndefined()
+    // Source visibility/removal has no cascading ownership effect on a discussion.
+    const source = (await repository.loadSession('project-1', 'source'))!
+    await repository.saveSession({ ...source, archivedAt: 10 })
+    expect(
+      (await repository.loadSessionSummaries()).find(({ id }) => id === 'discussion')
+        ?.researchMembership
+    ).toEqual(membership)
+    await repository.deleteSession('project-1', 'source')
+    expect(
+      (await repository.loadSessionSummaries()).find(({ id }) => id === 'discussion')
+        ?.researchMembership
+    ).toEqual(membership)
+  })
+
   it('preserves retained turn, run, and artifact timestamp semantics', () => {
     const projected = buildSessionProjection(session('session-1'))
 

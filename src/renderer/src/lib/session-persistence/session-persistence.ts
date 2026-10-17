@@ -1788,6 +1788,8 @@ const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatS
   interactionState: undefined,
   agentPromptInFlight: undefined,
   awaitingFirstAgentOutput: undefined,
+  importedResearch: undefined,
+  researchMembership: undefined,
   revision: undefined,
   archivedAt: undefined,
   enabledComputeHosts: undefined,

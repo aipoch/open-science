@@ -2902,7 +2902,9 @@ describe('LiteratureLibraryPage', () => {
     expect(openProjectButton.querySelector('.lucide-external-link')).not.toBeNull()
     expect(projectHeading.nextElementSibling).toBe(openProjectButton)
     fireEvent.click(openProjectButton)
-    expect(openProject).toHaveBeenCalledWith('project-1', 'user')
+    await waitFor(() => {
+      expect(openProject).toHaveBeenCalledWith('project-1', 'user', undefined, expect.any(Function))
+    })
 
     const reviewButton = screen.getByRole('button', { name: 'Review with agent' })
     expect(reviewButton.getAttribute('data-variant')).toBe('default')
@@ -8830,6 +8832,46 @@ describe('LiteratureLibraryPage', () => {
     expect(request.mimeType).toBe('application/x-bibtex;charset=utf-8')
     expect(new TextDecoder().decode(request.data)).toContain('@article{item-1')
   })
+
+  it.each([true, false])(
+    'reports all-matching export membership failures and preserves selection for retry (saved: %s)',
+    async (saved) => {
+      const entries = Array.from({ length: 26 }, (_, index) => createLibraryItem(index + 1))
+      let membershipUnavailable = true
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope !== 'library') return { entries: [] }
+        if (request.allItemIds) {
+          if (membershipUnavailable) throw new Error('Membership read failed')
+          return { entries: [], itemIds: entries.map(({ id }) => id), totalCount: entries.length }
+        }
+        return { entries: entries.slice(0, 25), totalCount: entries.length, nextOffset: 25 }
+      })
+      saveBlobFile.mockResolvedValue({ saved })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+      await openMenu(await selectionButton('Export'))
+      fireEvent.click(await exportMenuItem('BibTeX'))
+
+      expect(await screen.findByText('References could not be exported.')).not.toBeNull()
+      expect(screen.getByText('26 selected')).not.toBeNull()
+      expect(formatReferences).not.toHaveBeenCalled()
+      expect(saveBlobFile).not.toHaveBeenCalled()
+
+      membershipUnavailable = false
+      await openMenu(await selectionButton('Export'))
+      fireEvent.click(await exportMenuItem('BibTeX'))
+      await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+      expect(formatReferences).toHaveBeenCalledWith({
+        itemIds: entries.map(({ id }) => id),
+        styleId: 'apa',
+        locale: 'en-US'
+      })
+      expect(screen.queryByText('References could not be exported.')).toBeNull()
+      expect(screen.getByText('26 selected')).not.toBeNull()
+    }
+  )
 
   it.each([2, 201])(
     'rejects duplicate BibTeX keys among %s entries before saving a file',

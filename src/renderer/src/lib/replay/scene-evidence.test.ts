@@ -75,6 +75,14 @@ describe('visible replay evidence', () => {
       ['run', 'record'],
       ['version', 'record']
     ])
+    // In elapsed playback a later message does not complete an overlapping Notebook run.
+    execution.recordedAt = 0
+    execution.recordedEndAt = 1900
+    const elapsed = projectReplayScene(document, 'main', 1300, 0)
+    expect(elapsed.visibleEvidence.find((item) => item.id === 'run')?.part).toBe('input')
+    expect(elapsed.visibleEvidence.some((item) => item.id === 'version')).toBe(false)
+    expect(elapsed.visibleResourceIds).toEqual([])
+    expect(projectReplayScene(document, 'main', 1950, 0).visibleResourceIds).toEqual(['version'])
   })
   it('includes the bounded retained conversation while excluding future current-step results', () => {
     const steps: ReplayStep[] = Array.from({ length: 15 }, (_, index) => ({

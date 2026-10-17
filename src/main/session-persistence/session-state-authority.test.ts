@@ -576,3 +576,132 @@ it.each(['waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as c
 )
 
 await configureTestElectronHost(await import('electron'))
+describe('Main-owned stable research membership', () => {
+  const membership = {
+    sourceProjectId: 'p',
+    sourceSessionId: 'source',
+    sourceImportId: 'import',
+    sourceTitle: 'untrusted title'
+  }
+  const source = (): PersistedChatSession =>
+    fixture({
+      id: 'source',
+      title: 'Authoritative title',
+      packageOrigin: {
+        importId: 'import',
+        sourceProjectId: 'foreign-project',
+        sourceSessionId: 'foreign-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const create = (initial?: PersistedChatSession) => {
+    const records = new Map<string, PersistedChatSession>([['source', source()]])
+    if (initial) records.set(initial.id, structuredClone(initial))
+    const writes = vi.fn(async (session: PersistedChatSession, expectedRevision?: number) => {
+      const revision = records.get(session.id)?.revision ?? 0
+      if (expectedRevision !== undefined && expectedRevision !== revision)
+        throw new SessionRevisionConflictError(expectedRevision, revision)
+      const saved = structuredClone({ ...session, revision: revision + 1 })
+      records.set(saved.id, saved)
+      return saved
+    })
+    const owner = createOwner({
+      loadSessionWithDiagnostics: async (projectId, id) => {
+        const session = records.get(id)
+        return session && session.projectId === projectId
+          ? { status: 'found' as const, session: structuredClone(session) }
+          : { status: 'missing' as const }
+      },
+      saveSession: writes
+    })
+    return { owner, records, writes }
+  }
+
+  it('validates first-save grouping and commits it with the first Session write', async () => {
+    const { owner, writes, records } = create()
+    const saved = await owner.saveSession(fixture({ researchMembership: membership }))
+    expect(saved.researchMembership).toEqual({ ...membership, sourceTitle: 'Authoritative title' })
+    expect(writes).toHaveBeenCalledTimes(1)
+    expect(records.get('s')?.researchMembership).toEqual(saved.researchMembership)
+    expect(records.get('source')?.revision).toBe(0)
+  })
+
+  it.each(['different-project', 'self', 'wrong-import', 'missing', 'archived', 'ordinary-source'])(
+    'rejects invalid first-save membership: %s',
+    async (state) => {
+      const { owner, records, writes } = create()
+      const input = { ...membership }
+      if (state === 'different-project') input.sourceProjectId = 'elsewhere'
+      if (state === 'self') input.sourceSessionId = 's'
+      if (state === 'wrong-import') input.sourceImportId = 'old-import'
+      if (state === 'missing') records.delete('source')
+      if (state === 'archived') records.get('source')!.archivedAt = 3
+      if (state === 'ordinary-source') records.get('source')!.packageOrigin = undefined
+      await expect(owner.saveSession(fixture({ researchMembership: input }))).rejects.toThrow()
+      expect(writes).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([undefined, 'main'] as const)(
+    'preserves Main membership on ordinary saves, transcript owner %s',
+    async (runtimeTranscriptOwner) => {
+      const initial = fixture({ researchMembership: membership, runtimeTranscriptOwner })
+      const { owner } = create(initial)
+      const saved = await owner.saveSession({ ...initial, researchMembership: undefined })
+      expect(saved.researchMembership).toEqual(membership)
+      const replacement = await owner.saveSession({
+        ...saved,
+        researchMembership: { ...membership, sourceImportId: 'forged' }
+      })
+      expect(replacement.researchMembership).toEqual(membership)
+    }
+  )
+
+  it('revision-checks explicit enrollment and removal, preserving reading focus and transcript', async () => {
+    const initial = fixture({
+      runtimeContext: { version: 1, revision: 1, sessionContext: { version: 1, bindings: [] } }
+    })
+    const { owner, records } = create(initial)
+    const request = {
+      projectId: 'p',
+      sessionId: 's',
+      expectedRevision: 0,
+      source: { projectId: 'p', sourceSessionId: 'source', importId: 'import' }
+    }
+    const enrolled = await owner.setResearchMembership(request)
+    expect(enrolled.researchMembership?.sourceTitle).toBe('Authoritative title')
+    expect(enrolled.messages).toEqual(initial.messages)
+    expect(enrolled.runtimeContext).toEqual(initial.runtimeContext)
+    expect(enrolled.updatedAt).toBe(initial.updatedAt)
+    await expect(
+      owner.setResearchMembership({ ...request, source: undefined })
+    ).rejects.toBeInstanceOf(SessionRevisionConflictError)
+    records.delete('source')
+    const removed = await owner.setResearchMembership({
+      ...request,
+      expectedRevision: enrolled.revision!,
+      source: undefined
+    })
+    expect(removed.researchMembership).toBeUndefined()
+    const staleRenderer = await owner.saveSession({ ...removed, researchMembership: membership })
+    expect(staleRenderer.researchMembership).toBeUndefined()
+  })
+
+  it.each(['imported', 'archived'])('cannot enroll an %s target', async (kind) => {
+    const initial = fixture({
+      ...(kind === 'imported' ? { packageOrigin: source().packageOrigin } : { archivedAt: 3 })
+    })
+    const { owner, writes } = create(initial)
+    await expect(
+      owner.setResearchMembership({
+        projectId: 'p',
+        sessionId: 's',
+        expectedRevision: 0,
+        source: { projectId: 'p', sourceSessionId: 'source', importId: 'import' }
+      })
+    ).rejects.toThrow('writable')
+    expect(writes).not.toHaveBeenCalled()
+  })
+})

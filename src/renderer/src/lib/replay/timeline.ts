@@ -17,10 +17,9 @@ import {
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { PersistedToolActivity } from '../../../../shared/session-message-contract'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
-import { createWorkspaceConversationTimeline } from '../../pages/workspace/workspace-conversation-timeline'
-import { hydrateSession } from '../../stores/session-store'
 import { indexReplayRun } from './run-index'
 import type { ReplaySourceData } from './source-contract'
+import { createReplayTranscript } from './transcript'
 
 const time = (value: number | undefined): number | undefined =>
   value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined
@@ -368,7 +367,7 @@ export const buildReplayDocument = (source: ReplaySourceData): ReplayDocument =>
         issues: runs.flatMap(runIssues)
       })
     }
-    const timeline = createWorkspaceConversationTimeline(hydrateSession(projected))
+    const timeline = createReplayTranscript(projected)
     branch.steps = timeline.flatMap((item): ReplayStep[] => {
       if (item.type === 'message') {
         const message = item.message

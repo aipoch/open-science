@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
+import type { ChatSession } from '@/stores/session-store'
+import { SessionNotebookContent, SessionNotebookDialog } from './SessionNotebookDialog'
+import { loadSessionNotebookData, type SessionNotebookData } from './session-notebook-data'
+
+vi.mock('./session-notebook-data', () => ({ loadSessionNotebookData: vi.fn() }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 if (!Element.prototype.scrollIntoView) {
@@ -49,6 +54,136 @@ afterEach(() => {
   container.remove()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('SessionNotebookDialog initial load recovery', () => {
+  const session = (id: string): ChatSession => ({
+    id,
+    projectId: 'project',
+    title: id,
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    conversationGraph: createLinearConversationGraph({
+      sessionId: id,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const loaded = (runId: string, sessionId = 'session-1'): SessionNotebookData => ({
+    runs: [
+      {
+        ...run,
+        runId,
+        rootFrameId: `root-frame-${sessionId}`,
+        agentFrameId: `root-frame-${sessionId}`
+      }
+    ],
+    runCount: 1,
+    historyPage: { hasEarlierRuns: false }
+  })
+  const load = vi.mocked(loadSessionNotebookData)
+
+  beforeEach(() => {
+    load.mockReset()
+    vi.stubGlobal('api', { notebook: { state: vi.fn().mockResolvedValue({}) } })
+  })
+
+  it('retries in place, keeps close available while loading and restores history and export', async () => {
+    let resolveRetry!: (value: SessionNotebookData) => void
+    load.mockRejectedValueOnce(new Error('Read failed')).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    const close = vi.fn()
+    await act(async () => {
+      root.render(<SessionNotebookDialog session={session('session-1')} onClose={close} />)
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('Failed to load notebook.')
+    )
+    expect(
+      document.querySelector('[data-testid="session-notebook-export"]')?.hasAttribute('disabled')
+    ).toBe(true)
+    const retry = screen.getByRole('button', { name: 'Retry' })
+    await act(async () => {
+      retry.click()
+      retry.click()
+    })
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.getByText('Loading notebook…').getAttribute('role')).toBe('status')
+    expect(
+      document
+        .querySelector('[data-testid="session-notebook-scroll-viewport"]')
+        ?.getAttribute('aria-busy')
+    ).toBe('true')
+    await act(async () => screen.getByRole('button', { name: 'Close' }).click())
+    expect(close).toHaveBeenCalledOnce()
+    const viewport = document.querySelector<HTMLDivElement>(
+      '[data-testid="session-notebook-scroll-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      scrollHeight: { value: 1000 },
+      clientHeight: { value: 300 }
+    })
+    await act(async () => resolveRetry(loaded('recovered')))
+    expect(document.querySelector('[data-notebook-run-id="recovered"]')).not.toBeNull()
+    expect(
+      document.querySelector('[data-testid="session-notebook-export"]')?.hasAttribute('disabled')
+    ).toBe(false)
+    expect(viewport.scrollTop).toBe(700)
+    expect(load).toHaveBeenNthCalledWith(2, window.api.notebook, {
+      sessionId: 'session-1',
+      projectId: 'project',
+      workspaceCwd: ''
+    })
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a retry that %ss after switching sessions',
+    async (outcome) => {
+      let resolveRetry!: (value: SessionNotebookData) => void
+      let rejectRetry!: (reason: Error) => void
+      load
+        .mockRejectedValueOnce(new Error('Read failed'))
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              resolveRetry = resolve
+              rejectRetry = reject
+            })
+        )
+        .mockResolvedValueOnce(loaded('current', 'session-2'))
+      await act(async () => {
+        root.render(<SessionNotebookDialog session={session('session-1')} onClose={vi.fn()} />)
+      })
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy())
+      await act(async () => screen.getByRole('button', { name: 'Retry' }).click())
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+      await act(async () => {
+        root.render(<SessionNotebookDialog session={session('session-2')} onClose={vi.fn()} />)
+      })
+      await waitFor(() =>
+        expect(document.querySelector('[data-notebook-run-id="current"]')).not.toBeNull()
+      )
+      await act(async () => {
+        if (outcome === 'resolve') resolveRetry(loaded('stale'))
+        else rejectRetry(new Error('Stale failure'))
+      })
+      expect(document.querySelector('[data-notebook-run-id="current"]')).not.toBeNull()
+      expect(document.querySelector('[data-notebook-run-id="stale"]')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(
+        document.querySelector('[data-testid="session-notebook-export"]')?.hasAttribute('disabled')
+      ).toBe(false)
+    }
+  )
 })
 
 describe('SessionNotebookContent export', () => {
