@@ -138,6 +138,13 @@ export const runtimeUpdateCopy = (
           'Application files could not be verified for replacement. The service has not been stopped. Continue working or recheck later.'
         )
       }
+    case 'S35':
+      return {
+        title: t('Update preparation failed'),
+        description: t(
+          'The app is still open. Resolve the problem and try again, or cancel to continue working.'
+        )
+      }
     case 'S34':
       return {
         title: t('A previous operation is still finishing'),

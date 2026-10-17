@@ -161,6 +161,7 @@ const setup = (
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
+      | 'rendererPersistencePreparedForUpdate'
       | 'log'
       | 'flushLogs'
       | 'logFlushTimeoutMs'
@@ -229,6 +230,7 @@ const setup = (
         overrides.holdSettingsInstallAdmission ?? (() => () => undefined),
       abortQuitPreparation,
       flushSessionPersistence,
+      rendererPersistencePreparedForUpdate: overrides.rendererPersistencePreparedForUpdate,
       log: overrides.log,
       flushLogs: overrides.flushLogs,
       logFlushTimeoutMs: overrides.logFlushTimeoutMs,
@@ -2109,4 +2111,22 @@ it('bounds unreachable system quit inspection and exits without a modal', async 
   expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
   expect(onQuitError).not.toHaveBeenCalled()
   expect(h.quit).toHaveBeenCalledOnce()
+})
+
+it('does not request saves from windows already closed by the native updater after preparation', async () => {
+  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  markApplicationShutdownTrigger('update')
+  h.windows[0].destroyed = true
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+  expect(h.flushSessionPersistence).not.toHaveBeenCalled()
+  expect(h.shutdownBackends).toHaveBeenCalledOnce()
+})
+
+it('still flushes an ordinary quit even if an old update preparation flag remains', async () => {
+  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  h.closeOpts[0].requestQuit(true)
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+  expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2)
 })

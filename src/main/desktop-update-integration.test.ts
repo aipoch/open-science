@@ -54,7 +54,10 @@ const base = {
 function setup(
   launch: 'desktop' | 'cli' = 'desktop',
   verifyInstallerReady?: () => Promise<void>,
-  legacyInstall?: (status: UpdateStatus) => boolean
+  legacyInstall?: (status: UpdateStatus) => boolean,
+  preparation: Partial<
+    Pick<Parameters<typeof createDesktopUpdateIntegration>[0], 'flushRenderer'>
+  > = {}
 ): {
   setClosing: ReturnType<typeof vi.fn>
   verifyArtifact: ReturnType<typeof vi.fn>
@@ -103,6 +106,7 @@ function setup(
     client: () => client,
     currentVersion: '1',
     allowedProcessIds: () => [],
+    ...preparation,
     verifyInstallerReady,
     verifyArtifact,
     ...(legacyInstall ? { legacyInstall } : {}),
@@ -478,3 +482,54 @@ describe('legacy install for uncertified channels', () => {
     expect(state.begin).toHaveBeenCalled()
   })
 })
+
+// Both native installers and the supervised executor must save before stopping Node.
+it.each([true, false])('saves before stopping the runtime (legacy=%s)', async (legacy) => {
+  const order: string[] = []
+  const flushRenderer = vi.fn(async (phase: string) => {
+    order.push(phase)
+  })
+  const h = setup('desktop', undefined, () => legacy, { flushRenderer })
+  h.invoke.mockImplementation(async () => {
+    order.push('drain')
+    return { completed: true, reaped: true }
+  })
+  h.stop.mockImplementation(async () => {
+    order.push('stop')
+    return { release: vi.fn() }
+  })
+  await h.hooks.prepareInstall!(status, {})
+  await h.hooks.installGate!({})
+  expect(order).toEqual(['preflight', 'drain', 'final', 'stop'])
+  await h.hooks.beforeInstallHandoff!(status)
+  if (legacy)
+    expect(h.progress).toHaveBeenLastCalledWith({
+      recovery: expect.objectContaining({
+        phase: 'handoff',
+        runtime: 'stopped-clean',
+        canCancel: false
+      })
+    })
+})
+
+it.each([true, false])(
+  'never stops Node after a failed renderer save (legacy=%s)',
+  async (legacy) => {
+    for (const failedPhase of ['preflight', 'final']) {
+      state.record = undefined
+      const h = setup('desktop', undefined, () => legacy, {
+        flushRenderer: async (phase) => {
+          if (phase === failedPhase) throw new Error('save failed')
+        }
+      })
+      await h.hooks.prepareInstall!(status, {})
+      await expect(h.hooks.installGate!({})).rejects.toThrow('save failed')
+      expect(h.stop).not.toHaveBeenCalled()
+      expect(h.onHandoff).not.toHaveBeenCalled()
+      expect(h.setClosing).toHaveBeenLastCalledWith(false)
+      h.hooks.releaseInstallHandoff!()
+      await vi.waitFor(() => expect(h.invoke).toHaveBeenCalledWith('desktop:update-abort'))
+      expect(h.restart).not.toHaveBeenCalled()
+    }
+  }
+)

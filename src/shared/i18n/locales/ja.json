@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。"
   },
   "renderer": {
+    "Update preparation failed": "更新の準備に失敗しました",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "アプリは開いたままです。問題を解決して再試行するか、更新をキャンセルして作業を続けてください。",
     "Select one or more options": "1つ以上の選択肢を選択",
     "Your conversation is preserved. Try Resume again.": "会話は保持されています。もう一度再開してください。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "エージェントが時間内に応答しませんでした。会話は保持されています。もう一度再開してください。",

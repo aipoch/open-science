@@ -1277,6 +1277,8 @@ async function startDesktop(): Promise<void> {
   const { installElectronBroadcast } = await import('./renderer-broadcast-electron')
   installElectronNetwork()
   const removeNativeBroadcast = installElectronBroadcast()
+  let rendererPreparedForUpdate = false
+  const flushUpdateRenderer = createElectronSessionPersistenceFlush(() => getMainWindow())
   let preparedMacInstallation: PreparedMacInstallation | undefined
   const isLegacyInstall = (status: { localPath?: string }): boolean =>
     !status.localPath || !usesSupervisedInstall(process.platform, status.localPath)
@@ -1294,6 +1296,16 @@ async function startDesktop(): Promise<void> {
         )
     },
     legacyInstall: isLegacyInstall,
+    flushRenderer: async (phase) => {
+      const outcome = await flushUpdateRenderer()
+      diagnostics.log.info('update renderer persistence', { phase, outcome })
+      if (outcome !== 'completed')
+        throw new UpdateLifecycleError(
+          'install-failed',
+          'Your changes could not be saved. The update was stopped; keep the app open and try again.'
+        )
+      rendererPreparedForUpdate = phase === 'final'
+    },
     verifyArtifact: async (status, signal) => {
       if (!status.localPath || !status.latest)
         throw new UpdateLifecycleError(
@@ -1390,7 +1402,13 @@ async function startDesktop(): Promise<void> {
           'This Desktop cannot safely preserve the running service configuration.'
         )
     },
-    setClosing: (closing) => recovery.setClosing(closing),
+    setClosing: (closing) => {
+      recovery.setClosing(closing)
+      if (!closing) {
+        rendererPreparedForUpdate = false
+        notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
+      }
+    },
     retainLease: retainShutdownLease,
     onProgress: (status) => update.publishLifecycleStatus?.(status),
     onStopped: () => {
@@ -1611,6 +1629,7 @@ async function startDesktop(): Promise<void> {
       }
     },
     flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
+    rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
         getWindow,

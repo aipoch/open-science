@@ -147,6 +147,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés."
   },
   "renderer": {
+    "Update preparation failed": "Échec de la préparation de la mise à jour",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "L’application reste ouverte. Résolvez le problème et réessayez, ou annulez pour continuer à travailler.",
     "Select one or more options": "Sélectionnez une ou plusieurs options",
     "Your conversation is preserved. Try Resume again.": "Votre conversation est conservée. Réessayez de la reprendre.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "L’agent n’a pas répondu à temps. Votre conversation est conservée. Réessayez de la reprendre.",
