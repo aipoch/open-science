@@ -26,6 +26,11 @@ on:
         default: '38998525919'
         required: true
         type: string
+      baseline_signing_sha:
+        description: Exact workflow SHA that built the current PR 1.0.0 baseline
+        default: 8032877fa6c3fd7af75f4a060052b6543f63288a
+        required: true
+        type: string
       baseline_tag:
         description: Lower released stable Windows version
         default: v1.0.0
@@ -129,6 +134,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_RUN: ${{ inputs.baseline_run_id }}
+          BASELINE_SIGNING_SHA: ${{ inputs.baseline_signing_sha }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -136,7 +142,11 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $json | Set-Content evidence/pr-baseline-signing-run.json
           $baseline = $json | ConvertFrom-Json
-          if ($baseline.head_sha -ne $env:EXPECTED_SHA -or $baseline.conclusion -ne 'success') { throw 'PR baseline artifact is not the exact successfully signed candidate' }
+          if ($baseline.head_sha -ne $env:BASELINE_SIGNING_SHA -or $baseline.conclusion -ne 'success' -or $baseline.path -ne '.github/workflows/signpath-test.yml') { throw 'PR baseline artifact is not the exact successfully signed build' }
+          if ((Get-Content previous/upgrade-product-sha.txt -Raw).Trim() -ne $env:EXPECTED_SHA) { throw 'PR baseline product identity differs from candidate checkout' }
+          $modified = @(Get-Content previous/upgrade-modified-files.txt | Where-Object { $_.Trim() })
+          if ($modified.Count -ne 0) { throw 'PR 1.0.0 baseline has unexpected source modifications' }
+          Get-ChildItem previous/upgrade-* | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path 'evidence' ('baseline-' + $_.Name)) }
       - name: Fetch the signed lower-version baseline
         if: matrix.baseline == 'published'
         shell: pwsh
