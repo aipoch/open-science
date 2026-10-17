@@ -71,6 +71,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 77f387d90b5ceca578141316cbc9a756613a89e9
           persist-credentials: false
 
       - name: Setup Node
@@ -116,6 +117,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 77f387d90b5ceca578141316cbc9a756613a89e9
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -172,6 +174,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 77f387d90b5ceca578141316cbc9a756613a89e9
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -215,6 +218,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 77f387d90b5ceca578141316cbc9a756613a89e9
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -324,6 +328,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 77f387d90b5ceca578141316cbc9a756613a89e9
           persist-credentials: false
 
       - name: Setup Node
@@ -616,6 +621,15 @@ jobs:
             npm version --no-git-tag-version "$nightly_version"
             eb_ver=(-c.extraMetadata.version="$nightly_version")
           fi
+          # Diagnostic artifact only: same PR code, greater stable version for real updater checks.
+          test "$(git rev-parse HEAD)" = "77f387d90b5ceca578141316cbc9a756613a89e9"
+          test "$(node -p "require('./package.json').version")" = "1.0.0"
+          npm version --no-git-tag-version --ignore-scripts 1.0.1
+          mkdir -p dist
+          git rev-parse HEAD > dist/upgrade-product-sha.txt
+          git diff --binary > dist/upgrade-version-only.patch
+          git diff --name-only > dist/upgrade-modified-files.txt
+          node -e "const fs=require('fs'); const names=fs.readFileSync('dist/upgrade-modified-files.txt','utf8').trim().split(/\r?\n/); if(names.some(n=>!['package.json','package-lock.json'].includes(n))) throw Error('Unexpected product modification')"
           npm run build:e2e
           npm run build:web
           windows_signing_args=()
@@ -716,6 +730,8 @@ jobs:
           name: ${{ matrix.name }}
           retention-days: 7
           path: |
+            dist/upgrade-*.txt
+            dist/upgrade-*.patch
             dist/*.dmg
             dist/*.zip
             dist/*.exe
