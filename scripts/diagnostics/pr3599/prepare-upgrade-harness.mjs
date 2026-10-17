@@ -77,6 +77,43 @@ text = text.slice(0, applyStart) + `    const mainIdentity = ownedBeforeUpdate.f
 ` + text.slice(applyEnd)
 replace('  let installerExit', '  let installerExit\n  let windowObservation')
 replace("[Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED')", "[Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED'); [Console]::Out.WriteLine(('PR3599_INSTALLER_STARTED ' + $candidate.CreationDate.ToUniversalTime().ToString('o')))")
+replace("$target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)", "Add-Type -AssemblyName UIAutomationClient\n$target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)")
+replace('$wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 300000)', String.raw`
+$uiFile = Join-Path $env:PR3599_EVIDENCE_DIR 'installer-window-timeline.jsonl'
+$uiWriter = [IO.StreamWriter]::new($uiFile,$false,[Text.UTF8Encoding]::new($false))
+$uiWriter.AutoFlush = $true
+$installDeadline = [DateTime]::UtcNow.AddMilliseconds(300000)
+try {
+  do {
+    $sample = @{at=[DateTime]::UtcNow.ToString('o');rootPid=$candidate.ProcessId;windows=@();processes=@()}
+    try {
+      $all = @(Get-CimInstance Win32_Process)
+      $owned = @($all | Where-Object { $_.ProcessId -eq $candidate.ProcessId -and $_.CreationDate -eq $candidate.CreationDate })
+      do {
+        $before = $owned.Count
+        $parents = @($owned.ProcessId)
+        $owned += @($all | Where-Object { $_.ParentProcessId -in $parents -and $_.ProcessId -notin $parents -and $_.CreationDate -ge $candidate.CreationDate })
+      } while ($owned.Count -gt $before)
+      $sample.processes = @($owned | ForEach-Object { @{pid=$_.ProcessId;parent=$_.ParentProcessId;path=$_.ExecutablePath;created=$_.CreationDate.ToUniversalTime().ToString('o')} })
+      foreach ($record in $owned) {
+        $process = $null
+        try {
+          $process = [Diagnostics.Process]::GetProcessById($record.ProcessId)
+          if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+            $window = [Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+            $texts = @($window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition) | ForEach-Object { if (-not $_.Current.IsOffscreen) { $_.Current.Name } })
+            $sample.windows += @{pid=$record.ProcessId;title=$window.Current.Name;offscreen=$window.Current.IsOffscreen;text=$texts}
+          }
+        } catch { $sample.windows += @{pid=$record.ProcessId;observerError=$_.Exception.Message} }
+        finally { if ($process) { $process.Dispose() } }
+      }
+    } catch { $sample.observerError = $_.Exception.Message }
+    $sample.rootAlive = ([OpenScienceProcessObserver]::WaitForSingleObject($handle, 0) -eq 0x00000102)
+    $uiWriter.WriteLine(($sample | ConvertTo-Json -Depth 7 -Compress))
+    $wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 500)
+  } while ($wait -eq 0x00000102 -and [DateTime]::UtcNow -lt $installDeadline)
+} finally { $uiWriter.Dispose() }
+`)
 replace('[Console]::Out.Write("installer pid=$($candidate.ProcessId) exit=$exitCode")', "[Console]::Out.WriteLine(('PR3599_INSTALLER_EXITED ' + [DateTime]::UtcNow.ToString('o'))); [Console]::Out.Write(\"installer pid=$($candidate.ProcessId) exit=$exitCode\")")
 replace('    console.log(`Updater installer observation:', `    await evidence('installer-result', installerResult)
     if (windowObservation) await windowObservation.completion
@@ -155,13 +192,18 @@ const composerDraft = { marker: 'PR3599 unsent draft must survive signed update'
 async function seedComposerDraft(installDirectory) {
   try {
     await desktopButton(installDirectory, 'open-project-for-draft', '^PR3599 upgrade preservation$', true)
-    const result = await waitFor('the real editable composer', async () => {
+    const written = await waitFor('the real editable composer', async () => {
       const read = await operateRecordedDraft(await snapshotInstallation(installDirectory))
       if (!read.found) return
       return operateRecordedDraft(await snapshotInstallation(installDirectory), composerDraft.marker)
     }, 30000)
-    if (result.text !== composerDraft.marker) throw new Error('Composer did not accept the synthetic unsent draft')
-    composerDraft.seed = { status: 'PASS', result }
+    await evidence('composer-draft-immediate-write-result', written)
+    const result = await waitFor('the actual composer text after input settles', async () => {
+      const read = await operateRecordedDraft(await snapshotInstallation(installDirectory))
+      await evidence('composer-draft-settle-read', read)
+      return read.text?.replace(/[\r\n]+$/, '') === composerDraft.marker ? read : undefined
+    }, 30000)
+    composerDraft.seed = { status: 'PASS', written, result }
   } catch (error) {
     composerDraft.seed = { status: 'BLOCKED', error: error.message, windows: await readRecordedWindows(await snapshotInstallation(installDirectory)) }
   }
@@ -178,7 +220,7 @@ async function inspectRestoredDraft(installDirectory, prefix) {
         return read.found ? read : undefined
       }, 30000)
     }
-    composerDraft.restored.push({ prefix, status: result.text === composerDraft.marker ? 'PASS' : 'FAIL', result })
+    composerDraft.restored.push({ prefix, status: result.text?.replace(/[\r\n]+$/, '') === composerDraft.marker ? 'PASS' : 'FAIL', result })
   } catch (error) { composerDraft.restored.push({ prefix, status: 'BLOCKED', error: error.message }) }
   await evidence('composer-draft-restoration', composerDraft)
 }
@@ -222,11 +264,15 @@ async function verifyUpdateObservations() {
   const observerErrors = samples.filter((sample) => sample.observerError && !sample.processExited)
   const missingWindow = samples.filter((sample) => !sample.windowPresent && !sample.processExited)
   const persistence = JSON.parse(await readFile(join(directory, 'persistence-order.json'), 'utf8'))
+  const installerTimeline = (await readFile(join(directory, 'installer-window-timeline.jsonl'), 'utf8')).trim().split(/\r?\n/).map(JSON.parse).filter((sample) => sample.rootAlive)
+  const installerWindows = installerTimeline.filter((sample) => sample.windows.some((window) => window.title && !window.offscreen))
+  const installerErrors = installerTimeline.filter((sample) => sample.observerError || sample.windows.some((window) => window.observerError))
+  const installerUi = { status: installerErrors.length ? 'BLOCKED' : installerWindows.length === installerTimeline.length && installerTimeline.length ? 'PASS' : 'FAIL', sampleCount: installerTimeline.length, visibleSampleCount: installerWindows.length, errors: installerErrors, source: 'actual installer PID and descendants; no synthetic window' }
   const result = {
-    status: errors.length || observerErrors.length || persistence.status !== 'PASS' || composerDraft.restored.some((draft) => draft.status === 'FAIL') ? 'FAIL' : progress.length ? 'PASS' : 'BLOCKED',
+    status: errors.length || observerErrors.length || persistence.status !== 'PASS' || composerDraft.restored.some((draft) => draft.status === 'FAIL') || installerUi.status === 'FAIL' ? 'FAIL' : progress.length ? 'PASS' : 'BLOCKED',
     sampleCount: samples.length, progress, errors, observerErrors, missingWindow, persistence,
     scope: '100ms requested accessibility sampling until the original signed Electron process exits; raw timestamps include actual sampling gaps. Installer UI after handoff is not observed.',
-    continuousInstallationUi: 'NOT_FULLY_VERIFIED: sampling of old app ends at process exit; cannot prove installer UI remained visible',
+    continuousInstallationUi: installerUi,
     composerDraft,
     authorizationTiming: 'No interactive elevation was requested for this per-user update; installer process timestamps are recorded separately'
   }

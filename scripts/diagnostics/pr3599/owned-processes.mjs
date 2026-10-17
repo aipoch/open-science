@@ -153,18 +153,23 @@ if ($editors.Count -eq 0) { Write-Output '{"found":false}'; exit 0 }
 $editor = $editors[0]
 $pattern = $null
 $text = $null
+$valueText = $null
+$documentText = $null
 if ($editor.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$pattern)) {
   $valuePattern = [Windows.Automation.ValuePattern]$pattern
   if ($env:PR3599_SET_DRAFT -eq '1') {
     if ($valuePattern.Current.IsReadOnly -or -not $editor.Current.IsEnabled) { throw 'Composer is not editable' }
     $valuePattern.SetValue($env:PR3599_DRAFT_TEXT)
   }
-  $text = $valuePattern.Current.Value
+  $valueText = $valuePattern.Current.Value
+  $text = $valueText
 } elseif ($env:PR3599_SET_DRAFT -eq '1') { throw 'Composer does not expose an accessibility ValuePattern; no alternate injection permitted' }
-elseif ($editor.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
-  $text = ([Windows.Automation.TextPattern]$pattern).DocumentRange.GetText(-1)
-} else { throw 'Composer text is not readable through accessibility' }
-@{found=$true;text=$text;set=($env:PR3599_SET_DRAFT -eq '1')} | ConvertTo-Json -Compress
+if ($editor.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern,[ref]$pattern)) {
+  $documentText = ([Windows.Automation.TextPattern]$pattern).DocumentRange.GetText(-1)
+  $text = $documentText
+}
+if ($null -eq $text) { throw 'Composer text is not readable through accessibility' }
+@{found=$true;text=$text;valueText=$valueText;documentText=$documentText;set=($env:PR3599_SET_DRAFT -eq '1')} | ConvertTo-Json -Compress
 `, { PR3599_PROCESS_RECORDS: JSON.stringify(records), PR3599_SET_DRAFT: value === undefined ? '0' : '1', PR3599_DRAFT_TEXT: value ?? '' }, 20000)
   return JSON.parse(output)
 }
