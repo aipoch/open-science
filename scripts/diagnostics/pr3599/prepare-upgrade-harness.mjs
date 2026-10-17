@@ -49,6 +49,7 @@ const replace = (before, after) => {
 }
 replace("import { basename, join, resolve, win32 } from 'node:path'", "import { basename, dirname, join, resolve, win32 } from 'node:path'")
 replace("import { randomUUID } from 'node:crypto'", "import { createHash, randomUUID } from 'node:crypto'")
+replace("import { pathToFileURL } from 'node:url'", "import { fileURLToPath, pathToFileURL } from 'node:url'")
 replace("from './windows-installer-smoke.mjs'", "from './pr3599-installer-smoke.mjs'")
 replace("const child = spawn(executable, ['--open-science-headless', '--serve=0'], {\n    env,\n    windowsHide: true\n  })", "const child = spawn(executable, ['--serve=0'], {\n    env,\n    windowsHide: false\n  })")
 replace('  cleanupSmokeRoot,', '')
@@ -68,7 +69,19 @@ text = text.slice(0, checkStart) + `    await desktopButton(dirname(executable),
 const applyStart = text.indexOf('    const applied = await invokeWebRpc(')
 const applyEnd = text.indexOf('    const exitCode = await closed', applyStart)
 if (applyStart < 0 || applyEnd < 0) throw new Error('Missing native apply button boundary')
-text = text.slice(0, applyStart) + "    await desktopButton(dirname(executable), 'apply-update', '^Restart to update$', true)\n" + text.slice(applyEnd)
+text = text.slice(0, applyStart) + `    const mainIdentity = ownedBeforeUpdate.find((record) => record.pid === child.pid)
+    if (!mainIdentity) throw new Error('Cannot identify the update window owner')
+    windowObservation = await observeUpdateWindow(mainIdentity)
+    await evidence('apply-requested-at', { at: new Date().toISOString(), source: 'actual accessibility button' })
+    await desktopButton(dirname(executable), 'apply-update', '^Restart to update$', true)
+` + text.slice(applyEnd)
+replace('  let installerExit', '  let installerExit\n  let windowObservation')
+replace("[Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED')", "[Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_ACQUIRED'); [Console]::Out.WriteLine(('PR3599_INSTALLER_STARTED ' + $candidate.CreationDate.ToUniversalTime().ToString('o')))")
+replace('[Console]::Out.Write("installer pid=$($candidate.ProcessId) exit=$exitCode")', "[Console]::Out.WriteLine(('PR3599_INSTALLER_EXITED ' + [DateTime]::UtcNow.ToString('o'))); [Console]::Out.Write(\"installer pid=$($candidate.ProcessId) exit=$exitCode\")")
+replace('    console.log(`Updater installer observation:', `    await evidence('installer-result', installerResult)
+    if (windowObservation) await windowObservation.completion
+    await evidence('persistence-order', inspectPersistenceOrder(stdout))
+    console.log(\`Updater installer observation:`)
 replace("  const profileDirectory = join(root, 'profile')", '  const profileDirectory = process.env.USERPROFILE')
 replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...process.env, OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory, independentHarnessPid: process.pid, independentHarnessExecutable: process.execPath }, null, 2))")
 replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)', "    const ownedBeforeUpdate = await snapshotInstallation(dirname(executable))\n    rememberedProcesses.push(...ownedBeforeUpdate)\n    await evidence('old-processes-before-update', ownedBeforeUpdate)\n    const closed = waitForShutdownExit(exit, child, diagnosticOutput)")
@@ -79,7 +92,7 @@ replace('    await Promise.all([terminateProcessTree(child), installerExit?.catc
     await evidence('update-failure-windows', await readRecordedWindows(failedProcesses).catch((error) => ({ error: error.message })))
     await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))
     if (installerExit) await evidence('installer-observer-after-failure', await installerExit.then((result) => result, (error) => ({ error: error.message })))`)
-replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)\n    await verifyNormalReopen(installDirectory, previousConfigRoot, currentVersion, env)')
+replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)\n    await verifyNormalReopen(installDirectory, previousConfigRoot, currentVersion, env)\n    await verifyUpdateObservations()')
 replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })\n  )", `  await cleanup(async () => {
     const residual = await snapshotInstallation(installDirectory)
     await evidence('processes-before-cleanup', residual)
@@ -138,6 +151,57 @@ async function exerciseDownloadFaults(connection, installDirectory, expectedVers
 
 const rememberedProcesses = []
 let seededData
+async function observeUpdateWindow(record) {
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'pr3599-observe-update-window.ps1')
+  const output = join(process.env.PR3599_EVIDENCE_DIR, 'update-window-timeline.jsonl')
+  const observer = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script, '-TargetPid', String(record.pid), '-Started', record.started, '-Output', output], { windowsHide: true })
+  let stdout = '', stderr = ''
+  const ready = Promise.withResolvers()
+  observer.stdout.setEncoding('utf8'); observer.stderr.setEncoding('utf8')
+  observer.stdout.on('data', (chunk) => { stdout += chunk; if (stdout.includes('PR3599_WINDOW_OBSERVER_READY')) ready.resolve() })
+  observer.stderr.on('data', (chunk) => { stderr += chunk })
+  const completion = new Promise((resolve, reject) => {
+    observer.once('error', reject)
+    observer.once('close', (code) => {
+      const result = { code, stdout, stderr, output }
+      evidence('window-observer-result', result).then(() => {
+        if (code !== 0) reject(new Error('Update window observer failed: ' + stderr))
+        else resolve(result)
+      }, reject)
+    })
+  })
+  void completion.catch((error) => ready.reject(error))
+  await withTimeout(ready.promise, 'read-only window observer readiness', 15000)
+  // Return a wrapper so async promise assimilation does not await application exit here.
+  return { completion }
+}
+function inspectPersistenceOrder(stdout) {
+  const preflight = stdout.indexOf("update renderer persistence { phase: 'preflight', outcome: 'completed' }")
+  const final = stdout.indexOf("update renderer persistence { phase: 'final', outcome: 'completed' }")
+  const stop = stdout.indexOf('[desktop-runtime-client] runtime-stop')
+  return { preflight, final, stop, status: preflight >= 0 && final > preflight && stop > final ? 'PASS' : 'FAIL', source: 'actual signed Electron stdout; offsets preserve emitted order' }
+}
+async function verifyUpdateObservations() {
+  const directory = process.env.PR3599_EVIDENCE_DIR
+  const timeline = (await readFile(join(directory, 'update-window-timeline.jsonl'), 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
+  const samples = timeline.filter((event) => event.event === 'sample')
+  const visible = samples.flatMap((sample) => sample.controls.filter((control) => !control.offscreen).map((control) => ({ at: sample.at, name: control.name })))
+  const errors = visible.filter((control) => /Desktop connection lost|Check failed/i.test(control.name))
+  const progress = visible.filter((control) => /Preparing update|Stopping the service|Preparing installation|Installing update/i.test(control.name))
+  const observerErrors = samples.filter((sample) => sample.observerError && !sample.processExited)
+  const missingWindow = samples.filter((sample) => !sample.windowPresent && !sample.processExited)
+  const persistence = JSON.parse(await readFile(join(directory, 'persistence-order.json'), 'utf8'))
+  const result = {
+    status: errors.length || observerErrors.length || persistence.status !== 'PASS' ? 'FAIL' : progress.length ? 'PASS' : 'BLOCKED',
+    sampleCount: samples.length, progress, errors, observerErrors, missingWindow, persistence,
+    scope: '100ms requested accessibility sampling until the original signed Electron process exits; raw timestamps include actual sampling gaps. Installer UI after handoff is not observed.',
+    continuousInstallationUi: 'NOT_FULLY_VERIFIED: sampling of old app ends at process exit; cannot prove installer UI remained visible',
+    composerDraft: 'NOT_VERIFIED: saved transcript is not an unsent composer draft',
+    authorizationTiming: 'No interactive elevation was requested for this per-user update; installer process timestamps are recorded separately'
+  }
+  await evidence('additional-update-observations', result)
+  if (result.status === 'FAIL') throw new Error('Signed update observation failed; see additional-update-observations.json')
+}
 async function desktopButton(installDirectory, step, pattern, invoke) {
   const outcome = await waitFor('the actual product button: ' + step, async () => {
     let result
@@ -300,6 +364,7 @@ async function verifyNormalReopen(installDirectory, configRoot, expectedVersion,
 replace('const invokedAsScript =', helpers + '\nconst invokedAsScript =')
 if (text.includes("'/IM'")) throw new Error('Global image-name termination remains')
 await copyFile(join(dirname(fileURLToPath(import.meta.url)), 'owned-processes.mjs'), join(source, 'scripts/pr3599-owned-processes.mjs'))
+await copyFile(join(dirname(fileURLToPath(import.meta.url)), 'observe-update-window.ps1'), join(source, 'scripts/pr3599-observe-update-window.ps1'))
 await writeFile(join(source, 'scripts/pr3599-upgrade-certification.mjs'), text)
 console.log('Prepared candidate-bound upgrade harness with scoped cleanup and normal successor shutdown.')
 
