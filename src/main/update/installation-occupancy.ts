@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
@@ -218,7 +218,7 @@ export function inspectOwnedLinuxZygoteProcesses(): number[] {
   return [...owned]
 }
 
-/** Crashpad is reparented on macOS/Linux and is absent from getAppMetrics().
+/** Crashpad is absent from getAppMetrics() and is reparented on macOS/Linux.
  * Accept only the exact bundled executable, crash database and per-launch annotation.
  * A previous launch (even with the same profile), another profile, or an unannotated
  * handler remains an occupant. This is ownership evidence, not a process-name exemption. */
@@ -227,6 +227,7 @@ export function inspectOwnedCrashpadProcesses(options: {
   crashDumpsPath: string
   instanceId: string
 }): number[] {
+  if (process.platform === 'win32') return inspectOwnedWindowsCrashpadProcesses(options)
   if (process.platform !== 'darwin' && process.platform !== 'linux') return []
   const read = (field: string): Map<number, string> => {
     const result = spawnSync('/bin/ps', ['-axo', `pid=,${field}=`], {
@@ -285,4 +286,101 @@ export function inspectOwnedCrashpadProcesses(options: {
       ? [pid]
       : []
   })
+}
+
+function inspectOwnedWindowsCrashpadProcesses(options: {
+  installationRoot: string
+  crashDumpsPath: string
+  instanceId: string
+}): number[] {
+  const canonical = (path: string): string | undefined => {
+    try {
+      return realpathSync(path).toLowerCase()
+    } catch {
+      return undefined
+    }
+  }
+  const executable = canonical(process.execPath)
+  const database = canonical(options.crashDumpsPath)
+  if (
+    !executable ||
+    !database ||
+    !options.instanceId ||
+    canonical(dirname(executable)) !== canonical(options.installationRoot)
+  )
+    return []
+  // Parse with Windows' own argv rules: quoted profile paths and annotation values must not be
+  // inferred with substring matching. Only current direct children are even considered.
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+    '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
+      process.pid +
+      '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
+    'if ($rows.Count -eq 0) { Write-Output "[]"; exit 0 }',
+    "Add-Type -TypeDefinition @'",
+    'using System; using System.Runtime.InteropServices;',
+    'public static class OpenScienceCrashpadArguments {',
+    '  [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CommandLineToArgvW(string value, out int count);',
+    '  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);',
+    '  public static string[] Parse(string value) {',
+    '    int count; IntPtr pointer = CommandLineToArgvW(value, out count);',
+    '    if (pointer == IntPtr.Zero) throw new InvalidOperationException("Cannot parse process arguments");',
+    '    try { string[] result = new string[count]; for (int i = 0; i < count; i++) result[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, i * IntPtr.Size)); return result; }',
+    '    finally { LocalFree(pointer); }',
+    '  }',
+    '}',
+    "'@",
+    '$result = @($rows | ForEach-Object { @{ProcessId=$_.ProcessId;ParentProcessId=$_.ParentProcessId;ExecutablePath=$_.ExecutablePath;Arguments=[OpenScienceCrashpadArguments]::Parse($_.CommandLine)} })',
+    'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
+  ].join('\n')
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5_000,
+      maxBuffer: 16 * 1024 * 1024
+    }
+  )
+  try {
+    if (result.status !== 0) throw result.error ?? new Error('Process query failed')
+    const rows: unknown = JSON.parse(result.stdout)
+    if (!Array.isArray(rows)) throw new Error('Invalid process query result')
+    return rows.flatMap((row) => {
+      if (
+        !row ||
+        !Number.isSafeInteger(row.ProcessId) ||
+        row.ProcessId <= 0 ||
+        row.ParentProcessId !== process.pid ||
+        typeof row.ExecutablePath !== 'string' ||
+        canonical(row.ExecutablePath) !== executable ||
+        !Array.isArray(row.Arguments) ||
+        !row.Arguments.every((arg: unknown) => typeof arg === 'string')
+      )
+        return []
+      const args: string[] = row.Arguments
+      const values = (key: string): string[] =>
+        args.filter((arg) => arg.startsWith(key + '=')).map((arg) => arg.slice(key.length + 1))
+      const types = values('--type')
+      const databases = values('--database')
+      const instances = values('--annotation=openScienceInstance')
+      return types.length === 1 &&
+        types[0] === 'crashpad-handler' &&
+        databases.length === 1 &&
+        canonical(databases[0]) === database &&
+        instances.length === 1 &&
+        instances[0] === options.instanceId
+        ? [row.ProcessId]
+        : []
+    })
+  } catch (cause) {
+    throw new UpdateLifecycleError(
+      'installation-busy',
+      'Crash reporter ownership could not be inspected.',
+      undefined,
+      { cause }
+    )
+  }
 }

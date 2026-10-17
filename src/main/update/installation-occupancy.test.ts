@@ -227,10 +227,87 @@ describe('current macOS Crashpad ownership', () => {
     expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
   })
 
-  it.each(['win32'] as const)('does not exempt handlers on %s', (platform) => {
+  it.each(['freebsd'] as const)('does not exempt handlers on %s', (platform) => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
     expect(mocks.spawnSync).not.toHaveBeenCalled()
+  })
+})
+
+describe('Windows crash reporter ownership', () => {
+  const root = join(process.cwd(), 'fixture application')
+  const executable = join(root, 'open-science.exe')
+  const database = join(root, 'profile space', 'Crashpad')
+  const options = { installationRoot: root, crashDumpsPath: database, instanceId: 'current-launch' }
+  const row = () => ({
+    ProcessId: 101,
+    ParentProcessId: process.pid,
+    ExecutablePath: executable,
+    Arguments: [
+      executable,
+      '--type=crashpad-handler',
+      '--database=' + database,
+      '--annotation=openScienceInstance=current-launch'
+    ]
+  })
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    mocks.realpath.mockImplementation((path: string) =>
+      path === process.execPath ? executable : path
+    )
+  })
+  const snapshot = (rows: unknown): void => {
+    mocks.spawnSync.mockReturnValue({ status: 0, stdout: JSON.stringify(rows) })
+  }
+  it('recognizes its own handler using native parsed arguments and actual executable identity', () => {
+    snapshot([row()])
+    expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
+  })
+  it.each([
+    ['another parent', { ParentProcessId: process.pid + 1 }],
+    ['another executable', { ExecutablePath: executable + '-other' }],
+    [
+      'previous launch',
+      { Arguments: [...row().Arguments.slice(0, -1), '--annotation=openScienceInstance=previous'] }
+    ],
+    [
+      'another profile',
+      {
+        Arguments: row().Arguments.map((arg) =>
+          arg.startsWith('--database=') ? '--database=' + database + '-other' : arg
+        )
+      }
+    ],
+    [
+      'another process type',
+      {
+        Arguments: row().Arguments.map((arg) =>
+          arg === '--type=crashpad-handler' ? '--type=renderer' : arg
+        )
+      }
+    ],
+    [
+      'duplicate instance',
+      { Arguments: [...row().Arguments, '--annotation=openScienceInstance=current-launch'] }
+    ],
+    ['duplicate database', { Arguments: [...row().Arguments, '--database=' + database] }],
+    ['missing annotation', { Arguments: row().Arguments.slice(0, -1) }],
+    ['invalid arguments', { Arguments: null }]
+  ])('does not exempt %s', (_name, change) => {
+    snapshot([{ ...row(), ...change }])
+    expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
+  })
+  it('does not exempt its handler from a different installation', () => {
+    snapshot([row()])
+    expect(
+      inspectOwnedCrashpadProcesses({ ...options, installationRoot: root + '-other' })
+    ).toEqual([])
+  })
+  it('fails closed on a failed native process query or malformed output', () => {
+    mocks.spawnSync.mockReturnValue({ status: null, error: new Error('timeout'), stdout: '' })
+    expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
+    mocks.spawnSync.mockReturnValue({ status: 0, stdout: '{bad-json' })
+    expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
   })
 })
 
@@ -275,7 +352,7 @@ describe('Linux desktop helper ownership', () => {
   it.each(['current', 'old', 'other-executable', 'unreadable'])(
     'checks the Linux crash reporter executable and launch identity (%s)',
     (kind) => {
-      const handler = '/opt/Science/chrome_crashpad_handler'
+      const handler = join('/opt/Science', 'chrome_crashpad_handler')
       mocks.spawnSync.mockReturnValueOnce({ status: 0, stdout: '11 chrome_crashpad' })
       mocks.spawnSync.mockReturnValueOnce({
         status: 0,
@@ -300,9 +377,9 @@ describe('AppImage runtime parent ownership', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
     vi.stubEnv('APPIMAGE', '/apps/Science.AppImage')
-    vi.stubEnv('APPDIR', '/tmp/extracted')
+    vi.stubEnv('APPDIR', join('/tmp', 'extracted'))
     mocks.realpath.mockImplementation((path: string) =>
-      path === process.execPath ? '/tmp/extracted/open-science' : path
+      path === process.execPath ? join('/tmp', 'extracted', 'open-science') : path
     )
     mocks.readlink.mockReturnValue('/apps/Science.AppImage')
   })
