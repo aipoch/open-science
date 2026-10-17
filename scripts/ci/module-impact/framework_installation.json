@@ -10,7 +10,9 @@
     "src/main/settings/process-tree.test.ts",
     "src/main/settings/process-tree.ts",
     "src/main/settings/reasoning-transport.ts",
-    "src/main/settings/codex-authentication-status.test.ts"
+    "src/main/settings/codex-authentication-status.test.ts",
+    "src/main/settings/codex-authentication-status.ts",
+    "src/main/settings/fixtures/codex-acp-1.6.2-authentication-status.txt"
   ],
   "interfacePaths": [
     "src/main/settings/codex-paths.ts",

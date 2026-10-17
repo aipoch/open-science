@@ -1,5 +1,5 @@
-// Match ACP authentication failures, not arbitrary provider or assistant text.
+// Match ACP authentication failures, including the application's session-resume wrapper.
 export const isAgentAuthenticationRequired = (message: string | null | undefined): boolean =>
-  /^(?:(?:ApplicationCommandError|RequestError|Error):\s*)*Authentication required(?:\.|$)/i.test(
+  /^(?:(?:ApplicationCommandError|RequestError|Error|Agent session resume failed):\s*)*Authentication required\.?$/i.test(
     message?.trim() ?? ''
   )

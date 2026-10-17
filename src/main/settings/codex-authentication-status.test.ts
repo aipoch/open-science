@@ -1,27 +1,25 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { runInNewContext } from 'node:vm'
-import { patchCodexAcpAuthenticationStatusSource } from './managed-codex'
+import { patchCodexAcpAuthenticationStatusSource } from './codex-authentication-status'
 
-const source = `class Client {
-  async getAuthenticationStatus() {
-    const modelProvider = await this.getCurrentModelProvider();
-    if (modelProvider) {
-      return {
-        type: "gateway",
-        name: modelProvider
-      };
-    }
-    const account = (await this.getAccount()).account;
-    return { type: account === null ? "unauthenticated" : account.type };
-  }
-}; Client`
+const source = `class Client {${readFileSync(
+  new URL('./fixtures/codex-acp-1.6.2-authentication-status.txt', import.meta.url),
+  'utf8'
+)}}; Client`
+
 describe('Codex authentication status patch', () => {
   it.each([
     ['open-science-chatgpt-https', true, null, 'unauthenticated'],
-    ['open-science-chatgpt-https', true, { type: 'chat-gpt' }, 'chat-gpt'],
+    [
+      'open-science-chatgpt-https',
+      true,
+      { type: 'chatgpt', email: 'researcher@example.test' },
+      'chat-gpt'
+    ],
     ['custom', false, null, 'gateway'],
     [null, true, null, 'unauthenticated'],
-    [null, true, { type: 'api-key' }, 'api-key']
+    [null, true, { type: 'apiKey' }, 'api-key']
   ])(
     'checks account requirements for %s',
     async (provider, requiresOpenaiAuth, account, expected) => {
@@ -32,6 +30,16 @@ describe('Codex authentication status patch', () => {
       expect((await client.getAuthenticationStatus()).type).toBe(expected)
     }
   )
+  it('propagates account-read failures instead of reporting a gateway login', async () => {
+    const Client = runInNewContext(patchCodexAcpAuthenticationStatusSource(source))
+    const client = new Client()
+    client.getCurrentModelProvider = async () => 'custom'
+    client.getAccount = async () => {
+      throw new Error('account unavailable')
+    }
+    await expect(client.getAuthenticationStatus()).rejects.toThrow('account unavailable')
+  })
+
   it('is idempotent and refuses ambiguous or changed real adapters', () => {
     const patched = patchCodexAcpAuthenticationStatusSource(source)
     expect(patchCodexAcpAuthenticationStatusSource(patched)).toBe(patched)
