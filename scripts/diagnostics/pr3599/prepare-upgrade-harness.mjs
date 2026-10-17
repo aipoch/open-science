@@ -26,10 +26,11 @@ const replace = (before, after) => {
 replace("import { basename, join, resolve, win32 } from 'node:path'", "import { basename, dirname, join, resolve, win32 } from 'node:path'")
 replace("import { randomUUID } from 'node:crypto'", "import { createHash, randomUUID } from 'node:crypto'")
 replace("from './windows-installer-smoke.mjs'", "from './pr3599-installer-smoke.mjs'")
+replace("const child = spawn(executable, ['--open-science-headless', '--serve=0'], {\n    env,\n    windowsHide: true\n  })", "const child = spawn(executable, ['--serve=0'], {\n    env,\n    windowsHide: false\n  })")
 replace('  cleanupSmokeRoot,', '')
 replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = fetch }) => {')
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')
-replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
+replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow, readRecordedWindows } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
 replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
 replace('    await onDownloaded()', "    await onDownloaded()\n    if (process.env.PR3599_BASELINE === 'pr') await verifyOccupiedInstallation({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), env)")
 replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...windowsProfileEnvironment(profileDirectory), OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory, independentHarnessPid: process.pid, independentHarnessExecutable: process.execPath }, null, 2))")
@@ -78,7 +79,22 @@ async function verifyOccupiedInstallation(connection, installDirectory, env) {
 }
 async function seedUpgradeData(connection, installDirectory) {
   const rpc = (channel, ...args) => invokeWebRpc({ ...connection, channel, args })
+  const windows = await waitFor('the actual pre-upgrade product window', async () => {
+    const records = await snapshotInstallation(installDirectory)
+    const found = await readRecordedWindows(records)
+    if (found.length) return found
+  }, UPDATE_TIMEOUT_MS)
+  await evidence('pre-upgrade-windows', windows)
   const project = await rpc('projects:create', { name: 'PR3599 upgrade preservation', description: 'Synthetic upgrade data; no user content' })
+  const now = Date.now()
+  const session = {
+    id: randomUUID(), projectId: project.id, title: 'Synthetic upgrade transcript',
+    cwd: process.env.PR3599_EVIDENCE_DIR, status: 'idle', createdAt: now, updatedAt: now,
+    messages: [{ id: randomUUID(), role: 'user', content: 'Synthetic persistence marker: no model request.', status: 'complete', eventIds: [] }]
+  }
+  await rpc('sessions:save-session', session)
+  const loaded = await rpc('sessions:load-one', { projectId: project.id, sessionId: session.id })
+  if (loaded?.messages?.[0]?.content !== session.messages[0].content) throw new Error('Initial synthetic session was not persisted')
   await rpc('settings:set-close-preference', { preference: 'quit' })
   const credential = await rpc('settings:create-device-credential', { displayName: 'PR3599 synthetic MCP', kind: 'token', secret: 'synthetic-pr3599-no-access' })
   if (!credential.createdCredential?.id || !project.id) throw new Error('Could not seed actual product data')
@@ -93,7 +109,7 @@ async function seedUpgradeData(connection, installDirectory) {
     const processes = await snapshotInstallation(installDirectory)
     if (started?.credentialMatched && processes.some((p) => p.pid === started.pid)) return started
   }, UPDATE_TIMEOUT_MS)
-  seededData = { project, credentialId: credential.createdCredential.id, marker, mcp }
+  seededData = { project, session, credentialId: credential.createdCredential.id, marker, mcp }
   await evidence('seeded-product-data', seededData)
 }
 async function evidence(name, value) {
@@ -129,6 +145,8 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   const rpc = (channel, ...args) => invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel, args })
   const project = await rpc('projects:get', seededData.project.id)
   if (project?.name !== seededData.project.name || project?.description !== seededData.project.description) throw new Error('Upgrade did not preserve the project')
+  const session = await rpc('sessions:load-one', { projectId: project.id, sessionId: seededData.session.id })
+  if (session?.title !== seededData.session.title || session?.messages?.[0]?.content !== seededData.session.messages[0].content) throw new Error('Upgrade did not preserve the synthetic session transcript')
   const settings = await rpc('settings:get-settings')
   if (settings.closePreference !== 'quit') throw new Error('Upgrade did not preserve the close preference')
   await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
@@ -140,7 +158,7 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   }, UPDATE_TIMEOUT_MS)
   ready.processes = reconnected.processes
   rememberedProcesses.push(...ready.processes)
-  await evidence('preserved-project-and-credential', { project, credentialId: seededData.credentialId, mcp: reconnected.latest })
+  await evidence('preserved-project-and-credential', { project, session, credentialId: seededData.credentialId, mcp: reconnected.latest })
   await invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel: 'settings:set-close-preference', args: [{ preference: 'quit' }] })
   const closeRequest = await waitFor('the updated product window to accept normal close', () => closeRecordedWindow(ready.processes), UPDATE_TIMEOUT_MS)
   await evidence('automatic-successor-close-request', closeRequest)
