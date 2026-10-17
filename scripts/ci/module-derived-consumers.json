@@ -1,35 +1,15 @@
 {
   "schemaVersion": 1,
   "modules": {
-    "host_http_transport": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "host_process_runtime": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "host_runtime_ports": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "host_value_guards": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "native_process_tree": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "package_literature_citations": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "package_literature_library": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "package_literature_reading": [
-      "src/main/settings/codex-bridge-tools.test.ts"
-    ],
-    "resilient_download": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ],
-    "skill_package": [
-      "src/main/settings/codex-authentication-status.test.ts"
-    ]
+    "host_http_transport": ["src/main/settings/codex-authentication-status.test.ts"],
+    "host_process_runtime": ["src/main/settings/codex-authentication-status.test.ts"],
+    "host_runtime_ports": ["src/main/settings/codex-authentication-status.test.ts"],
+    "host_value_guards": ["src/main/settings/codex-authentication-status.test.ts"],
+    "native_process_tree": ["src/main/settings/codex-authentication-status.test.ts"],
+    "package_literature_citations": ["src/main/settings/codex-authentication-status.test.ts"],
+    "package_literature_library": ["src/main/settings/codex-authentication-status.test.ts"],
+    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
+    "resilient_download": ["src/main/settings/codex-authentication-status.test.ts"],
+    "skill_package": ["src/main/settings/codex-authentication-status.test.ts"]
   }
 }
