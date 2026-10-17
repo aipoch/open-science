@@ -4,6 +4,10 @@ name: Windows PR upgrade diagnostic (manual, no publish)
 on:
   workflow_dispatch:
     inputs:
+      environment_only:
+        description: Run only the ordinary account known-folder and DPAPI diagnostic
+        type: boolean
+        default: false
       candidate_run_id:
         description: Existing Azure signing dry-run containing the Windows artifact
         required: true
@@ -31,7 +35,27 @@ permissions:
   contents: read
   actions: read
 jobs:
+  account:
+    if: inputs.environment_only
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify the isolated ordinary-user environment
+        shell: pwsh
+        run: |
+          ./scripts/diagnostics/pr3599/run-as-standard-user.ps1 -CandidateRoot "$env:GITHUB_WORKSPACE" -CurrentDirectory "$env:GITHUB_WORKSPACE" -PreviousDirectory "$env:GITHUB_WORKSPACE" -OutputDirectory "$env:GITHUB_WORKSPACE\evidence" -EnvironmentOnly
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr3599-isolated-account
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
   actual-upgrade:
+    if: ${{ !inputs.environment_only }}
     name: Upgrade ${{ matrix.baseline }} 1.0.0 to PR 1.0.1
     strategy:
       fail-fast: false
