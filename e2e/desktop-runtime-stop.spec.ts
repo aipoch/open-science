@@ -17,6 +17,23 @@ const makeFixtureWritable = async (root: string): Promise<void> => {
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
+const processAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
+const waitForProcessExit = async (pid: number, timeoutMs: number): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  while (processAlive(pid) && Date.now() < deadline)
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100))
+  if (processAlive(pid)) throw new Error(`Owned process ${pid} did not exit within ${timeoutMs}ms`)
+}
+
 // Playwright requires a destructured fixture argument even when no fixtures are requested.
 // eslint-disable-next-line no-empty-pattern
 test('keeps the desktop connected after stopping several active chats through the UI', async ({}, testInfo) => {
@@ -59,8 +76,9 @@ test('keeps the desktop connected after stopping several active chats through th
     true,
     false,
     roots.fakeRemoteItRoot,
-    // Streaming assertions need animation frames from a visible Linux X11 window.
-    process.platform === 'linux' ? 'normal' : 'hidden',
+    // The streaming assertion needs animation frames. Keep the Electron window visible on every
+    // desktop platform so Windows does not throttle the smooth-streaming timer in hidden mode.
+    'normal',
     false
   )
   const page = await application.firstWindow()
@@ -78,6 +96,7 @@ test('keeps the desktop connected after stopping several active chats through th
     if (message.type() === 'error')
       failures.push({ at: new Date().toISOString(), phase, message: message.text() })
   })
+  let primaryError: unknown
   try {
     await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
     await expect
@@ -170,31 +189,25 @@ test('keeps the desktop connected after stopping several active chats through th
     await page.screenshot({ path: testInfo.outputPath('six-stops-connected.png') })
   } catch (error) {
     failures.push({ at: new Date().toISOString(), phase, message: String(error) })
-    throw error
+    primaryError = error
   } finally {
-    let backendAlive = false
-    try {
-      process.kill(before.pid, 0)
-      backendAlive = true
-    } catch {
-      /* Captured below. */
-    }
-    await writeFile(
-      testInfo.outputPath('stop-evidence.json'),
-      JSON.stringify(
-        { phase, stoppedChats, postStopReadChecks, before, backendAlive, failures },
-        null,
-        2
-      )
-    )
-    await testInfo.attach('stop-evidence', {
-      body: JSON.stringify(
-        { phase, stoppedChats, postStopReadChecks, before, backendAlive, failures },
-        null,
-        2
-      ),
-      contentType: 'application/json'
-    })
+    const cleanup: {
+      cliStop?: { exitCode?: number | string; stdout?: string; stderr?: string; error?: string }
+      desktopTermination?: {
+        command: string
+        exitCode?: number | string
+        stdout?: string
+        stderr?: string
+        error?: string
+      }
+      desktopExited?: boolean
+      desktopGracefulExit?: boolean
+      forcedTermination?: boolean
+      backendExited?: boolean
+      profileCleanup?: { completed: boolean; error?: string }
+      error?: string
+    } = {}
+    const cleanupErrors: string[] = []
     for (const [name, path] of [
       ['electron-log', join(roots.userDataRoot, 'desktop-logs', 'main.log')],
       ['backend-log', join(roots.storageRoot, 'logs', 'main.log')]
@@ -204,34 +217,155 @@ test('keeps the desktop connected after stopping several active chats through th
         contentType: 'text/plain'
       })
     }
-    // Only this test's unique configuration root is stopped; desktop exit avoids the unrelated
-    // owned-runtime graceful-close setup issue that prevents configureFakeAgent from restarting.
-    await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
-      env: {
-        ...process.env,
-        OPEN_SCIENCE_CONFIG_ROOT: roots.storageRoot,
-        OPEN_SCIENCE_STORAGE_ROOT: roots.storageRoot
-      },
-      timeout: 30_000
-    }).catch(() => undefined)
-    // A disconnected desktop may be blocked in its native error box; use only our spawned handle.
+    // Keep the real connection available while requesting normal application shutdown.
     const child = application.process()
     if (child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()))
-      child.kill('SIGKILL')
-      await exited
-    }
-    await expect
-      .poll(() => {
-        try {
-          process.kill(before.pid, 0)
-          return true
-        } catch {
-          return false
+      try {
+        await Promise.race([
+          application.close(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Electron graceful close timed out')), 10_000)
+          )
+        ])
+        await waitForProcessExit(child.pid!, 10_000)
+        cleanup.desktopExited = true
+        cleanup.desktopGracefulExit = true
+      } catch (error) {
+        cleanup.desktopGracefulExit = false
+        cleanup.desktopTermination = {
+          command: 'ElectronApplication.close()',
+          error: String(error)
         }
-      })
-      .toBe(false)
-    await makeFixtureWritable(root)
-    await removeTreeForCleanup(root)
+        if (process.platform === 'win32') {
+          const command = 'taskkill /PID ' + String(child.pid) + ' /T /F'
+          try {
+            const result = await promisify(execFile)(
+              'taskkill',
+              ['/PID', String(child.pid), '/T', '/F'],
+              {
+                timeout: 10_000,
+                windowsHide: true,
+                maxBuffer: 1024 * 1024
+              }
+            )
+            cleanup.desktopTermination = {
+              command,
+              exitCode: 0,
+              stdout: result.stdout,
+              stderr: result.stderr
+            }
+            cleanup.forcedTermination = true
+          } catch (terminationError) {
+            const failure = terminationError as NodeJS.ErrnoException & {
+              stdout?: string
+              stderr?: string
+              code?: number | string
+            }
+            cleanup.desktopTermination = {
+              command,
+              exitCode: failure.code,
+              stdout: failure.stdout,
+              stderr: failure.stderr,
+              error: String(terminationError)
+            }
+            cleanupErrors.push(`taskkill failed: ${String(terminationError)}`)
+          }
+        } else {
+          child.kill('SIGKILL')
+          cleanup.forcedTermination = true
+        }
+        try {
+          await waitForProcessExit(child.pid!, 10_000)
+          cleanup.desktopExited = true
+        } catch (waitError) {
+          cleanup.desktopExited = false
+          cleanupErrors.push(String(waitError))
+        }
+      }
+    } else {
+      cleanup.desktopExited = true
+      cleanup.desktopGracefulExit = true
+    }
+    // Stop the desktop first so its owned runtime receives the normal quit request.
+    // CLI stop is failure cleanup only; stopping it first would disconnect the desktop.
+    if (processAlive(before.pid)) {
+      try {
+        const result = await promisify(execFile)(
+          process.execPath,
+          [resolve('cli/index.mjs'), 'stop'],
+          {
+            env: {
+              ...process.env,
+              OPEN_SCIENCE_CONFIG_ROOT: roots.storageRoot,
+              OPEN_SCIENCE_STORAGE_ROOT: roots.storageRoot
+            },
+            timeout: 30_000,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024
+          }
+        )
+        cleanup.cliStop = { exitCode: 0, stdout: result.stdout, stderr: result.stderr }
+      } catch (error) {
+        const failure = error as NodeJS.ErrnoException & {
+          stdout?: string
+          stderr?: string
+          code?: number | string
+        }
+        cleanup.cliStop = {
+          exitCode: failure.code,
+          stdout: failure.stdout,
+          stderr: failure.stderr,
+          error: String(error)
+        }
+      }
+    }
+    try {
+      await waitForProcessExit(before.pid, 10_000)
+      cleanup.backendExited = true
+    } catch (error) {
+      cleanup.backendExited = false
+      cleanupErrors.push(String(error))
+    }
+    if (cleanupErrors.length > 0) cleanup.error = cleanupErrors.join('; ')
+    const backendAlive = processAlive(before.pid)
+    const evidence = {
+      phase,
+      stoppedChats,
+      postStopReadChecks,
+      before,
+      backendAlive,
+      failures,
+      cleanup
+    }
+    if (cleanupErrors.length > 0 && !primaryError)
+      primaryError = new Error(cleanupErrors.join('; '))
+    if (cleanup.desktopExited && cleanup.backendExited && !backendAlive) {
+      try {
+        await makeFixtureWritable(root)
+        await removeTreeForCleanup(root)
+        cleanup.profileCleanup = { completed: true }
+      } catch (error) {
+        cleanup.profileCleanup = { completed: false, error: String(error) }
+        cleanup.error = [cleanup.error, `profile cleanup failed: ${String(error)}`]
+          .filter(Boolean)
+          .join('; ')
+        if (!primaryError) primaryError = error
+      }
+    } else {
+      cleanup.profileCleanup = {
+        completed: false,
+        error: 'Skipped because owned Electron or backend process exit was not confirmed.'
+      }
+      const cleanupError = new Error(cleanup.profileCleanup.error)
+      cleanup.error = [cleanup.error, cleanupError.message].filter(Boolean).join('; ')
+      if (!primaryError) primaryError = cleanupError
+    }
+    evidence.cleanup = cleanup
+    await writeFile(testInfo.outputPath('stop-evidence.json'), JSON.stringify(evidence, null, 2))
+    await testInfo.attach('stop-evidence', {
+      body: JSON.stringify(evidence, null, 2),
+      contentType: 'application/json'
+    })
   }
+  if (primaryError) throw primaryError
 })

@@ -22,6 +22,22 @@ export type RuntimeDirectoryLease = Readonly<{
   release(): void
 }>
 
+export function acquireCredentialBootstrapLease(options: {
+  home: string
+  profilePath: string
+  platform: NodeJS.Platform
+}): RuntimeDirectoryLease {
+  // Windows OSCrypt keys belong to Local State in each profile. Serializing unrelated profiles
+  // makes a slow DPAPI initialization incorrectly reject another application's startup.
+  // macOS/Linux identities can be shared across profiles and retain their user-wide lease.
+  return acquireRuntimeDirectorySync(
+    join(
+      options.platform === 'win32' ? options.profilePath : options.home,
+      '.open-science-credential-bootstrap'
+    )
+  )
+}
+
 export function acquireRuntimeDirectorySync(directory: string): RuntimeDirectoryLease {
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   const canonical = realpathSync(directory)

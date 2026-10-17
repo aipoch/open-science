@@ -65,6 +65,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",

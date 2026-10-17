@@ -23,9 +23,9 @@ describe('single Node runtime production startup', () => {
     expect(mainSource).toContain('if (verifiedStartupOutcome)')
   })
   it('hands a second shell to its owner before reading Chromium-locked credentials', () => {
-    before("app.setPath('userData', profilePath)", 'app.requestSingleInstanceLock()')
-    before('app.requestSingleInstanceLock()', 'prepareCredentialValidation(identity,')
-    before('prepareCredentialValidation(identity,', 'initializeNodeWindowsProfileKey(profilePath)')
+    before('app.requestSingleInstanceLock()', 'startupCredentialCiphertexts =')
+    before('startupCredentialCiphertexts =', "app.setPath('userData', profilePath)")
+    before("app.setPath('userData', profilePath)", "app.setPath('sessionData', profilePath)")
   })
   it('installs native shutdown listeners before launching Node and protects a quit during startup', () => {
     before('await app.whenReady()', 'system.installPowerMonitorListeners()')

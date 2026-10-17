@@ -42,7 +42,7 @@ import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
 import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
-import { acquireRuntimeDirectorySync, type RuntimeDirectoryLease } from './runtime-ownership'
+import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
 import { installationRootForEntry } from './update/installation-protection'
@@ -67,6 +67,7 @@ import {
   selectStartupCredentialIdentity,
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
@@ -219,6 +220,8 @@ async function startDesktop(): Promise<void> {
     })
   ]
   let initialRecoveryError: DesktopRuntimeStartupError | undefined
+  let startupCredentialCiphertexts: Buffer[] | undefined
+  let startupCredentialInventoryCapturedAt: number | undefined
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
     installationStartup = await resolveDesktopInstallationStartup({
@@ -257,8 +260,6 @@ async function startDesktop(): Promise<void> {
       ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: preservedStartupOptions.profilePath } }
       : {})
   })
-  app.setPath('userData', profilePath)
-  app.setPath('sessionData', profilePath)
   if (
     !(!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1') &&
     !app.requestSingleInstanceLock()
@@ -269,9 +270,11 @@ async function startDesktop(): Promise<void> {
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
   if (!initialRecoveryError) {
-    const bootstrapLease = acquireRuntimeDirectorySync(
-      join(app.getPath('home'), '.open-science-credential-bootstrap')
-    )
+    const bootstrapLease = acquireCredentialBootstrapLease({
+      home: app.getPath('home'),
+      profilePath,
+      platform: process.platform
+    })
     try {
       const identity = selectStartupCredentialIdentity({
         platform: process.platform,
@@ -280,12 +283,23 @@ async function startDesktop(): Promise<void> {
         linuxPasswordStore: app.commandLine.getSwitchValue('password-store')
       })
       app.setName(identity.appName)
-      prepareCredentialValidation(identity, { configRoot, profilePath })
+      startupCredentialCiphertexts =
+        identity.backend === 'file'
+          ? undefined
+          : readCredentialCiphertexts({ configRoot, profilePath })
+      startupCredentialInventoryCapturedAt = Date.now()
+      prepareCredentialValidation(
+        identity,
+        { configRoot, profilePath },
+        startupCredentialCiphertexts
+      )
       if (identity.backend === 'windows-dpapi') initializeNodeWindowsProfileKey(profilePath)
     } finally {
       bootstrapLease.release()
     }
   }
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
   const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
   let startupBlocked = false
@@ -363,6 +377,17 @@ async function startDesktop(): Promise<void> {
     cpuUsage: process.cpuUsage
   })
   startupDiagnostics = diagnostics.operation
+  bootstrapLog.info('desktop profile initialized', {
+    actualPaths: {
+      userData: app.getPath('userData'),
+      sessionData: app.getPath('sessionData')
+    },
+    requestedPaths: {
+      configRoot,
+      environmentUserData: process.env.OPEN_SCIENCE_USER_DATA ?? null,
+      commandLineUserData: app.commandLine.getSwitchValue('user-data-dir')
+    }
+  })
   installChildProcessGoneLogging(
     (listener) => app.on('child-process-gone', listener),
     diagnostics.log
@@ -801,6 +826,8 @@ async function startDesktop(): Promise<void> {
       version: app.getVersion(),
       ...initialBackendPaths,
       packaged: app.isPackaged,
+      credentialInventory: startupCredentialCiphertexts,
+      credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
       args: [
         ...credentialArgs,
         ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
