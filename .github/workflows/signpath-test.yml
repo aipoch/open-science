@@ -1,6 +1,12 @@
 name: Windows PR upgrade version signing (manual, no publish)
 on:
   workflow_dispatch:
+    inputs:
+      upgrade_version:
+        description: Version for the pinned current PR upgrade package
+        type: choice
+        options: ["1.0.0", "1.0.1"]
+        required: true
 permissions:
   actions: read
   contents: read
@@ -15,6 +21,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/build.yml
     with:
+      upgrade_version: ${{ inputs.upgrade_version }}
       platform_name: windows-x64
       skip_verify: true
       sign_windows: true
