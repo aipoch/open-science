@@ -78,7 +78,7 @@ replace('    await Promise.all([terminateProcessTree(child), installerExit?.catc
     await evidence('update-failure-windows', await readRecordedWindows(failedProcesses).catch((error) => ({ error: error.message })))
     await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))
     if (installerExit) await evidence('installer-observer-after-failure', await installerExit.then((result) => result, (error) => ({ error: error.message })))`)
-replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)')
+replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)\n    await verifyNormalReopen(installDirectory, previousConfigRoot, currentVersion, env)')
 replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })\n  )", `  await cleanup(async () => {
     const residual = await snapshotInstallation(installDirectory)
     await evidence('processes-before-cleanup', residual)
@@ -183,7 +183,8 @@ async function evidence(name, value) {
   await mkdir(directory, { recursive: true })
   await writeFile(join(directory, name + '.json'), JSON.stringify(value, null, 2))
 }
-async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVersion) {
+async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVersion, prefix = '') {
+  const writePhaseEvidence = (name, value) => evidence(prefix + name, value)
   const ready = await waitFor('the actual automatically launched updated application', async () => {
     const state = JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8'))
     if (state.appVersion !== expectedVersion || resolve(state.configRoot).toLowerCase() !== resolve(configRoot).toLowerCase()) return
@@ -201,12 +202,12 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
     return { state, processes, endpoint, auth, bootstrap }
   }, UPDATE_TIMEOUT_MS)
   rememberedProcesses.push(...ready.processes)
-  await evidence('automatic-successor-ready', { state: ready.state, processes: ready.processes, version: ready.bootstrap.appVersion, platform: ready.bootstrap.platform })
+  await writePhaseEvidence('automatic-successor-ready', { state: ready.state, processes: ready.processes, version: ready.bootstrap.appVersion, platform: ready.bootstrap.platform })
   const hashes = {}
   for (const relative of ['open-science.exe', 'resources/node-runtime/node.exe', 'resources/app.asar']) {
     hashes[relative] = createHash('sha256').update(await readFile(join(installDirectory, relative))).digest('hex')
   }
-  await evidence('installed-candidate-hashes', hashes)
+  await writePhaseEvidence('installed-candidate-hashes', hashes)
   const rpc = (channel, ...args) => invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel, args })
   const project = await rpc('projects:get', seededData.project.id)
   if (project?.name !== seededData.project.name || project?.description !== seededData.project.description) throw new Error('Upgrade did not preserve the project')
@@ -224,16 +225,41 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   }, UPDATE_TIMEOUT_MS)
   ready.processes = reconnected.processes
   rememberedProcesses.push(...ready.processes)
-  await evidence('preserved-project-and-credential', { project, session, credentialId: seededData.credentialId, mcp: reconnected.latest })
+  await writePhaseEvidence('preserved-project-and-credential', { project, session, credentialId: seededData.credentialId, mcp: reconnected.latest })
   await invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel: 'settings:set-close-preference', args: [{ preference: 'quit' }] })
   const closeRequest = await waitFor('the updated product window to accept normal close', () => closeRecordedWindow(ready.processes), UPDATE_TIMEOUT_MS)
-  await evidence('automatic-successor-close-request', closeRequest)
-  await evidence('automatic-successor-normal-exit', await waitForRecordedExit(ready.processes))
+  await writePhaseEvidence('automatic-successor-close-request', closeRequest)
+  await writePhaseEvidence('automatic-successor-normal-exit', await waitForRecordedExit(ready.processes))
+  const remaining = (await readdir(configRoot)).filter((name) => name.startsWith('.credential-inventory-') && name.endsWith('.json'))
+  await writePhaseEvidence('credential-handoff-after-normal-exit', { configRoot, remaining })
+  if (remaining.length) throw new Error('Normal exit retained credential handoff snapshots')
 }
+async function verifyNormalReopen(installDirectory, configRoot, expectedVersion, env) {
+  const executable = join(installDirectory, 'open-science.exe')
+  const child = spawn(executable, ['--serve=0'], { env, windowsHide: false })
+  const exited = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+  void exited.catch(() => undefined) // Observe early spawn errors; the awaited promise below still rejects.
+  let stdout = '', stderr = ''
+  child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk) => { stdout += chunk })
+  child.stderr.on('data', (chunk) => { stderr += chunk })
+  await evidence('normal-reopen-launch', { executable, args: ['--serve=0'], pid: child.pid, expectedVersion, configRoot, testPreload: false })
+  try {
+    await verifyAndStopSuccessor(installDirectory, configRoot, expectedVersion, 'reopened-')
+    const exitCode = await withTimeout(exited, 'normally reopened desktop exit', 60000)
+    await evidence('normal-reopen-exit', { pid: child.pid, exitCode, forced: false, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr) })
+    if (exitCode !== 0) throw new Error('Reopened desktop exited abnormally')
+  } catch (error) {
+    await evidence('normal-reopen-failure', { pid: child.pid, error: error.message, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr) })
+    throw error
+  }
+}
+
 `
 replace('const invokedAsScript =', helpers + '\nconst invokedAsScript =')
 if (text.includes("'/IM'")) throw new Error('Global image-name termination remains')
 await copyFile(join(dirname(fileURLToPath(import.meta.url)), 'owned-processes.mjs'), join(source, 'scripts/pr3599-owned-processes.mjs'))
 await writeFile(join(source, 'scripts/pr3599-upgrade-certification.mjs'), text)
 console.log('Prepared candidate-bound upgrade harness with scoped cleanup and normal successor shutdown.')
+
 
