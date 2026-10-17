@@ -69,7 +69,9 @@
     "src/renderer/src/pages/workspace/workspace-session-recovery.ts",
     "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx",
     "src/renderer/src/pages/workspace/WorkspaceActivityGroup.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx"
+    "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.tsx",
+    "src/renderer/src/pages/workspace/agent-authentication-error.ts",
+    "src/renderer/src/pages/workspace/agent-authentication-error.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -141,7 +143,8 @@
       "src/renderer/src/pages/workspace/session-message-artifact-reference.test.ts",
       "src/renderer/src/pages/workspace/use-transcript-window.test.tsx",
       "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
-      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/pages/workspace/agent-authentication-error.test.ts"
     ],
     "contract": [
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
