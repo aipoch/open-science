@@ -427,10 +427,14 @@ test('cancels an active provider turn on ordinary quit and resumes it after rest
   expect(before.status).toBe('running')
   expect(before.activeRun).toBeDefined()
 
-  const quittingPage = page
-  const restarting = app.restart()
-  await quittingPage.getByRole('button', { name: 'Quit', exact: true }).click()
-  page = await restarting
+  const [restart, quit] = await Promise.allSettled([
+    app.restart(),
+    page.getByRole('button', { name: 'Quit', exact: true }).click()
+  ])
+  // Settle both operations before fixture cleanup, even if the window closes before the click.
+  if (restart.status === 'rejected') throw restart.reason
+  if (quit.status === 'rejected') throw quit.reason
+  page = restart.value
   const restored = await page.evaluate(
     async () => (await window.api.sessions.loadAll()).sessions[0]
   )
