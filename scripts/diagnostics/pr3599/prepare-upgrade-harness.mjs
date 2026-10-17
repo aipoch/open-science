@@ -17,8 +17,9 @@ const probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProc
     await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-forced-cleanup.json'), JSON.stringify(cleanup, null, 2))`)
 smoke = smoke.slice(0, probeStart) + probe + smoke.slice(probeEnd)
 // A shutdown timeout remains a failure; the enclosing catch owns verified, recorded cleanup.
-if (smoke.split('terminate = terminateProcessTree').length !== 2) throw new Error('Unexpected shutdown timeout cleanup boundary')
-smoke = smoke.replace('terminate = terminateProcessTree', 'terminate = async () => undefined')
+const shutdownCleanup = 'timeoutMs = SHUTDOWN_TIMEOUT_MS,\n  terminate = terminateProcessTree'
+if (smoke.split(shutdownCleanup).length !== 2) throw new Error('Unexpected shutdown timeout cleanup boundary')
+smoke = smoke.replace(shutdownCleanup, 'timeoutMs = SHUTDOWN_TIMEOUT_MS,\n  terminate = async () => undefined')
 smoke = "import { snapshotInstallation, readRecordedWindows, waitForRecordedExit } from './pr3599-owned-processes.mjs'\n" + smoke
 await writeFile(join(source, 'scripts/pr3599-installer-smoke.mjs'), smoke)
 let text = await readFile(original, 'utf8')
