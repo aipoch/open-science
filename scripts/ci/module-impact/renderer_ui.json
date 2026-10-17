@@ -479,6 +479,8 @@
       "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationPreparation.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationView.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
@@ -538,7 +540,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
-      "src/renderer/src/components/runtime-startup-gate.test.tsx"
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "capabilityOverlays": [],

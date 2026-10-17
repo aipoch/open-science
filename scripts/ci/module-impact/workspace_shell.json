@@ -120,7 +120,11 @@
     "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
     "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts",
     "src/renderer/src/pages/workspace/workspace-specialist-barrier.ts",
-    "src/renderer/src/pages/workspace/workspace-specialist-reconfiguration.ts"
+    "src/renderer/src/pages/workspace/workspace-specialist-reconfiguration.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AgentControlMenuItemTooltip.tsx",
@@ -203,7 +207,9 @@
     "src/renderer/src/pages/workspace/workspace-specialist-barrier.ts",
     "src/renderer/src/pages/workspace/workspace-specialist-reconfiguration.ts",
     "src/renderer/src/pages/workspace/workspace-translate-clause.ts",
-    "src/renderer/src/pages/workspace/workspace-web-search-details.ts"
+    "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -261,7 +267,9 @@
       "src/renderer/src/pages/workspace/workspace-agent-control-availability.test.ts",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
-      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx"
+      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -416,7 +424,9 @@
       "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
       "src/renderer/src/pages/workspace/subagent-release-projection.test.ts",
       "src/renderer/src/pages/workspace/workspace-skill-load.test.ts",
-      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts"
+      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

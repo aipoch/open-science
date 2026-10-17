@@ -122,6 +122,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "title" TEXT NOT NULL,
     "status" TEXT NOT NULL,
     "presentedStatus" TEXT NOT NULL,
+    "researchMembershipJson" TEXT,
+    "importedResearchId" TEXT,
     "pinned" BOOLEAN NOT NULL DEFAULT false,
     "archivedAtMs" BIGINT,
     "revision" BIGINT NOT NULL DEFAULT 0,

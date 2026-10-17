@@ -235,7 +235,9 @@
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
       "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
-      "src/renderer/src/components/UpdateDialog.render.test.tsx"
+      "src/renderer/src/components/UpdateDialog.render.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "consumerModules": [],

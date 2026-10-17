@@ -226,7 +226,9 @@
       "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/artifact-reproducibility-start.test.tsx",
-      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts"
+      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

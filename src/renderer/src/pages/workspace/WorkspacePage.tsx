@@ -82,6 +82,9 @@ import {
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { ordinaryDraftKey, researchDraftKey, researchIdentity } from './research-draft-identity'
+import { createSessionReplayItem } from './workspace-session-actions'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
@@ -128,7 +131,6 @@ type ManualReviewRequestState = Readonly<{
   error: string | null
 }>
 
-const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 const planProjectionRecoveryPorts = {
@@ -202,8 +204,42 @@ const WorkspacePage = ({
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
-  const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
-  const currentDraftKey = selectedSessionId ?? newConversationDraftKey
+  const draftResearch = useResearchWorkspaceStore(
+    (state) => state.draftResearchByProject[scopedProjectId]
+  )
+  const activeDraftResearch = selectedSessionId ? undefined : draftResearch
+  const newConversationDraftKey = ordinaryDraftKey(scopedProjectId)
+  const currentDraftKey =
+    selectedSessionId ??
+    (activeDraftResearch ? researchDraftKey(activeDraftResearch) : newConversationDraftKey)
+  const selectedResearchMembership = useSessionStore(
+    (state) =>
+      state.sessions.find((session) => session.id === selectedSessionId)?.researchMembership
+  )
+  const researchVisit = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const visit =
+      selectedSessionId && selectedResearchMembership
+        ? JSON.stringify([selectedSessionId, researchIdentity(selectedResearchMembership)])
+        : undefined
+    if (researchVisit.current === visit) return
+    researchVisit.current = visit
+    if (!selectedSessionId || !selectedResearchMembership) return
+    useResearchWorkspaceStore
+      .getState()
+      .rememberDiscussion(selectedResearchMembership, selectedSessionId)
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(
+        createSessionReplayItem(
+          selectedResearchMembership.sourceProjectId,
+          selectedResearchMembership.sourceSessionId,
+          selectedResearchMembership.sourceTitle,
+          scopedProjectId
+        )
+      )
+    usePreviewWorkbenchStore.getState().setToolItemExpanded(null)
+  }, [selectedSessionId, selectedResearchMembership, scopedProjectId])
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
@@ -513,6 +549,7 @@ const WorkspacePage = ({
   const canEditDraft =
     isSessionPersistenceReady &&
     !activeSession?.packageOrigin &&
+    !activeSession?.importedResearch &&
     !activeSessionHasSendPreparation &&
     activeSession?.status !== 'waiting-plan-approval'
   const composerHistoryPolicy = useMemo(
@@ -538,6 +575,7 @@ const WorkspacePage = ({
   )
   const composer = useWorkspaceComposerController({
     currentDraftKey,
+    researchMembership: activeDraftResearch,
     newConversationDraftKey,
     activeProjectId,
     pendingCustomizePrefill,
@@ -1104,6 +1142,7 @@ const WorkspacePage = ({
     resetNewConversationDelegation()
     resetNewConversationConfiguration()
     useNavigationStore.getState().recordUserNavigation()
+    useResearchWorkspaceStore.getState().leaveDraft(scopedProjectId)
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
   }, [
@@ -1112,6 +1151,7 @@ const WorkspacePage = ({
     isSessionPersistenceReady,
     resetNewConversationConfiguration,
     resetNewConversationDelegation,
+    scopedProjectId,
     sessionController.actions,
     setAttachmentError
   ])
@@ -1191,7 +1231,7 @@ const WorkspacePage = ({
         }
       }
       libraryLoadIntent.current = undefined
-      const draftKey = sessionId ?? newConversationDraftKey
+      const draftKey = sessionId ?? (sourceSessionId ? newConversationDraftKey : currentDraftKey)
       const enqueue = (): void =>
         setPendingLibraryReferences((pending) => ({
           projectId,

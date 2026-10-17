@@ -236,7 +236,9 @@
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

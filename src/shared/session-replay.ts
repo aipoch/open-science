@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 const identity = z
   .string()
@@ -14,6 +13,8 @@ export const sessionReplayRequestSchema = z
   })
   .strict()
 export type SessionReplayRequest = z.infer<typeof sessionReplayRequestSchema>
+export const sessionDiscussionMatchSchema = z.object({ sessionId: identity }).strict().nullable()
+export type SessionDiscussionMatch = z.infer<typeof sessionDiscussionMatchSchema>
 export const sessionReplayListRequestSchema = z.object({ projectId: identity }).strict()
 export type SessionReplayListRequest = z.infer<typeof sessionReplayListRequestSchema>
 export const replayViewStateSchema = z
@@ -179,7 +180,7 @@ export const sessionReplaySnapshotSchema = sessionReplayRequestSchema
   .strict()
 export type SessionReplaySnapshot = z.infer<typeof sessionReplaySnapshotSchema>
 export type SessionReplayProgressSnapshot = z.infer<typeof viewSnapshotSchema>
-const saveViewResultSchema = z.discriminatedUnion('status', [
+export const saveViewResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('saved'), revision: z.number().int().positive() }).strict(),
   z.object({ status: z.literal('conflict'), snapshot: viewSnapshotSchema.nullable() }).strict()
 ])
@@ -195,33 +196,12 @@ export const unlinkSessionReadingRequestSchema = z
   .strict()
 export type UnlinkSessionReadingRequest = z.infer<typeof unlinkSessionReadingRequestSchema>
 
-export const sessionReplayCommandContracts = {
-  unlinkSession: defineApplicationCommandContract(
-    validationCodec(z.tuple([unlinkSessionReadingRequestSchema])),
-    validationCodec(z.void())
-  ),
-  get: defineApplicationCommandContract(
-    validationCodec(z.tuple([sessionReplayRequestSchema])),
-    validationCodec(sessionReplaySnapshotSchema)
-  ),
-  list: defineApplicationCommandContract(
-    validationCodec(z.tuple([sessionReplayListRequestSchema])),
-    validationCodec(z.array(sessionReplaySnapshotSchema))
-  ),
-  saveView: defineApplicationCommandContract(
-    validationCodec(z.tuple([saveSessionReplayProgressRequestSchema])),
-    validationCodec(saveViewResultSchema)
-  ),
-  saveSelectionSnapshot: defineApplicationCommandContract(
-    validationCodec(z.tuple([saveSessionDiscussionSnapshotRequestSchema])),
-    validationCodec(z.void())
-  ),
-  getSelectionSnapshot: defineApplicationCommandContract(
-    validationCodec(z.tuple([getSessionDiscussionSnapshotRequestSchema])),
-    validationCodec(sessionDiscussionSnapshotSchema.optional())
-  ),
-  listSelectionSnapshots: defineApplicationCommandContract(
-    validationCodec(z.tuple([sessionReplayRequestSchema])),
-    validationCodec(z.array(sessionDiscussionSnapshotSchema))
-  )
-}
+export const setResearchMembershipRequestSchema = z
+  .object({
+    projectId: identity,
+    sessionId: identity,
+    expectedRevision: z.number().int().nonnegative(),
+    source: sessionReplayRequestSchema.extend({ importId: identity }).strict().optional()
+  })
+  .strict()
+export type SetResearchMembershipRequest = z.infer<typeof setResearchMembershipRequestSchema>

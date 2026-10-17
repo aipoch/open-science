@@ -237,6 +237,7 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         messages: session.conversationGraph.messages.map(portableMessage)
       }
     : undefined,
+  researchMembership: undefined,
   promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
@@ -262,6 +263,7 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const session = hasEnvelopeField ? envelope.session : envelope
   if (!isRecord(session)) return false
   if (
+    Object.hasOwn(session, 'researchMembership') ||
     Object.hasOwn(session, 'promptPreparation') ||
     Object.hasOwn(session, 'providerSessionId') ||
     Object.hasOwn(session, 'providerContinuityToken')

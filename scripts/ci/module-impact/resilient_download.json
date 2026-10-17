@@ -1092,7 +1092,11 @@
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
       "src/main/system-boot-identity.windows.test.ts",
-      "src/main/system-boot-identity.test.ts"
+      "src/main/system-boot-identity.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts"
     ]
   },
   "capabilityOverlays": [

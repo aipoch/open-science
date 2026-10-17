@@ -162,7 +162,9 @@
       "src/renderer/src/pages/workspace/follow-notebook-scroll.test.ts",
       "src/renderer/src/pages/workspace/notebook-cell-utils.test.ts",
       "src/renderer/src/pages/workspace/notebook-tool-presentation.test.tsx",
-      "src/renderer/src/pages/workspace/tool-execution-phase.test.ts"
+      "src/renderer/src/pages/workspace/tool-execution-phase.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

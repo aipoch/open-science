@@ -42,6 +42,29 @@ describe('EmptyConversationBanner', () => {
     expect(html).toContain('accept=".science"')
   })
 
+  it('explains the source and separate discussion without unrelated research or import prompts', () => {
+    vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
+
+    const html = renderToStaticMarkup(
+      <EmptyConversationBanner
+        researchTitle="Tuanzi research"
+        onStartResearch={vi.fn()}
+        sessionImport={{ projectId: 'project-1', canImport: true }}
+      />
+    )
+
+    expect(html).toContain('Discussing Tuanzi research')
+    expect(html).toContain(
+      'Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.'
+    )
+    expect(html).toContain('Summarize research')
+    expect(html).toContain('Examine the evidence')
+    expect(html).toContain('Identify limitations')
+    expect(html).not.toContain('Analyze data')
+    expect(html).not.toContain('Compare papers')
+    expect(html).not.toContain('data-testid="session-package-entry"')
+  })
+
   it('omits the entry row without import props or when the Project cannot import', () => {
     vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
 

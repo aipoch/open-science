@@ -245,7 +245,9 @@
       "src/renderer/src/pages/workspace/PreviewPanel.test.tsx",
       "src/renderer/src/pages/workspace/file-type-icon.test.ts",
       "src/renderer/src/pages/workspace/preview-file-item.test.ts",
-      "src/renderer/src/pages/workspace/preview-support.test.ts"
+      "src/renderer/src/pages/workspace/preview-support.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

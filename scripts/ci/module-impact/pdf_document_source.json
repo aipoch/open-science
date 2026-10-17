@@ -1201,7 +1201,9 @@
       "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
       "src/renderer/src/components/UpdateDialog.render.test.tsx",
       "src/main/desktop-runtime-controller.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ]
   },
   "capabilityOverlays": [],

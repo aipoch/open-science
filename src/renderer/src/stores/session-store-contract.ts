@@ -12,7 +12,7 @@ import type {
   PersistedChatMessage
 } from '../../../shared/session-message-contract'
 import type { PersistedSessionStatus } from '../../../shared/session-run-contract'
-import type { PersistedChatSession } from '../../../shared/session-persistence'
+import type { PersistedChatSession, SessionSummary } from '../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { SessionInteractionState } from './session-interaction-contract'
 
@@ -74,6 +74,8 @@ export type ChatSession = Omit<
   // authority and is refreshed from startup summaries and create/resume responses rather than
   // persisted by renderer.
   wslSetup?: true
+  // Lightweight import identity is available before the transcript is hydrated.
+  importedResearch?: SessionSummary['importedResearch']
   // Transient: the first send has captured Delegation, but Main has not acknowledged the new
   // Session policy yet. Binding an Agent Session does not make this policy authoritative.
   delegationPolicyAuthorityPending?: true

@@ -35,6 +35,7 @@ export type {
   PersistedSessionDetailsGeneration,
   EditSessionDetailsRequest,
   PersistedRuntimeSessionAdmission,
+  ResearchMembership,
   PersistedChatSession,
   SessionSummary,
   SessionUsageProjection,
@@ -192,3 +193,5 @@ export {
   isPreparedSessionRun,
   resolvePreparationNoticeBaseline
 } from './session-persistence/prompt-preparation'
+
+export { researchMembershipSchema } from './session-persistence/session'

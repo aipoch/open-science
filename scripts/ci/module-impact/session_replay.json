@@ -45,7 +45,12 @@
     "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
     "src/renderer/src/pages/workspace/SessionDiscussionButton.tsx",
     "src/renderer/src/pages/workspace/replay/ReplayFilePreview.tsx",
-    "src/renderer/src/lib/replay/source-contract.ts"
+    "src/renderer/src/lib/replay/source-contract.ts",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
+    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/replay/index.ts",
@@ -75,7 +80,10 @@
     "src/renderer/src/pages/workspace/workspace-session-discussion.ts",
     "src/renderer/src/pages/workspace/workspace-session-actions.ts",
     "src/renderer/src/stores/session-replay-store.ts",
-    "src/renderer/src/pages/workspace/discussion-send-context.ts"
+    "src/renderer/src/pages/workspace/discussion-send-context.ts",
+    "src/renderer/src/pages/workspace/workspace-discussion-navigation.ts",
+    "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.tsx",
+    "src/renderer/src/pages/workspace/ResearchMaterialsPanel.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -95,7 +103,9 @@
       "src/renderer/src/pages/workspace/session-replay-progress-writer.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-discussion.test.tsx",
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
-      "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts"
+      "src/renderer/src/pages/workspace/replay/replay-navigation.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -268,7 +278,13 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/pages/workspace/discussion-send-context.test.ts",
       "src/renderer/src/pages/workspace/session-discussion-annotation.test.ts",
-      "src/renderer/src/stores/session-replay-store.test.ts"
+      "src/renderer/src/stores/session-replay-store.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/UpdateDialog.blockers.test.tsx",
+      "src/renderer/src/components/UpdateDialog.lifecycle.test.tsx",
+      "src/renderer/src/components/UpdateDialog.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

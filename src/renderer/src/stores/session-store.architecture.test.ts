@@ -1366,6 +1366,10 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
           'src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx',
+          'src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts',
+          'src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx',
+          'src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx',
+          'src/renderer/src/pages/workspace/research-navigation-model.test.ts',
           'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx',
           'src/renderer/src/components/desktop-runtime-recovery.test.tsx'
         ]

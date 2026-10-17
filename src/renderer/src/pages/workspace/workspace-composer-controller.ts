@@ -1,3 +1,4 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import {
   useCallback,
   useEffect,
@@ -18,7 +19,6 @@ import {
   removeComposerDrafts,
   writeComposerDraft
 } from './composer-draft-storage'
-import { captureDiscussionSendContext } from './discussion-send-context'
 export { type ComposerSendSnapshot } from './composer-contract'
 export { useWorkspaceComposerController, type WorkspaceComposerController }
 
@@ -254,6 +254,7 @@ const samePdfContextSources = (
 
 type WorkspaceComposerControllerInput = {
   currentDraftKey: string
+  researchMembership?: ResearchMembership
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
@@ -382,6 +383,7 @@ const blank = (): ComposerDraft => ({
 
 const useWorkspaceComposerController = ({
   currentDraftKey,
+  researchMembership,
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
@@ -1514,17 +1516,11 @@ const useWorkspaceComposerController = ({
       const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
+        ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
-        discussionFocus: captureDiscussionSendContext(
-          annotationsRef.current,
-          includeReadingContext
-            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
-            : undefined,
-          activeSession?.id
-        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1570,7 +1566,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
-      activeSession,
+      researchMembership,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
