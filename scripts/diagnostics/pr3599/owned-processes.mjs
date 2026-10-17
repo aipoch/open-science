@@ -159,7 +159,52 @@ if ($editor.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref
   $valuePattern = [Windows.Automation.ValuePattern]$pattern
   if ($env:PR3599_SET_DRAFT -eq '1') {
     if ($valuePattern.Current.IsReadOnly -or -not $editor.Current.IsEnabled) { throw 'Composer is not editable' }
-    $valuePattern.SetValue($env:PR3599_DRAFT_TEXT)
+    # Chromium's accessibility SetValue changes this contenteditable's DOM without input events.
+    # Drive the OS keyboard instead; never inject DOM text or a synthetic renderer event.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Pr3599Keyboard {
+  [StructLayout(LayoutKind.Sequential)] public struct KeyboardInput {
+    public ushort key, scan; public uint flags, time; public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct MouseInput {
+    public int x, y; public uint data, flags, time; public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Explicit)] public struct InputUnion {
+    [FieldOffset(0)] public KeyboardInput keyboard;
+    [FieldOffset(0)] public MouseInput mouse;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct Input {
+    public uint type; public InputUnion data;
+  }
+  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, Input[] inputs, int size);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  public static uint ForegroundProcess() {
+    uint process; GetWindowThreadProcessId(GetForegroundWindow(), out process); return process;
+  }
+  static Input Key(ushort key, ushort scan, uint flags) {
+    return new Input { type=1, data=new InputUnion { keyboard=new KeyboardInput { key=key, scan=scan, flags=flags } } };
+  }
+  public static void Replace(string text, uint owner) {
+    if (ForegroundProcess()!=owner) throw new InvalidOperationException("Owned editor lost foreground before typing");
+    var inputs=new System.Collections.Generic.List<Input>();
+    inputs.Add(Key(0x11,0,0)); inputs.Add(Key(0x41,0,0));
+    inputs.Add(Key(0x41,0,2)); inputs.Add(Key(0x11,0,2));
+    inputs.Add(Key(0x08,0,0)); inputs.Add(Key(0x08,0,2));
+    foreach (char c in text) { inputs.Add(Key(0,c,4)); inputs.Add(Key(0,c,6)); }
+    var batch=inputs.ToArray();
+    if (SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)))!=batch.Length)
+      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    if (ForegroundProcess()!=owner) throw new InvalidOperationException("Owned editor lost foreground while typing");
+  }
+}
+'@
+    $editor.SetFocus()
+    $focused = [Windows.Automation.AutomationElement]::FocusedElement
+    if (-not $editor.Current.HasKeyboardFocus -or $focused.Current.ProcessId -ne $editor.Current.ProcessId) { throw 'Owned editor did not receive keyboard focus' }
+    [Pr3599Keyboard]::Replace($env:PR3599_DRAFT_TEXT,[uint32]$editor.Current.ProcessId)
   }
   $valueText = $valuePattern.Current.Value
   $text = $valueText
