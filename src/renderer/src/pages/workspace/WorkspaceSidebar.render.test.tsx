@@ -12,6 +12,9 @@ import {
 import type { ChatSession } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useUpdateStore } from '@/stores/update-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -198,7 +201,8 @@ type SidebarProject = { id: string; name: string; description: string }
 
 const mountProjectSidebar = async (
   otherProjects: readonly SidebarProject[],
-  onOpenProject: (projectId: string) => void = vi.fn()
+  onOpenProject: (projectId: string) => void = vi.fn(),
+  onOpenSessionCallback: (sessionId: string) => void = vi.fn()
 ): Promise<{
   container: HTMLElement
   onOpenSession: ReturnType<typeof vi.fn>
@@ -213,7 +217,7 @@ const mountProjectSidebar = async (
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
-  const onOpenSession = vi.fn()
+  const onOpenSession = vi.fn(onOpenSessionCallback)
 
   let selectedSessionId = 'session-a'
   let renderedProjects = otherProjects
@@ -339,6 +343,9 @@ const getTextContent = (node: ReactNode): string => {
 }
 
 beforeEach(() => {
+  useComputeStore.setState({ pendingApprovals: [] })
+  useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
+  useSkillImportStore.setState(createInitialSkillImportState())
   useUpdateStore.setState({
     status: { state: 'up-to-date', current: '0.2.0', latest: '0.2.0' },
     isDialogOpen: false
@@ -523,6 +530,62 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(group.querySelector('[data-session-id="child-a"]')).toBeNull()
       await act(async () => useNavigationStore.getState().recordUserNavigation())
       expect(group.querySelector('[data-session-id="child-a"]')).not.toBeNull()
+    } finally {
+      sidebar.cleanup()
+    }
+  })
+
+  it('keeps a grouped discussion approval visible on the collapsed research row until it settles', async () => {
+    const source = createSession({
+      id: 'approval-source',
+      title: 'Research with an approval',
+      status: 'idle',
+      importedResearch: { importId: 'approval-import' }
+    })
+    const child = createSession({
+      id: 'approval-discussion',
+      title: 'Remote research discussion',
+      status: 'idle',
+      updatedAt: 1,
+      researchMembership: {
+        sourceProjectId: 'default',
+        sourceSessionId: source.id,
+        sourceImportId: 'approval-import',
+        sourceTitle: source.title
+      }
+    })
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'research-approval',
+          sessionId: child.id,
+          providerId: 'ssh:cluster',
+          providerName: 'Cluster',
+          operation: 'call_command',
+          shape: 'command',
+          intent: 'Run analysis',
+          willPersistUnencrypted: false,
+          commandPreview: 'python analysis.py',
+          commandFull: 'python analysis.py'
+        }
+      ]
+    })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      await sidebar.rerenderSessions([source, child])
+      const group = sidebar.container.querySelector('[data-research-id="approval-source"]')!
+      const sourceRow = group.querySelector('[data-session-id="approval-source"]')!
+      const childRow = group.querySelector('[data-session-id="approval-discussion"]')!
+      expect(sourceRow.textContent).toContain('Session status: Waiting for permission')
+      expect(childRow.textContent).toContain('Session status: Waiting for permission')
+      await act(async () =>
+        group.querySelector<HTMLButtonElement>('[aria-label="Collapse research"]')!.click()
+      )
+      expect(group.querySelector('[data-session-id="approval-discussion"]')).toBeNull()
+      expect(sourceRow.textContent).toContain('Session status: Waiting for permission')
+      await act(async () => useComputeStore.getState().dismissApproval('research-approval'))
+      expect(sourceRow.textContent).toContain('Session status: Idle')
+      expect(sourceRow.textContent).not.toContain('Session status: Waiting for permission')
     } finally {
       sidebar.cleanup()
     }
@@ -2866,6 +2929,78 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('>Active<')
     expect(html).toContain('Session status: Waiting for your answer')
+  })
+
+  it('keeps a remote approval in Active with its permission status until it settles', async () => {
+    const session = createSession({
+      id: 'remote-session',
+      title: 'Remote analysis',
+      status: 'idle',
+      updatedAt: 1
+    })
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'remote-approval',
+          sessionId: session.id,
+          providerId: 'ssh:cluster',
+          providerName: 'Cluster',
+          operation: 'call_command',
+          shape: 'command',
+          intent: 'Run analysis',
+          willPersistUnencrypted: false,
+          commandPreview: 'python analysis.py',
+          commandFull: 'python analysis.py'
+        }
+      ]
+    })
+
+    const onOpenSession = vi.fn()
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'linux' } as never
+    const sidebar = await mountProjectSidebar([], vi.fn(), onOpenSession)
+    try {
+      await sidebar.rerenderSessions([
+        createSession({
+          id: 'older-result',
+          title: 'Earlier result',
+          status: 'idle',
+          updatedAt: 1
+        }),
+        session
+      ])
+      expect(sidebar.container.innerHTML).toContain('>Active<')
+      expect(sidebar.container.innerHTML).toContain('Session status: Waiting for permission')
+      await act(async () =>
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: '1',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      )
+      expect(onOpenSession).toHaveBeenLastCalledWith(session.id)
+
+      await act(async () => useComputeStore.getState().dismissApproval('remote-approval'))
+      expect(sidebar.container.innerHTML).not.toContain('>Active<')
+      expect(sidebar.container.innerHTML).toContain('Session status: Idle')
+      await act(async () =>
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: '1',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      )
+      expect(onOpenSession).toHaveBeenLastCalledWith('older-result')
+    } finally {
+      sidebar.cleanup()
+      window.api = originalApi
+    }
   })
 
   it('moves a recently completed idle session to Today when its Active grace period expires', async () => {

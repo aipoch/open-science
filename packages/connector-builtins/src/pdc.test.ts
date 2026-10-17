@@ -616,3 +616,126 @@ describe('PDC discovery', () => {
     await expect(engine.call(PDC_TOOLS[0], {}, {})).rejects.toThrow('503')
   })
 })
+
+describe('PDC clinical metadata', () => {
+  it.each([
+    {},
+    { ...selector, study_id: studyId },
+    { study_id: 'invalid' },
+    { ...selector, acceptDUA: true },
+    { ...selector, limit: 101 },
+    { ...selector, offset: -1 }
+  ])('rejects invalid selectors, paging and agreement acceptance before HTTP: %j', (args) => {
+    const { call, fetchImpl } = setup()
+    expect(() => call('pdc_list_clinical', args)).toThrow('invalid_arguments')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([selector, { study_id: studyId }])(
+    'preserves clinical values and GDC references while paging received cases for %j',
+    async (selection) => {
+      const clinical = {
+        case_id: 'case-a',
+        case_submitter_id: 'CPTAC-case',
+        age_at_index: '50',
+        age_is_obfuscated: 'false',
+        tumor_stage: null,
+        days_to_death: '0',
+        samples: [{ sample_id: 'sample-a', sample_submitter_id: 'sample-submitter' }],
+        externalReferences: [
+          { reference_resource_shortname: 'GDC', external_reference_id: 'gdc-case-a' }
+        ]
+      }
+      const { call, fetchImpl } = setup({
+        data: { clinicalPerStudy: [{ case_id: 'case-b' }, clinical] }
+      })
+      await expect(call('pdc_list_clinical', { ...selection, limit: 1 })).resolves.toMatchObject({
+        clinical: [clinical],
+        study_selector: selection,
+        available: 2,
+        total: null,
+        completeness: 'unknown',
+        returned: 1,
+        next_offset: 1,
+        pagination_mode: 'local',
+        usage: { discovery_note: expect.stringContaining('no data use agreement') }
+      })
+      const request = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))
+      expect(request.variables).toEqual(selection)
+      expect(request.query).toContain('clinicalPerStudy')
+      expect(request.query).toContain('age_is_obfuscated')
+      expect(request.query).not.toMatch(/acceptDUA|offset:|limit:/)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('does not claim completeness at the end of received records or for an empty study', async () => {
+    for (const records of [[], [{ case_id: 'case-a' }]]) {
+      await expect(
+        setup({ data: { clinicalPerStudy: records } }).call('pdc_list_clinical', {
+          ...selector,
+          offset: 1
+        })
+      ).resolves.toMatchObject({
+        clinical: [],
+        available: records.length,
+        total: null,
+        completeness: 'unknown',
+        next_offset: null,
+        truncated: false
+      })
+    }
+  })
+
+  it.each(['false', 'true', false, true, null])(
+    'preserves the upstream obfuscation flag %j and unavailable associations',
+    async (flag) => {
+      const record = {
+        case_id: 'case-a',
+        age_at_index: null,
+        age_is_obfuscated: flag,
+        samples: [],
+        externalReferences: []
+      }
+      await expect(
+        setup({ data: { clinicalPerStudy: [record] } }).call('pdc_list_clinical', selector)
+      ).resolves.toMatchObject({ clinical: [record], total: null, completeness: 'unknown' })
+    }
+  )
+
+  it('leaves missing sample and external reference associations unavailable', async () => {
+    const record = { case_id: 'case-b', age_is_obfuscated: null }
+    const result = (await setup({ data: { clinicalPerStudy: [record] } }).call(
+      'pdc_list_clinical',
+      selector
+    )) as { clinical: Record<string, unknown>[] }
+    expect(result.clinical).toEqual([record])
+    expect(result.clinical[0]).not.toHaveProperty('samples')
+    expect(result.clinical[0]).not.toHaveProperty('externalReferences')
+  })
+
+  it.each([401, 503])(
+    'propagates HTTP %i instead of returning an empty clinical result',
+    async (status) => {
+      const engine = new ParserEngine({
+        fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response('Unavailable', { status })),
+        retries: 0
+      })
+      await expect(
+        engine.call(
+          PDC_TOOLS.find((tool) => tool.id === 'pdc_list_clinical')!,
+          selector,
+          {}
+        )
+      ).rejects.toThrow(`HTTP ${status}`)
+    }
+  )
+
+  it.each([
+    { errors: [{ message: 'Clinical resolver failed' }], data: { clinicalPerStudy: [] } },
+    { data: { clinicalPerStudy: null } },
+    { data: { clinicalPerStudy: [{}] } }
+  ])('rejects partial or malformed upstream clinical results: %j', async (response) => {
+    await expect(setup(response).call('pdc_list_clinical', selector)).rejects.toThrow(/PDC/)
+  })
+})

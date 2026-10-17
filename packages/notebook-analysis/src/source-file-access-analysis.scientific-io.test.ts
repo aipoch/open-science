@@ -186,6 +186,571 @@ describe('scientific reader review regressions', () => {
   })
 })
 
+describe('Rsamtools BAM/index lineage', () => {
+  it.each(['', ', index = "inputs/reference.bai"'])(
+    'does not publish content reads for an unopened BamFile reference: %s',
+    async (index) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        `bam <- Rsamtools::BamFile("inputs/reference.bam"${index})`
+      )
+      expect(result).toMatchObject({ reads: [], writes: [] })
+      if (!index) {
+        // Default index discovery observes existence without reading file contents.
+        expect(result.readState).toBe('partial')
+        expect(result.externalState).toBe('partial')
+      }
+    }
+  )
+
+  it('retains qualified BamFile inputs through scanBam and indexBam output', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam <- Rsamtools::BamFile("inputs/sample.bam", index = "inputs/sample.bam.bai")',
+        'alignments <- Rsamtools::scanBam(bam)',
+        'Rsamtools::indexBam("inputs/sample.bam")'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/sample.bam', 'inputs/sample.bam.bai'],
+      writes: ['inputs/sample.bam.bai'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('resolves stable path aliases and named scanBam arguments', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam_path <- "inputs/aliased.bam"',
+        'index_path <- "inputs/aliased.bam.bai"',
+        'bam <- Rsamtools::BamFile(file = bam_path, index = index_path)',
+        'alignments <- Rsamtools::scanBam(file = bam)'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/aliased.bam', 'inputs/aliased.bam.bai'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains direct scanBam paths and explicit indexes', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::scanBam(file = "inputs/direct.bam", index = "inputs/direct.bam.bai")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/direct.bam', 'inputs/direct.bam.bai'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains direct pileup paths and explicit indexes', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::pileup(file = "inputs/coverage.bam", index = "inputs/coverage.bam.bai")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/coverage.bam', 'inputs/coverage.bam.bai'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains direct readPileup text inputs', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::readPileup(file = "inputs/variants.pileup")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/variants.pileup'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not infer readPileup paths from dynamic connections', async () => {
+    const result = await analyzeNotebookSourceFileAccess('r', 'Rsamtools::readPileup(pileup_path)')
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it.each([
+    ['scanBcf', 'inputs/variants.bcf.gz'],
+    ['scanBcfHeader', 'inputs/header.bcf.gz'],
+    ['scanFa', 'inputs/reference.fa'],
+    ['scanFaIndex', 'inputs/reference.fa'],
+    ['countFa', 'inputs/reference.fa'],
+    ['scanTabix', 'inputs/regions.tsv.gz'],
+    ['countTabix', 'inputs/regions.tsv.gz'],
+    ['headerTabix', 'inputs/regions.tsv.gz'],
+    ['seqnamesTabix', 'inputs/regions.tsv.gz'],
+    ['testPairedEndBam', 'inputs/paired.bam']
+  ])('retains direct Rsamtools scientific reader paths: %s', async (reader, path) => {
+    const result = await analyzeNotebookSourceFileAccess('r', `Rsamtools::${reader}("${path}")`)
+    expect(result.reads).toEqual([path])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('retains an explicit BCF index without synthesizing implicit indexes', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::scanBcf(file = "inputs/variants.bcf.gz", index = "inputs/variants.csi")'
+    )
+    expect(result.reads).toEqual(['inputs/variants.bcf.gz', 'inputs/variants.csi'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each([
+    ['scanFa', 'inputs/reference.fa', 'inputs/reference.fa.fai'],
+    ['scanTabix', 'inputs/regions.tsv.gz', 'inputs/regions.tsv.gz.tbi'],
+    ['scanBcfHeader', 'inputs/header.bcf.gz', 'inputs/header.bcf.gz.csi']
+  ])('retains a positional index for %s', async (reader, file, index) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      `Rsamtools::${reader}("${file}", "${index}")`
+    )
+    expect(result.reads).toEqual([file, index])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each([
+    ['BcfFile', 'scanBcf', 'inputs/variants.bcf.gz', 'inputs/variants.csi'],
+    ['FaFile', 'scanFa', 'inputs/reference.fa', 'inputs/reference.fa.fai'],
+    ['TabixFile', 'scanTabix', 'inputs/regions.tsv.gz', 'inputs/regions.tsv.gz.tbi']
+  ])('replays same-cell %s bindings through %s', async (constructor, reader, file, index) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        `handle <- Rsamtools::${constructor}("${file}", index = "${index}")`,
+        `Rsamtools::${reader}(handle)`
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([file, index])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('retains an explicit compressed FASTA gzip index through a FaFile reader', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'handle <- Rsamtools::FaFile("inputs/reference.fa.gz", index = "inputs/reference.fa.gz.fai", gzindex = "inputs/reference.fa.gz.gzi")',
+        'Rsamtools::scanFa(handle)'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([
+      'inputs/reference.fa.gz',
+      'inputs/reference.fa.gz.fai',
+      'inputs/reference.fa.gz.gzi'
+    ])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('does not publish indexed scientific handles across cells', async () => {
+    const first = await analyzeRNotebookSource(
+      'handle <- Rsamtools::FaFile("inputs/reference.fa", index = "inputs/reference.fa.fai")'
+    )
+    const second = await analyzeNotebookSourceFileAccess('r', 'Rsamtools::scanFa(handle)')
+    expect(first.fileAccess?.reads).toEqual([])
+    expect(second.reads).toEqual([])
+    expect(second.readState).toBe('partial')
+    expect(second.externalState).toBe('partial')
+  })
+
+  it('does not infer scientific reader paths from dynamic arguments', async () => {
+    const result = await analyzeNotebookSourceFileAccess('r', 'Rsamtools::scanFa(fasta_path)')
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('does not treat a pileup index argument as an override for a BamFile binding', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam <- Rsamtools::BamFile("inputs/coverage.bam", index = "inputs/coverage.bam.bai")',
+        'Rsamtools::pileup(file = bam, index = "inputs/ignored.bai")'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual(['inputs/coverage.bam', 'inputs/coverage.bam.bai'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each([
+    'Rsamtools::scanBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::scanBam(bam, index = NULL)',
+    'Rsamtools::countBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::idxstatsBam(bam, index = "inputs/ignored.bai")',
+    'Rsamtools::filterBam(bam, "outputs/filtered.bam", index = "inputs/ignored.bai")',
+    'Rsamtools::filterBam(bam, "outputs/filtered.bam", index = NULL)'
+  ])('uses the stored BamFile index when a method ignores its index argument: %s', async (call) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      ['bam <- Rsamtools::BamFile("inputs/source.bam", index = "inputs/stored.bai")', call].join(
+        '\n'
+      )
+    )
+    expect(result.reads).toEqual(['inputs/source.bam', 'inputs/stored.bai'])
+    expect(result.writes).toEqual(call.includes('filterBam') ? ['outputs/filtered.bam'] : [])
+    expect(result.readState).toBe('partial')
+  })
+
+  it('retains the stored index opened by scanBamHeader on a BamFile reference', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam <- Rsamtools::BamFile("inputs/header.bam", index = "inputs/stored.bai")',
+        'Rsamtools::scanBamHeader(bam, index = "inputs/ignored.bai")'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual(['inputs/header.bam', 'inputs/stored.bai'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it.each(['rm', 'remove', 'base::rm', 'base::remove'])(
+    'does not reuse an indexed reference removed by %s',
+    async (remove) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        [
+          'handle <- Rsamtools::FaFile("inputs/reference.fa", index = "inputs/reference.fa.fai")',
+          `${remove}(handle)`,
+          'Rsamtools::scanFa(handle)'
+        ].join('\n')
+      )
+      expect(result.reads).toEqual([])
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each(['rm', 'remove'])(
+    'retains an indexed reference passed to a shadowed no-op %s',
+    async (remove) => {
+      const result = await analyzeNotebookSourceFileAccess(
+        'r',
+        [
+          `${remove} <- function(...) NULL`,
+          'handle <- Rsamtools::FaFile("inputs/reference.fa", index = "inputs/reference.fa.fai")',
+          `${remove}(handle)`,
+          'Rsamtools::scanFa(handle)'
+        ].join('\n')
+      )
+      expect(result.reads).toEqual(['inputs/reference.fa', 'inputs/reference.fa.fai'])
+      expect(result.readState).toBe('partial')
+    }
+  )
+
+  it.each([
+    'Rsamtools::scanBam("inputs/phantom.bam", index = "inputs/phantom.bai")',
+    'bam <- Rsamtools::BamFile("inputs/phantom.bam"); Rsamtools::scanBam(bam)',
+    'Rsamtools::sortBam("inputs/phantom.bam", "outputs/phantom")'
+  ])('does not certify Rsamtools I/O through a shadowed namespace operator: %s', async (call) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      ['`::` <- function(...) function(...) NULL', call].join('\n')
+    )
+    expect(result).toMatchObject({ reads: [], writes: [], externalState: 'partial' })
+  })
+
+  it('replays static PileupFiles inputs through applyPileups', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::PileupFiles(c("inputs/one.bam", "inputs/two.bam"))',
+        'Rsamtools::applyPileups(files, FUN = function(x) x)'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/one.bam', 'inputs/two.bam'],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('replays static BamFileList inputs through countBam', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::BamFileList(c("inputs/one.bam", "inputs/two.bam"), index = c("inputs/one.bam.bai", "inputs/two.bam.bai"))',
+        'Rsamtools::countBam(files)'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/one.bam', 'inputs/one.bam.bai', 'inputs/two.bam', 'inputs/two.bam.bai'],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('resolves named BamFileList arguments regardless of order', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::BamFileList(index = c("inputs/one.bam.bai", "inputs/two.bam.bai"), file = c("inputs/one.bam", "inputs/two.bam"))',
+        'Rsamtools::countBam(files)'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([
+      'inputs/one.bam',
+      'inputs/one.bam.bai',
+      'inputs/two.bam',
+      'inputs/two.bam.bai'
+    ])
+    expect(result.readState).toBe('partial')
+  })
+
+  it('replays a static BamFileList through mergeBam', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::BamFileList(c("inputs/one.bam", "inputs/two.bam"), index = c("inputs/one.bam.bai", "inputs/two.bam.bai"))',
+        'Rsamtools::mergeBam(files, destination = "outputs/merged.bam")'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/one.bam', 'inputs/one.bam.bai', 'inputs/two.bam', 'inputs/two.bam.bai'],
+      writes: ['outputs/merged.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('keeps BamFileList inputs partial when the index vector is dynamic', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::BamFileList(c("inputs/one.bam", "inputs/two.bam"), index = index_paths)',
+        'Rsamtools::countBam(files)'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not infer applyPileups inputs from dynamic file collections', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'files <- Rsamtools::PileupFiles(bam_paths)',
+        'Rsamtools::applyPileups(files, FUN = function(x) x)'
+      ].join('\n')
+    )
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('retains filterBam source, explicit index, and exact destination paths', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::filterBam(file = "inputs/source.bam", destination = "outputs/filtered.bam", index = "inputs/source.bam.bai")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/source.bam', 'inputs/source.bam.bai'],
+      writes: ['outputs/filtered.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains filterBam paths through a stable BamFile binding', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      [
+        'bam <- Rsamtools::BamFile("inputs/source.bam", index = "inputs/source.bam.bai")',
+        'Rsamtools::filterBam(file = bam, destination = "outputs/filtered.bam")'
+      ].join('\n')
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/source.bam', 'inputs/source.bam.bai'],
+      writes: ['outputs/filtered.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not infer an index when filterBam explicitly disables it', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::filterBam(file = "inputs/source.bam", destination = "outputs/filtered.bam", index = NULL)'
+    )
+    expect(result.reads).toEqual(['inputs/source.bam'])
+    expect(result.writes).toEqual(['outputs/filtered.bam'])
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+  })
+
+  it('retains sortBam input and documented .bam destination suffix', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::sortBam(file = "inputs/source.bam", destination = "outputs/sorted")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/source.bam'],
+      writes: ['outputs/sorted.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains mergeBam static input collections and exact destination', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::mergeBam(files = c("inputs/part-1.bam", "inputs/part-2.bam"), destination = "outputs/merged.bam")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/part-1.bam', 'inputs/part-2.bam'],
+      writes: ['outputs/merged.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains asBam input and documented .bam destination suffix', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::asBam(file = "inputs/source.sam", destination = "outputs/aligned")'
+    )
+    expect(result).toMatchObject({
+      reads: ['inputs/source.sam'],
+      writes: ['outputs/aligned.bam'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not infer the optional asBam companion index', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::asBam(file = "inputs/source.sam", destination = "outputs/aligned", indexDestination = TRUE)'
+    )
+    expect(result.reads).toEqual(['inputs/source.sam'])
+    expect(result.writes).toEqual(['outputs/aligned.bam'])
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+  })
+
+  it.each([
+    'Rsamtools::sortBam(file = source_path, destination = "outputs/sorted")',
+    'Rsamtools::mergeBam(files = bam_paths, destination = "outputs/merged.bam")',
+    'Rsamtools::asBam(file = source_path, destination = "outputs/aligned")'
+  ])('does not infer Rsamtools transform paths from dynamic inputs: %s', async (source) => {
+    const result = await analyzeNotebookSourceFileAccess('r', source)
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('does not infer filterBam paths from dynamic arguments', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::filterBam(file = source_path, destination = destination_path)'
+    )
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it.each([
+    ['scanBamHeader', ''],
+    ['countBam', 'index = "inputs/counts.bam.bai"'],
+    ['idxstatsBam', 'index = "inputs/stats.bam.bai"'],
+    ['quickBamFlagSummary', '']
+  ])('retains direct Rsamtools reader paths: %s', async (reader, index) => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      `Rsamtools::${reader}(file = "inputs/${reader}.bam"${index ? `, ${index}` : ''})`
+    )
+    expect(result.reads).toEqual(
+      expect.arrayContaining([
+        `inputs/${reader}.bam`,
+        ...(index
+          ? [
+              `inputs/${reader === 'countBam' ? 'counts' : reader === 'idxstatsBam' ? 'stats' : 'direct'}.bam.bai`
+            ]
+          : [])
+      ])
+    )
+    expect(result.readState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it('does not treat ignored index arguments as reads', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::scanBamHeader(file = "inputs/header.bam", index = "inputs/ignored.bai")'
+    )
+    expect(result.reads).toEqual(['inputs/header.bam'])
+    expect(result.readState).toBe('partial')
+  })
+
+  it('does not publish BAM object bindings across cells', async () => {
+    const first = await analyzeRNotebookSource(
+      'bam <- Rsamtools::BamFile("inputs/cell-local.bam", index = "inputs/cell-local.bam.bai")'
+    )
+    const second = await analyzeNotebookSourceFileAccess(
+      'r',
+      'Rsamtools::scanBam(bam)',
+      first.fileAccess?.context
+    )
+    expect(second.reads).toEqual([])
+    expect(second.writes).toEqual([])
+    expect(second.externalState).toBe('partial')
+  })
+
+  it.each([
+    ['Rsamtools::BamFile(dynamic_path, index = dynamic_index)', 'partial'],
+    ['Rsamtools::scanBam(other_bam)', 'partial'],
+    ['Rsamtools::countBam(dynamic_path, index = dynamic_index)', 'partial'],
+    ['Rsamtools::idxstatsBam(dynamic_path, index = dynamic_index)', 'partial'],
+    ['Rsamtools::indexBam(dynamic_path)', 'partial'],
+    ['scanBam(bam)', 'complete']
+  ] as const)('does not infer paths from dynamic or unqualified calls: %s', async (call, state) => {
+    const result = await analyzeNotebookSourceFileAccess('r', call)
+    expect(result.reads).toEqual([])
+    expect(result.writes).toEqual([])
+    expect(result.externalState).toBe(state)
+  })
+})
+
 describe('SciPy curve_fit hidden callback I/O', () => {
   // Reduced from an executed mercury vapor-pressure workflow. The Jacobian
   // accesses these files during the solver call, not while it is defined.

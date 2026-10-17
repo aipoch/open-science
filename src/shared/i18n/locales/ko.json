@@ -166,6 +166,7 @@
     "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
     "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
     "Map PDC aliquots to samples, cases and external references.": "PDC 분주 검체를 검체, 사례 및 외부 참조에 매핑.",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "PDC 사례의 인구통계, 진단 및 샘플 참조를 조회합니다.",
     "Discover PDC study files and quantitative reports without downloading files.": "파일을 다운로드하지 않고 PDC 연구 파일 및 정량 보고서 검색.",
     "Query linkage disequilibrium between two variants in a specified population.": "지정한 집단에서 두 변이 간의 연관 불평형을 조회합니다.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "지정한 집단에서 높은 연관 불평형을 보이는 인접 변이를 검색합니다.",

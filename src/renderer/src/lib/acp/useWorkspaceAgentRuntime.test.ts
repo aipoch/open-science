@@ -1585,7 +1585,7 @@ describe('workspace durable elicitation', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
   })
 
-  it('returns to running when no actionable user choice remains', async () => {
+  it('keeps waiting for a remaining live form after answering another question', async () => {
     useSessionStore.getState().setElicitationPending('session-choice-1', true)
     const response = {
       requestId: 'choice-1',
@@ -1625,10 +1625,13 @@ describe('workspace durable elicitation', () => {
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'running',
+      status: 'waiting-for-user',
       agentPromptInFlight: true,
       awaitingFirstAgentOutput: true
     })
+
+    syncWorkspaceElicitationState([])
+    expect(useSessionStore.getState().sessions[0].status).toBe('running')
   })
 
   it('does not revive prompt ownership from a stale elicitation response', async () => {

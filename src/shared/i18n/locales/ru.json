@@ -169,6 +169,7 @@
     "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",
     "Map PDC aliquots to samples, cases and external references.": "Сопоставление аликвот PDC с образцами, случаями и внешними ссылками.",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "Получить демографические данные, диагнозы и ссылки на образцы случаев PDC.",
     "Discover PDC study files and quantitative reports without downloading files.": "Поиск файлов исследований и количественных отчётов PDC без скачивания файлов.",
     "Query linkage disequilibrium between two variants in a specified population.": "Запросить неравновесие по сцеплению между двумя вариантами в указанной популяции.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "Найти близлежащие варианты с высоким неравновесием по сцеплению в указанной популяции.",

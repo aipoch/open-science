@@ -58,6 +58,7 @@ type SessionInteractionSource = Readonly<{
   packageOrigin?: ChatSession['packageOrigin']
   status: SessionStatus
   interactionState?: SessionInteractionState
+  liveInteractionState?: ChatSession['liveInteractionState']
   runtimeContext?: ChatSession['runtimeContext']
   activities?: readonly {
     elicitation?: {
@@ -127,10 +128,12 @@ export const inferSessionInteractionState = (
 
 export const resolveSessionInteractionStatus = (
   session: SessionInteractionSource,
-  interactionState: SessionInteractionState = inferSessionInteractionState(session)
+  interactionState: SessionInteractionState = inferSessionInteractionState(session),
+  includeLiveInteractions = true
 ): SessionStatus => {
-  if (interactionState.permission) return 'waiting-permission'
-  if (interactionState.elicitation) return 'waiting-for-user'
+  const liveInteractionState = includeLiveInteractions ? session.liveInteractionState : undefined
+  if (interactionState.permission || liveInteractionState?.permission) return 'waiting-permission'
+  if (interactionState.elicitation || liveInteractionState?.elicitation) return 'waiting-for-user'
   if (interactionState.plan) return 'waiting-plan-approval'
   if (!isSessionWaitReason(session.status)) return session.status
   return session.activeRun || session.agentPromptInFlight ? 'running' : 'idle'
@@ -158,7 +161,15 @@ export const projectSessionActionability = (
   const isImported = Boolean(session.packageOrigin)
   const interactionState = inferSessionInteractionState(session)
   const status = resolveSessionInteractionStatus(session, interactionState)
-  const waitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
+  const statusWaitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
+  const waitReason =
+    facts.rootPermissionPending === true
+      ? 'waiting-permission'
+      : statusWaitReason === 'waiting-permission'
+        ? statusWaitReason
+        : facts.credentialPending === true || facts.elicitationPending === true
+          ? 'waiting-for-user'
+          : (statusWaitReason ?? (facts.planPending === true ? 'waiting-plan-approval' : undefined))
   // Durable transcript updates can lag Main's live prompt ownership. Keep foreground actions
   // locked until that ownership settles, while preserving actionable user waits above it.
   const running =
@@ -169,9 +180,13 @@ export const projectSessionActionability = (
       facts.hasRunningWork === true)
   const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
   const permissionPending =
-    durableRootPermissionPending || (facts.rootPermissionPending ?? interactionState.permission)
+    durableRootPermissionPending ||
+    (facts.rootPermissionPending ??
+      (interactionState.permission || session.liveInteractionState?.permission === true))
   const credentialPending = facts.credentialPending === true
-  const elicitationPending = facts.elicitationPending ?? interactionState.elicitation
+  const elicitationPending =
+    facts.elicitationPending ??
+    (interactionState.elicitation || session.liveInteractionState?.elicitation === true)
   const planPending = facts.planPending ?? interactionState.plan
   const blockingInteraction: SessionBlockingInteraction | undefined = permissionPending
     ? 'permission'
@@ -274,7 +289,11 @@ export const projectSessionInteractionState = (
 ): ChatSession => {
   const current = inferSessionInteractionState(session)
   const interactionState = { ...current, ...patch }
-  const status = resolveSessionInteractionStatus(session, interactionState)
+  const status = resolveSessionInteractionStatus(
+    session,
+    interactionState,
+    session.liveInteractionState?.presentationOnly !== true
+  )
   if (
     current.permission === interactionState.permission &&
     current.elicitation === interactionState.elicitation &&
@@ -285,4 +304,43 @@ export const projectSessionInteractionState = (
     return session
   }
   return { ...session, interactionState, status, updatedAt: Date.now() }
+}
+
+export const projectLiveSessionInteractionState = (
+  session: ChatSession,
+  patch: Partial<
+    Pick<NonNullable<ChatSession['liveInteractionState']>, 'permission' | 'elicitation'>
+  >,
+  presentationOnly = false
+): ChatSession => {
+  const liveInteractionState = {
+    permission: patch.permission ?? session.liveInteractionState?.permission ?? false,
+    elicitation: patch.elicitation ?? session.liveInteractionState?.elicitation ?? false,
+    ...(presentationOnly ? { presentationOnly: true as const } : {})
+  }
+  const liveSession =
+    session.liveInteractionState?.permission === liveInteractionState.permission &&
+    session.liveInteractionState?.elicitation === liveInteractionState.elicitation &&
+    session.liveInteractionState?.presentationOnly === liveInteractionState.presentationOnly
+      ? session
+      : { ...session, liveInteractionState }
+  if (presentationOnly) return liveSession
+  const aggregatePatch: Partial<SessionInteractionState> = {
+    ...(patch.permission !== undefined
+      ? {
+          permission:
+            liveInteractionState.permission ||
+            session.runtimeContext?.permission?.state === 'pending'
+        }
+      : {}),
+    ...(patch.elicitation !== undefined
+      ? {
+          elicitation:
+            liveInteractionState.elicitation ||
+            (session.interactionState?.elicitation !== false &&
+              hasPendingDurableElicitation(session))
+        }
+      : {})
+  }
+  return projectSessionInteractionState(liveSession, aggregatePatch)
 }
