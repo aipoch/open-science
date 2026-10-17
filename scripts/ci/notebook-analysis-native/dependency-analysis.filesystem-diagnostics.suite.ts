@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from './index'
+import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
 
 const reportedSine = `import numpy as np
 import matplotlib.pyplot as plt
@@ -29,40 +29,36 @@ plt.close(fig)
 import os
 print(f"Saved: {output_path} ({os.path.getsize(output_path)} bytes)")`
 
-it.skipIf(process.env.RUN_KERNEL !== '1' || !process.env.OPEN_SCIENCE_TEST_PYTHON)(
-  'matches the reported PNG write with native Python',
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'native-sine-diagnostics-'))
-    const sessionRoot = join(root, 'notebook')
-    const dataRoot = join(sessionRoot, 'data')
-    try {
-      await mkdir(dataRoot, { recursive: true })
-      expect(await analyzeNotebookSourceFileAccess('python', reportedSine)).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        reads: [],
-        writes: ['sine_wave.png']
-      })
-      const { stdout } = await promisify(execFile)(
-        process.env.OPEN_SCIENCE_TEST_PYTHON!,
-        ['-c', reportedSine],
-        {
-          cwd: dataRoot,
-          timeout: 60000,
-          env: { ...process.env, MPLBACKEND: 'Agg', MPLCONFIGDIR: join(root, 'matplotlib') }
-        }
-      )
-      const image = await readFile(join(dataRoot, 'sine_wave.png'))
-      expect(image.subarray(1, 4).toString()).toBe('PNG')
-      expect(stdout).toContain(`Saved: sine_wave.png (${image.length} bytes)`)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  },
-  75000
-)
+it('matches the reported PNG write with native Python', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'native-sine-diagnostics-'))
+  const sessionRoot = join(root, 'notebook')
+  const dataRoot = join(sessionRoot, 'data')
+  try {
+    await mkdir(dataRoot, { recursive: true })
+    expect(await analyzeNotebookSourceFileAccess('python', reportedSine)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: [],
+      writes: ['sine_wave.png']
+    })
+    const { stdout } = await promisify(execFile)(
+      process.env.OPEN_SCIENCE_TEST_PYTHON!,
+      ['-c', reportedSine],
+      {
+        cwd: dataRoot,
+        timeout: 60000,
+        env: { ...process.env, MPLBACKEND: 'Agg', MPLCONFIGDIR: join(root, 'matplotlib') }
+      }
+    )
+    const image = await readFile(join(dataRoot, 'sine_wave.png'))
+    expect(image.subarray(1, 4).toString()).toBe('PNG')
+    expect(stdout).toContain(`Saved: sine_wave.png (${image.length} bytes)`)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 75000)
 
-it.skipIf(process.env.RUN_KERNEL !== '1').each(['python', 'r'] as const)(
+it.each(['python', 'r'] as const)(
   'matches native %s output followed by formatted filesystem diagnostics',
   async (language) => {
     const code =

@@ -200,7 +200,6 @@ jobs:
           packages/notebook-analysis/src/dependency-analysis.test.ts
           src/main/notebook/working-file-observer.analysis-contract.integration.test.ts
           packages/notebook-analysis/src/dependency-analysis.chord.test.ts
-          packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts
           packages/notebook-analysis/src/dependency-analysis.path-plot.test.ts
           packages/notebook-analysis/src/dependency-analysis.anndata.test.ts
           src/main/artifacts/artifact-reproducibility-outputs.test.ts

@@ -31,7 +31,7 @@ Public contracts and the analysis engine have separate module-impact owners. Con
 
 ## Native analysis regressions
 
-`src/dependency-analysis.*.native.test.ts` compares analysis predictions with Python/R execution, including real scientific plotting fixtures. These tests use no host observer, kernel protocol, storage manifest or app scripts. Set `RUN_KERNEL=1` and `OPEN_SCIENCE_TEST_PYTHON` / `OPEN_SCIENCE_TEST_R_COMMAND`; circlize also accepts `OPEN_SCIENCE_TEST_R_ENV` (an R prefix with `bin/Rscript`). Plot cases require pandas, openpyxl, numpy and matplotlib in Python, and ggplot2 (with `margin_auto`), dplyr, scales, circlize and readxl in R. Without the declared runtime environment native cases keep their explicit skip conditions; portable algorithm tests still run.
+The CI-owned native suite runs with `npm run test:notebook-analysis-native` from the repository root. Its explicit file list, activation, required Python/R environment and behavioral evidence are in `scripts/ci/notebook-analysis-native/suite.json`. Set `RUN_KERNEL=1`, `OPEN_SCIENCE_TEST_PYTHON`, `OPEN_SCIENCE_TEST_R_COMMAND` and `OPEN_SCIENCE_TEST_R_ENV` (an R prefix with `bin/Rscript`). Plot cases require pandas, openpyxl, numpy and matplotlib in Python, and ggplot2 (with `margin_auto`), dplyr, scales, circlize, readxl and purrr in R. Missing prerequisites fail the dedicated run. Ordinary package tests execute the portable algorithms; they do not claim this native evidence.
 
 The host owns compact namespace/byte-capture and R graphics-device integration contracts. Multi-owner kernel recovery and actual environment-lock/recipe replay tests stay with those host workflows. Drawing variants alone do not justify repeating host integrations.
 
