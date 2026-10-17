@@ -27,12 +27,50 @@ $evidence = Join-Path $PSScriptRoot 'evidence'
 New-Item -ItemType Directory -Path $evidence,(Join-Path $PSScriptRoot 'temp') -Force | Out-Null
 $admin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $inheritedProfile = $env:USERPROFILE
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class UpgradeUserEnvironment {
+  [DllImport("userenv.dll", SetLastError=true)] public static extern bool CreateEnvironmentBlock(out IntPtr block, IntPtr token, bool inherit);
+  [DllImport("userenv.dll")] public static extern bool DestroyEnvironmentBlock(IntPtr block);
+  [DllImport("shell32.dll")] public static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
+}
+"@
+$block = [IntPtr]::Zero
+if (-not [UpgradeUserEnvironment]::CreateEnvironmentBlock([ref]$block,[Security.Principal.WindowsIdentity]::GetCurrent().Token,$false)) { throw "CreateEnvironmentBlock failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+$accountEnvironment = @{}
+try {
+  $cursor = $block
+  while ($true) {
+    $entry = [Runtime.InteropServices.Marshal]::PtrToStringUni($cursor)
+    if (-not $entry) { break }
+    $separator = $entry.IndexOf('=')
+    if ($separator -gt 0) { $accountEnvironment[$entry.Substring(0,$separator)] = $entry.Substring($separator+1) }
+    $cursor = [IntPtr]::Add($cursor,($entry.Length+1)*2)
+  }
+} finally { [void][UpgradeUserEnvironment]::DestroyEnvironmentBlock($block) }
+$environmentEvidence = @{}
+foreach ($key in @('USERPROFILE','HOMEDRIVE','HOMEPATH','APPDATA','LOCALAPPDATA','USERNAME','USERDOMAIN')) {
+  $environmentEvidence[$key] = @{inherited=[Environment]::GetEnvironmentVariable($key);account=$accountEnvironment[$key]}
+  if ($accountEnvironment.ContainsKey($key)) { [Environment]::SetEnvironmentVariable($key,$accountEnvironment[$key]) }
+}
+$environmentEvidence | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidence 'account-environment.json')
 $env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
 $env:HOME = $env:USERPROFILE
 $env:HOMEDRIVE = [IO.Path]::GetPathRoot($env:USERPROFILE).TrimEnd('\')
 $env:HOMEPATH = $env:USERPROFILE.Substring($env:HOMEDRIVE.Length)
 $env:APPDATA = [Environment]::GetFolderPath('ApplicationData', [Environment+SpecialFolderOption]::Create)
 $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData', [Environment+SpecialFolderOption]::Create)
+$folderEvidence = @{}
+foreach ($folder in @(@('Roaming','3EB685DB-65F9-4CF6-A03A-E3EF65729F3D'),@('Local','F1B32785-6FBA-4FCF-9D55-7B8E7F157091'))) {
+  $id = [guid]$folder[1]
+  $folderPath = [IntPtr]::Zero
+  $hr = [UpgradeUserEnvironment]::SHGetKnownFolderPath([ref]$id,0x8000,[IntPtr]::Zero,[ref]$folderPath)
+  try { $folderEvidence[$folder[0]] = @{hresult=$hr;path=[Runtime.InteropServices.Marshal]::PtrToStringUni($folderPath)} }
+  finally { [Runtime.InteropServices.Marshal]::FreeCoTaskMem($folderPath) }
+}
+$folderEvidence['userShellFolders'] = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction SilentlyContinue | Select-Object AppData,'Local AppData'
+$folderEvidence | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidence 'known-folders.json')
 if (-not $env:APPDATA -or -not $env:LOCALAPPDATA) { throw 'The isolated Windows account has no usable AppData known folders' }
 foreach ($known in @($env:APPDATA,$env:LOCALAPPDATA)) {
   if (-not $known.StartsWith($env:USERPROFILE + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Known folder escaped the isolated account profile' }
