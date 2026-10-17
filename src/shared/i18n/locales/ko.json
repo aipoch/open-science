@@ -7271,6 +7271,8 @@
     "Save body area": "본문 영역 저장",
     "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
     "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
-    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다."
+    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다.",
+    "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다."
   }
 }
