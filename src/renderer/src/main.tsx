@@ -10,7 +10,11 @@ import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
-import { applyInterfaceScale, resolveInterfaceScale } from '@/lib/interface-scale'
+import {
+  applyInterfaceScale,
+  isDesktopRenderer,
+  resolveInterfaceScale
+} from '@/lib/interface-scale'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import { startNetworkMonitor } from '@/stores/network-store'
 import { installRendererFailureDiagnostics } from './renderer-diagnostics'
@@ -53,7 +57,7 @@ window.addEventListener('drop', (event) => event.preventDefault())
 // Load only the selected language before mounting, retaining a translated first app paint.
 const initialLocale = resolveInitialLocale()
 const startRenderer = (): void => {
-  configureComposerDraftStorage('desktop-profile', 'profile')
+  if (isDesktopRenderer()) configureComposerDraftStorage('desktop-profile', 'profile')
   initI18n(initialLocale)
   applyHtmlLang(initialLocale)
   startLocalePreferenceSync()
