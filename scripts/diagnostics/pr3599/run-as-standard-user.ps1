@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$CandidateRoot, [Parameter(Mandatory)][string]$CurrentDirectory, [Parameter(Mandatory)][string]$PreviousDirectory, [Parameter(Mandatory)][string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$CandidateRoot, [Parameter(Mandatory)][string]$CurrentDirectory, [Parameter(Mandatory)][string]$PreviousDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [switch]$EnvironmentOnly)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'This provisioning script is restricted to disposable GitHub-hosted Windows runners' }
 $administrator = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Path $root,$OutputDirectory -Force | Out-Null
 if ($LASTEXITCODE) { throw 'Could not grant read access to isolated checkout' }
 & icacls.exe $root /grant "*$($account.SID.Value):(OI)(CI)M" /Q
 if ($LASTEXITCODE) { throw 'Could not grant write access to isolated test directory' }
-$config = @{candidateRoot=$CandidateRoot;currentDirectory=$CurrentDirectory;previousDirectory=$PreviousDirectory;root=$root;node=(Get-Command node.exe).Source}
+$config = @{candidateRoot=$CandidateRoot;currentDirectory=$CurrentDirectory;previousDirectory=$PreviousDirectory;root=$root;node=(Get-Command node.exe).Source;environmentOnly=[bool]$EnvironmentOnly}
 $config | ConvertTo-Json | Set-Content (Join-Path $root 'run-config.json')
 $childScript = Join-Path $root 'run-validation.ps1'
 New-Item -ItemType Directory -Path (Join-Path $root 'evidence') -Force | Out-Null
@@ -56,7 +56,14 @@ foreach ($key in @('USERPROFILE','HOMEDRIVE','HOMEPATH','APPDATA','LOCALAPPDATA'
   $environmentEvidence[$key] = @{inherited=[Environment]::GetEnvironmentVariable($key);account=$accountEnvironment[$key]}
   if ($accountEnvironment.ContainsKey($key)) { [Environment]::SetEnvironmentVariable($key,$accountEnvironment[$key]) }
 }
-$environmentEvidence | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidence 'account-environment.json')
+$environmentEvidence | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidence ('account-environment-' + $env:PR3599_ACCOUNT_ENV_READY + '.json'))
+# Windows shell folder APIs may cache inherited paths before the script runs. Start a fresh
+# same-user process with the environment obtained from Windows, before querying those APIs.
+if ($env:PR3599_ACCOUNT_ENV_READY -ne '1') {
+  $env:PR3599_ACCOUNT_ENV_READY = '1'
+  & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath
+  exit $LASTEXITCODE
+}
 $env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
 $env:HOME = $env:USERPROFILE
 $env:HOMEDRIVE = [IO.Path]::GetPathRoot($env:USERPROFILE).TrimEnd('\')
@@ -77,7 +84,7 @@ if (-not $env:APPDATA -or -not $env:LOCALAPPDATA) { throw 'The isolated Windows 
 foreach ($known in @($env:APPDATA,$env:LOCALAPPDATA)) {
   if (-not $known.StartsWith($env:USERPROFILE + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Known folder escaped the isolated account profile' }
 }
-if (-not $env:USERPROFILE -or $env:USERPROFILE -eq $inheritedProfile) { throw 'The isolated account profile was not loaded separately' }
+if (-not $env:USERPROFILE -or $env:USERPROFILE -ne $accountEnvironment['USERPROFILE']) { throw 'The isolated account profile was not loaded separately' }
 @{identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;isAdministrator=$admin;profile=$env:USERPROFILE;inheritedProfile=$inheritedProfile;appData=$env:APPDATA;localAppData=$env:LOCALAPPDATA;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'identity.json')
 if ($admin) { throw 'Upgrade acceptance must run as an ordinary user' }
 Add-Type -AssemblyName System.Security
@@ -86,6 +93,7 @@ $encrypted = [Security.Cryptography.ProtectedData]::Protect($probeBytes,$null,[S
 $decrypted = [Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
 if ([Convert]::ToBase64String($decrypted) -ne [Convert]::ToBase64String($probeBytes)) { throw 'Ordinary-user DPAPI round trip failed' }
 @{dpapiCurrentUserRoundTrip=$true;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value} | ConvertTo-Json | Set-Content (Join-Path $evidence 'credential-environment.json')
+if ($configuration.environmentOnly) { Write-Output 'Isolated ordinary-user known folders and DPAPI verified.'; exit 0 }
 Set-Location $configuration.candidateRoot
 $env:PR3599_EVIDENCE_DIR = $evidence
 $env:TEMP = Join-Path $PSScriptRoot 'temp'
@@ -140,6 +148,11 @@ try {
   Get-ChildItem -LiteralPath $root -Recurse -File | Select-Object FullName,Length,LastWriteTime | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $OutputDirectory 'retained-file-inventory.json')
   $accountProfile = Get-CimInstance Win32_UserProfile | Where-Object SID -eq $account.SID.Value
   if ($accountProfile -and (Test-Path -LiteralPath $accountProfile.LocalPath)) {
+    $aclEvidence = foreach ($relative in @('','AppData','AppData\Local','AppData\Roaming')) {
+      $target = if ($relative) { Join-Path $accountProfile.LocalPath $relative } else { $accountProfile.LocalPath }
+      if (Test-Path -LiteralPath $target) { $acl = Get-Acl -LiteralPath $target; @{path=$target;owner=$acl.Owner;sddl=$acl.Sddl} }
+    }
+    $aclEvidence | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $OutputDirectory 'account-folder-permissions.json')
     Get-ChildItem -LiteralPath $accountProfile.LocalPath -Recurse -File -Force -Filter '*.log' -ErrorAction Continue | ForEach-Object {
       $relative = $_.FullName.Substring($accountProfile.LocalPath.Length).TrimStart('\').Replace('\','__')
       Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs ('account__' + $relative))
