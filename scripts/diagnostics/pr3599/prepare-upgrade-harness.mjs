@@ -97,11 +97,19 @@ const helpers = String.raw`
 const rememberedProcesses = []
 let seededData
 async function desktopButton(installDirectory, step, pattern, invoke) {
-  return waitFor('the actual product button: ' + step, async () => {
-    const result = await operateRecordedButton(await snapshotInstallation(installDirectory), pattern, invoke)
+  const outcome = await waitFor('the actual product button: ' + step, async () => {
+    let result
+    try { result = await operateRecordedButton(await snapshotInstallation(installDirectory), pattern, invoke) }
+    catch (error) {
+      // A lost action acknowledgement must fail, not blindly invoke a possibly completed action again.
+      await evidence('ui-' + step + '-driver-error', { error: error.message })
+      return { driverError: error }
+    }
     await evidence('ui-' + step, result)
     if (result.matched && (!invoke || result.invoked)) return result
   }, UPDATE_TIMEOUT_MS)
+  if (outcome.driverError) throw outcome.driverError
+  return outcome
 }
 async function verifyOccupiedInstallation(connection, installDirectory, env) {
   const executable = join(installDirectory, 'resources/node-runtime/node.exe')

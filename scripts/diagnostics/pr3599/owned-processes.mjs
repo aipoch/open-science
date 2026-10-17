@@ -20,8 +20,11 @@ export function selectOwnedProcesses(records, directory) {
 
 function powershell(script, env, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, ...env }, windowsHide: true })
+    const encodedScript = '$global:PR3599OutputEncodingBefore = [Console]::OutputEncoding.CodePage; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);\n' + script
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', encodedScript], { env: { ...process.env, ...env }, windowsHide: true })
     let stdout = '', stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk) => { stdout += chunk })
     child.stderr.on('data', (chunk) => { stderr += chunk })
     const timer = setTimeout(() => { child.kill(); reject(new Error(`Process observer timed out: ${stderr}`)) }, timeoutMs)
@@ -29,7 +32,10 @@ function powershell(script, env, timeoutMs) {
     child.on('close', (code) => {
       clearTimeout(timer)
       if (code !== 0) reject(new Error(`Process observer exited ${code}: ${stdout}\n${stderr}`))
-      else resolve(stdout)
+      else {
+        try { JSON.parse(stdout); resolve(stdout) }
+        catch (error) { reject(new Error(`Process observer JSON failed: ${error.message}; raw UTF-8 output base64=${Buffer.from(stdout).toString('base64')}`)) }
+      }
     })
   })
 }
@@ -120,7 +126,7 @@ if ($matchesFound.Count -eq 1) {
     $invoked = $true
   }
 }
-@{matched=$name;invoked=$invoked;controls=$observed} | ConvertTo-Json -Depth 5 -Compress
+@{matched=$name;invoked=$invoked;controls=$observed;outputEncodingBefore=$global:PR3599OutputEncodingBefore;outputEncodingAfter=[Console]::OutputEncoding.CodePage} | ConvertTo-Json -Depth 5 -Compress
 `, { PR3599_PROCESS_RECORDS: JSON.stringify(records), PR3599_BUTTON_PATTERN: pattern, PR3599_INVOKE_BUTTON: invoke ? '1' : '0' }, 20000)
   return JSON.parse(output)
 }

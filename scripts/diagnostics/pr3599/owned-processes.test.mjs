@@ -20,7 +20,7 @@ test('selects only the exact installation directory and its later descendants', 
 
 test('actual Windows wait fails on a live process, ignores reused identity and only kills the owned fixture', { skip: process.platform !== 'win32', timeout: 60000 }, async () => {
   const parent = resolve('tmp')
-  const root = await mkdtemp(join(parent, 'upgrade-process-fixture-'))
+  const root = await mkdtemp(join(parent, 'upgrade-process-→-fixture-'))
   assert.ok(root.startsWith(parent + '\\'))
   const executable = join(root, 'owned-fixture.exe')
   await copyFile(process.execPath, executable)
@@ -33,6 +33,7 @@ test('actual Windows wait fails on a live process, ignores reused identity and o
     await Promise.all([ready(owned), ready(unrelated)])
     const records = await snapshotInstallation(root)
     assert.ok(records.some((p) => p.pid === owned.pid))
+    assert.equal(records.find((p) => p.pid === owned.pid).path.toLowerCase(), executable.toLowerCase())
     assert.ok(records.every((p) => p.pid === owned.pid || (p.parent === owned.pid && /\\conhost\.exe$/i.test(p.path))))
     assert.ok(!records.some((p) => p.pid === unrelated.pid))
     await assert.rejects(waitForRecordedExit(records, { timeoutMs: 100 }), /did not exit/)
