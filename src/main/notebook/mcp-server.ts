@@ -3,6 +3,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { DATASET_LIMITS, inspectDatasetSchema } from './dataset-inspection'
 import { executionRecoveryContext } from './execution-recovery'
 
 import {
@@ -1617,6 +1618,16 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     mapResult: (raw) => raw,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
     progressMessage: 'Waiting for Notebook network approval.'
+  },
+  {
+    name: 'inspect_dataset',
+    title: 'Inspect dataset',
+    description:
+      'Read-only UTF-8 CSV/TSV inspection: schema, dimensions, bounded preview, and missing/numeric statistics for columns; idColumn counts repeated nonmissing IDs. Path is relative to session data or an absolute staged input path (set format for extensionless inputs). Defaults to the first 1000 rows, at most 8 MiB and 200000 cells. Reports complete only at EOF; sample statistics cover inspected rows only. Does not modify data or establish scientific suitability.',
+    method: 'inspectDataset',
+    inputSchema: inspectDatasetSchema,
+    mapResult: (raw) => raw,
+    resultLimitChars: DATASET_LIMITS.reportBytes * 2
   },
   {
     name: 'notebook_state',

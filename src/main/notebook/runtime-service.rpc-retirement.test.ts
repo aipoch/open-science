@@ -1,6 +1,7 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import { NotebookRunRepository } from './repository'
+import { getNotebookDataRoot, NotebookRunRepository } from './repository'
+import { getNotebookInputRoot } from './input-staging'
+import { materializeNotebookPromptInput } from './prompt-input-materialization'
+import { createFrameNotebookLane } from './lane-identity'
 import {
   NotebookRuntimeService,
   type NotebookControlResult,
@@ -16,9 +20,199 @@ import {
   type NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, open: vi.fn(fs.open) }
+})
+
 const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
+
+it('inspects a session dataset through authenticated RPC without executing or trusting body scope', async () => {
+  const h = await harness()
+  const dataRoot = getNotebookDataRoot(h.root, 'default-project', 'session-1')
+  await mkdir(dataRoot, { recursive: true })
+  await writeFile(join(dataRoot, 'table.csv'), 'id,value\na,1\na,3\n')
+  const execute = vi.spyOn(h.service, 'execute')
+  const state = vi.spyOn(h.service, 'state')
+  const connection = await h.server.issueSessionConnection(
+    'session-1',
+    'default-project',
+    'root-frame-session-1'
+  )
+  const call = (path: string): Promise<Response> =>
+    fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'inspectDataset',
+          params: {
+            sessionId: 'forged-session',
+            projectId: 'forged-project',
+            workspaceCwd: h.root,
+            path,
+            idColumn: 'id',
+            columns: ['value']
+          }
+        })
+      },
+      'Dataset inspection test'
+    )
+  const response = await call('table.csv')
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({
+    result: {
+      dimensions: { rows: 2, columns: 2 },
+      inspection: { scope: 'complete' },
+      columns: [{ duplicateIdCount: 1 }, { numericRange: { min: 1, max: 3 } }]
+    }
+  })
+  await writeFile(join(h.root, 'outside.csv'), 'id,value\na,99\n')
+  const outside = await call(join(h.root, 'outside.csv'))
+  expect(outside.ok).toBe(false)
+  expect(await outside.text()).toContain('outside the current session read scope')
+  const otherSession = getNotebookDataRoot(h.root, 'default-project', 'session-2')
+  await mkdir(otherSession, { recursive: true })
+  await writeFile(join(otherSession, 'table.csv'), 'id,value\na,99\n')
+  expect((await call(join(otherSession, 'table.csv'))).ok).toBe(false)
+
+  const content = 'id,value\nattached,7\n'
+  const stagedRoot = getNotebookInputRoot(h.root, 'default-project', 'session-1')
+  await mkdir(stagedRoot, { recursive: true })
+  const stagedPath = join(stagedRoot, 'content')
+  await writeFile(stagedPath, content)
+  const attached = await materializeNotebookPromptInput({
+    storageRoot: h.root,
+    projectId: 'default-project',
+    appSessionId: 'session-1',
+    stagedPath,
+    input: {
+      inputFileVersionId: 'version-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceProjectId: 'default-project',
+      sourceSessionId: 'session-1',
+      filename: 'attached.csv',
+      sizeBytes: Buffer.byteLength(content),
+      checksum: createHash('sha256').update(content).digest('hex'),
+      storageKey: 'unused',
+      association: 'turn-attached'
+    }
+  })
+  expect(await (await call(attached.notebookPath)).json()).toMatchObject({
+    result: { preview: { rows: [['attached', '7']] } }
+  })
+  expect(execute).not.toHaveBeenCalled()
+  expect(state).not.toHaveBeenCalled()
+})
+
+it('keeps inspection inside the authenticated child lane and denies revoked attempts', async () => {
+  const h = await harness()
+  const scope = { projectId: 'default-project', sessionId: 'session-1', agentFrameId: 'frame-one' }
+  const childRoot = getNotebookDataRoot(
+    h.root,
+    scope.projectId,
+    scope.sessionId,
+    createFrameNotebookLane(scope.projectId, scope.sessionId, scope.agentFrameId, 'attempt-one')
+  )
+  const siblingRoot = getNotebookDataRoot(
+    h.root,
+    scope.projectId,
+    scope.sessionId,
+    createFrameNotebookLane(scope.projectId, scope.sessionId, 'frame-two')
+  )
+  for (const root of [childRoot, siblingRoot]) {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'table.csv'), 'value\n1')
+  }
+  let writable = true
+  const connection = await h.server.issueDelegatedNotebookConnection({
+    ...scope,
+    rootFrameId: 'root-frame-session-1',
+    attemptId: 'attempt-one',
+    messageBranchId: 'branch-one',
+    runtimeSegmentId: 'runtime-one',
+    promptMessageId: 'message-one',
+    workspaceCwd: siblingRoot,
+    isAttemptWritable: () => writable
+  })
+  cleanups.push(() => connection.revoke())
+  const call = (path: string): Promise<Response> =>
+    fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'inspectDataset',
+          params: {
+            projectId: scope.projectId,
+            sessionId: scope.sessionId,
+            workspaceCwd: siblingRoot,
+            path,
+            provenanceContext: { rootFrameId: 'root-frame-session-1', agentFrameId: 'frame-two' }
+          }
+        })
+      },
+      'Dataset child inspection test'
+    )
+  const inspected = await call('table.csv')
+  expect(inspected.status, await inspected.text()).toBe(200)
+  expect((await call(join(siblingRoot, 'table.csv'))).ok).toBe(false)
+  writable = false
+  expect((await call('table.csv')).status).toBe(403)
+  expect(h.requests).toHaveLength(0)
+})
+
+it('cancels an admitted inspection on project deletion and drains without creating a kernel', async () => {
+  const h = await harness()
+  const root = getNotebookDataRoot(h.root, 'default-project', 'session-1')
+  await mkdir(root, { recursive: true })
+  await writeFile(join(root, 'table.csv'), 'value\n1')
+  const fs = await import('node:fs/promises')
+  const { open } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  const opened = deferred()
+  const resume = deferred()
+  const spy = vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args)
+    opened.resolve()
+    await resume.promise
+    return handle
+  })
+  const request = {
+    projectId: 'default-project',
+    sessionId: 'session-1',
+    workspaceCwd: root,
+    path: 'table.csv'
+  }
+  const pending = h.service.inspectDataset(request)
+  const rejected = expect(pending).rejects.toThrow()
+  try {
+    await opened.promise
+    h.service.beginProjectDeletion('default-project')
+    resume.resolve()
+    await rejected
+    await expect(h.service.inspectDataset(request)).rejects.toThrow()
+    h.service.releaseProjectDeletion('default-project')
+    expect(await h.service.inspectDataset(request)).toMatchObject({
+      inspection: { scope: 'complete' }
+    })
+    expect(h.requests).toHaveLength(0)
+  } finally {
+    resume.resolve()
+    spy.mockRestore()
+    h.service.releaseProjectDeletion('default-project')
+  }
 })
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

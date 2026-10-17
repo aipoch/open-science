@@ -237,6 +237,7 @@
       "src/main/office-preview/office-preview-navigation.test.ts",
       "src/main/permission-grants/application-commands.test.ts",
       "src/main/permission-grants/catalog.test.ts",
+      "src/main/permission-grants/identity-catalog.test.ts",
       "src/main/permission-grants/ipc.test.ts",
       "src/main/permission-grants/projection-controller.test.ts",
       "src/main/permission-grants/registry.test.ts",

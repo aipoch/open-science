@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/notebook/dataset-inspection.ts",
+    "src/main/notebook/dataset-inspection.test.ts",
     "src/main/notebook/application-commands.test.ts",
     "src/main/notebook/application-commands.ts",
     "src/main/notebook/application.test.ts",
@@ -227,6 +229,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/dataset-inspection.test.ts",
       "src/main/notebook/application-commands.test.ts",
       "src/main/notebook/application.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
