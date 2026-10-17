@@ -75,6 +75,7 @@ replace('    const installerResult = await installerExit', "    await evidence('
 replace('    installerObserver.abort(', "    await evidence('old-app-failure-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), error: error.message })\n    installerObserver.abort(")
 replace('    await Promise.all([terminateProcessTree(child), installerExit?.catch(() => undefined)])', `    const failedProcesses = await snapshotInstallation(dirname(executable))
     await evidence('update-failure-processes', failedProcesses)
+    await evidence('update-failure-windows', await readRecordedWindows(failedProcesses).catch((error) => ({ error: error.message })))
     await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))
     if (installerExit) await evidence('installer-observer-after-failure', await installerExit.then((result) => result, (error) => ({ error: error.message })))`)
 replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)')
@@ -175,6 +176,15 @@ async function seedUpgradeData(connection, installDirectory) {
   }, UPDATE_TIMEOUT_MS)
   seededData = { project, session, credentialId: credential.createdCredential.id, marker, mcp }
   await evidence('seeded-product-data', seededData)
+  // Diagnostic A/B only: test whether the product-owned bundled-Node MCP is the occupant.
+  // This run cannot certify MCP cleanup during installer handoff.
+  const ownedMcp = (await snapshotInstallation(installDirectory)).filter((record) => record.pid === mcp.pid)
+  if (ownedMcp.length !== 1) throw new Error('Missing exact MCP identity for occupancy comparison')
+  await rpc('settings:set-custom-server-enabled', { id: 'pr3599-upgrade', enabled: false })
+  await evidence('diagnostic-mcp-stopped-before-update', {
+    diagnosticOnly: true, provesMcpCleanupDuringUpdate: false,
+    records: await waitForRecordedExit(ownedMcp)
+  })
 }
 async function evidence(name, value) {
   const directory = process.env.PR3599_EVIDENCE_DIR
@@ -214,6 +224,7 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
   const settings = await rpc('settings:get-settings')
   if (settings.closePreference !== 'quit') throw new Error('Upgrade did not preserve the close preference')
   if (!Number.isFinite(settings.onboardingCompletedAt)) throw new Error('Upgrade lost the prepared profile setup marker')
+  await rpc('settings:set-custom-server-enabled', { id: 'pr3599-upgrade', enabled: true })
   await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
   const reconnected = await waitFor('the updated MCP resolving the preserved synthetic credential', async () => {
     const events = (await readFile(seededData.marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
