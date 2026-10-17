@@ -18,6 +18,8 @@ if ($LASTEXITCODE) { throw 'Could not grant write access to isolated test direct
 $config = @{candidateRoot=$CandidateRoot;currentDirectory=$CurrentDirectory;previousDirectory=$PreviousDirectory;root=$root;node=(Get-Command node.exe).Source}
 $config | ConvertTo-Json | Set-Content (Join-Path $root 'run-config.json')
 $childScript = Join-Path $root 'run-validation.ps1'
+New-Item -ItemType Directory -Path (Join-Path $root 'evidence') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'product-local-mcp.cjs') -Destination (Join-Path $root 'evidence/product-local-mcp.cjs')
 @'
 $ErrorActionPreference = 'Stop'
 $configuration = Get-Content (Join-Path $PSScriptRoot 'run-config.json') -Raw | ConvertFrom-Json

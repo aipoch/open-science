@@ -16,6 +16,7 @@ replace('  cleanupSmokeRoot,', '')
 replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = fetch }) => {')
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')
 replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
+replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
 replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...windowsProfileEnvironment(profileDirectory), OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory }, null, 2))")
 replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)', "    const ownedBeforeUpdate = await snapshotInstallation(dirname(executable))\n    rememberedProcesses.push(...ownedBeforeUpdate)\n    await evidence('old-processes-before-update', ownedBeforeUpdate)\n    const closed = waitForShutdownExit(exit, child, diagnosticOutput)")
 replace('    const installerResult = await installerExit', "    await evidence('old-app-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), exitCode })\n    await evidence('old-processes-normal-exit', await waitForRecordedExit(ownedBeforeUpdate))\n    const installerResult = await installerExit")
@@ -38,6 +39,26 @@ replace('  if (installed) await cleanup(() => uninstallAndVerify(installDirector
 replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))', "  await evidence('final-state', { root, primaryError: primaryError?.message, cleanupErrors: cleanupErrors.map((e) => e.message), processes: await snapshotInstallation(installDirectory), directoryRetained: true })")
 const helpers = String.raw`
 const rememberedProcesses = []
+let seededData
+async function seedUpgradeData(connection, installDirectory) {
+  const rpc = (channel, ...args) => invokeWebRpc({ ...connection, channel, args })
+  const project = await rpc('projects:create', { name: 'PR3599 upgrade preservation', description: 'Synthetic upgrade data; no user content' })
+  const credential = await rpc('settings:create-device-credential', { displayName: 'PR3599 synthetic MCP', kind: 'token', secret: 'synthetic-pr3599-no-access' })
+  if (!credential.createdCredential?.id || !project.id) throw new Error('Could not seed actual product data')
+  const marker = join(process.env.PR3599_EVIDENCE_DIR, 'mcp-lifecycle.jsonl')
+  const fixture = join(process.env.PR3599_EVIDENCE_DIR, 'product-local-mcp.cjs')
+  await rpc('settings:add-custom-server', { id: 'pr3599-upgrade', name: 'pr3599-upgrade', displayName: 'PR3599 local upgrade MCP', transport: 'stdio', command: join(installDirectory, 'resources/node-runtime/node.exe'), args: [fixture, marker], envCredentialIds: { PR3599_TEST_SECRET: credential.createdCredential.id } })
+  await rpc('settings:set-custom-server-enabled', { id: 'pr3599-upgrade', enabled: true })
+  await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
+  const mcp = await waitFor('the real pre-upgrade MCP with its synthetic credential', async () => {
+    const events = (await readFile(marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
+    const started = events.filter((event) => event.event === 'started').at(-1)
+    const processes = await snapshotInstallation(installDirectory)
+    if (started?.credentialMatched && processes.some((p) => p.pid === started.pid)) return started
+  }, UPDATE_TIMEOUT_MS)
+  seededData = { project, credentialId: credential.createdCredential.id, marker, mcp }
+  await evidence('seeded-product-data', seededData)
+}
 async function evidence(name, value) {
   const directory = process.env.PR3599_EVIDENCE_DIR
   if (!directory) throw new Error('Missing PR3599_EVIDENCE_DIR')
@@ -68,7 +89,20 @@ async function verifyAndStopSuccessor(installDirectory, configRoot, expectedVers
     hashes[relative] = createHash('sha256').update(await readFile(join(installDirectory, relative))).digest('hex')
   }
   await evidence('installed-candidate-hashes', hashes)
-  await invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.protocolVersion, channel: 'settings:set-close-preference', args: [{ preference: 'quit' }] })
+  const rpc = (channel, ...args) => invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel, args })
+  const project = await rpc('projects:get', seededData.project.id)
+  if (project?.name !== seededData.project.name || project?.description !== seededData.project.description) throw new Error('Upgrade did not preserve the project')
+  await rpc('settings:retry-custom-server', { id: 'pr3599-upgrade' })
+  const reconnected = await waitFor('the updated MCP resolving the preserved synthetic credential', async () => {
+    const events = (await readFile(seededData.marker, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
+    const latest = events.filter((event) => event.event === 'started').at(-1)
+    const processes = await snapshotInstallation(installDirectory)
+    if (latest?.pid !== seededData.mcp.pid && latest?.credentialMatched && processes.some((p) => p.pid === latest.pid)) return { latest, processes }
+  }, UPDATE_TIMEOUT_MS)
+  ready.processes = reconnected.processes
+  rememberedProcesses.push(...ready.processes)
+  await evidence('preserved-project-and-credential', { project, credentialId: seededData.credentialId, mcp: reconnected.latest })
+  await invokeWebRpc({ endpoint: ready.endpoint, auth: ready.auth, protocolVersion: ready.bootstrap.rpcProtocolVersion, channel: 'settings:set-close-preference', args: [{ preference: 'quit' }] })
   const closeRequest = await waitFor('the updated product window to accept normal close', () => closeRecordedWindow(ready.processes), UPDATE_TIMEOUT_MS)
   await evidence('automatic-successor-close-request', closeRequest)
   await evidence('automatic-successor-normal-exit', await waitForRecordedExit(ready.processes))
