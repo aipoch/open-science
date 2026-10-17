@@ -1,246 +1,201 @@
-name: Windows Upgrade Smoke
+name: Windows PR upgrade diagnostic (manual, no publish)
 
-# Advisory post-release validation. It consumes published assets, so it cannot extend or block the
-# stable Release workflow. A failure is intentionally red here and can be rerun for the same tag.
+# Temporary diagnostic variant on a dedicated branch. No schedule, PR gate, or release publication.
 on:
-  repository_dispatch:
-    types:
-      - windows-upgrade-smoke
   workflow_dispatch:
     inputs:
-      tag:
-        description: Published stable tag to validate
-        type: string
-        required: true
-
-      dry_run:
-        description: Test baseline selection and the installer observer without downloading or installing releases
+      environment_only:
+        description: Run only the ordinary account known-folder and DPAPI diagnostic
         type: boolean
         default: false
-
+      candidate_run_id:
+        description: Existing Azure signing dry-run containing the Windows artifact
+        required: true
+        type: string
+      expected_sha:
+        description: Exact product source SHA bound to that artifact
+        required: true
+        type: string
+      signing_sha:
+        description: Exact reviewed diagnostic workflow commit that signed the candidate
+        default: 2235061980cba64284828e2bf93fb1a20718922a
+        required: true
+        type: string
+      baseline_run_id:
+        description: Exact signed current PR 1.0.0 artifact for the second upgrade path
+        default: '38998525919'
+        required: true
+        type: string
+      baseline_signing_sha:
+        description: Exact workflow SHA that built the current PR 1.0.0 baseline
+        default: 8032877fa6c3fd7af75f4a060052b6543f63288a
+        required: true
+        type: string
+      baseline_tag:
+        description: Lower released stable Windows version
+        default: v1.0.0
+        required: true
+        type: string
 permissions:
   contents: read
-
-concurrency:
-  group: windows-upgrade-smoke-${{ github.event.client_payload.tag || inputs.tag }}
-  cancel-in-progress: false
-
+  actions: read
 jobs:
-  windows-upgrade-smoke:
-    if: ${{ !inputs.dry_run }}
+  account:
+    if: inputs.environment_only
     runs-on: windows-latest
-    timeout-minutes: 40
-    env:
-      CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+    timeout-minutes: 8
     steps:
-      - name: Checkout smoke harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
-
-      - name: Resolve released revision
-        id: current
+          persist-credentials: false
+      - name: Verify the isolated ordinary-user environment
         shell: pwsh
         run: |
-          $releasedSha = git rev-parse "$($env:CURRENT_TAG)^{commit}"
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releasedSha)) {
-            exit 1
-          }
-          git merge-base --is-ancestor $releasedSha $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Released revision $releasedSha is not an ancestor of smoke harness $env:GITHUB_SHA."
-            exit 1
-          }
-          $migrationFiles = @(
-            git ls-tree -r --name-only $releasedSha -- src/main/database/migrations
-          )
-          if ($LASTEXITCODE -ne 0 -or $migrationFiles.Count -eq 0) {
-            Write-Error "Released revision $releasedSha has no application migrations."
-            exit 1
-          }
-          $migrationPattern = '^src/main/database/migrations/(?<sequence>\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$'
-          for ($index = 0; $index -lt $migrationFiles.Count; $index += 1) {
-            if ($migrationFiles[$index] -notmatch $migrationPattern) {
-              Write-Error "Unexpected released migration path: $($migrationFiles[$index])"
-              exit 1
-            }
-            $expectedSequence = $index + 1
-            if ([int]$Matches.sequence -ne $expectedSequence) {
-              Write-Error "Released migrations are not a continuous prefix at $($migrationFiles[$index])."
-              exit 1
-            }
-          }
-          # Contract-boundary commits for the Artifact RPC methods (artifactSaveVersion / artifactReserveWrite,
-          # src/main/notebook/local-rpc-server.ts); scripts/windows-installer-smoke.mjs replays the matching contract.
-          $artifactSaveCommit = '1a6faf134836d417b8bb1cdf89571f5d9dee2a0b'
-          $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
-          $artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactSaveBase)) {
-            Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
-            exit 1
-          }
-          $artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
-            Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
-            exit 1
-          }
-          if ($artifactSaveBase -eq $artifactSaveCommit) {
-            $artifactRpcContract = 'save'
-          } elseif ($artifactReservationBase -eq $artifactReservationCommit) {
-            $artifactRpcContract = 'reservation'
-          } else {
-            $artifactRpcContract = 'legacy'
-          }
-          "sha=$releasedSha" >> $env:GITHUB_OUTPUT
-          "migration_count=$($migrationFiles.Count)" >> $env:GITHUB_OUTPUT
-          "artifact_rpc_contract=$artifactRpcContract" >> $env:GITHUB_OUTPUT
-
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Download current Windows installer
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          New-Item -ItemType Directory -Force current | Out-Null
-          gh release download $env:CURRENT_TAG --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --pattern 'latest.yml' --dir current
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Download previous stable Windows installer
-        id: previous
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          New-Item -ItemType Directory -Force previous | Out-Null
-          $stableTag = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$'
-          if ($env:CURRENT_TAG -notmatch $stableTag) { throw "Current tag must be stable SemVer." }
-          $current = [version]$env:CURRENT_TAG.Substring(1)
-          $pages = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $releases = @($pages | ConvertFrom-Json | ForEach-Object { $_ })
-          $eligible = @($releases | Where-Object {
-            if ($_.draft -or $_.prerelease -or $_.tag_name -notmatch $stableTag) { return $false }
-            $version = [version]$_.tag_name.Substring(1)
-            $installer = "aipoch-open-science-$version-win-x64-setup.exe"
-            $version -lt $current -and $_.assets.name -contains $installer -and
-              $_.assets.name -contains "$installer.blockmap"
-          })
-          $tag = ($eligible | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1).tag_name
-          if ([string]::IsNullOrWhiteSpace($tag)) {
-            "available=false" >> $env:GITHUB_OUTPUT
-            "reason=no-previous-stable-release" >> $env:GITHUB_OUTPUT
-            Write-Host "No eligible previous stable Windows installer is available; fresh-install smoke already passed."
-            exit 0
-          }
-          gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "available=true" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-
-      - name: Certify Windows electron-updater differential update
-        id: updater
-        env:
-          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-updater-certification
-        if: steps.previous.outputs.available == 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          node scripts/windows-updater-certification.mjs `
-            --current-dir current `
-            --previous-dir previous `
-            --output windows-updater-observation.json 2>&1 |
-            Tee-Object -FilePath windows-updater-certification.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Drill Windows silent upgrade, process lock, rollback, and restart
-        id: installer
-        env:
-          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-installer-certification
-        if: always() && steps.previous.outputs.available == 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          node scripts/windows-installer-smoke.mjs `
-            --installer-dir current `
-            --previous-installer-dir previous `
-            --artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}' `
-            --expected-migration-count '${{ steps.current.outputs.migration_count }}' 2>&1 |
-            Tee-Object -FilePath windows-installer-certification.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Record Windows update-drill evidence
+          ./scripts/diagnostics/pr3599/run-as-standard-user.ps1 -CandidateRoot "$env:GITHUB_WORKSPACE" -CurrentDirectory "$env:GITHUB_WORKSPACE" -PreviousDirectory "$env:GITHUB_WORKSPACE" -OutputDirectory "$env:GITHUB_WORKSPACE\evidence" -EnvironmentOnly
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
-        shell: pwsh
-        env:
-          GITHUB_SHA: ${{ steps.current.outputs.sha }}
-        run: |
-          $available = '${{ steps.previous.outputs.available }}' -eq 'true'
-          $passed = '${{ steps.updater.outcome }}' -eq 'success' -and '${{ steps.installer.outcome }}' -eq 'success'
-          $status = if (-not $available) { 'not-applicable' } elseif ($passed) { 'passed' } else { 'failed' }
-          $arguments = @(
-            'scripts/ci/release-certification-evidence.mjs', 'write-windows-update',
-            '--output', 'certification-windows-update.json',
-            '--current-tag', $env:CURRENT_TAG,
-            '--status', $status
-          )
-          if ($available) {
-            $arguments += @('--previous-tag', '${{ steps.previous.outputs.tag }}')
-            if (Test-Path 'windows-updater-observation.json') {
-              $arguments += @('--updater-observation', 'windows-updater-observation.json')
-            }
-            if (Test-Path 'current/database-migration-certification.json') {
-              $arguments += @('--database-migration-certification', 'current/database-migration-certification.json')
-            }
-            if (-not $passed) {
-              $arguments += @('--reason', 'updater=${{ steps.updater.outcome }},installer=${{ steps.installer.outcome }}')
-            }
-          } else {
-            $arguments += @('--reason', '${{ steps.previous.outputs.reason }}')
-          }
-          & node @arguments
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Upload Windows update-drill evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: windows-update-certification-${{ env.CURRENT_TAG }}
-          retention-days: 7
-          path: |
-            certification-windows-update.json
-            windows-*-certification.log
+          name: pr3599-isolated-account
+          path: evidence
           if-no-files-found: error
-
-      - name: Report Windows update-drill outcome
-        if: >-
-          always() && steps.previous.outputs.available == 'true' &&
-          (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
-        run: exit 1
-
-  baseline-dry-run:
-    if: ${{ inputs.dry_run }}
+          retention-days: 14
+  actual-upgrade:
+    if: ${{ !inputs.environment_only }}
+    name: Upgrade ${{ matrix.baseline }} 1.0.0 to PR 1.0.1
+    strategy:
+      fail-fast: false
+      matrix:
+        baseline: [pr]
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
-      - name: Checkout selection harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Setup Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: validation-tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.expected_sha }}
+          path: candidate-source
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24
-      - name: Install test dependencies
+      - name: Bind artifact to the exact successful signed Windows build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          SIGNING_SHA: ${{ inputs.signing_sha }}
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CANDIDATE_RUN -notmatch '^\d+$' -or $env:EXPECTED_SHA -notmatch '^[a-f0-9]{40}$' -or $env:BASELINE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid source identity input' }
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          $runJson = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $runJson | Set-Content evidence/signing-run.json
+          $run = $runJson | ConvertFrom-Json
+          if ($run.head_sha -ne $env:SIGNING_SHA -or $run.path -ne '.github/workflows/signpath-test.yml') { throw 'Wrong artifact source' }
+          $jobsJson = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN/jobs"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $jobsJson | Set-Content evidence/signing-jobs.json
+          $build = @(($jobsJson | ConvertFrom-Json).jobs | Where-Object { $_.name -eq 'build / Build windows-x64' })
+          if ($build.Count -ne 1 -or $build[0].conclusion -ne 'success') { throw 'Signed Windows build is not successful' }
+          git -C candidate-source rev-parse HEAD | Set-Content evidence/product-sha.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: windows-x64
+          path: current
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify product source and version-only build delta
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((Get-Content current/upgrade-product-sha.txt -Raw).Trim() -ne $env:EXPECTED_SHA) { throw 'Artifact product SHA does not match checkout' }
+          $changed = @(Get-Content current/upgrade-modified-files.txt)
+          if ($changed.Count -ne 2 -or @($changed | Where-Object { $_ -notin @('package.json','package-lock.json') }).Count) { throw 'Unexpected build modifications' }
+          Copy-Item current/upgrade-* evidence/
+      - name: Download the exact current PR 1.0.0 baseline
+        if: matrix.baseline == 'pr'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: windows-x64
+          path: previous
+          run-id: ${{ inputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify current PR baseline identity
+        if: matrix.baseline == 'pr'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN: ${{ inputs.baseline_run_id }}
+          BASELINE_SIGNING_SHA: ${{ inputs.baseline_signing_sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $json = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BASELINE_RUN"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $json | Set-Content evidence/pr-baseline-signing-run.json
+          $baseline = $json | ConvertFrom-Json
+          if ($baseline.head_sha -ne $env:BASELINE_SIGNING_SHA -or $baseline.conclusion -ne 'success' -or $baseline.path -ne '.github/workflows/signpath-test.yml') { throw 'PR baseline artifact is not the exact successfully signed build' }
+          if ((Get-Content previous/upgrade-product-sha.txt -Raw).Trim() -ne $env:EXPECTED_SHA) { throw 'PR baseline product identity differs from candidate checkout' }
+          $modified = @(Get-Content previous/upgrade-modified-files.txt | Where-Object { $_.Trim() })
+          if ($modified.Count -ne 0) { throw 'PR 1.0.0 baseline has unexpected source modifications' }
+          Get-ChildItem previous/upgrade-* | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path 'evidence' ('baseline-' + $_.Name)) }
+      - name: Fetch the signed lower-version baseline
+        if: matrix.baseline == 'published'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+        run: |
+          New-Item -ItemType Directory -Path previous -Force | Out-Null
+          gh release download $env:BASELINE_TAG --repo $env:GITHUB_REPOSITORY --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify signatures, versions and immutable installer hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $records = foreach ($directory in @('current','previous')) {
+            $installers = @(Get-ChildItem $directory -Recurse -Filter '*-win-x64-setup.exe')
+            if ($installers.Count -ne 1) { throw 'Expected exactly one installer' }
+            $file = $installers[0]
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|, )CN=AIPOCH PTE\. LTD\.') { throw "Installer trust verification failed: $($signature.Status)" }
+            @{role=$directory;file=$file.FullName;version=$file.VersionInfo.ProductVersion;sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash;signature=$signature.Status.ToString();publisher=$signature.SignerCertificate.Subject}
+          }
+          $records | ConvertTo-Json -Depth 5 | Set-Content evidence/installers.json
+          if ([version]$records[0].version -ne [version]'1.0.1' -or [version]$records[1].version -ne [version]'1.0.0') { throw 'Expected the explicitly requested 1.0.0 to 1.0.1 transition' }
+          if ([version]$records[0].version -le [version]$records[1].version) { throw 'Candidate must be newer than baseline' }
+      - name: Install only the existing upgrade harness dependencies
+        working-directory: candidate-source
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Generate test database client
+      - working-directory: candidate-source
         run: npx prisma generate
-      - name: Test actual Windows baseline selection and installer observation
-        run: npx vitest run scripts/windows-upgrade-baseline.test.ts scripts/windows-updater-certification.test.ts
+      - name: Prepare scoped process evidence without changing product binaries
+        shell: pwsh
+        run: |
+          node validation-tools/scripts/diagnostics/pr3599/prepare-upgrade-harness.mjs candidate-source
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-FileHash candidate-source/scripts/pr3599-*.mjs -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/harness-hashes.json
+          git -C candidate-source status --porcelain | Set-Content evidence/source-status.txt
+      - name: Exercise actual application update under an isolated standard Windows account
+        env:
+          PR3599_BASELINE: ${{ matrix.baseline }}
+        shell: pwsh
+        run: |
+          ./validation-tools/scripts/diagnostics/pr3599/run-as-standard-user.ps1 -CandidateRoot "$env:GITHUB_WORKSPACE\candidate-source" -CurrentDirectory "$env:GITHUB_WORKSPACE\current" -PreviousDirectory "$env:GITHUB_WORKSPACE\previous" -OutputDirectory "$env:GITHUB_WORKSPACE\evidence"
+      - name: Preserve original evidence even when the first stage fails
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pr3599-real-upgrade-${{ matrix.baseline }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
+
