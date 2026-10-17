@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -16,13 +17,18 @@ const mocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   arguments: vi.fn()
 }))
-vi.mock('@aipoch/process-tree-native', () => ({ getDarwinProcessArguments: mocks.arguments }))
+vi.mock('node:module', () => ({
+  createRequire: () => () => ({ getDarwinProcessArguments: mocks.arguments })
+}))
 vi.mock('node:fs', () => ({
   realpathSync: mocks.realpath,
   readlinkSync: mocks.readlink,
   readFileSync: mocks.readFile
 }))
-vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }))
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawnSync: mocks.spawnSync
+}))
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
 beforeEach(() => {
   vi.resetAllMocks()
@@ -33,6 +39,63 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+it('defers native loading until macOS inspection and retains occupancy when the binding fails', () => {
+  // Exercise the actual CommonJS dependency boundary, outside Vitest's native-module mock.
+  const script = `
+    const assert = require('node:assert/strict')
+    const Module = require('node:module')
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const ts = require('typescript')
+    const filename = ${JSON.stringify(join(__dirname, 'installation-occupancy.ts'))}
+    Module._extensions['.ts'] = (instance, source) => instance._compile(
+      ts.transpileModule(fs.readFileSync(source, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+      }).outputText, source)
+    const root = path.resolve('fixture', 'Science.app')
+    const executable = path.join(root, 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler')
+    const database = path.resolve('fixture', 'profile --backup', 'Crashpad')
+    const options = { installationRoot: root, crashDumpsPath: database, instanceId: 'current' }
+    let attempts = 0
+    let binding
+    const originalLoad = Module._load
+    Module._load = function(id, ...args) {
+      if (id === '@aipoch/process-tree-native') {
+        attempts++
+        if (!binding) throw Object.assign(new Error('Missing native binding'), { code: 'MODULE_NOT_FOUND' })
+        return binding
+      }
+      const actual = originalLoad.call(this, id, ...args)
+      if (id === 'node:fs') return { ...actual, realpathSync: value => value }
+      if (id === 'node:child_process') return {
+        ...actual, spawnSync: () => ({ status: 0, stdout: '42 ' + executable + '\\n' })
+      }
+      return actual
+    }
+    for (const platform of ['linux', 'win32', 'darwin']) {
+      Object.defineProperty(process, 'platform', { value: platform })
+      delete require.cache[filename]
+      const occupancy = require(filename)
+      assert.equal(attempts, 0, platform + ' module startup must not load the native binding')
+      if (platform === 'darwin') {
+        assert.deepEqual(occupancy.inspectOwnedCrashpadProcesses(options), [])
+        assert.equal(attempts, 1)
+        binding = {}
+        assert.deepEqual(occupancy.inspectOwnedCrashpadProcesses(options), [])
+        binding = { getDarwinProcessArguments: () => [
+          executable, '--database=' + database, '--annotation=openScienceInstance=current'
+        ] }
+        assert.deepEqual(occupancy.inspectOwnedCrashpadProcesses(options), [42])
+        assert.equal(attempts, 3, 'each macOS inspection must consult the native loader')
+      }
+    }
+    process.stdout.write('native-loading-ok')
+  `
+  expect(execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })).toBe(
+    'native-loading-ok'
+  )
 })
 
 // Both APIs must find the same occupants from the platform's native process-list format.

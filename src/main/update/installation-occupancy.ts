@@ -1,8 +1,10 @@
-import { getDarwinProcessArguments } from '@aipoch/process-tree-native'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
+
+const requireNative = createRequire(__filename)
 
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
 function isLinuxInstallationExecutable(pid: number, installationRoot: string): boolean {
@@ -277,9 +279,15 @@ export function inspectOwnedCrashpadProcesses(options: {
     if (canonical(command) !== executable) return []
     let args: string[] | null
     try {
+      // Startup recovery must remain reachable when the native component is missing or damaged.
+      // Load only for macOS inspection; failure grants no ownership exemption and can be retried.
       args =
         process.platform === 'darwin'
-          ? getDarwinProcessArguments(pid)
+          ? (
+              requireNative(
+                '@aipoch/process-tree-native'
+              ) as typeof import('@aipoch/process-tree-native')
+            ).getDarwinProcessArguments(pid)
           : readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
     } catch {
       return []
