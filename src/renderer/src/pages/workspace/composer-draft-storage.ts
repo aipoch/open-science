@@ -22,6 +22,7 @@ const envelopeSchema = z.object({
   drafts: z.array(storedDraftSchema)
 })
 let enabled = false
+let storage = (): Storage => sessionStorage
 let scope: string | undefined
 let drafts: StoredDraft[] = []
 let failed = false
@@ -45,43 +46,48 @@ const save = (): void => {
     return
   }
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, scope, drafts }))
+    storage().setItem(STORAGE_KEY, JSON.stringify({ version: 1, scope, drafts }))
     failed = false
   } catch {
     failed = true
     // A failed overwrite must not leave an older, possibly already-sent draft available to reload.
     // Keep the current in-memory drafts for the explicit copy fallback.
     try {
-      sessionStorage.removeItem(STORAGE_KEY)
+      storage().removeItem(STORAGE_KEY)
     } catch {
       /* Storage access itself may be denied. */
     }
   }
 }
 
-// sessionStorage isolates tabs and origins, survives reload, and avoids cross-window overwrites.
-// The server supplies a non-secret scope tied to the host token and authorization principal.
-export const configureComposerDraftStorage = (nextScope?: string): void => {
+// Web drafts stay tab-local with a server-supplied authorization scope. Desktop has one main
+// renderer per profile: its Chromium localStorage survives a process restart and is isolated by
+// the profile's userData/sessionData directory, independently of the backend's ephemeral port.
+export const configureComposerDraftStorage = (
+  nextScope?: string,
+  lifetime: 'tab' | 'profile' = 'tab'
+): void => {
   enabled = true
+  storage = lifetime === 'profile' ? () => localStorage : () => sessionStorage
   scope = nextScope
   drafts = []
   deletedProjects.clear()
   deletedSessions.clear()
   failed = !scope
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const raw = storage().getItem(STORAGE_KEY)
     const parsed = raw ? envelopeSchema.safeParse(JSON.parse(raw)) : undefined
-    const recoveryRaw = sessionStorage.getItem(RECOVERY_STORAGE_KEY)
+    const recoveryRaw = storage().getItem(RECOVERY_STORAGE_KEY)
     const recovery = recoveryRaw ? envelopeSchema.safeParse(JSON.parse(recoveryRaw)) : undefined
     if (scope && recovery?.success && recovery.data.scope === scope) {
       drafts = recovery.data.drafts
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(recovery.data))
-      sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+      storage().setItem(STORAGE_KEY, JSON.stringify(recovery.data))
+      storage().removeItem(RECOVERY_STORAGE_KEY)
     } else if (scope && parsed?.success && parsed.data.scope === scope) {
       drafts = parsed.data.drafts
     } else {
-      sessionStorage.removeItem(STORAGE_KEY)
-      sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+      storage().removeItem(STORAGE_KEY)
+      storage().removeItem(RECOVERY_STORAGE_KEY)
     }
   } catch {
     failed = true
@@ -94,8 +100,8 @@ export const revokeComposerDraftStorage = (): void => {
   scope = undefined
   drafts = []
   try {
-    sessionStorage.removeItem(STORAGE_KEY)
-    sessionStorage.removeItem(RECOVERY_STORAGE_KEY)
+    storage().removeItem(STORAGE_KEY)
+    storage().removeItem(RECOVERY_STORAGE_KEY)
   } catch {
     /* Re-pairing changes scope even if removal fails. */
   }
@@ -105,10 +111,10 @@ export const preserveComposerDraftsForRecovery = (): void => {
   for (const writer of writers) writer()
   if (!scope) return
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
+    const raw = storage().getItem(STORAGE_KEY)
     const parsed = raw ? envelopeSchema.safeParse(JSON.parse(raw)) : undefined
     if (parsed?.success && parsed.data.scope === scope) {
-      sessionStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(parsed.data))
+      storage().setItem(RECOVERY_STORAGE_KEY, JSON.stringify(parsed.data))
     }
   } catch {
     // Recovery is best-effort; the in-memory draft remains available to the dialog copy action.

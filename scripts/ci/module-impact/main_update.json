@@ -2,6 +2,7 @@
   "ownerPaths": [
     "src/main/update/create-strategy.test.ts",
     "src/main/update/create-strategy.ts",
+    "src/main/update/differential-download-cancellation.test.ts",
     "src/main/update/downloader.test.ts",
     "src/main/update/downloader.ts",
     "src/main/update/electron-updater-provider-regressions.test.ts",
@@ -67,6 +68,7 @@
   "testFiles": {
     "owner": [
       "src/main/update/create-strategy.test.ts",
+      "src/main/update/differential-download-cancellation.test.ts",
       "src/main/update/downloader.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",

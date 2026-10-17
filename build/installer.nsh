@@ -212,6 +212,35 @@ FunctionEnd
   !define MUI_PAGE_CUSTOMFUNCTION_PRE protectNestedDataRootsForInstall
 !macroend
 
+# Interactive updates retain the native instfiles page after Electron exits. The normal setup
+# finish page would strand --force-run at a second confirmation, so update installs complete it
+# automatically. Fresh installations keep the standard finish page and optional Run checkbox.
+!macro customFinishPage
+  Function openScienceStartInstalledApp
+    StrCpy $1 ""
+    ${if} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${endif}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  Function openScienceUpdateFinish
+    ${if} ${isUpdated}
+      ${if} ${isForceRun}
+        Call openScienceStartInstalledApp
+      ${endif}
+      Abort
+    ${endif}
+  FunctionEnd
+
+  !ifndef HIDE_RUN_AFTER_FINISH
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_FUNCTION openScienceStartInstalledApp
+  !endif
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE openScienceUpdateFinish
+  !insertmacro MUI_PAGE_FINISH
+!macroend
+
 !macro customInit
   # Cache both registered locations before either uninstall pass can delete their registry data.
   # More importantly, move any nested OpenScience data root OUTSIDE the install directory before
@@ -345,7 +374,11 @@ FunctionEnd
 
   Function protectNestedDataRootsForInstall
     !ifdef openScienceOriginalInstFilesPre
-      Call ${openScienceOriginalInstFilesPre}
+      # An update must replace the registered installation, including a custom directory that
+      # does not contain APP_FILENAME. The setup-page sanitizer would append a second directory.
+      ${ifNot} ${isUpdated}
+        Call ${openScienceOriginalInstFilesPre}
+      ${endif}
     !endif
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode

@@ -7,17 +7,27 @@ const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 const capability = process.env.OPEN_SCIENCE_E2E_RELAUNCH_CAPABILITY
 if (!root || !/^[a-f0-9-]{36}$/.test(capability || '') || app.isPackaged)
   throw new Error('Relaunch observer requires isolated source Electron.')
-appendFileSync(join(root, 'fixture-desktop-pids'), `${process.pid}\n`)
-appendFileSync(
-  join(root, 'fixture-desktop-identities.jsonl'),
-  JSON.stringify({
-    pid: process.pid,
-    argv: process.argv,
-    configRoot: process.env.OPEN_SCIENCE_CONFIG_ROOT,
-    userData: app.getPath('userData'),
-    isPackaged: app.isPackaged
-  }) + '\n'
-)
+let recorded = false
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Executable CommonJS cannot use TypeScript return annotations.
+const recordIdentity = () => {
+  if (recorded) return
+  recorded = true
+  appendFileSync(join(root, 'fixture-desktop-pids'), `${process.pid}\n`)
+  appendFileSync(
+    join(root, 'fixture-desktop-identities.jsonl'),
+    JSON.stringify({
+      pid: process.pid,
+      argv: process.argv,
+      configRoot: process.env.OPEN_SCIENCE_CONFIG_ROOT,
+      environmentUserData: process.env.OPEN_SCIENCE_USER_DATA,
+      userData: app.getPath('userData'),
+      sessionData: app.getPath('sessionData'),
+      isPackaged: app.isPackaged
+    }) + '\n'
+  )
+}
+if (app.isReady()) recordIdentity()
+else app.once('ready', recordIdentity)
 setInterval(() => {
   try {
     const request = JSON.parse(readFileSync(join(root, 'fixture-quit-pid'), 'utf8'))

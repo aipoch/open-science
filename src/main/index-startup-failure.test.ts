@@ -13,6 +13,7 @@ const f = vi.hoisted(() => {
     leaseRelease: vi.fn(),
     select: vi.fn(),
     validate: vi.fn(),
+    inventory: vi.fn(() => [Buffer.from('synthetic-profile-ciphertext')]),
     key: vi.fn(),
     launch: vi.fn(),
     connect: vi.fn(),
@@ -68,7 +69,7 @@ vi.mock('./ipc-handler-registry', () => ({
   ipcMainHandle: (name: string, fn: (...args: unknown[]) => unknown) => f.handlers.set(name, fn)
 }))
 vi.mock('./runtime-ownership', () => ({
-  acquireRuntimeDirectorySync: () => ({ release: f.leaseRelease })
+  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease })
 }))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: vi.fn(),
@@ -79,6 +80,9 @@ vi.mock('./credential-identity/bootstrap', () => ({
   prepareCredentialValidation: f.validate
 }))
 vi.mock('./credential-identity/node-cipher', () => ({ initializeNodeWindowsProfileKey: f.key }))
+vi.mock('./credential-identity/ciphertext-inventory', () => ({
+  readCredentialCiphertexts: f.inventory
+}))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/test/config',
   resolveElectronProfile: () => '/test/profile'
@@ -211,10 +215,15 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
     f.select.mockReturnValue({ backend, appName: 'Open-Science (DEV)', exists: true })
     await import('./index')
     await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
-    expect(f.validate).toHaveBeenCalledWith(expect.objectContaining({ backend }), {
+    expect(f.inventory).toHaveBeenCalledWith({
       configRoot: '/test/config',
       profilePath: '/test/profile'
     })
+    expect(f.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ backend }),
+      { configRoot: '/test/config', profilePath: '/test/profile' },
+      [Buffer.from('synthetic-profile-ciphertext')]
+    )
     expect(f.leaseRelease.mock.invocationCallOrder[0]).toBeLessThan(
       f.app.whenReady.mock.invocationCallOrder[0]
     )
@@ -227,7 +236,8 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
       expect.objectContaining({
         configRoot: '/test/config',
         command: '/test/node',
-        entry: '/test/backend.cjs'
+        entry: '/test/backend.cjs',
+        credentialInventory: [Buffer.from('synthetic-profile-ciphertext')]
       })
     )
     expect(f.report).toHaveBeenCalledWith(
@@ -251,6 +261,20 @@ it('releases credential preflight and exits without yielding or initializing the
   expect(f.log.error.mock.invocationCallOrder[0]).toBeLessThan(
     f.dialog.showErrorBox.mock.invocationCallOrder[0]
   )
+})
+it('selects the requested profile before checking its single-instance lock', async () => {
+  let selectedPaths: unknown
+  f.app.requestSingleInstanceLock.mockImplementation(() => {
+    selectedPaths = f.app.setPath.mock.calls.map((call) => [...call])
+    return false
+  })
+  await import('./index')
+  expect(selectedPaths).toEqual([
+    ['userData', '/test/profile'],
+    ['sessionData', '/test/profile']
+  ])
+  expect(f.inventory).not.toHaveBeenCalled()
+  expect(f.app.whenReady).not.toHaveBeenCalled()
 })
 it('a secondary desktop never starts or stops a business runtime', async () => {
   f.app.requestSingleInstanceLock.mockReturnValue(false)

@@ -108,7 +108,7 @@ describe('createUpdateStrategy', () => {
     await strategy.apply()
 
     expect(installGate).toHaveBeenCalledTimes(1)
-    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(quitAndInstall).toHaveBeenCalledWith(process.platform !== 'win32', true)
   })
 
   it('forwards update handoff cleanup to the in-place strategy', async () => {

@@ -21,6 +21,10 @@ import { access, mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { DesktopEndpoint } from './desktop-connection'
+import {
+  removeCredentialInventory,
+  writeCredentialInventory
+} from './credential-identity/inventory-handoff'
 
 const ownerSchema = z
   .object({
@@ -351,6 +355,8 @@ export async function startOrAttachDesktopBackend(options: {
   entry: string
   packaged: boolean
   args?: readonly string[]
+  credentialInventory?: readonly Buffer[]
+  credentialInventoryCapturedAt?: number
   timeoutMs?: number
   // Bounds for waiting out a stopping runtime or a lock still held after exit 75.
   ownershipWaitMs?: number
@@ -374,11 +380,34 @@ export async function startOrAttachDesktopBackend(options: {
   )
   // The explicit config root must not make Node select a different credential profile.
   const attemptId = randomUUID()
+  let credentialInventoryPath: string | undefined
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPEN_SCIENCE_CONFIG_ROOT: options.configRoot,
     OPEN_SCIENCE_USER_DATA: options.profilePath,
     OPEN_SCIENCE_STARTUP_ATTEMPT: attemptId
+  }
+  // A direct backend/CLI process may inherit a stale handoff path from its parent. Never let a
+  // launch without a fresh snapshot read or remove that unrelated file.
+  delete env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
+  delete env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256
+  if (options.credentialInventory) {
+    credentialInventoryPath = join(options.configRoot, `.credential-inventory-${attemptId}.json`)
+    try {
+      env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256 = await writeCredentialInventory({
+        path: credentialInventoryPath,
+        attemptId,
+        configRoot: options.configRoot,
+        profilePath: options.profilePath,
+        ciphertexts: options.credentialInventory,
+        capturedAt: options.credentialInventoryCapturedAt
+      })
+    } catch (error) {
+      await file.close()
+      await removeCredentialInventory(credentialInventoryPath)
+      throw error
+    }
+    env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH = credentialInventoryPath
   }
   delete env.ELECTRON_RUN_AS_NODE
   let child: ChildProcess
@@ -419,9 +448,12 @@ export async function startOrAttachDesktopBackend(options: {
     // Spawn errors can fire before the asynchronous descriptor close settles.
     child.on('error', onError)
     child.on('message', onMessage)
-  } finally {
+  } catch (error) {
     await file.close()
+    if (credentialInventoryPath) await removeCredentialInventory(credentialInventoryPath)
+    throw error
   }
+  await file.close()
   child.unref()
   child.channel?.unref()
   const deadline = startedAt + (options.timeoutMs ?? 60_000)
@@ -443,6 +475,14 @@ export async function startOrAttachDesktopBackend(options: {
         if (lockHeld(options.configRoot) || attempt >= MAX_OWNERSHIP_RESPAWNS)
           throw new DesktopBackendStartupError(
             `The data folder is still owned by another process (exit 75). See ${logs}.`,
+            status?.stage ?? 'bootstrap',
+            true,
+            logs,
+            status
+          )
+        if (options.credentialInventory !== undefined)
+          throw new DesktopBackendStartupError(
+            'Credential inventory cannot be reused after an ownership conflict; restart the desktop for a fresh snapshot.',
             status?.stage ?? 'bootstrap',
             true,
             logs,
@@ -473,5 +513,6 @@ export async function startOrAttachDesktopBackend(options: {
     child.off('message', onMessage)
     if (child.connected) child.disconnect()
     child.off('error', onError)
+    if (credentialInventoryPath) await removeCredentialInventory(credentialInventoryPath)
   }
 }

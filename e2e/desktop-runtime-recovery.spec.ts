@@ -130,6 +130,7 @@ for (const borrowed of [false, true])
           .toBe(true)
       app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
       const page = await app.firstWindow()
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       await expect
         .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), {
           timeout: 60_000
@@ -660,6 +661,7 @@ test('exits from the recovery notice when the original backend has really stoppe
       }
     })
     const page = await app.firstWindow()
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await expect
       .poll(() => page.evaluate(() => window.api?.desktopRuntime?.getState()), { timeout: 60_000 })
       .toMatchObject({ phase: 'connected' })
@@ -763,6 +765,7 @@ for (const scenario of [
     try {
       app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
       const page = await app.firstWindow()
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       await expect
         .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), {
           timeout: 60_000

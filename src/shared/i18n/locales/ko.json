@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
+    "Update preparation failed": "업데이트 준비 실패",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",
     "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",
@@ -7194,7 +7196,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "미완료 작업과 업데이트 설치 가능 여부를 확인하고 있습니다.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "다른 앱에서 작업을 마치고 앱 메뉴에서 종료한 다음 다시 확인하세요.",
     "Force update…": "강제 업데이트…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "설치가 시작되어 취소할 수 없습니다. 설치 후 앱이 다시 열립니다.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "설치가 시작되어 취소할 수 없습니다. 몇 분 정도 걸릴 수 있습니다. 시스템에서 권한을 요청하면 업데이트를 승인하여 계속 진행하세요. 설치가 완료되면 앱이 다시 열립니다.",
     "Installation result is unknown": "설치 결과를 확인하지 못했습니다",
     "Installation starts only after shutdown has finished and its result is confirmed.": "종료가 완료되고 결과가 확인된 후에만 설치를 시작합니다.",
     "Installing update…": "업데이트 설치 중…",

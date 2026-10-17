@@ -148,6 +148,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
+    "Update preparation failed": "Не удалось подготовить обновление",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",
     "Your conversation is preserved. Try Resume again.": "Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "Агент не ответил вовремя. Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
@@ -7663,7 +7665,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Проверка незавершённых задач и возможности установки обновления.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Завершите работу в другом приложении и выйдите из него через меню, затем повторите проверку.",
     "Force update…": "Принудительно обновить…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "Установка началась, и её нельзя отменить. После установки приложение откроется снова.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "Установка началась, и её нельзя отменить. Это может занять несколько минут. Если система запросит разрешение, разрешите обновление, чтобы продолжить. После завершения установки приложение откроется снова.",
     "Installation result is unknown": "Результат установки неизвестен",
     "Installation starts only after shutdown has finished and its result is confirmed.": "Установка начинается только после завершения остановки и подтверждения её результата.",
     "Installing update…": "Установка обновления…",

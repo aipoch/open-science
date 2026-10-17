@@ -21,8 +21,27 @@ afterEach(() => {
   vi.restoreAllMocks()
   revokeComposerDraftStorage()
   sessionStorage.clear()
+  localStorage.clear()
 })
 describe('composer refresh storage', () => {
+  it('restores desktop drafts after a new browser session without sharing Web tab storage', () => {
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    writeComposerDraft('project', 'session', draft('unsent across update'))
+    sessionStorage.clear()
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    expect(readComposerDraft('project', 'session', 'retry')?.doc.nodes).toEqual([
+      { type: 'text', text: 'unsent across update' }
+    ])
+    configureComposerDraftStorage('web-principal')
+    expect(readComposerDraft('project', 'session', 'retry')).toBeUndefined()
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    expect(readComposerDraft('project', 'session', 'retry')?.doc.nodes).toEqual([
+      { type: 'text', text: 'unsent across update' }
+    ])
+    writeComposerDraft('project', 'session', draft(''))
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    expect(readComposerDraft('project', 'session', 'retry')).toBeUndefined()
+  })
   it('restores long paste text, pending states and receipts without trusting saved attachment paths', () => {
     configureComposerDraftStorage('host/principal')
     const value = draft('before ')

@@ -38,6 +38,8 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
 
   const runProbe = async ({ announce = false, invalidate = false } = {}): Promise<void> => {
     const generation = ++probeGeneration
+    // A planned shutdown invalidates pending probes, but says nothing about internet access.
+    if (useDesktopRuntimeRecoveryStore.getState().closing) return
     const startedAt = Date.now()
 
     const holdAnnouncedState = async (): Promise<void> => {
@@ -69,6 +71,8 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
             throw new Error('Backend connection changed during network check.')
           }
         } catch (error) {
+          if (probeGeneration !== generation || useDesktopRuntimeRecoveryStore.getState().closing)
+            return
           try {
             window.api?.diagnostics?.reportRendererFailure(
               projectRendererFailure('handled-error', error, 'settings', 'network-check')
@@ -79,7 +83,11 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
           // A failed check says nothing about registry reachability. Never present an old answer
           // as the result of this attempt, including silent refreshes after runtime recovery.
           await holdAnnouncedState()
-          if (probeGeneration === generation && get().isOnline) {
+          if (
+            probeGeneration === generation &&
+            !useDesktopRuntimeRecoveryStore.getState().closing &&
+            get().isOnline
+          ) {
             set({ connectivity: 'probe-failed' })
           }
           return
@@ -88,7 +96,11 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     }
 
     await holdAnnouncedState()
-    if (probeGeneration === generation && (get().isOnline || !reachable)) {
+    if (
+      probeGeneration === generation &&
+      !useDesktopRuntimeRecoveryStore.getState().closing &&
+      (get().isOnline || !reachable)
+    ) {
       const connectivity = reachable ? 'reachable' : 'unreachable'
       set({ connectivity })
     }
@@ -141,6 +153,7 @@ export const startNetworkMonitor = (): void => {
 
   useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
     if (
+      state.closing !== previous.closing ||
       state.epoch !== previous.epoch ||
       (state.phase === 'connected' && previous.phase !== 'connected')
     ) {

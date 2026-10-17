@@ -791,6 +791,25 @@ describe('ElectronUpdaterStrategy', () => {
     await downloading
   })
 
+  it('Windows hands off to visible NSIS progress after the install gate', async () => {
+    const updater = new FakeUpdater()
+    const gate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = createStrategy({
+      platform: 'win32',
+      updater,
+      currentVersion: '1.0.0',
+      broadcast: vi.fn(),
+      installGate: gate
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(gate).toHaveBeenCalledOnce()
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(gate.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]
+    )
+  })
+
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()

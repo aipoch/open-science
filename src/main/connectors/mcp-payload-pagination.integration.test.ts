@@ -35,7 +35,12 @@ describe('ConnectorService MCP integration', () => {
       calls.push(params.name)
       return { content: [{ type: 'text' as const, text: '{"ok":true}' }] }
     })
-    const manager = new McpClientManager({ createClient: () => connect(server) })
+    // The root test graph and the connector package can resolve distinct MCP SDK declaration
+    // copies. The runtime client is intentionally the same protocol object; keep this test's
+    // factory boundary explicit rather than letting duplicate private fields fail node typecheck.
+    const manager = new McpClientManager({
+      createClient: () => connect(server) as unknown as never
+    })
     const service = new ConnectorService({
       registry: createConnectorRegistry([]),
       mcpClientManager: manager,
