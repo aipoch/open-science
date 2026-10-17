@@ -50,7 +50,16 @@ $credential = [PSCredential]::new("$env:COMPUTERNAME\$name", $secure)
 $process = $null
 try {
   $process = Start-Process -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Credential $credential -LoadUserProfile -WorkingDirectory $root -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$childScript+'"')) -PassThru -WindowStyle Hidden
-  if (-not $process.WaitForExit(1800000)) { throw 'Ordinary-user upgrade test exceeded its 30 minute deadline; do not count as normal exit' }
+  $deadline = (Get-Date).AddMinutes(30)
+  $lastLine = ''
+  while (-not $process.WaitForExit(5000)) {
+    $log = Join-Path $root 'evidence/upgrade.log'
+    if (Test-Path -LiteralPath $log) {
+      $line = Get-Content -LiteralPath $log -Tail 1
+      if ($line -and $line -ne $lastLine) { Write-Output ($line -replace '([?&]token=)[^\s&#]+','$1<redacted>'); $lastLine = $line }
+    }
+    if ((Get-Date) -gt $deadline) { throw 'Ordinary-user upgrade test exceeded its 30 minute deadline; do not count as normal exit' }
+  }
   $process.Refresh()
   @{pid=$process.Id;exit=$process.ExitCode;ended=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'controller-result.json')
   if ($process.ExitCode -ne 0) { throw "Upgrade validation failed with exit $($process.ExitCode)" }
