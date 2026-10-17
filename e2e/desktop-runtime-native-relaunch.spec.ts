@@ -366,10 +366,11 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     for (const entry of desktopIdentities) {
       expect(entry).toMatchObject({
         configRoot,
-        userData: await realpath(profileRoot),
-        sessionData: await realpath(profileRoot),
         isPackaged: false
       })
+      // Electron can preserve macOS's /var alias; compare the actual directories on both sides.
+      expect(await realpath(entry.userData)).toBe(await realpath(profileRoot))
+      expect(await realpath(entry.sessionData)).toBe(await realpath(profileRoot))
       expect(entry.environmentUserData).toBe(profileRoot)
       expect(entry.argv).toContain(`--user-data-dir=${profileRoot}`)
       if (process.platform === 'darwin') expect(entry.argv).toContain('--use-mock-keychain')
