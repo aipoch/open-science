@@ -7603,6 +7603,8 @@
     "Save body area": "Guardar el área del cuerpo",
     "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
     "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
-    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje."
+    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje.",
+    "Sign in to continue this conversation": "Iniciar sesión para continuar esta conversación",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "El Agente requiere autenticación. Abra la configuración del modelo, inicie sesión en su proveedor y vuelva a intentarlo. Su conversación y su borrador se conservan."
   }
 }

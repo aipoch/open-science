@@ -7434,6 +7434,8 @@
     "Save body area": "Textbereich speichern",
     "Body areas are unavailable on rotated pages.": "Auf gedrehten Seiten sind Textbereiche nicht verfügbar.",
     "You can configure up to 32 pages.": "Sie können bis zu 32 Seiten konfigurieren.",
-    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet."
+    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet.",
+    "Sign in to continue this conversation": "Anmelden, um diese Konversation fortzusetzen",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Der Agent benötigt eine Authentifizierung. Öffnen Sie die Modelleinstellungen, melden Sie sich bei Ihrem Anbieter an und versuchen Sie es erneut. Ihre Konversation und Ihr Entwurf bleiben erhalten."
   }
 }

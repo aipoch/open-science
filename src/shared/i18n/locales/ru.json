@@ -7743,6 +7743,8 @@
     "Save body area": "Сохранить область основного текста",
     "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
-    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
+    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
+    "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены."
   }
 }
