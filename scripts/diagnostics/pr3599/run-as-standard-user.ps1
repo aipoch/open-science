@@ -36,6 +36,12 @@ $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
 if (-not $env:USERPROFILE -or $env:USERPROFILE -eq $inheritedProfile) { throw 'The isolated account profile was not loaded separately' }
 @{identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;isAdministrator=$admin;profile=$env:USERPROFILE;inheritedProfile=$inheritedProfile;appData=$env:APPDATA;localAppData=$env:LOCALAPPDATA;started=(Get-Date -Format o)} | ConvertTo-Json | Set-Content (Join-Path $evidence 'identity.json')
 if ($admin) { throw 'Upgrade acceptance must run as an ordinary user' }
+Add-Type -AssemblyName System.Security
+$probeBytes = [Text.Encoding]::UTF8.GetBytes('pr3599-synthetic-dpapi-probe')
+$encrypted = [Security.Cryptography.ProtectedData]::Protect($probeBytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+$decrypted = [Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+if ([Convert]::ToBase64String($decrypted) -ne [Convert]::ToBase64String($probeBytes)) { throw 'Ordinary-user DPAPI round trip failed' }
+@{dpapiCurrentUserRoundTrip=$true;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value} | ConvertTo-Json | Set-Content (Join-Path $evidence 'credential-environment.json')
 Set-Location $configuration.candidateRoot
 $env:PR3599_EVIDENCE_DIR = $evidence
 $env:TEMP = Join-Path $PSScriptRoot 'temp'

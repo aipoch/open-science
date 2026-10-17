@@ -5,6 +5,18 @@ import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const source = resolve(process.argv[2] || '.')
 const original = join(source, 'scripts/windows-updater-certification.mjs')
+let smoke = await readFile(join(source, 'scripts/windows-installer-smoke.mjs'), 'utf8')
+const probeStart = smoke.indexOf('const launchAndProbe = async')
+const probeEnd = smoke.indexOf('const assertDatabaseDowngradeBlocked =', probeStart)
+if (probeStart < 0 || probeEnd < 0) throw new Error('Unexpected installed-app probe boundary')
+const probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProcessTree(child)', `    const records = await snapshotInstallation(installDirectory)
+    let windows
+    try { windows = await readRecordedWindows(records) } catch (error) { windows = { captureError: error.message } }
+    await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-failure.json'), JSON.stringify({ error: error.message, records, windows }, null, 2))
+    await terminateProcessTree(child)`)
+smoke = smoke.slice(0, probeStart) + probe + smoke.slice(probeEnd)
+smoke = "import { snapshotInstallation, readRecordedWindows } from './pr3599-owned-processes.mjs'\n" + smoke
+await writeFile(join(source, 'scripts/pr3599-installer-smoke.mjs'), smoke)
 let text = await readFile(original, 'utf8')
 const replace = (before, after) => {
   if (text.split(before).length !== 2) throw new Error(`Unexpected harness boundary: ${before.slice(0, 100)}`)
@@ -12,6 +24,7 @@ const replace = (before, after) => {
 }
 replace("import { basename, join, resolve, win32 } from 'node:path'", "import { basename, dirname, join, resolve, win32 } from 'node:path'")
 replace("import { randomUUID } from 'node:crypto'", "import { createHash, randomUUID } from 'node:crypto'")
+replace("from './windows-installer-smoke.mjs'", "from './pr3599-installer-smoke.mjs'")
 replace('  cleanupSmokeRoot,', '')
 replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = fetch }) => {')
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')

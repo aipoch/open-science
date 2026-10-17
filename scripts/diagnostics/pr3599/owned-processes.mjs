@@ -65,6 +65,27 @@ foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
     }
   } finally { $target.Dispose() }
 }
+
+export async function readRecordedWindows(records) {
+  const output = await powershell(`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+$windows = @()
+foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
+  $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)"
+  if (-not $current -or $current.CreationDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { continue }
+  $target = [Diagnostics.Process]::GetProcessById($record.pid)
+  try {
+    if ($target.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+    $element = [Windows.Automation.AutomationElement]::FromHandle($target.MainWindowHandle)
+    $texts = @($element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition) | Select-Object -First 100 | ForEach-Object { $_.Current.Name })
+    $windows += @{pid=$record.pid;title=$element.Current.Name;text=$texts}
+  } finally { $target.Dispose() }
+}
+ConvertTo-Json -InputObject $windows -Depth 4 -Compress
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
+  return JSON.parse(output)
+}
 Write-Output 'null'
 `, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
   return JSON.parse(output)
