@@ -727,6 +727,7 @@ describe('Compute service architecture', () => {
     )
     expect(computeService.testFiles.consumer).toEqual(
       expect.arrayContaining([
+        'src/main/session-package/research-reproduction.integration.test.ts',
         'src/main/storage/wsl-npm-migration.integration.test.ts',
         'src/main/composition/notebook-environment.test.ts',
         'src/main/literature/command-owner.test.ts',

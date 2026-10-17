@@ -1012,7 +1012,10 @@
       "src/main/websocket-frame-sender.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
-      "src/main/session-diagnostics/desktop-log-paths.test.ts"
+      "src/main/session-diagnostics/desktop-log-paths.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

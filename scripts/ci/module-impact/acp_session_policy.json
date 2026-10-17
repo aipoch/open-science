@@ -775,7 +775,8 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "consumerModules": [

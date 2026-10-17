@@ -1004,7 +1004,10 @@
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/desktop-update-integration.test.ts",
       "src/main/runtime-network-node.test.ts",
-      "src/main/desktop-startup-recovery.integration.test.ts"
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

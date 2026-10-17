@@ -55,7 +55,8 @@
     "src/main/session-package/literature-contract.ts",
     "src/main/session-package/pdf-notes-contract.ts",
     "src/main/session-package/records-contract.ts",
-    "src/main/session-package/reproducibility-contract.ts"
+    "src/main/session-package/reproducibility-contract.ts",
+    "src/main/session-package/research-reproduction.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -91,7 +92,8 @@
       "src/main/session-package/ro-crate.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/sensitive-content.test.ts",
-      "src/main/session-package/json-syntax.test.ts"
+      "src/main/session-package/json-syntax.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -131,7 +131,14 @@
     "src/main/notebook/shell-search-scope.ts",
     "src/main/notebook/trust-bundle.test.ts",
     "src/main/notebook/trust-bundle.ts",
-    "src/main/notebook/working-file-observer.ts"
+    "src/main/notebook/working-file-observer.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/local-service-lease.test.ts",
+    "src/main/notebook/local-service.macos.integration.test.ts",
+    "src/main/notebook/node-local-service-preload.mjs",
+    "src/main/notebook/node-local-service-preload.test.ts",
+    "src/main/notebook/research-service.macos.integration.test.ts",
+    "src/main/notebook/fixtures/research-service-driver.mjs"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -222,7 +229,9 @@
     "src/main/notebook/shell-process-ownership.windows-posix.ts",
     "src/main/notebook/shell-process.ts",
     "src/main/notebook/trust-bundle.ts",
-    "src/main/notebook/working-file-observer.ts"
+    "src/main/notebook/working-file-observer.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/node-local-service-preload.mjs"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -271,7 +280,11 @@
       "src/main/notebook/mirror-probe.test.ts",
       "src/main/notebook/scientific-output-analysis.test.ts",
       "src/main/notebook/shell-npm-environment.test.ts",
-      "src/main/notebook/trust-bundle.test.ts"
+      "src/main/notebook/trust-bundle.test.ts",
+      "src/main/notebook/local-service-lease.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/node-local-service-preload.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -828,7 +841,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

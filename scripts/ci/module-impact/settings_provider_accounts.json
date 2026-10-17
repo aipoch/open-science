@@ -589,7 +589,10 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -1,0 +1,26 @@
+{
+  "ownerPaths": [
+    "src/shared/research-reproduction.ts",
+    "src/shared/research-reproduction.test.ts",
+    "scripts/research/prepare-git-snapshot.mjs",
+    "scripts/research/prepare-git-snapshot.test.ts",
+    "scripts/research/README.md",
+    "docs/research-reproduction-description.md",
+    "docs/research-reproduction-stage1.md"
+  ],
+  "interfacePaths": [
+    "src/shared/research-reproduction.ts",
+    "scripts/research/prepare-git-snapshot.mjs"
+  ],
+  "consumerModules": ["main_session_package"],
+  "testFiles": {
+    "owner": [
+      "src/shared/research-reproduction.test.ts",
+      "scripts/research/prepare-git-snapshot.test.ts"
+    ],
+    "contract": [],
+    "consumer": ["src/main/session-package/research-reproduction.integration.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

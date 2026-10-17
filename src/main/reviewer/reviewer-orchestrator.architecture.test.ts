@@ -559,6 +559,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
+          'src/main/session-package/research-reproduction.integration.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/composition/reviewer.test.ts',

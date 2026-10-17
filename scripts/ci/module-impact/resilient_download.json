@@ -1092,7 +1092,10 @@
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
       "src/main/system-boot-identity.windows.test.ts",
-      "src/main/system-boot-identity.test.ts"
+      "src/main/system-boot-identity.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [

@@ -1343,7 +1343,10 @@
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

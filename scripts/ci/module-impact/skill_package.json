@@ -1376,7 +1376,10 @@
       "src/main/update/installation-reboot-recovery.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

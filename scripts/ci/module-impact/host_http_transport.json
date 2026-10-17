@@ -683,7 +683,10 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/runtime-network-node.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "consumerModules": ["settings_service_facade"],

@@ -996,7 +996,10 @@
       "src/main/desktop-recovery-readiness.test.ts",
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

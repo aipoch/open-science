@@ -469,7 +469,8 @@
       "src/renderer/web/api-installer.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "consumerModules": ["session_persistence"],
