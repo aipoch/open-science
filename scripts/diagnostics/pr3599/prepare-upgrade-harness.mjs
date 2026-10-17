@@ -16,12 +16,15 @@ const probe = smoke.slice(probeStart, probeEnd).replace('    await terminateProc
     const cleanup = await waitForRecordedExit(records, { force: true, timeoutMs: 10000 })
     await writeFile(join(process.env.PR3599_EVIDENCE_DIR, 'initial-startup-forced-cleanup.json'), JSON.stringify(cleanup, null, 2))`)
 smoke = smoke.slice(0, probeStart) + probe + smoke.slice(probeEnd)
+// A shutdown timeout remains a failure; the enclosing catch owns verified, recorded cleanup.
+if (smoke.split('terminate = terminateProcessTree').length !== 2) throw new Error('Unexpected shutdown timeout cleanup boundary')
+smoke = smoke.replace('terminate = terminateProcessTree', 'terminate = async () => undefined')
 smoke = "import { snapshotInstallation, readRecordedWindows, waitForRecordedExit } from './pr3599-owned-processes.mjs'\n" + smoke
 await writeFile(join(source, 'scripts/pr3599-installer-smoke.mjs'), smoke)
 let text = await readFile(original, 'utf8')
 const replace = (before, after) => {
   if (text.split(before).length !== 2) throw new Error(`Unexpected harness boundary: ${before.slice(0, 100)}`)
-  text = text.replace(before, after)
+  text = text.replace(before, () => after)
 }
 replace("import { basename, join, resolve, win32 } from 'node:path'", "import { basename, dirname, join, resolve, win32 } from 'node:path'")
 replace("import { randomUUID } from 'node:crypto'", "import { createHash, randomUUID } from 'node:crypto'")
@@ -30,14 +33,29 @@ replace("const child = spawn(executable, ['--open-science-headless', '--serve=0'
 replace('  cleanupSmokeRoot,', '')
 replace('channel, fetchImpl = fetch }) => {', 'channel, args = [], fetchImpl = fetch }) => {')
 replace('JSON.stringify({ protocolVersion, args: [] })', 'JSON.stringify({ protocolVersion, args })')
-replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow, readRecordedWindows } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
+replace("const UPDATE_TIMEOUT_MS = 180_000", "import { snapshotInstallation, waitForRecordedExit, closeRecordedWindow, readRecordedWindows, operateRecordedButton } from './pr3599-owned-processes.mjs'\nconst UPDATE_TIMEOUT_MS = 180_000")
 replace('    const checked = await withTimeout(', '    await seedUpgradeData({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable))\n    const checked = await withTimeout(')
 replace('    await onDownloaded()', "    await onDownloaded()\n    if (process.env.PR3599_BASELINE === 'pr') await verifyOccupiedInstallation({ endpoint, auth, protocolVersion: bootstrap.rpcProtocolVersion }, dirname(executable), env)")
+const checkStart = text.indexOf('    const checked = await withTimeout(')
+const checkEnd = text.indexOf('    await onDownloaded()', checkStart)
+if (checkStart < 0 || checkEnd < 0) throw new Error('Missing native update button boundary')
+text = text.slice(0, checkStart) + `    await desktopButton(dirname(executable), 'open-update', '^New version: Update [(]v' + expectedVersion.replaceAll('.', '[.]') + '[)]$', true)
+    await desktopButton(dirname(executable), 'download-update', '^Download update(?: [(]|$)', true)
+    await desktopButton(dirname(executable), 'download-ready', '^Restart to update$', false)
+` + text.slice(checkEnd)
+const applyStart = text.indexOf('    const applied = await invokeWebRpc(')
+const applyEnd = text.indexOf('    const exitCode = await closed', applyStart)
+if (applyStart < 0 || applyEnd < 0) throw new Error('Missing native apply button boundary')
+text = text.slice(0, applyStart) + "    await desktopButton(dirname(executable), 'apply-update', '^Restart to update$', true)\n" + text.slice(applyEnd)
 replace("  const profileDirectory = join(root, 'profile')", '  const profileDirectory = process.env.USERPROFILE')
 replace('  const env = windowsProfileEnvironment(profileDirectory)', "  const env = { ...process.env, OPEN_SCIENCE_WEB_PORT: '0' }\n  await writeFile(options.output + '.root.json', JSON.stringify({ root, installDirectory, profileDirectory, independentHarnessPid: process.pid, independentHarnessExecutable: process.execPath }, null, 2))")
 replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)', "    const ownedBeforeUpdate = await snapshotInstallation(dirname(executable))\n    rememberedProcesses.push(...ownedBeforeUpdate)\n    await evidence('old-processes-before-update', ownedBeforeUpdate)\n    const closed = waitForShutdownExit(exit, child, diagnosticOutput)")
 replace('    const installerResult = await installerExit', "    await evidence('old-app-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), exitCode })\n    await evidence('old-processes-normal-exit', await waitForRecordedExit(ownedBeforeUpdate))\n    const installerResult = await installerExit")
 replace('    installerObserver.abort(', "    await evidence('old-app-failure-output', { pid: child.pid, stdout: redactPackagedAppOutput(stdout), stderr: redactPackagedAppOutput(stderr), error: error.message })\n    installerObserver.abort(")
+replace('    await Promise.all([terminateProcessTree(child), installerExit?.catch(() => undefined)])', `    const failedProcesses = await snapshotInstallation(dirname(executable))
+    await evidence('update-failure-processes', failedProcesses)
+    await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))
+    if (installerExit) await evidence('installer-observer-after-failure', await installerExit.then((result) => result, (error) => ({ error: error.message })))`)
 replace("    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })", '    await verifyAndStopSuccessor(installDirectory, previousConfigRoot, currentVersion)')
 replace("  await cleanup(() =>\n    runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {\n      allowNonZero: true,\n      env,\n      timeoutMs: 10_000\n    })\n  )", `  await cleanup(async () => {
     const residual = await snapshotInstallation(installDirectory)
@@ -57,6 +75,13 @@ replace('  await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErr
 const helpers = String.raw`
 const rememberedProcesses = []
 let seededData
+async function desktopButton(installDirectory, step, pattern, invoke) {
+  return waitFor('the actual product button: ' + step, async () => {
+    const result = await operateRecordedButton(await snapshotInstallation(installDirectory), pattern, invoke)
+    await evidence('ui-' + step, result)
+    if (result.matched && (!invoke || result.invoked)) return result
+  }, UPDATE_TIMEOUT_MS)
+}
 async function verifyOccupiedInstallation(connection, installDirectory, env) {
   const executable = join(installDirectory, 'resources/node-runtime/node.exe')
   const blocker = spawn(executable, ['-e', 'process.stdin.once("data",()=>process.exit(0));console.log("owned-lock-ready")'], { env, windowsHide: true })
@@ -65,9 +90,16 @@ async function verifyOccupiedInstallation(connection, installDirectory, env) {
     await withTimeout(new Promise((resolve, reject) => { blocker.stdout.once('data', resolve); blocker.once('error', reject) }), 'owned installation lock readiness', 15000)
     const records = await snapshotInstallation(installDirectory)
     rememberedProcesses.push(...records)
-    const result = await invokeWebRpc({ ...connection, channel: 'update:apply' })
-    await evidence('occupied-installation-blocked', { blockerPid: blocker.pid, processes: records, result })
-    if (result.reason !== 'installation-busy' || result.recovery?.installation !== 'unchanged' || result.recovery?.runtime !== 'running') throw new Error('Occupied installation was not safely blocked')
+    const before = createHash('sha256').update(await readFile(join(installDirectory, 'resources/app.asar'))).digest('hex')
+    await desktopButton(installDirectory, 'occupied-apply', '^Restart to update$', true)
+    const rejection = await waitFor('the real occupied-installation error in the product', async () => {
+      const windows = await readRecordedWindows(await snapshotInstallation(installDirectory))
+      await evidence('occupied-installation-windows', windows)
+      if (windows.some((window) => window.text.some((text) => text.includes('Another process is using this installation.')))) return windows
+    }, UPDATE_TIMEOUT_MS)
+    const after = createHash('sha256').update(await readFile(join(installDirectory, 'resources/app.asar'))).digest('hex')
+    if (before !== after) throw new Error('The occupied installation was modified')
+    await evidence('occupied-installation-blocked', { blockerPid: blocker.pid, processes: records, rejection, before, after })
     if (blocker.exitCode !== null) throw new Error('Product terminated the independent installation occupant')
     const response = await fetchWithTimeout(connection.endpoint + '/api/bootstrap?' + connection.auth)
     if (!response.ok) throw new Error('Product became unavailable after refusing occupied installation')

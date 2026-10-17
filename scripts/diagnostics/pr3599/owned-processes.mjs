@@ -86,6 +86,45 @@ Write-Output 'null'
   return JSON.parse(output)
 }
 
+export async function operateRecordedButton(records, pattern, invoke = false) {
+  const output = await powershell(`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+$matchesFound = @()
+$observed = @()
+foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
+  $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)"
+  if (-not $current -or $current.CreationDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { continue }
+  $target = [Diagnostics.Process]::GetProcessById($record.pid)
+  try {
+    if ($target.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+    $element = [Windows.Automation.AutomationElement]::FromHandle($target.MainWindowHandle)
+    $elements = $element.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)
+    foreach ($candidate in $elements) {
+      $state = $candidate.Current
+      $observed += @{pid=$record.pid;name=$state.Name;type=$state.ControlType.ProgrammaticName;enabled=$state.IsEnabled;offscreen=$state.IsOffscreen}
+      if ($state.ControlType -eq [Windows.Automation.ControlType]::Button -and $state.IsEnabled -and -not $state.IsOffscreen -and $state.Name -match $env:PR3599_BUTTON_PATTERN) { $matchesFound += $candidate }
+    }
+  } finally { $target.Dispose() }
+}
+if ($matchesFound.Count -gt 1) { throw 'Ambiguous product button match; refusing to act' }
+$name = $null
+$invoked = $false
+if ($matchesFound.Count -eq 1) {
+  $button = $matchesFound[0]
+  $name = $button.Current.Name
+  if ($env:PR3599_INVOKE_BUTTON -eq '1') {
+    $action = $null
+    if (-not $button.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern,[ref]$action)) { throw 'Product button has no accessibility invoke pattern' }
+    ([Windows.Automation.InvokePattern]$action).Invoke()
+    $invoked = $true
+  }
+}
+@{matched=$name;invoked=$invoked;controls=$observed} | ConvertTo-Json -Depth 5 -Compress
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(records), PR3599_BUTTON_PATTERN: pattern, PR3599_INVOKE_BUTTON: invoke ? '1' : '0' }, 20000)
+  return JSON.parse(output)
+}
+
 export async function readRecordedWindows(records) {
   const output = await powershell(`
 $ErrorActionPreference = 'Stop'
