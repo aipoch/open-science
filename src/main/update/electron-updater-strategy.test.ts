@@ -1548,6 +1548,86 @@ describe('ElectronUpdaterStrategy', () => {
   })
 })
 
+describe('Windows update window handoff', () => {
+  it('keeps the application alive until the independent window acknowledges readiness', async () => {
+    const updater = new FakeUpdater()
+    let acknowledge!: (value: { cancel: () => void }) => void
+    const startInstallProgress = vi.fn(
+      () =>
+        new Promise<{ cancel: () => void }>((resolve) => {
+          acknowledge = resolve
+        })
+    )
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress
+    })
+    await markUpdateReady(strategy, updater)
+    const apply = strategy.apply()
+    await vi.waitFor(() => expect(startInstallProgress).toHaveBeenCalledOnce())
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    acknowledge({ cancel: vi.fn() })
+    await apply
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
+  it('refuses installation when the independent window cannot start', async () => {
+    const updater = new FakeUpdater()
+    const releaseInstallHandoff = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      releaseInstallHandoff,
+      startInstallProgress: async () => {
+        throw new Error('Window readiness failed')
+      }
+    })
+    await markUpdateReady(strategy, updater)
+    expect(await strategy.apply()).toMatchObject({
+      state: 'error',
+      reason: 'install-failed',
+      error: 'Window readiness failed'
+    })
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
+    expect(currentApplicationShutdownTrigger()).not.toBe('update')
+  })
+
+  it('closes the progress companion when the installer reports a failure', async () => {
+    const updater = new FakeUpdater()
+    const cancel = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress: async () => ({ cancel })
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    updater.emit('error', new Error('Installer spawn failed'))
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(strategy.getStatus()).toMatchObject({ state: 'error' })
+  })
+
+  it('does not show an interactive window for non-relaunching updates', async () => {
+    const updater = new FakeUpdater()
+    const startInstallProgress = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply({ relaunch: false })
+    expect(startInstallProgress).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
+  })
+})
+
 describe('read-only installation update admission', () => {
   it('blocks repeated downloads without starting a transfer and publishes actionable status', async () => {
     const updater = new FakeUpdater()

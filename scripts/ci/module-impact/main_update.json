@@ -8,6 +8,7 @@
     "src/main/update/electron-updater-provider-regressions.test.ts",
     "src/main/update/electron-updater-strategy.test.ts",
     "src/main/update/electron-updater-strategy.ts",
+    "src/main/update/windows-install-progress.ts",
     "src/main/update/ipc.test.ts",
     "src/main/update/ipc.ts",
     "src/main/update/legacy-shell-recovery.integration.test.ts",

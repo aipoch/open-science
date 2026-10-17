@@ -129,6 +129,8 @@ win:
       to: windows-runtime-cache-uninstall.ps1
     - from: build/windows-notebook-sandbox-uninstall.ps1
       to: windows-notebook-sandbox-uninstall.ps1
+    - from: build/windows-update-progress/build/Release/open-science-update-progress.exe
+      to: open-science-update-progress.exe
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json

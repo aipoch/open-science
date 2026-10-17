@@ -144,7 +144,11 @@
     "Retry startup": "Reintentar el inicio",
     "Open startup logs": "Abrir registros de inicio",
     "Could not open the logs folder.": "No se ha podido abrir la carpeta de registros.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado.",
+    "Installing the Open-Science update…": "Instalando la actualización de Open-Science…",
+    "Opening the updated Open-Science…": "Abriendo Open-Science actualizado…",
+    "The Open-Science update could not finish.": "No se pudo completar la actualización de Open-Science.",
+    "Close update window": "Cerrar la ventana de actualización"
   },
   "renderer": {
     "Update preparation failed": "Error al preparar la actualización",

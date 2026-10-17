@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -25,6 +26,11 @@ import {
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import {
+  startWindowsInstallProgress,
+  type WindowsInstallProgress
+} from './windows-install-progress'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -49,6 +55,7 @@ export interface MinimalCancellationToken {
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
 export interface MinimalAutoUpdater {
+  readonly installerPath?: string | null
   autoDownload: boolean
   autoInstallOnAppQuit: boolean
   on(event: string, listener: (...args: unknown[]) => void): unknown
@@ -70,6 +77,8 @@ export type UpdateInstallationHooks = {
   recheckInstall?: () => Promise<Partial<UpdateStatus>>
 }
 export type ElectronUpdaterDeps = UpdateInstallationHooks & {
+  translate?: NativeTranslator
+  startInstallProgress?: () => Promise<WindowsInstallProgress>
   installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
   updater?: MinimalAutoUpdater
   currentVersion?: string
@@ -243,6 +252,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly installGate?: InstallGate
   private readonly releaseInstallHandoff: () => void
   private readonly markUpdateShutdown: () => () => void
+  private readonly startInstallProgress?: () => Promise<WindowsInstallProgress>
+  private installProgress?: WindowsInstallProgress
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
@@ -274,6 +285,23 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.releaseInstallHandoff = deps.releaseInstallHandoff ?? (() => undefined)
     this.markUpdateShutdown =
       deps.markUpdateShutdown ?? (() => markApplicationShutdownTrigger('update'))
+    this.startInstallProgress =
+      deps.startInstallProgress ??
+      (this.platform === 'win32' && !deps.updater && app.isPackaged
+        ? async () => {
+            const installerPath = this.updater.installerPath
+            if (!installerPath) throw new Error('Downloaded installer path is unavailable')
+            return startWindowsInstallProgress({
+              installerPath,
+              applicationPath: process.execPath,
+              helperPath: join(process.resourcesPath, 'open-science-update-progress.exe'),
+              cacheDirectory: join(app.getPath('temp'), 'open-science-update-tools'),
+              logDirectory: app.getPath('logs'),
+              translate: deps.translate ?? englishNativeTranslator,
+              log: this.log
+            })
+          }
+        : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
     this.updater.autoDownload = false
@@ -413,6 +441,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private releaseAbortedInstallHandoff(): void {
+    try {
+      this.installProgress?.cancel()
+      this.installProgress = undefined
+    } catch (error) {
+      this.log.warn('update progress cancellation failed', error)
+    }
     try {
       this.releaseInstallHandoff()
     } catch (error) {
@@ -842,11 +876,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.installerStarted = true
     try {
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
-      if (!this.installationHooks.executeInstall || executed === 'legacy')
+      if (!this.installationHooks.executeInstall || executed === 'legacy') {
+        if (options.relaunch !== false && this.startInstallProgress) {
+          this.installProgress = await this.startInstallProgress()
+          // An updater error can arrive while the independent window is starting.
+          if (!this.applying) {
+            this.releaseAbortedInstallHandoff()
+            return this.status
+          }
+        }
         this.updater.quitAndInstall(
           this.platform !== 'win32' || options.relaunch === false,
           options.relaunch ?? true
         )
+      }
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined

@@ -10,6 +10,20 @@ module.exports = async (context) => {
   if (context.electronPlatformName !== process.platform || arch !== process.arch)
     throw new Error('Build the desktop Node backend on its target platform/architecture.')
   const root = context.packager.projectDir
+  if (process.platform === 'win32') {
+    const result = spawnSync(
+      process.execPath,
+      [
+        require.resolve('node-gyp/bin/node-gyp.js'),
+        'rebuild',
+        '--directory',
+        path.join(root, 'build/windows-update-progress')
+      ],
+      { cwd: root, stdio: 'inherit' }
+    )
+    if (result.error || result.status !== 0)
+      throw result.error || new Error('Windows update progress build failed.')
+  }
   for (const [script, args] of [
     [path.join(root, 'scripts/native-components.mjs'), []],
     [path.join(root, 'scripts/build-backend.mjs'), []]
