@@ -239,7 +239,12 @@ describe('Windows crash reporter ownership', () => {
   const executable = join(root, 'open-science.exe')
   const database = join(root, 'profile space', 'Crashpad')
   const options = { installationRoot: root, crashDumpsPath: database, instanceId: 'current-launch' }
-  const row = () => ({
+  const row = (): {
+    ProcessId: number
+    ParentProcessId: number
+    ExecutablePath: string
+    Arguments: string[]
+  } => ({
     ProcessId: 101,
     ParentProcessId: process.pid,
     ExecutablePath: executable,

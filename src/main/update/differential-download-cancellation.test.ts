@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Socket } from 'node:net'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
@@ -66,8 +66,8 @@ it.each(
         newUrl: new URL(`http://127.0.0.1:${address.port}/setup.exe`),
         cancellationToken: token,
         isUseMultipleRangeRequest: mode === 'multipart',
-        logger: { info() {}, debug() {}, error() {} },
-        onProgress() {}
+        logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+        onProgress: vi.fn()
       }
     )
     const downloading: Promise<unknown> =
