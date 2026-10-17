@@ -1,8 +1,81 @@
+diff --git a/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js b/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
+index c6e948a..499aef1 100644
+--- a/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
++++ b/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
+@@ -1,4 +1,5 @@
+ "use strict";
++const { cancelRequest } = require("./cancelRequest");
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.DifferentialDownloader = void 0;
+ const builder_util_runtime_1 = require("builder-util-runtime");
+@@ -219,7 +220,7 @@ class DifferentialDownloader {
+                     request.followRedirect();
+                 });
+                 this.httpExecutor.addErrorAndTimeoutHandlers(request, reject);
+-                request.end();
++                if (cancelRequest(request, this.options.cancellationToken, reject)) request.end();
+             };
+             w(0);
+         });
+@@ -252,7 +253,7 @@ class DifferentialDownloader {
+                 response.on("end", () => resolve());
+             });
+             this.httpExecutor.addErrorAndTimeoutHandlers(request, reject);
+-            request.end();
++            if (cancelRequest(request, this.options.cancellationToken, reject)) request.end();
+         });
+     }
+ }
+diff --git a/node_modules/electron-updater/out/differentialDownloader/cancelRequest.js b/node_modules/electron-updater/out/differentialDownloader/cancelRequest.js
+new file mode 100644
+index 0000000..029ea30
+--- /dev/null
++++ b/node_modules/electron-updater/out/differentialDownloader/cancelRequest.js
+@@ -0,0 +1,24 @@
++"use strict";
++const { CancellationError } = require("builder-util-runtime");
++// Range transfers bypass HttpExecutor.download's cancellation wiring. Keep cancellation
++// attached to the request even when the server has stopped delivering response bytes.
++exports.cancelRequest = (request, token, reject) => {
++    if (token == null) return true;
++    const cleanup = () => token.removeListener("cancel", cancel);
++    const cancel = () => {
++        cleanup();
++        reject(new CancellationError());
++        request.abort();
++    };
++    // Electron may close the upload side before delivering the response.
++    // Keep ownership until the response finishes or the request aborts/fails.
++    request.once("response", response => {
++        response.once("end", cleanup);
++        response.once("error", cleanup);
++        response.once("aborted", cleanup);
++    });
++    request.once("error", cleanup);
++    request.once("abort", cleanup);
++    token.onCancel(cancel);
++    return !token.cancelled;
++};
 diff --git a/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js b/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
-index 56adc38fe..79fd6e85b 100644
+index 56adc38..ca64841 100644
 --- a/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
 +++ b/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
-@@ -74,6 +74,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+@@ -1,4 +1,5 @@
+ "use strict";
++const { cancelRequest } = require("./cancelRequest");
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.executeTasksUsingMultipleRangeRequests = executeTasksUsingMultipleRangeRequests;
+ exports.checkIsRangesSupported = checkIsRangesSupported;
+@@ -65,7 +66,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+                     response.once("end", () => w(index));
+                 });
+                 differentialDownloader.httpExecutor.addErrorAndTimeoutHandlers(request, reject);
+-                request.end();
++                if (cancelRequest(request, differentialDownloader.options.cancellationToken, reject)) request.end();
+             }
+         };
+         w(options.start);
+@@ -74,6 +75,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
      const requestOptions = differentialDownloader.createRequestOptions();
      requestOptions.headers.Range = ranges.substring(0, ranges.length - 2);
      const request = differentialDownloader.httpExecutor.createRequest(requestOptions, response => {
@@ -10,3 +83,12 @@ index 56adc38fe..79fd6e85b 100644
          if (!checkIsRangesSupported(response, reject)) {
              return;
          }
+@@ -94,7 +96,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+         });
+     });
+     differentialDownloader.httpExecutor.addErrorAndTimeoutHandlers(request, reject);
+-    request.end();
++    if (cancelRequest(request, differentialDownloader.options.cancellationToken, reject)) request.end();
+ }
+ function checkIsRangesSupported(response, reject) {
+     // Electron net handles redirects automatically, our NodeJS test server doesn't use redirects - so, we don't check 3xx codes.
