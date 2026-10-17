@@ -9,7 +9,8 @@
     "src/main/settings/managed-opencode.ts",
     "src/main/settings/process-tree.test.ts",
     "src/main/settings/process-tree.ts",
-    "src/main/settings/reasoning-transport.ts"
+    "src/main/settings/reasoning-transport.ts",
+    "src/main/settings/codex-authentication-status.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/codex-paths.ts",
@@ -24,7 +25,8 @@
       "src/main/settings/managed-claude.test.ts",
       "src/main/settings/managed-codex.test.ts",
       "src/main/settings/managed-opencode.test.ts",
-      "src/main/settings/process-tree.test.ts"
+      "src/main/settings/process-tree.test.ts",
+      "src/main/settings/codex-authentication-status.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
