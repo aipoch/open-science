@@ -25,6 +25,8 @@ $ErrorActionPreference = 'Stop'
 $configuration = Get-Content (Join-Path $PSScriptRoot 'run-config.json') -Raw | ConvertFrom-Json
 $evidence = Join-Path $PSScriptRoot 'evidence'
 New-Item -ItemType Directory -Path $evidence,(Join-Path $PSScriptRoot 'temp') -Force | Out-Null
+$env:TEMP = Join-Path $PSScriptRoot 'temp'
+$env:TMP = $env:TEMP
 $admin = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $inheritedProfile = $env:USERPROFILE
 Add-Type -TypeDefinition @"
