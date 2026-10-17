@@ -45,6 +45,31 @@ ConvertTo-Json -InputObject $records -Compress
   return selectOwnedProcesses(JSON.parse(output), directory)
 }
 
+// Send the normal Windows close request only to a recorded installation process.
+// This does not terminate it: lifecycle completion is checked separately.
+export async function closeRecordedWindow(records) {
+  const output = await powershell(`
+$ErrorActionPreference = 'Stop'
+foreach ($record in ($env:PR3599_PROCESS_RECORDS | ConvertFrom-Json)) {
+  $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)"
+  if (-not $current -or $current.CreationDate.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { continue }
+  $target = [Diagnostics.Process]::GetProcessById($record.pid)
+  try {
+    $null = $target.Handle
+    if ($target.StartTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'") -ne $record.started) { throw 'Window process identity changed' }
+    if ($target.MainWindowHandle -ne [IntPtr]::Zero) {
+      $sent = $target.CloseMainWindow()
+      if (-not $sent) { throw 'The product window rejected the normal close request' }
+      @{pid=$record.pid;closeRequested=$sent;forced=$false} | ConvertTo-Json -Compress
+      exit 0
+    }
+  } finally { $target.Dispose() }
+}
+Write-Output 'null'
+`, { PR3599_PROCESS_RECORDS: JSON.stringify(records) }, 15000)
+  return JSON.parse(output)
+}
+
 // Wait on verified process handles. Never turn a timeout into success, and never act on reused PIDs.
 export async function waitForRecordedExit(records, { force = false, timeoutMs = 60000 } = {}) {
   if (!records.length) return []
