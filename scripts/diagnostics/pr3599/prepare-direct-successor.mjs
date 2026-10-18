@@ -111,7 +111,9 @@ replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)',
     }) : waitForShutdownExit(exit, child, diagnosticOutput)
     void closed.catch(() => undefined)`)
 replace("    const beforeOperation = await listOperationIds()", "    if (retained) await assertRetainedB(dirname(executable), 'immediately-before-second-apply')\n    const beforeOperation = await listOperationIds()")
-replace("    await evidence('persistence-order', inspectPersistenceOrder(stdout))", "    await evidence('persistence-order', retained ? { status: 'NOT_RETESTED', reason: 'Automatically launched B has no harness stdout pipe; original product file logs are retained. This focused test asserts actual preserved data.' } : inspectPersistenceOrder(stdout))")
+replace("    await evidence('persistence-order', inspectPersistenceOrder(stdout))", `    const persistence = retained ? await inspectRetainedPersistence(activeOperation, directBackendIdentity) : inspectPersistenceOrder(stdout)
+    await evidence('persistence-order', persistence)
+    if (persistence.status !== 'PASS') throw new Error('Persistence did not complete before backend stop')`)
 replace("    await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))", "    await evidence('update-failure-retained-scene', { processes: failedProcesses, forced: false })")
 replace("      await evidence('failure-only-forced-cleanup', await waitForRecordedExit(identities, { force: true, timeoutMs: 10000 }))", "      await evidence('failure-retained-scene', { identities, forced: false })")
 replace('  activeOperation = undefined', '  // Retain the first operation identity until the new product request is captured.')
@@ -137,6 +139,43 @@ const extra = String.raw`
 let directSuccessor
 let directBackendIdentity
 let firstOperationSnapshot
+function inspectPersistedHandoff(text, request, backend) {
+  const require = (condition, message) => { if (!condition) throw new Error('Persistence evidence: ' + message) }
+  require(Number.isInteger(request.parentPid) && Number.isInteger(request.helperPid) && Number.isInteger(backend.pid) && backend.parent === request.parentPid, 'backend is not owned by the updating main process')
+  require(typeof request.operationId === 'string' && /^[a-f0-9-]{36}$/i.test(request.operationId) && Number.isFinite(request.createdAt), 'invalid operation identity')
+  const rows = text.replace(/^\uFEFF/, '').split(/\r?\n/).flatMap((line, i) => line.trim() ? [{ line: i + 1, record: JSON.parse(line) }] : [])
+  const anchors = rows.filter(({ record: r }) => r.scope === 'update' && r.msg === 'Windows update progress window ready' && r.data?.pid === request.helperPid && r.data?.visible === true && typeof r.data?.directory === 'string' && r.data.directory.replaceAll('\\', '/').endsWith('/Open-Science/UpdateHandoffs/' + request.operationId))
+  require(anchors.length === 1, 'missing or ambiguous operation/helper anchor')
+  const anchor = anchors[0]
+  const runId = anchor.record.runId
+  require(typeof runId === 'string' && runId.length > 0 && Date.parse(anchor.record.t) >= request.createdAt, 'invalid run identity or stale anchor')
+  const run = rows.filter(({ record }) => record.runId === runId)
+  const isApply = ({ record: r }) => r.scope === 'update' && r.data?.operation === 'update-apply' && r.msg === 'operation started'
+  const start = run.filter(row => row.line < anchor.line && isApply(row)).at(-1)
+  require(start && typeof start.record.data.operationId === 'string', 'missing apply boundary')
+  const next = run.find(row => row.line > anchor.line && isApply(row))
+  const window = run.filter(row => row.line > start.line && (!next || row.line < next.line))
+  const one = (predicate, name) => {
+    const matches = window.filter(({ record }) => predicate(record))
+    require(matches.length === 1, 'missing or ambiguous ' + name)
+    return matches[0]
+  }
+  const preflight = one(r => r.scope === 'main' && r.msg === 'update renderer persistence' && r.data?.phase === 'preflight', 'preflight save')
+  const final = one(r => r.scope === 'main' && r.msg === 'update renderer persistence' && r.data?.phase === 'final', 'final save')
+  const stop = one(r => r.scope === 'desktop-runtime-client' && r.msg === 'runtime-stop' && r.data?.step === 'confirm', 'backend stop')
+  const confirmed = one(r => r.scope === 'desktop-runtime-client' && r.msg === 'runtime-stop' && r.data?.step === 'confirmed', 'backend exit confirmation')
+  require(preflight.record.data.outcome === 'completed' && final.record.data.outcome === 'completed', 'save did not complete')
+  require(stop.record.data.runtimePid === backend.pid && confirmed.record.data.result === 'clean' && confirmed.record.data.processExited === true, 'backend identity or clean exit mismatch')
+  require(anchor.line < preflight.line && preflight.line < final.line && final.line < stop.line && stop.line < confirmed.line, 'save/helper readiness must precede backend stop')
+  const terminals = window.filter(({ record: r }) => r.scope === 'update' && r.data?.operation === 'update-apply' && r.data?.operationId === start.record.data.operationId && ['operation completed', 'operation failed', 'operation cancelled'].includes(r.msg))
+  require(terminals.every(row => row.line > confirmed.line && row.record.data.outcome === 'completed'), 'apply ended before clean shutdown')
+  return { status: 'PASS', operationId: request.operationId, parentPid: request.parentPid, backendPid: backend.pid, runId, applyOperationId: start.record.data.operationId, records: { start, anchor, preflight, final, stop, confirmed }, source: 'ordered product JSONL, bound to the exact operation/helper and owned backend; no stdout or restart' }
+}
+async function inspectRetainedPersistence(request, backend) {
+  const path = join(request.profilePath, 'desktop-logs', 'main.log')
+  const bytes = await readFile(path)
+  return { ...inspectPersistedHandoff(bytes.toString('utf8'), request, backend), path, sha256: createHash('sha256').update(bytes).digest('hex') }
+}
 async function authenticateRetainedEndpoint(configRoot) {
   const state = JSON.parse(await readFile(join(configRoot, 'web-service.json'), 'utf8'))
   const records = await snapshotInstallation(dirname(directSuccessor.path))

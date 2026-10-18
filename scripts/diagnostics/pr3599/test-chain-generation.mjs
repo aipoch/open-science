@@ -28,4 +28,38 @@ for (const [maintained, generated] of [
     await readFile(resolve(process.argv[2], 'scripts', generated), 'utf8')
   )
 }
-console.log('PASS: generated receipt bytes, JSONL parsing, config discovery, uninstall filename and candidate observer binding')
+const inspectSource = source.match(/function inspectPersistedHandoff\([\s\S]*?\n}\n/)
+assert.ok(inspectSource, 'Generated persistence verifier is missing')
+const inspectPersistence = vm.runInNewContext('(' + inspectSource[0] + ')')
+const operation = '0a5a6537-65ed-43a4-8d64-2523a52ea3b2'
+const request = { operationId: operation, helperPid: 6548, parentPid: 2984, createdAt: 1000 }
+const backend = { pid: 4412, parent: 2984 }
+const row = (scope, msg, data) => ({ t: '2026-10-18T13:30:43.000Z', runId: 'retained-b', scope, msg, data })
+const records = [
+  row('update', 'operation started', { operation: 'update-apply', operationId: 'apply-b' }),
+  row('update', 'Windows update progress window ready', { pid: 6548, visible: true, directory: 'C:\\fixture\\Open-Science\\UpdateHandoffs\\' + operation }),
+  row('main', 'update renderer persistence', { phase: 'preflight', outcome: 'completed' }),
+  row('main', 'update renderer persistence', { phase: 'final', outcome: 'completed' }),
+  row('desktop-runtime-client', 'runtime-stop', { step: 'confirm', runtimePid: 4412 }),
+  row('desktop-runtime-client', 'runtime-stop', { step: 'confirmed', result: 'clean', processExited: true })
+]
+const encode = rows => rows.map(record => JSON.stringify(record)).join('\r\n') + '\r\n'
+assert.equal(inspectPersistence(encode(records), request, backend).status, 'PASS')
+const wrong = mutate => { const copy = structuredClone(records); mutate(copy); return copy }
+for (const [name, rows] of [
+  ['missing final save', records.filter((_, index) => index !== 3)],
+  ['stop before final save', [records[0], records[1], records[2], records[4], records[3], records[5]]],
+  ['wrong operation', wrong(rows => { rows[1].data.directory += '-old' })],
+  ['wrong helper', wrong(rows => { rows[1].data.pid = 999 })],
+  ['wrong backend', wrong(rows => { rows[4].data.runtimePid = 999 })],
+  ['other run final save', wrong(rows => { rows[3].runId = 'old-a' })],
+  ['failed final save', wrong(rows => { rows[3].data.outcome = 'failed' })],
+  ['ambiguous final save', [...records, records[3]]],
+  ['stale previous attempt', [records[0], records[2], records[3], records[0], records[1], records[4], records[5]]],
+  ['new attempt before stop', [...records.slice(0, 4), records[0], ...records.slice(4)]],
+  ['failed apply', [...records.slice(0, 4), row('update', 'operation failed', { operation: 'update-apply', operationId: 'apply-b', outcome: 'failed' }), ...records.slice(4)]]
+]) assert.throws(() => inspectPersistence(encode(rows), request, backend), /Persistence evidence:/, name)
+assert.throws(() => inspectPersistence(encode(records), request, { ...backend, parent: 1 }), /not owned/)
+assert.throws(() => inspectPersistence(encode(records), { ...request, createdAt: Date.now() + 1e12 }, backend), /stale/)
+assert.throws(() => inspectPersistence(encode(records) + '{', request, backend), /JSON|Expected/)
+console.log('PASS: generated contracts and persistence ordering (positive + 14 negative cases)')
