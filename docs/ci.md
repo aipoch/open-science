@@ -98,7 +98,8 @@ supplemental regression shards, and capacity. Electron retains one worker per ru
 fail-fast is disabled so every group can report its own failures. Capacity is selected from the
 same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are
 removed. Each job uploads distinct group/shard diagnostics, allowing failed jobs to be rerun
-without repeating successful groups. Setup failure and any failed or missing selected suite fail
+without repeating successful groups while the one-day setup artifact is retained; after expiry,
+start a new run to rebuild it. Setup failure and any failed or missing selected suite fail
 the scheduled outcome.
 
 Source Regression manual modes `functional`, `workspace`, `presentation`, `regressions`, `capacity`
