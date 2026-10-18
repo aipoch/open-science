@@ -1,6 +1,6 @@
 vi.mock('./runtime-ownership', async (original) => ({
   ...(await original<typeof import('./runtime-ownership')>()),
-  acquireRuntimeDirectorySync: () => ({ release: vi.fn() }),
+  acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
   RuntimeDirectoryOwnership: class {
     acquireSync = vi.fn()
   },

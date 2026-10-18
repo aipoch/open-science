@@ -30,7 +30,7 @@ vi.mock('./runtime-ownership', () => ({
     acquireSync = vi.fn()
     close = f.closeOwnership
   },
-  acquireRuntimeDirectorySync: () => ({ release: vi.fn() }),
+  acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
   configureRuntimeDirectoryOwnership: vi.fn()
 }))
 vi.mock('./runtime-metadata', () => ({ configureRuntimeMetadata: vi.fn() }))

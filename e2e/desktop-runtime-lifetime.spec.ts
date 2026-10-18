@@ -9,6 +9,53 @@ import { join, resolve } from 'node:path'
 import { _electron as electron, type ElectronApplication } from 'playwright'
 import { electronLaunchTarget, launchEnvironment, launchOpenScience } from './fixtures/electron-app'
 
+test('scopes single-instance ownership to environment-selected profiles', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-profile-lock-'))
+  const applications: ElectronApplication[] = []
+  let duplicate: ReturnType<typeof spawn> | undefined
+  try {
+    for (const name of ['a', 'b']) {
+      const storageRoot = join(root, `storage-${name}`)
+      const profileRoot = join(root, `profile-${name}`)
+      await mkdir(storageRoot)
+      const target = electronLaunchTarget(profileRoot)
+      target.args = target.args.filter((arg) => !arg.startsWith('--user-data-dir='))
+      const env: Record<string, string> = {
+        ...launchEnvironment(storageRoot),
+        OPEN_SCIENCE_USER_DATA: profileRoot,
+        ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+          ? {
+              NODE_OPTIONS: `--require=${JSON.stringify(resolve('e2e/fixtures/mock-node-credentials.cjs'))}`
+            }
+          : {})
+      }
+      delete env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE
+      const args = [...target.args, '--open-science-headless', '--serve=0']
+      const application = await electron.launch({ ...target, args, env })
+      applications.push(application)
+      await expect
+        .poll(
+          () => readFile(join(profileRoot, 'desktop-logs', 'main.log'), 'utf8').catch(() => ''),
+          {
+            timeout: 60000
+          }
+        )
+        .toContain('Open-Science Web:')
+      expect(await application.evaluate(({ app }) => app.getPath('userData'))).toBe(profileRoot)
+      if (name === 'a') {
+        duplicate = spawn(application.process().spawnfile, args, { env, stdio: 'ignore' })
+        await expect.poll(() => duplicate!.exitCode, { timeout: 20000 }).toBe(0)
+        expect(application.process().exitCode).toBeNull()
+      }
+    }
+    expect(applications.every((application) => application.process().exitCode === null)).toBe(true)
+  } finally {
+    if (duplicate && duplicate.exitCode === null) duplicate.kill()
+    for (const application of applications.reverse()) await application.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('headless desktop creates no renderer and exits after Web shutdown', async () => {
   test.skip(Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE), 'Source entry certification')
   const root = await mkdtemp(join(tmpdir(), 'open-science-headless-lifetime-with spaces-'))
@@ -156,6 +203,9 @@ for (const borrowed of [false, true]) {
         }
       })
       const page = await app.firstWindow()
+      // Keep the lifecycle assertions independent of the Windows account language. The direct
+      // launch path does not pass through ElectronAppHarness.create(), which normally pins English.
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
       await expect
         .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })

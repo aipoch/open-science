@@ -32,6 +32,9 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
     await expect
       .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })
       .toMatchObject({ phase: 'ready' })
+    // This direct launcher does not run the shared fixture's locale setup.
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe('en')
     const additionalWindow = application.waitForEvent('window')
     await application.evaluate(({ app }) => {
       const { createRequire } = process.getBuiltinModule('node:module')
@@ -370,7 +373,8 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'reconciling' })
-      await page.getByRole('button', { name: 'Quit app', exact: true }).click()
+      // Recovery hides its buttons while reconciling; native Quit remains available.
+      await application.evaluate(({ app }) => app.quit())
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'disconnected', closing: false })

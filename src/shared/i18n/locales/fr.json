@@ -144,9 +144,16 @@
     "Retry startup": "Réessayer le démarrage",
     "Open startup logs": "Ouvrir les journaux de démarrage",
     "Could not open the logs folder.": "Impossible d’ouvrir le dossier des journaux.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés.",
+    "Installing the Open-Science update…": "Installation de la mise à jour d’Open-Science…",
+    "Opening the updated Open-Science…": "Ouverture de la version mise à jour d’Open-Science…",
+    "The Open-Science update could not finish.": "La mise à jour d’Open-Science n’a pas pu se terminer.",
+    "Close update window": "Fermer la fenêtre de mise à jour",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "L’état de la mise à jour n’a pas pu être confirmé. Fermer cette fenêtre n’arrête pas l’installation."
   },
   "renderer": {
+    "Update preparation failed": "Échec de la préparation de la mise à jour",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "L’application reste ouverte. Résolvez le problème et réessayez, ou annulez pour continuer à travailler.",
     "Select one or more options": "Sélectionnez une ou plusieurs options",
     "Your conversation is preserved. Try Resume again.": "Votre conversation est conservée. Réessayez de la reprendre.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "L’agent n’a pas répondu à temps. Votre conversation est conservée. Réessayez de la reprendre.",
@@ -7524,7 +7531,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Vérification des tâches inachevées et des conditions d’installation de la mise à jour.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Terminez votre travail dans l’autre application et quittez-la depuis son menu, puis vérifiez à nouveau.",
     "Force update…": "Forcer la mise à jour…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "L’installation a commencé et ne peut plus être annulée. L’application se rouvrira après l’installation.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "L’installation a commencé et ne peut plus être annulée. Elle peut prendre quelques minutes. Si votre système demande une autorisation, autorisez la mise à jour pour continuer. L’application se rouvrira une fois l’installation terminée.",
     "Installation result is unknown": "Le résultat de l’installation est inconnu",
     "Installation starts only after shutdown has finished and its result is confirmed.": "L’installation ne commence qu’une fois l’arrêt terminé et son résultat confirmé.",
     "Installing update…": "Installation de la mise à jour…",

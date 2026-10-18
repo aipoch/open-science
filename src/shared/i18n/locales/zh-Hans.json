@@ -142,9 +142,16 @@
     "Retry startup": "重试启动",
     "Open startup logs": "打开启动日志",
     "Could not open the logs folder.": "无法打开日志文件夹。",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。"
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。",
+    "Installing the Open-Science update…": "正在安装 Open-Science 更新…",
+    "Opening the updated Open-Science…": "正在打开更新后的 Open-Science…",
+    "The Open-Science update could not finish.": "未能完成 Open-Science 更新。",
+    "Close update window": "关闭更新窗口",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "无法确认更新状态。关闭此窗口不会停止安装。"
   },
   "renderer": {
+    "Update preparation failed": "更新准备失败",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "应用仍保持打开。解决问题后重试，或取消更新以继续工作。",
     "Select one or more options": "选择一个或多个选项",
     "Your conversation is preserved. Try Resume again.": "您的会话已保留。请再次尝试恢复。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能体未能及时响应。您的会话已保留。请再次尝试恢复。",
@@ -7196,7 +7203,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "正在检查未完成的任务，以及能否安装更新。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "请在另一个应用中处理工作，并从应用菜单退出，然后重新检查。",
     "Force update…": "强制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "安装已开始，不能取消。安装后应用会重新打开。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "安装已开始，不能取消，可能需要几分钟。如果系统请求授权，请允许更新以继续。安装完成后应用会重新打开。",
     "Installation result is unknown": "安装结果尚未确认",
     "Installation starts only after shutdown has finished and its result is confirmed.": "只有完成关闭操作并确认结果后，才会开始安装。",
     "Installing update…": "正在安装更新…",

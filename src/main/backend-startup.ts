@@ -66,12 +66,17 @@ export class DesktopBackendStartupError extends Error {
 
 // The reporter is owned by this launch attempt only. Its channel must not keep an otherwise
 // finished backend alive, and losing Electron must not terminate the independent Node runtime.
+// Capture the launch identity before the reporter removes it from the environment. The backend
+// uses the same value to bind a credential inventory handoff without leaking it to descendants.
+export let backendStartupAttemptId: string | undefined
+
 export function createBackendStartupReporter(): {
   phase(stage: BackendStartupStatus['stage']): void
   failed(error: unknown): void
   ready(): void
 } {
   const attemptId = process.env.OPEN_SCIENCE_STARTUP_ATTEMPT
+  backendStartupAttemptId = attemptId
   delete process.env.OPEN_SCIENCE_STARTUP_ATTEMPT
   if (attemptId) process.channel?.unref()
   let stage: BackendStartupStatus['stage'] = 'bootstrap'

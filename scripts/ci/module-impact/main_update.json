@@ -2,11 +2,13 @@
   "ownerPaths": [
     "src/main/update/create-strategy.test.ts",
     "src/main/update/create-strategy.ts",
+    "src/main/update/differential-download-cancellation.test.ts",
     "src/main/update/downloader.test.ts",
     "src/main/update/downloader.ts",
     "src/main/update/electron-updater-provider-regressions.test.ts",
     "src/main/update/electron-updater-strategy.test.ts",
     "src/main/update/electron-updater-strategy.ts",
+    "src/main/update/windows-install-progress.ts",
     "src/main/update/ipc.test.ts",
     "src/main/update/ipc.ts",
     "src/main/update/legacy-shell-recovery.integration.test.ts",
@@ -44,7 +46,10 @@
     "src/main/update/verification-process.test.ts",
     "src/main/update/verification-process.ts",
     "src/main/update/installation-occupancy.test.ts",
-    "src/main/update/installation-preparation.test.ts"
+    "src/main/update/installation-preparation.test.ts",
+    "src/main/update/windows-update-handoff.ts",
+    "src/main/update/windows-update-handoff.test.ts",
+    "src/main/update/windows-install-progress.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -61,12 +66,14 @@
     "src/main/update/installation-occupancy.ts",
     "src/main/update/installation-protection.ts",
     "src/main/update/installation-reboot-recovery.ts",
-    "src/main/update/verification-process.ts"
+    "src/main/update/verification-process.ts",
+    "src/main/update/windows-update-handoff.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/update/create-strategy.test.ts",
+      "src/main/update/differential-download-cancellation.test.ts",
       "src/main/update/downloader.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
@@ -90,12 +97,17 @@
       "src/main/update/installation-reboot-recovery.test.ts",
       "src/main/update/verification-process.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/main/update/windows-install-progress.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "build/packaging.test.ts",
+      "scripts/windows-update-handoff-uninstall.test.ts",
+      "scripts/windows-update-progress.test.ts"
     ],
     "consumer": [
       "src/main/desktop-runtime-recovery.integration.test.ts",

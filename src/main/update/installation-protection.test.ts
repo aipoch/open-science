@@ -9,6 +9,7 @@ import {
   realpathSync,
   readdirSync,
   existsSync,
+  copyFileSync,
   symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,6 +35,10 @@ import {
   registerInstallationRuntime
 } from './installation-protection'
 import { protectInstallationStartup } from '../../../packages/open-science/installation-startup.cjs'
+import {
+  inspectInstallationProcesses,
+  inspectInstallationProcessesAsync
+} from './installation-occupancy'
 
 vi.mock('./installation-filesystem', async (original) => {
   const { installationFs: fs } = await original<typeof import('./installation-filesystem')>()
@@ -342,6 +347,45 @@ describe('installation protection', () => {
     finishInstallationRecovery(f.location, record.operationId, 'cancel')
   }, 15000)
 })
+
+it.runIf(process.platform === 'linux')(
+  'blocks an unregistered bundled Node with rewritten argv until the actual process exits',
+  async () => {
+    const f = fixture()
+    const executable = join(f.location.installationRoot, 'node')
+    copyFileSync(process.execPath, executable)
+    const child = spawn(
+      executable,
+      ['-e', "process.title='old-node';process.stdout.write('ready');setInterval(()=>{},1000)"],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.stdout.once('data', () => resolve())
+        child.once('error', reject)
+        child.once('exit', () => reject(new Error('child exited before readiness')))
+      })
+      expect(inspectInstallationProcesses(f.location.installationRoot)).toContain(child.pid)
+      expect(await inspectInstallationProcessesAsync(f.location.installationRoot)).toContain(
+        child.pid
+      )
+      await expect(inspectInstallationAvailability(f.location)).rejects.toMatchObject({
+        reason: 'installation-busy',
+        recovery: { detail: 'other-runtime' }
+      })
+      expect(child.exitCode).toBeNull()
+      expect(inspectInstallationUpdate(f.location)).toBeUndefined()
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+        child.kill('SIGTERM')
+        await exited
+      }
+    }
+    await expect(inspectInstallationAvailability(f.location)).resolves.toBeUndefined()
+  },
+  15000
+)
 
 it('uses the persisted path spelling when native realpath expands a Windows short name', async () => {
   const f = fixture()

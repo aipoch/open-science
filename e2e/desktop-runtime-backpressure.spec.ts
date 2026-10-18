@@ -158,7 +158,7 @@ test('keeps real desktop connected through concurrent Notebook and session reads
       contentType: 'application/json'
     })
     await testInfo.attach('desktop-log', {
-      body: await readFile(join(roots.userDataRoot, 'logs/main.log')),
+      body: await readFile(join(roots.userDataRoot, 'desktop-logs/main.log')),
       contentType: 'text/plain'
     })
     await testInfo.attach('backend-log', {

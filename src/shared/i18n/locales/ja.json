@@ -142,9 +142,16 @@
     "Retry startup": "起動を再試行",
     "Open startup logs": "起動ログを開く",
     "Could not open the logs folder.": "ログフォルダーを開けませんでした。",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。"
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。",
+    "Installing the Open-Science update…": "Open-Science の更新をインストールしています…",
+    "Opening the updated Open-Science…": "更新された Open-Science を開いています…",
+    "The Open-Science update could not finish.": "Open-Science の更新を完了できませんでした。",
+    "Close update window": "更新ウィンドウを閉じる",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "更新の状態を確認できませんでした。このウィンドウを閉じてもインストールは停止しません。"
   },
   "renderer": {
+    "Update preparation failed": "更新の準備に失敗しました",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "アプリは開いたままです。問題を解決して再試行するか、更新をキャンセルして作業を続けてください。",
     "Select one or more options": "1つ以上の選択肢を選択",
     "Your conversation is preserved. Try Resume again.": "会話は保持されています。もう一度再開してください。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "エージェントが時間内に応答しませんでした。会話は保持されています。もう一度再開してください。",
@@ -7196,7 +7203,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "未完了のタスクと更新のインストール条件を確認しています。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "別のアプリで作業を終え、そのアプリのメニューから終了してから再確認してください。",
     "Force update…": "強制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "インストールが開始されており、キャンセルできません。インストール後にアプリが再度開きます。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "インストールが開始されており、キャンセルできません。数分かかる場合があります。システムから許可を求められた場合は、更新を許可して続行してください。インストールが完了すると、アプリが再度開きます。",
     "Installation result is unknown": "インストール結果を確認できません",
     "Installation starts only after shutdown has finished and its result is confirmed.": "終了処理が完了し、その結果を確認してからインストールを開始します。",
     "Installing update…": "更新をインストール中…",

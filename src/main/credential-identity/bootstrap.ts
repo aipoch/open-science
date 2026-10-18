@@ -36,9 +36,15 @@ export const selectStartupCredentialIdentity = (
 // The entire inventory is read before Electron can initialize a profile or create a missing key.
 export const prepareCredentialValidation = (
   identity: CredentialIdentity,
-  paths: { configRoot: string; profilePath: string }
+  paths: { configRoot: string; profilePath: string },
+  preloadedCiphertexts?: readonly Buffer[]
 ): ((cipher: SecureStorageCipher, recover: (error: CredentialIdentityError) => void) => void) => {
-  const ciphertexts = identity.backend === 'file' ? [] : readCredentialCiphertexts(paths)
+  const ciphertexts =
+    identity.backend === 'file'
+      ? []
+      : preloadedCiphertexts
+        ? [...preloadedCiphertexts]
+        : readCredentialCiphertexts(paths)
   if (identity.backend === 'windows-dpapi')
     validateWindowsProfileKey({
       profilePath: paths.profilePath,

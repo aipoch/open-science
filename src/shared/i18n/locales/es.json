@@ -144,9 +144,16 @@
     "Retry startup": "Reintentar el inicio",
     "Open startup logs": "Abrir registros de inicio",
     "Could not open the logs folder.": "No se ha podido abrir la carpeta de registros.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado.",
+    "Installing the Open-Science update…": "Instalando la actualización de Open-Science…",
+    "Opening the updated Open-Science…": "Abriendo Open-Science actualizado…",
+    "The Open-Science update could not finish.": "No se pudo completar la actualización de Open-Science.",
+    "Close update window": "Cerrar la ventana de actualización",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "No se pudo confirmar el estado de la actualización. Cerrar esta ventana no detiene la instalación."
   },
   "renderer": {
+    "Update preparation failed": "Error al preparar la actualización",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "La aplicación sigue abierta. Resuelva el problema e inténtelo de nuevo, o cancele para seguir trabajando.",
     "Select one or more options": "Seleccionar una o varias opciones",
     "Your conversation is preserved. Try Resume again.": "Su conversación se conserva. Intente reanudarla de nuevo.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "El agente no respondió a tiempo. Su conversación se conserva. Intente reanudarla de nuevo.",
@@ -7524,7 +7531,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Comprobando las tareas pendientes y si se puede instalar la actualización.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Termine su trabajo en la otra aplicación y salga desde su menú; después, vuelva a comprobarlo.",
     "Force update…": "Forzar actualización…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "La instalación ha comenzado y no se puede cancelar. La aplicación se volverá a abrir tras la instalación.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "La instalación ha comenzado y no se puede cancelar. Puede tardar unos minutos. Si el sistema solicita permiso, autorice la actualización para continuar. La aplicación se volverá a abrir cuando finalice la instalación.",
     "Installation result is unknown": "Se desconoce el resultado de la instalación",
     "Installation starts only after shutdown has finished and its result is confirmed.": "La instalación solo comienza una vez finalizado el cierre y confirmado su resultado.",
     "Installing update…": "Instalando actualización…",

@@ -13,11 +13,15 @@ const f = vi.hoisted(() => {
     leaseRelease: vi.fn(),
     select: vi.fn(),
     validate: vi.fn(),
+    inventory: vi.fn(() => [Buffer.from('synthetic-profile-ciphertext')]),
     key: vi.fn(),
     launch: vi.fn(),
     connect: vi.fn(),
     lifecycle: vi.fn(),
     diagnostics: vi.fn(),
+    completedStartup: vi.fn(),
+    windowsStartup: vi.fn(),
+    verifyRecovery: vi.fn(async () => {}),
     report: vi.fn(async () => undefined),
     app: {
       isPackaged: false,
@@ -34,7 +38,7 @@ const f = vi.hoisted(() => {
       getVersion: () => 'test',
       getLocale: () => 'en',
       getPreferredSystemLanguages: () => ['en'],
-      commandLine: { getSwitchValue: () => '' },
+      commandLine: { getSwitchValue: () => '', appendSwitch: vi.fn() },
       isReady: (): boolean => false,
       whenReady: vi.fn(async () => {}),
       requestSingleInstanceLock: vi.fn(() => true)
@@ -62,13 +66,20 @@ vi.mock('electron', () => ({
     fromPartition: () => ({ protocol: f.protocol })
   }
 }))
+vi.mock('./update/windows-update-handoff', async (original) => ({
+  ...(await original<typeof import('./update/windows-update-handoff')>()),
+  resolveWindowsUpdateStartup: f.windowsStartup
+}))
+vi.mock('./desktop-recovery-readiness', () => ({
+  verifyDesktopRecoveryReadiness: f.verifyRecovery
+}))
 vi.mock('./runtime-metadata', () => ({ configureRuntimeMetadata: vi.fn() }))
 vi.mock('./ipc-handler-registry', () => ({
   configureIpcHandlerRegistry: vi.fn(),
   ipcMainHandle: (name: string, fn: (...args: unknown[]) => unknown) => f.handlers.set(name, fn)
 }))
 vi.mock('./runtime-ownership', () => ({
-  acquireRuntimeDirectorySync: () => ({ release: f.leaseRelease })
+  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease })
 }))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: vi.fn(),
@@ -79,6 +90,9 @@ vi.mock('./credential-identity/bootstrap', () => ({
   prepareCredentialValidation: f.validate
 }))
 vi.mock('./credential-identity/node-cipher', () => ({ initializeNodeWindowsProfileKey: f.key }))
+vi.mock('./credential-identity/ciphertext-inventory', () => ({
+  readCredentialCiphertexts: f.inventory
+}))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/test/config',
   resolveElectronProfile: () => '/test/profile'
@@ -114,7 +128,7 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
 vi.mock('./diagnostics/startup', () => ({
   initializeApplicationDiagnostics: () => {
     f.diagnostics()
-    return { log: f.log, operation: { phase: vi.fn(), complete: vi.fn() } }
+    return { log: f.log, operation: { phase: vi.fn(), complete: f.completedStartup } }
   },
   reportApplicationStartupFailure: f.report
 }))
@@ -192,6 +206,7 @@ beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
   f.ready = false
+  f.windowsStartup.mockResolvedValue(undefined)
   f.handlers.clear()
   f.select.mockReturnValue({ backend: 'mac-keychain', appName: 'Open-Science (DEV)', exists: true })
   f.validate.mockReturnValue(vi.fn())
@@ -211,10 +226,15 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
     f.select.mockReturnValue({ backend, appName: 'Open-Science (DEV)', exists: true })
     await import('./index')
     await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
-    expect(f.validate).toHaveBeenCalledWith(expect.objectContaining({ backend }), {
+    expect(f.inventory).toHaveBeenCalledWith({
       configRoot: '/test/config',
       profilePath: '/test/profile'
     })
+    expect(f.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ backend }),
+      { configRoot: '/test/config', profilePath: '/test/profile' },
+      [Buffer.from('synthetic-profile-ciphertext')]
+    )
     expect(f.leaseRelease.mock.invocationCallOrder[0]).toBeLessThan(
       f.app.whenReady.mock.invocationCallOrder[0]
     )
@@ -227,7 +247,8 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
       expect.objectContaining({
         configRoot: '/test/config',
         command: '/test/node',
-        entry: '/test/backend.cjs'
+        entry: '/test/backend.cjs',
+        credentialInventory: [Buffer.from('synthetic-profile-ciphertext')]
       })
     )
     expect(f.report).toHaveBeenCalledWith(
@@ -251,6 +272,20 @@ it('releases credential preflight and exits without yielding or initializing the
   expect(f.log.error.mock.invocationCallOrder[0]).toBeLessThan(
     f.dialog.showErrorBox.mock.invocationCallOrder[0]
   )
+})
+it('selects the requested profile before checking its single-instance lock', async () => {
+  let selectedPaths: unknown
+  f.app.requestSingleInstanceLock.mockImplementation(() => {
+    selectedPaths = f.app.setPath.mock.calls.map((call) => [...call])
+    return false
+  })
+  await import('./index')
+  expect(selectedPaths).toEqual([
+    ['userData', '/test/profile'],
+    ['sessionData', '/test/profile']
+  ])
+  expect(f.inventory).not.toHaveBeenCalled()
+  expect(f.app.whenReady).not.toHaveBeenCalled()
 })
 it('a secondary desktop never starts or stops a business runtime', async () => {
   f.app.requestSingleInstanceLock.mockReturnValue(false)
@@ -355,4 +390,68 @@ it('stops the backend it started when quitting from the attach-retry blocked pag
   expect(child.kill.mock.invocationCallOrder[0]).toBeLessThan(
     f.app.exit.mock.invocationCallOrder[0]
   )
+})
+
+it('rejects a missing update configuration before selecting a fallback profile or credentials', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    f.windowsStartup.mockRejectedValue(new Error('Missing update request'))
+    await import('./index')
+    await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+    expect(f.app.setPath).not.toHaveBeenCalled()
+    expect(f.select).not.toHaveBeenCalled()
+    expect(f.launch).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
+it('allows a normal relaunch after confirmed upgrade to read newly committed data settings', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const oldOptions = {
+      configRoot: '/test/config',
+      profilePath: '/test/profile',
+      dataRoot: '/test/old-data',
+      port: 44100,
+      host: '127.0.0.1',
+      credentialStore: 'file'
+    }
+    f.windowsStartup.mockResolvedValue({ startupOptions: oldOptions, confirmed: true })
+    f.lifecycle.mockReturnValue({
+      showMainWindow: vi.fn(),
+      getMainWindow: () => ({ isDestroyed: () => false, isVisible: () => true }),
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    })
+    const client = {
+      ownsRuntime: () => false,
+      processId: () => 123,
+      runtimeInfo: () => ({
+        generation: 'migrated-data',
+        startupOptions: { ...oldOptions, dataRoot: '/test/new-data' }
+      }),
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'checking' }),
+      close: vi.fn()
+    }
+    f.connect.mockResolvedValue(client)
+    f.launch.mockResolvedValue({})
+    await import('./index')
+    await vi.waitFor(() => expect(f.lifecycle).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalled())
+    expect(f.verifyRecovery).not.toHaveBeenCalled()
+    expect(f.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configRoot: oldOptions.configRoot,
+        profilePath: oldOptions.profilePath,
+        args: ['--credential-store=file', '--serve=44100']
+      })
+    )
+    expect(f.app.exit).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
 })

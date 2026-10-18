@@ -325,6 +325,7 @@
       "src/main/crash-diagnostics.test.ts",
       "src/main/credential-identity/access.test.ts",
       "src/main/credential-identity/ciphertext-inventory.test.ts",
+      "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/linux.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/node-cipher.test.ts",
