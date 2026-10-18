@@ -129,7 +129,9 @@ test('keeps source icons inside table cells after expanding a message table', as
   await expect(fullscreen).toHaveCount(0)
 })
 
-test('expands the selected table across repeated portal lifecycles', async ({ app }) => {
+test('expands the selected table across repeated portal lifecycles @pr-mainline-conversation', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)

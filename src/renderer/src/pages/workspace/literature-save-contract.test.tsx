@@ -7,6 +7,209 @@ import { buildLiteratureLibraryToolSummary } from './literature-tool-presentatio
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { useNavigationStore } from '../../stores/navigation-store'
 import { useLiteratureSaveState } from './use-literature-save-state'
+
+it('keeps missing and deleted saved references neutral, and refreshes restored items', async () => {
+  const summary = buildLiteratureLibraryToolSummary(
+    'save',
+    {},
+    {
+      results: [{ kind: 'candidate', id: 'saved', state: 'pending' }]
+    }
+  )
+  let missing = false
+  let available = true
+  let fail = false
+  const get = vi.fn(async () => {
+    if (fail) throw new Error('Offline')
+    return available ? { id: 'item' } : undefined
+  })
+  const previousApi = window.api
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: {
+      literature: {
+        search: vi.fn(async ({ inboxState }: { inboxState: string }) => ({
+          entries:
+            !missing && inboxState === 'accepted'
+              ? [{ id: 'saved', state: 'accepted', candidate: {}, acceptedItemId: 'item' }]
+              : [],
+          totalCount: missing ? 0 : 1
+        })),
+        get
+      }
+    }
+  })
+  try {
+    const view = render(<WorkspaceLiteratureToolCard summary={summary} />)
+    await waitFor(() => expect(view.getByText('Already in library: 1')).toBeDefined())
+    fail = true
+    await act(async () => fireEvent(window, new Event('focus')))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await expect(get.mock.results[1].value).rejects.toThrow('Offline')
+    expect(view.getByText('Already in library: 1')).toBeDefined()
+    fail = false
+    available = false
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(view.queryByText('Already in library: 1')).toBeNull())
+    expect(view.queryByRole('button', { name: 'Open reference' })).toBeNull()
+    expect(view.queryByText(/Pending review:/)).toBeNull()
+    expect(view.getByText('Other results: 1')).toBeDefined()
+    available = true
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(view.getByText('Already in library: 1')).toBeDefined())
+    missing = true
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(view.queryByText('Already in library: 1')).toBeNull())
+    expect(view.queryByText(/Pending review:/)).toBeNull()
+    expect(view.queryByRole('button', { name: 'Open Inbox' })).toBeNull()
+    expect(summary.savedCount).toBe(1)
+  } finally {
+    cleanup()
+    window.api = previousApi
+  }
+})
+
+it('shares paged catalog reads across cards without caching them across refresh events', async () => {
+  const search = vi.fn(
+    async ({
+      inboxState,
+      offset = 0,
+      limit
+    }: {
+      inboxState: string
+      offset?: number
+      limit: number
+    }) =>
+      inboxState === 'pending'
+        ? {
+            entries: Array.from({ length: limit }, (_, index) => ({
+              id: `unrelated-${offset + index}`,
+              state: 'pending',
+              candidate: {}
+            })),
+            totalCount: 10_000,
+            ...(offset + limit < 10_000 ? { nextOffset: offset + limit } : {})
+          }
+        : {
+            entries: Array.from({ length: 20 }, (_, index) => ({
+              id: `saved-${index}`,
+              state: 'accepted',
+              candidate: {},
+              acceptedItemId: `item-${index}`
+            })),
+            totalCount: 20
+          }
+  )
+  const get = vi.fn(async (id: string) => ({ id }))
+  const listeners = new Set<(event: LiteratureChangedEvent) => void>()
+  const previousApi = window.api
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: {
+      literature: {
+        search,
+        get,
+        onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        }
+      }
+    }
+  })
+  try {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      renderHook(() =>
+        useLiteratureSaveState(
+          buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            {
+              results: [{ kind: 'candidate', id: `saved-${index}`, state: 'pending' }]
+            }
+          )
+        )
+      )
+    )
+    await waitFor(() =>
+      cards.forEach(({ result }, index) =>
+        expect(result.current.existingItemIds).toEqual([`item-${index}`])
+      )
+    )
+    expect(search).toHaveBeenCalledTimes(101)
+    expect(get).toHaveBeenCalledTimes(20)
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(40))
+    expect(search).toHaveBeenCalledTimes(202)
+    // Native event dispatch can run microtasks between listeners; synthetic focus does not.
+    await act(async () => {
+      for (const listener of listeners) {
+        listener({ revision: 1, itemIds: ['unrelated'] })
+        await Promise.resolve()
+      }
+    })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(60))
+    expect(search).toHaveBeenCalledTimes(303)
+    cleanup()
+    expect(listeners.size).toBe(0)
+    fireEvent(window, new Event('focus'))
+    await act(async () => {})
+    expect(search).toHaveBeenCalledTimes(303)
+  } finally {
+    cleanup()
+    window.api = previousApi
+  }
+})
+
+it('does not reuse an in-flight pre-change read when the same receipt refreshes', async () => {
+  let resolveOld!: (page: { entries: object[]; totalCount: number }) => void
+  const oldRead = new Promise<{ entries: object[]; totalCount: number }>((resolve) => {
+    resolveOld = resolve
+  })
+  const search = vi
+    .fn()
+    .mockReturnValueOnce(oldRead)
+    .mockResolvedValueOnce({ entries: [], totalCount: 0 })
+    .mockResolvedValueOnce({
+      entries: [{ id: 'saved', state: 'accepted', candidate: {}, acceptedItemId: 'item' }],
+      totalCount: 1
+    })
+  const previousApi = window.api
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: { literature: { search, get: vi.fn(async () => ({ id: 'item' })) } }
+  })
+  try {
+    const { result } = renderHook(() =>
+      useLiteratureSaveState(
+        buildLiteratureLibraryToolSummary(
+          'save',
+          {},
+          {
+            results: [{ kind: 'candidate', id: 'saved', state: 'pending' }]
+          }
+        )
+      )
+    )
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1))
+    fireEvent(window, new Event('open-science:web-events-open'))
+    await waitFor(() => expect(result.current.existingItemIds).toEqual(['item']))
+    await act(async () =>
+      resolveOld({
+        entries: [{ id: 'saved', state: 'pending', candidate: {} }],
+        totalCount: 1
+      })
+    )
+    expect(result.current.savedCount).toBe(0)
+    expect(search).toHaveBeenCalledTimes(3)
+  } finally {
+    cleanup()
+    window.api = previousApi
+  }
+})
+
 it('reconciles historical save receipts with current Inbox state on changes and remount', async () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',
@@ -54,6 +257,7 @@ it('reconciles historical save receipts with current Inbox state on changes and 
     value: {
       literature: {
         search,
+        get: vi.fn(async (id: string) => ({ id })),
         onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
           listeners.add(listener)
           return () => listeners.delete(listener)
@@ -70,9 +274,12 @@ it('reconciles historical save receipts with current Inbox state on changes and 
     expect(rendered.getByText('Pending review: 2')).toBeDefined()
     // An unsuccessful read must not turn a pending receipt into a library item.
     fail = true
+    const readsBeforeFailure = search.mock.calls.length
     await act(async () => {
       listeners.forEach((listener) => listener({ revision: 1, candidateIds: ['a'] }))
     })
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(readsBeforeFailure + 1))
+    await expect(search.mock.results[readsBeforeFailure].value).rejects.toThrow('Offline')
     expect(rendered.queryByText('Already in library: 1')).toBeNull()
     fail = false
     accepted = true
@@ -137,12 +344,13 @@ it('ignores a stale catalog read after switching receipt identities', async () =
   Object.defineProperty(window, 'api', {
     configurable: true,
     writable: true,
-    value: { literature: { search } }
+    value: { literature: { search, get: vi.fn(async (id: string) => ({ id })) } }
   })
   try {
     const { result, rerender } = renderHook(({ summary }) => useLiteratureSaveState(summary), {
       initialProps: { summary: makeSummary('old') }
     })
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1))
     rerender({ summary: makeSummary('new') })
     await waitFor(() => expect(result.current.existingItemIds).toEqual(['new-item']))
     await act(async () => {
