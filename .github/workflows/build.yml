@@ -14,6 +14,9 @@ name: Build
 on:
   workflow_call:
     inputs:
+      upgrade_version:
+        type: string
+        required: true
       nightly:
         description: >-
           Mark artifacts as a nightly build: appends `-nightly.g<short-sha>` to the version so
@@ -54,7 +57,7 @@ permissions:
 # Keyed by caller workflow + ref so Nightly and Release never queue behind each other. Packaging
 # must not be cancelled mid-run (signing keychains, half-written artifacts), so duplicates queue.
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
+  group: build-${{ github.workflow }}-${{ github.ref }}-${{ inputs.upgrade_version }}
   cancel-in-progress: false
 
 jobs:
@@ -71,6 +74,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
           persist-credentials: false
 
       - name: Setup Node
@@ -116,6 +120,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -172,6 +177,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -215,6 +221,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -324,6 +331,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
           persist-credentials: false
 
       - name: Setup Node
@@ -331,6 +339,24 @@ jobs:
         with:
           node-version: 24
           cache: npm
+
+      - name: Prepare version-only upgrade candidate in clean checkout
+        shell: bash
+        env:
+          UPGRADE_VERSION: ${{ inputs.upgrade_version }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          # Diagnostic artifact only: same pinned candidate code, greater stable version for real updater checks.
+          test "$(git rev-parse HEAD)" = "292cddde868c14092511b293cd695d3145fe5083"
+          test "$(node -p "require('./package.json').version")" = "1.0.0"
+          case "$UPGRADE_VERSION" in 1.0.0|1.0.1|1.0.2) ;; *) exit 1 ;; esac
+          if [ "$UPGRADE_VERSION" != "1.0.0" ]; then npm version --no-git-tag-version --ignore-scripts "$UPGRADE_VERSION"; fi
+          mkdir -p dist
+          git rev-parse HEAD > dist/upgrade-product-sha.txt
+          git diff --binary > dist/upgrade-version-only.patch
+          git diff --name-only > dist/upgrade-modified-files.txt
+          node -e "const fs=require('fs'); const names=fs.readFileSync('dist/upgrade-modified-files.txt','utf8').trim().split(/\r?\n/).filter(Boolean); console.log(names); if(names.some(n=>!['package.json','package-lock.json'].includes(n))) throw Error('Unexpected product modification')"
 
       # The Node secret backend compiles against libsecret/dbus headers during packaging
       # (build:backend-native); Ubuntu images do not ship them.
@@ -351,6 +377,23 @@ jobs:
           npx vitest run
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
+
+      - name: Prepare the existing desktop orchestration fixture directory
+        if: ${{ matrix.platform == 'win' }}
+        run: node -e "const fs=require('node:fs'),path=require('node:path');const directory=path.resolve('/tmp');fs.mkdirSync(directory,{recursive:true});console.log(JSON.stringify({fixtureDirectory:directory,productModified:false}))"
+
+      - name: Verify stalled download cancellation and Windows updater regressions
+        if: ${{ matrix.platform == 'win' }}
+        run: >-
+          npx vitest run
+          src/main/update/differential-download-cancellation.test.ts
+          src/main/update/multipart-response.test.ts
+          src/main/update/electron-updater-provider-regressions.test.ts
+          src/main/update/electron-updater-strategy.test.ts
+          src/main/update/installation-occupancy.test.ts
+          src/main/update/installation-protection.test.ts
+          src/main/desktop-update-integration.test.ts
+          --maxWorkers=4
 
       # Exercise persisted data-location upgrades on each actual target OS before packaging.
       # The shared verification job cannot substitute for Windows path semantics or Linux casing.
@@ -589,6 +632,13 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: node scripts/windows-runtime-cdn.mjs check
 
+      - name: Record generated native build changes and verify product source
+        shell: bash
+        run: |
+          git diff --exit-code -- src scripts build .github
+          git diff --binary > dist/upgrade-generated-build.patch
+          git diff --name-only > dist/upgrade-generated-files.txt
+
       - name: Build & package
         id: package
         shell: bash
@@ -716,6 +766,8 @@ jobs:
           name: ${{ matrix.name }}
           retention-days: 7
           path: |
+            dist/upgrade-*.txt
+            dist/upgrade-*.patch
             dist/*.dmg
             dist/*.zip
             dist/*.exe
