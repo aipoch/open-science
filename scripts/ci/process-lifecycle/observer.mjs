@@ -81,22 +81,33 @@ export class LifecycleObserver {
     return this
   }
 
-  async observe(pid, ownership = 'owned', minimum = 1) {
-    const table = await this.readTable()
-    const root = table.find((item) => item.pid === pid)
-    if (
-      !root ||
-      root.unknown ||
-      !Number.isFinite(root.created) ||
-      this.baseline.has(identityKey(root))
-    ) {
-      throw new Error('process-identity-not-proven')
-    }
-    this.roots.set(identityKey(root), { ...root, ownership })
-    await this.sample(table)
-    const count = [...this.seen.values()].filter((item) => item.root === identityKey(root)).length
-    if (count < minimum) throw new Error('process-tree-not-observed')
-    return root
+  async observe(pid, ownership = 'owned', minimum = 1, { signal, timeoutMs = 5000 } = {}) {
+    const deadline = Date.now() + timeoutMs
+    let captured
+    do {
+      signal?.throwIfAborted()
+      const table = await this.readTable()
+      const root = table.find((item) => item.pid === pid)
+      if (root) {
+        if (
+          root.unknown ||
+          !Number.isFinite(root.created) ||
+          this.baseline.has(identityKey(root)) ||
+          (captured && !isSameProcess(captured, root))
+        )
+          throw new Error('process-identity-not-proven')
+        captured = root
+        this.roots.set(identityKey(root), { ...root, ownership })
+        await this.sample(table)
+        const count = [...this.seen.values()].filter(
+          (item) => item.root === identityKey(root)
+        ).length
+        if (count >= minimum) return root
+      }
+      if (Date.now() >= deadline) break
+      await sleep(50, undefined, { signal })
+    } while (Date.now() <= deadline)
+    throw new Error(captured ? 'process-tree-not-observed' : 'process-identity-not-proven')
   }
 
   async sample(table = undefined) {
@@ -199,7 +210,13 @@ export class LifecycleObserver {
     await this.save()
     let cleanup
     try {
-      const beforeCleanup = await this.sample()
+      // A failed snapshot must not bypass cleanup of identities already proven earlier.
+      let beforeCleanup = []
+      try {
+        beforeCleanup = await this.sample()
+      } catch {
+        this.errors.push('cleanup-observation-failed')
+      }
       this.cleanupRequired = [...this.seen.values()].filter((item) =>
         beforeCleanup.some((now) => isSameProcess(item, now) && now.status !== 'zombie')
       )

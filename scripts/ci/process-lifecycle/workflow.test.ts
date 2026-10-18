@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { posix } from 'node:path'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 import lifecycleConfig from './vitest.config'
@@ -66,10 +67,35 @@ it('runs the three-platform fixed collection daily without an unchanged-SHA bypa
   expect(run.if).toContain("github.event_name != 'workflow_dispatch'")
 })
 
-it('validates only lifecycle PR changes at the exact head and retains manual platform selection', () => {
-  expect(workflow.on.pull_request).toEqual({
-    paths: ['.github/workflows/process-lifecycle.yml', 'scripts/ci/process-lifecycle/**']
-  })
+it('validates lifecycle owners and runtime prerequisites at the exact PR head', () => {
+  const paths = (workflow.on.pull_request as { paths: string[] }).paths
+  const selected = (file: string): boolean =>
+    paths.some((pattern) => posix.matchesGlob(file, pattern))
+  const suite = readFileSync('scripts/ci/process-lifecycle/lifecycle.suite.ts', 'utf8')
+  // Native discovery is separate from portable consumer registration. Keep its direct source
+  // imports and dynamic/package boundaries represented in the standalone trigger inventory.
+  for (const match of suite.matchAll(/from ['"](\.\.\/\.\.\/\.\.\/src\/[^'"]+)['"]/g)) {
+    const owner = `${posix.normalize(posix.join('scripts/ci/process-lifecycle', match[1]))}.ts`
+    expect(selected(owner), owner).toBe(true)
+  }
+  for (const file of [
+    '.github/workflows/process-lifecycle.yml',
+    'scripts/ci/process-lifecycle/observer.mjs',
+    'packages/connector-mcp-client/src/client-manager.ts',
+    'packages/process-tree-native/src/process_tree_native.cc',
+    'resources/notebook/kernel_process_host.js',
+    'src/main/desktop-runtime-transport.ts',
+    'src/main/runtime-stop-confirmation.ts',
+    'src/main/runtime-ownership.ts',
+    'src/main/windows-powershell.ts',
+    'package-lock.json',
+    'vitest.config.ts',
+    'scripts/ci/npm-ci.mjs',
+    'build/native-components-lock.json'
+  ])
+    expect(selected(file), file).toBe(true)
+  expect(selected('src/renderer/src/components/Button.tsx')).toBe(false)
+  expect(selected('docs/PRD.md')).toBe(false)
   const checkout = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Checkout')!
   expect(checkout.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}')
   expect(checkout.with?.['persist-credentials']).toBe(false)

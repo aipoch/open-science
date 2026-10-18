@@ -169,7 +169,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
             code: mode === 'normal' ? 'ok' : mode === 'cancel' ? 'cancelled' : 'timeout'
           })
           // Diagnostic completion promises cleanup; a grace period here would hide the pending
-          // stdio close race fixed separately by 529b0097e.
+          // stdio close race. The manager must join pending connection and transport cleanup.
           await observer.checkpoint('diagnostic-returned', { timeoutMs: 0 })
         }),
       30000

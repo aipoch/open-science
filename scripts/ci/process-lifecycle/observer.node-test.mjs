@@ -5,7 +5,14 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { LifecycleObserver, isSameProcess, processTable } from './observer.mjs'
-import { runObserved, validateCoreEvidence, validateDetectorTap, CORE_SCENARIOS } from './run.mjs'
+import {
+  runObserved,
+  validateCoreEvidence,
+  validateDetectorTap,
+  CORE_SCENARIOS,
+  CORE_CHECKPOINTS,
+  DETECTOR_COUNT
+} from './run.mjs'
 
 for (const kind of ['clean', 'borrowed', 'leak', 'orphan', 'timeout']) {
   test(`canary ${kind} checks before cleanup`, { timeout: 30000 }, async () => {
@@ -90,18 +97,31 @@ test('PID reuse, unreadable evidence and missing execution fail closed', async (
 
 test('runner timeout fails before killing its own process tree', { timeout: 30000 }, async () => {
   const output = await mkdtemp(join(tmpdir(), 'lifecycle-timeout-'))
+  const marker = join(output, 'started')
   try {
     await assert.rejects(
       runObserved(
         process.execPath,
-        ['-e', 'setInterval(()=>{},1000)'],
+        [
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); setInterval(()=>{},1000)`
+        ],
         'timeout',
         { ...process.env, LIFECYCLE_OUTPUT: output },
-        300
+        10000
       ),
       /incomplete/
     )
-    const evidence = JSON.parse(await readFile(join(output, (await readdir(output))[0]), 'utf8'))
+    assert.equal(await readFile(marker, 'utf8'), 'started')
+    const evidence = JSON.parse(
+      await readFile(
+        join(
+          output,
+          (await readdir(output)).find((name) => name.endsWith('.json'))
+        ),
+        'utf8'
+      )
+    )
     assert.equal(evidence.checkpoints[0].status, 'failed')
     assert.ok(evidence.checkpoints[0].leaks.length)
     assert.deepEqual(evidence.cleanupRemaining, [])
@@ -110,40 +130,77 @@ test('runner timeout fails before killing its own process tree', { timeout: 3000
   }
 })
 
+test('capture deadline never releases a late workload', { timeout: 30000 }, async () => {
+  const output = await mkdtemp(join(tmpdir(), 'lifecycle-capture-timeout-'))
+  const marker = join(output, 'started')
+  let calls = 0
+  try {
+    await assert.rejects(
+      runObserved(
+        process.execPath,
+        [
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); setInterval(()=>{},1000)`
+        ],
+        'capture-timeout',
+        { ...process.env, LIFECYCLE_OUTPUT: output },
+        100,
+        {
+          readTable: async () => {
+            if (++calls === 2) await new Promise((resolve) => setTimeout(resolve, 500))
+            return processTable()
+          }
+        }
+      ),
+      /incomplete/
+    )
+    await assert.rejects(readFile(marker), { code: 'ENOENT' })
+    const report = JSON.parse(await readFile(join(output, (await readdir(output))[0]), 'utf8'))
+    assert.ok(report.errors.includes('runner-not-started'))
+    assert.deepEqual(report.cleanupRemaining, [])
+  } finally {
+    await rm(output, { recursive: true, force: true })
+  }
+})
+
 test('runner rejects missing, skipped, stale, duplicate and incomplete scenario evidence', () => {
-  const tap = '# tests 8\n# pass 8\n# fail 0\n# skipped 0\n# cancelled 0\n# todo 0\n'
+  const tap = `# tests ${DETECTOR_COUNT}\n# pass ${DETECTOR_COUNT}\n# fail 0\n# skipped 0\n# cancelled 0\n# todo 0\n`
   assert.equal(validateDetectorTap(tap), true)
   for (const bad of [
     '',
-    tap.replace('tests 8', 'tests 0'),
+    tap.replace(`tests ${DETECTOR_COUNT}`, 'tests 0'),
     tap.replace('skipped 0', 'skipped 1'),
     tap.replace('fail 0', 'fail 1')
   ])
     assert.equal(validateDetectorTap(bad), false)
+  const provenance = { runId: 'run', sourceSha: 'a'.repeat(40), harnessSha256: 'b'.repeat(64) }
   const reports = CORE_SCENARIOS.map((scenario) => ({
+    ...provenance,
     scenario,
     runId: 'run',
     schemaVersion: 1,
     sourceSha: 'a'.repeat(40),
     platform: process.platform,
     identities: [{ pid: 1, created: 1 }],
-    checkpoints: [
-      'product-stop',
-      'borrowed-survives-detach',
-      'generation-0-exited',
-      'generation-1-exited'
-    ].map((label) => ({ label, status: 'passed' })),
+    checkpoints: CORE_CHECKPOINTS[scenario].map((label) => ({ label, status: 'passed' })),
     errors: [],
     cleanup: [{ pid: 1, created: 1, action: 'absent' }],
     cleanupRemaining: []
   }))
-  assert.ok(validateCoreEvidence(reports, 'run').every((item) => item.status === 'passed'))
+  assert.ok(validateCoreEvidence(reports, provenance).every((item) => item.status === 'passed'))
   assert.ok(
-    validateCoreEvidence(reports, 'stale-run').every((item) => item.status === 'not-executed')
+    validateCoreEvidence(reports, { ...provenance, runId: 'stale-run' }).every(
+      (item) => item.status === 'not-executed'
+    )
   )
   for (const replacement of [
     undefined,
+    { ...reports[0], sourceSha: 'c'.repeat(40) },
+    { ...reports[0], harnessSha256: 'c'.repeat(64) },
+    { ...reports[0], platform: 'other-platform' },
     { ...reports[0], checkpoints: [] },
+    { ...reports[0], checkpoints: [{ label: 'unrelated', status: 'passed' }] },
+    { ...reports[0], checkpoints: [...reports[0].checkpoints, ...reports[0].checkpoints] },
     { ...reports[0], checkpoints: [{ status: 'skipped' }] },
     { ...reports[0], cleanupRemaining: [{ pid: 1 }] },
     { ...reports[0], errors: ['blocked'] },
@@ -151,7 +208,117 @@ test('runner rejects missing, skipped, stale, duplicate and incomplete scenario 
   ]) {
     const changed = reports.slice(1)
     if (replacement) changed.push(replacement)
-    assert.notEqual(validateCoreEvidence(changed, 'run')[0].status, 'passed')
+    assert.notEqual(validateCoreEvidence(changed, provenance)[0].status, 'passed')
   }
-  assert.equal(validateCoreEvidence([...reports, reports[0]], 'run')[0].status, 'failed')
+  assert.equal(validateCoreEvidence([...reports, reports[0]], provenance)[0].status, 'failed')
 })
+
+test(
+  'runner waits for initial capture before releasing the workload',
+  { timeout: 30000 },
+  async () => {
+    const output = await mkdtemp(join(tmpdir(), 'lifecycle-capture-'))
+    const marker = join(output, 'started')
+    let calls = 0
+    try {
+      const baseline = await processTable()
+      assert.equal(
+        await runObserved(
+          process.execPath,
+          ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started')`],
+          'delayed-capture',
+          { ...process.env, LIFECYCLE_OUTPUT: output },
+          10000,
+          {
+            readTable: async () => {
+              if (++calls <= 3) {
+                await assert.rejects(readFile(marker), { code: 'ENOENT' })
+                return baseline
+              }
+              return processTable()
+            }
+          }
+        ),
+        true
+      )
+      assert.ok(calls > 3)
+      assert.equal(await readFile(marker, 'utf8'), 'started')
+    } finally {
+      await rm(output, { recursive: true, force: true })
+    }
+  }
+)
+
+test(
+  'failed initial capture reaps the gate without starting descendants',
+  { timeout: 30000 },
+  async () => {
+    const output = await mkdtemp(join(tmpdir(), 'lifecycle-capture-failure-'))
+    const marker = join(output, 'started')
+    let calls = 0
+    let captured = []
+    try {
+      await assert.rejects(
+        runObserved(
+          process.execPath,
+          [
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); setInterval(()=>{},1000)`
+          ],
+          'capture-failure',
+          { ...process.env, LIFECYCLE_OUTPUT: output },
+          10000,
+          {
+            readTable: async () => {
+              const table = await processTable()
+              if (++calls === 2) {
+                captured = table.filter((item) => item.parentPid === process.pid)
+                throw new Error('initial-observation-failed')
+              }
+              return table
+            }
+          }
+        ),
+        /incomplete/
+      )
+      await assert.rejects(readFile(marker), { code: 'ENOENT' })
+      assert.ok(captured.length > 0)
+      const current = await processTable()
+      assert.ok(
+        captured.every(
+          (item) => !current.some((now) => isSameProcess(item, now) && now.status !== 'zombie')
+        )
+      )
+      const report = JSON.parse(await readFile(join(output, (await readdir(output))[0]), 'utf8'))
+      assert.ok(report.errors.includes('runner-not-started'))
+      assert.deepEqual(report.cleanupRemaining, [])
+    } finally {
+      await rm(output, { recursive: true, force: true })
+    }
+  }
+)
+
+test(
+  'missing workload executable fails and leaves no observed process',
+  { timeout: 30000 },
+  async () => {
+    const output = await mkdtemp(join(tmpdir(), 'lifecycle-spawn-failure-'))
+    try {
+      await assert.rejects(
+        runObserved(
+          join(output, 'missing-executable'),
+          [],
+          'spawn-failure',
+          { ...process.env, LIFECYCLE_OUTPUT: output },
+          10000
+        ),
+        /incomplete/
+      )
+      const report = JSON.parse(await readFile(join(output, (await readdir(output))[0]), 'utf8'))
+      assert.ok(report.errors.includes('scenario-operation-failed'))
+      assert.deepEqual(report.cleanupRemaining, [])
+    } finally {
+      await rm(output, { recursive: true, force: true })
+    }
+  }
+)

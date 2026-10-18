@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { spawn, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { realpathSync } from 'node:fs'
 import { mkdir, readdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,28 +9,30 @@ import { resolve, join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LifecycleObserver, isSameProcess, harnessDigest } from './observer.mjs'
 
-export const CORE_SCENARIOS = [
-  'verification-normal',
-  'verification-failure',
-  'verification-cancel',
-  'verification-timeout',
-  'mcp-normal',
-  'mcp-cancel',
-  'mcp-timeout',
-  'agent-stop',
-  'agent-recovery',
-  'kernel-host-stop',
-  'shell-recovery',
-  'backend-startup-failure',
-  'runtime-borrowed',
-  'runtime-owned-generations'
-]
+export const CORE_CHECKPOINTS = {
+  'verification-normal': ['product-stop'],
+  'verification-failure': ['product-stop'],
+  'verification-cancel': ['product-stop'],
+  'verification-timeout': ['product-stop'],
+  'mcp-normal': ['diagnostic-returned'],
+  'mcp-cancel': ['diagnostic-returned'],
+  'mcp-timeout': ['diagnostic-returned'],
+  'agent-stop': ['agent-tree-stopped'],
+  'agent-recovery': ['agent-tree-stopped'],
+  'kernel-host-stop': ['kernel-host-and-workload-exited'],
+  'shell-recovery': ['shell-recovered'],
+  'backend-startup-failure': ['failed-start-exited'],
+  'runtime-borrowed': ['borrowed-survives-detach', 'generation-0-exited'],
+  'runtime-owned-generations': ['generation-0-exited', 'generation-1-exited']
+}
+export const CORE_SCENARIOS = Object.keys(CORE_CHECKPOINTS)
+export const DETECTOR_COUNT = 12
 
 export function validateDetectorTap(tap) {
   const count = (name) => Number(tap.match(new RegExp(`^# ${name} (\\d+)$`, 'm'))?.[1])
   return (
-    count('tests') === 8 &&
-    count('pass') === 8 &&
+    count('tests') === DETECTOR_COUNT &&
+    count('pass') === DETECTOR_COUNT &&
     count('fail') === 0 &&
     count('skipped') === 0 &&
     count('cancelled') === 0 &&
@@ -37,22 +40,20 @@ export function validateDetectorTap(tap) {
   )
 }
 
-export function validateCoreEvidence(reports, runId) {
+export function validateCoreEvidence(reports, { runId, sourceSha, harnessSha256 }) {
   return CORE_SCENARIOS.map((scenario) => {
     const matching = reports.filter(
       (report) => report.runId === runId && report.scenario === scenario
     )
     const report = matching[0]
-    const required =
-      scenario === 'runtime-borrowed'
-        ? ['borrowed-survives-detach', 'generation-0-exited']
-        : scenario === 'runtime-owned-generations'
-          ? ['generation-0-exited', 'generation-1-exited']
-          : undefined
+    const required = CORE_CHECKPOINTS[scenario]
     const complete =
       matching.length === 1 &&
       report.schemaVersion === 1 &&
       /^[a-f0-9]{40}$/.test(report.sourceSha) &&
+      report.sourceSha === sourceSha &&
+      /^[a-f0-9]{64}$/.test(report.harnessSha256) &&
+      report.harnessSha256 === harnessSha256 &&
       report.platform === process.platform &&
       report.identities?.length > 0 &&
       report.identities.every(
@@ -62,12 +63,11 @@ export function validateCoreEvidence(reports, runId) {
           Number.isFinite(identity.created) &&
           identity.created > 0
       ) &&
-      report.checkpoints?.length > 0 &&
-      report.checkpoints.every((checkpoint) => checkpoint.status === 'passed') &&
-      (!required ||
-        required.every((label) =>
-          report.checkpoints.some((checkpoint) => checkpoint.label === label)
-        )) &&
+      report.checkpoints?.length === required.length &&
+      report.checkpoints.every(
+        (checkpoint, index) =>
+          checkpoint.status === 'passed' && checkpoint.label === required[index]
+      ) &&
       Array.isArray(report.errors) &&
       report.errors.length === 0 &&
       Array.isArray(report.cleanup) &&
@@ -84,38 +84,69 @@ export function validateCoreEvidence(reports, runId) {
   })
 }
 
-export async function runObserved(command, args, label, environment, timeoutMs) {
+export async function runObserved(
+  command,
+  args,
+  label,
+  environment,
+  timeoutMs,
+  { readTable } = {}
+) {
   const observer = new LifecycleObserver(`runner-${label}`, {
-    output: environment.LIFECYCLE_OUTPUT
+    output: environment.LIFECYCLE_OUTPUT,
+    readTable
   })
   await observer.start()
-  const child = spawn(command, args, {
+  // No workload can spawn until the independent observer has captured this owned gate.
+  // If capture fails, killing this exact ChildProcess cannot leave unseen descendants.
+  const gate = `
+const { spawn } = require('node:child_process');
+process.once('message', ({ command, args }) => {
+  const child = spawn(command, args, { stdio: 'inherit' });
+  child.once('error', () => process.exit(1));
+  child.once('exit', code => process.exit(code ?? 1));
+});
+process.send('ready');`
+  const child = spawn(process.execPath, ['-e', gate], {
     env: environment,
-    stdio: 'inherit'
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc']
   })
   const completed = new Promise((fulfill) => {
     child.once('error', () => fulfill({ code: null, reason: 'spawn-failed' }))
     child.once('exit', (code) => fulfill({ code }))
   })
+  const controller = new AbortController()
+  const ready = once(child, 'message', { signal: controller.signal })
   let timer,
     sampling,
     stopped = false,
+    released = false,
     observationFailed = false
   let result
+  const capture = (async () => {
+    await ready
+    await observer.observe(child.pid, 'owned', 1, { signal: controller.signal })
+  })()
   try {
-    await observer.observe(child.pid)
-    sampling = (async () => {
-      while (!stopped) {
-        try {
-          await observer.sample()
-        } catch {
-          observationFailed = true
-        }
-        await new Promise((fulfill) => setTimeout(fulfill, 200))
-      }
-    })()
     result = await Promise.race([
-      completed,
+      capture.then(() => {
+        if (stopped) return { code: null, reason: 'capture-timeout' }
+        released = true
+        child.send({ command, args }, (error) => {
+          if (error) observationFailed = true
+        })
+        sampling = (async () => {
+          while (!stopped) {
+            try {
+              await observer.sample()
+            } catch {
+              observationFailed = true
+            }
+            await new Promise((fulfill) => setTimeout(fulfill, 200))
+          }
+        })()
+        return completed
+      }),
       new Promise((fulfill) => {
         timer = setTimeout(() => fulfill({ code: null, reason: 'timeout' }), timeoutMs)
       })
@@ -131,6 +162,18 @@ export async function runObserved(command, args, label, environment, timeoutMs) 
   } finally {
     clearTimeout(timer)
     stopped = true
+    controller.abort()
+    // Record the failure before direct cleanup, even when no OS identity was captured.
+    if (!released) {
+      observer.errors.push('runner-not-started')
+      try {
+        await observer.save()
+      } finally {
+        child.kill('SIGKILL')
+        await completed
+      }
+    }
+    await capture.catch(() => undefined)
     await sampling
     await observer.finish(observationFailed || result?.code !== 0)
   }
@@ -218,7 +261,7 @@ async function main() {
         if (name.endsWith('.json') && name !== 'summary.json')
           reports.push(JSON.parse(await readFile(join(output, name), 'utf8')))
       }
-      summary.scenarios = validateCoreEvidence(reports, runId)
+      summary.scenarios = validateCoreEvidence(reports, summary)
       const vitest = JSON.parse(await readFile(resultPath, 'utf8'))
       summary.testCounts = {
         total: vitest.numTotalTests,
