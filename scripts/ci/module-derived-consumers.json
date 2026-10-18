@@ -1,6 +1,15 @@
 {
   "schemaVersion": 1,
   "modules": {
+    "literature_presentation_model": [
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+    ],
     "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"]
   }
 }
