@@ -5,12 +5,8 @@
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
-    "host_runtime_ports": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
-    "host_value_guards": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
+    "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
@@ -21,29 +17,15 @@
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/windows-install-progress.test.ts"
     ],
-    "package_literature_citations": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
-    "package_literature_library": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
-    "package_literature_reading": [
-      "src/main/settings/codex-bridge-tools.test.ts"
-    ],
+    "package_literature_citations": ["src/main/update/windows-update-handoff.test.ts"],
+    "package_literature_library": ["src/main/update/windows-update-handoff.test.ts"],
+    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
     "renderer_desktop_recovery": [
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx"
     ],
-    "renderer_upload_transfer": [
-      "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
-    ],
-    "resilient_download": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
-    "skill_package": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
-    "workspace_page": [
-      "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
-    ]
+    "renderer_upload_transfer": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
+    "resilient_download": ["src/main/update/windows-update-handoff.test.ts"],
+    "skill_package": ["src/main/update/windows-update-handoff.test.ts"],
+    "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"]
   }
 }
