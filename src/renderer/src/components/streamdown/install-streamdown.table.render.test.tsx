@@ -5,7 +5,32 @@ import { Streamdown } from 'streamdown'
 
 import { installStreamdown } from './install-streamdown'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+it('closes a focused table dialog with Escape when reduced motion is enabled', async () => {
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+  const uninstall = installStreamdown()
+  try {
+    const { container } = render(
+      <div className="agent-markdown-root">
+        <Streamdown mode="static">{'| Name | Value |\n| --- | --- |\n| alpha | 1 |'}</Streamdown>
+      </div>
+    )
+    fireEvent.click(container.querySelector('button[title="View fullscreen"]')!)
+    await vi.waitFor(() =>
+      expect(document.activeElement?.getAttribute('title')).toBe('Exit fullscreen')
+    )
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-streamdown="table-fullscreen"]')).toBeNull()
+    )
+  } finally {
+    uninstall()
+  }
+})
 
 it('expands the clicked table inside a positioned conversation, not the first table', async () => {
   const uninstall = installStreamdown()

@@ -744,7 +744,12 @@ const installFullscreenDialogAdapter = (): (() => void) => {
       return
     }
 
-    if (event.key !== 'Escape' || !closeAfterAnimation(overlay)) return
+    if (event.key !== 'Escape') return
+    const closeButton = findFullscreenCloseButton(overlay)
+    if (!closeButton) return
+
+    // Streamdown's panel stops key bubbling, so reduced motion must close here too.
+    if (!closeAfterAnimation(overlay)) closeButton.click()
 
     event.preventDefault()
     event.stopImmediatePropagation()
