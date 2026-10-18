@@ -989,7 +989,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     const advisory = name === 'nightly.yml' ? " || steps.advisory.outputs.ok != 'true'" : ''
     expect(script.env?.CONCLUSION).toBe(
       name === 'source-regression.yml'
-        ? "${{ needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}"
+        ? "${{ needs.macos_setup.result == 'success' && needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}"
         : `\${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')${advisory}) && 'failure' || 'success' }}`
     )
     if (name === 'nightly.yml') {

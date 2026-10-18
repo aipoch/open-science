@@ -245,18 +245,22 @@ it('retains all deferred Mac suites in the nightly job and fails on missing exec
   ]) {
     expect(steps.some(({ run }) => run?.includes(command))).toBe(true)
   }
-  const enforce = steps.find(
-    ({ name }) => name === 'Enforce complete Mac core and presentation suites'
-  )!
-  const env = {
-    ...process.env,
-    FUNCTIONAL: 'success',
-    WORKSPACE: 'success',
-    PRESENTATION: 'success',
-    ACCESSIBILITY: 'success'
-  }
-  expect(spawnSync('bash', ['-c', enforce.run!], { env }).status).toBe(0)
-  for (const key of ['FUNCTIONAL', 'WORKSPACE', 'PRESENTATION', 'ACCESSIBILITY']) {
+  const enforce = steps.find(({ name }) => name === 'Enforce selected Mac suite')!
+  for (const [group, key] of [
+    ['functional', 'FUNCTIONAL'],
+    ['workspace', 'WORKSPACE'],
+    ['presentation', 'PRESENTATION'],
+    ['presentation', 'ACCESSIBILITY']
+  ]) {
+    const env = {
+      ...process.env,
+      GROUP: group,
+      FUNCTIONAL: 'success',
+      WORKSPACE: 'success',
+      PRESENTATION: 'success',
+      ACCESSIBILITY: 'success'
+    }
+    expect(spawnSync('bash', ['-c', enforce.run!], { env }).status).toBe(0)
     expect(
       spawnSync('bash', ['-c', enforce.run!], { env: { ...env, [key]: 'skipped' } }).status
     ).toBe(1)
