@@ -46,6 +46,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         ],
         { encoding: 'utf8', timeout: 10_000 }
       )
+      expect(acl.error, acl.stderr || acl.stdout).toBeUndefined()
       expect(acl.status, acl.stderr || acl.stdout).toBe(0)
       const operations = join(root, 'operations')
       const operationId = randomUUID()
@@ -90,8 +91,9 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         resolve('build/windows-runtime-cache-uninstall.ps1'),
         join(root, 'windows-runtime-cache-uninstall.ps1')
       )
-      const run = (): ReturnType<typeof spawnSync> =>
-        spawnSync(
+      const run = (stage: string): ReturnType<typeof spawnSync> => {
+        const started = Date.now()
+        const result = spawnSync(
           join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
           [
             '-NoProfile',
@@ -105,7 +107,13 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           ],
           { encoding: 'utf8', timeout: 30_000 }
         )
-      const result = run()
+        expect(
+          result.error,
+          `${stage} after ${Date.now() - started} ms\n${result.stderr || result.stdout}`
+        ).toBeUndefined()
+        return result
+      }
+      const result = run('initial uninstall')
       if (scenario === 'active') {
         expect(result.status).not.toBe(0)
         expect(result.stderr).toContain('still active')
@@ -113,10 +121,16 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       const removed =
         scenario === 'unknown' || scenario === 'partial' || scenario.startsWith('reused-')
       expect(existsSync(directory)).toBe(!removed)
-      if (removed) expect(run().status).toBe(0)
+      if (removed) {
+        const retry = run('idempotent uninstall')
+        expect(retry.status, retry.stderr || retry.stdout).toBe(0)
+      }
       if (scenario === 'foreign')
         expect(readFileSync(join(directory, 'unrelated-file'), 'utf8')).toBe('preserve')
       expect(process.kill(process.pid, 0)).toBe(true)
-    }
+    },
+    // Cover ACL setup (10 s), both bounded PowerShell calls (30 s each), and fixture assertions.
+    // The default 15 s test limit can expire even when every child completes within its budget.
+    75_000
   )
 })
