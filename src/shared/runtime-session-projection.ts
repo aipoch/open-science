@@ -27,6 +27,7 @@ import {
 } from './conversation-graph'
 import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
 import { createRuntimeAgentMessageId } from './runtime-message-identity'
+import { resolveRuntimeToolActivityId } from './runtime-tool-identity'
 import {
   isInLatestTurn,
   legacySessionStateForOutcome,
@@ -511,18 +512,7 @@ export const applyRuntimeSessionEvents = (
       message.updatedAt = Math.max(message.updatedAt, event.timestamp)
       branch.updatedAt = Math.max(branch.updatedAt, event.timestamp)
     } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
-      // Codex reuses synthetic MCP startup ids after restarting its adapter. Keep each turn's
-      // failure evidence distinct, including continuation Branches retaining the same prompt.
-      const isMcpStartup = event.toolCallId.startsWith('mcp_startup.')
-      const toolCallId = isMcpStartup
-        ? `runtime-mcp-startup:${JSON.stringify([
-            scope.agentFrameId,
-            scope.messageBranchId,
-            scope.promptMessageId,
-            scope.runtimeSegmentId,
-            event.toolCallId
-          ])}`
-        : event.toolCallId
+      const toolCallId = resolveRuntimeToolActivityId(event.toolCallId, scope, graph.activities)
       if (event.kind === 'compaction') completeGroups(graph.activityGroups, scope, event.timestamp)
       if (
         event.kind === 'tool' &&
@@ -552,18 +542,6 @@ export const applyRuntimeSessionEvents = (
           agentFrameId === scope.agentFrameId &&
           messageBranchId === scope.messageBranchId
       )
-      // Older sessions store the provider id directly. Reuse that record only within its
-      // original scope, preserving references and event deduplication without a migration.
-      if (!activity && isMcpStartup) {
-        activity = graph.activities.find(
-          (candidate) =>
-            candidate.id === event.toolCallId &&
-            candidate.agentFrameId === scope.agentFrameId &&
-            candidate.messageBranchId === scope.messageBranchId &&
-            candidate.promptMessageId === scope.promptMessageId &&
-            candidate.runtimeSegmentId === scope.runtimeSegmentId
-        )
-      }
       if (activity?.eventIds.includes(event.id)) continue
       const status = toolStatus(event.status === 'cancelled' ? 'completed' : event.status)
       if (!activity) {

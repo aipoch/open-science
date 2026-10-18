@@ -15,6 +15,7 @@ import {
   type PersistedChatSession,
   type SaveSessionOptions
 } from '../../../../shared/session-persistence'
+import { applyRuntimeSessionEvents } from '../../../../shared/runtime-session-projection'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1873,6 +1874,67 @@ describe('workspace runtime events', () => {
     syncWorkspaceAgentFirstOutputState([])
     syncWorkspaceAgentFirstOutputState(['transport-session-1'])
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+  })
+
+  it('replays MCP startup evidence and projects an admitted continuation beside a legacy record', async () => {
+    const initial = toPersistedSession(useSessionStore.getState().sessions[0])
+    const graph = initial.conversationGraph!
+    const promptMessageId = initial.messages[0].id
+    const scope = {
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: graph.branches[0].id,
+      promptMessageId,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    }
+    const startup = createEvent({
+      id: 'startup-original',
+      kind: 'tool',
+      toolCallId: 'mcp_startup.example',
+      status: 'failed',
+      title: 'mcp__example__startup',
+      promptMessageId
+    })
+    const saved = applyRuntimeSessionEvents(initial, scope, [startup])
+    saved.conversationGraph!.activities[0].id = startup.toolCallId!
+    saved.activities![0].id = startup.toolCallId!
+    saved.conversationGraph!.runtimeSegments.push({
+      ...graph.runtimeSegments[0],
+      id: 'continued-segment',
+      startedAt: Date.now() + 1
+    })
+    const continuedScope = { ...scope, runtimeSegmentId: 'continued-segment' }
+    saved.runtimeSessionAdmissions = [
+      {
+        ...continuedScope,
+        executionId: 'continued-execution',
+        rootFrameId: graph.rootFrameId,
+        promptRuntimeSegmentId: scope.runtimeSegmentId
+      }
+    ]
+    saved.runtimeTranscriptOwner = 'main'
+    useSessionStore.getState().hydrateSessions([saved])
+    useSessionStore.getState().setAwaitingFirstAgentOutput(initial.id, false)
+    await applyWorkspaceRuntimeEvent(startup)
+    expect(useSessionStore.getState().sessions[0].activities).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    const retry = {
+      ...startup,
+      id: 'startup-continuation',
+      promptExecutionId: 'continued-execution',
+      timestamp: Date.now() + 2
+    }
+    await applyWorkspaceRuntimeEvent(retry)
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.awaitingFirstAgentOutput).toBe(true)
+    expect(projected.activities?.map(({ id }) => id)).toEqual(
+      applyRuntimeSessionEvents(saved, continuedScope, [retry]).activities!.map(({ id }) => id)
+    )
+    expect(toPersistedSession(projected).conversationGraph?.activities.at(-1)).toMatchObject({
+      ...continuedScope,
+      eventIds: [retry.id]
+    })
+    await applyWorkspaceRuntimeEvent(retry)
+    expect(useSessionStore.getState().sessions[0].activities).toHaveLength(2)
   })
 
   it('keeps first-output waiting through tools and filtered Agent diagnostics', async () => {
