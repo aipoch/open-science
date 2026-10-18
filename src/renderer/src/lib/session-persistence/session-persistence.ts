@@ -2454,14 +2454,19 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (
         !source ||
         source.projectId !== scope.projectId ||
-        source.activeRun?.promptMessageId !== event.promptMessageId ||
-        source.activeRun?.startedAt !== scope.startedAt
+        (source.activeRun
+          ? source.activeRun.promptMessageId !== event.promptMessageId ||
+            source.activeRun.startedAt !== scope.startedAt
+          : !authority || source.resumeRecovery?.promptMessageId !== event.promptMessageId)
       )
         continue
+      // A local interruption may already have released activeRun. Its matching recovery target
+      // still needs Main's storage-failure overlay, or the obsolete Resume notice remains visible.
       // Ordinary sends have no renderer-only Resume segment alias. Match Main's admission
       // instead, and never let an old failed execution release a newer attempt on this prompt.
       const admission = (
-        source.runtimeSessionAdmissions ?? authority?.runtimeSessionAdmissions
+        source.runtimeSessionAdmissions ??
+        (source.activeRun ? authority?.runtimeSessionAdmissions : undefined)
       )?.findLast((candidate) => candidate.promptMessageId === event.promptMessageId)
       if (
         admission
@@ -2469,7 +2474,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             admission.agentFrameId !== scope.agentFrameId ||
             admission.messageBranchId !== scope.messageBranchId ||
             admission.runtimeSegmentId !== scope.runtimeSegmentId
-          : event.terminalCommitFailure !== 'missing-record'
+          : !source.activeRun || event.terminalCommitFailure !== 'missing-record'
       )
         continue
       if (!authority) {
@@ -2683,6 +2688,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
         unresolvedSessionRevisionConflictTargets.clear()
         revisionConflictTargets.current.clear()
         setIsHydrated(true)
+        setLoadError(undefined)
+        setLoadWarning(undefined)
         const loadWarnings = result.diagnostics?.warnings ?? []
         const sessionWarningCount = loadWarnings.filter(
           (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
@@ -2696,12 +2703,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
 
         if (result.diagnostics?.isComplete === false) {
+          setIsReady(false)
           setLoadError(
             result.diagnostics.failure === 'startup-reconciliation-failed'
               ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
               : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
           )
           setIsLoading(false)
+          // Transport recovered; the existing storage notice and write gates own this failure.
+          if (recovering) completeDesktopSessionRecovery(recovery.epoch, true)
           return
         }
 
@@ -2975,7 +2985,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   return {
     isHydrated,
     isLoading,
-    isReady,
+    isReady: isReady && recovery.phase === 'connected',
     hasCompleteSessionCatalog,
     catalogRecovery,
     canDeleteSessionsAndProjects,

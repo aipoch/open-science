@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -1403,6 +1404,38 @@ describe('installManagedCodex', () => {
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
+  })
+})
+
+describe('Codex authentication repair', () => {
+  it('repairs the pinned authentication method in an installed adapter and remains idempotent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-repair-'))
+    try {
+      const method = await readFile(
+        new URL('./fixtures/codex-acp-1.6.2-authentication-status.txt', import.meta.url),
+        'utf8'
+      )
+      const adapterPath = join(root, 'index.js')
+      await writeFile(
+        adapterPath,
+        withPinnedSkillMapper(`class Client {${method}}\n// Other pinned patch targets`)
+      )
+      await ensureManagedCodexContextUsage(adapterPath)
+      const repaired = await readFile(adapterPath, 'utf8')
+      const Client = runInNewContext(
+        `${repaired.split('// Other pinned patch targets')[0]}\nClient`
+      )
+      const client = new Client()
+      client.getCurrentModelProvider = async () => 'open-science-chatgpt-https'
+      client.getAccount = async () => ({ requiresOpenaiAuth: true, account: null })
+      expect((await client.getAuthenticationStatus()).type).toBe('unauthenticated')
+      client.getAccount = async () => ({ requiresOpenaiAuth: false, account: null })
+      expect((await client.getAuthenticationStatus()).type).toBe('gateway')
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(repaired)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

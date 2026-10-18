@@ -50,6 +50,17 @@
     "Quit app": "Выйти из приложения"
   },
   "native": {
+    "Local State is in use by another process.": "Local State используется другим процессом.",
+    "The Local State configuration file could not be read.": "Не удалось прочитать файл конфигурации Local State.",
+    "The Local State configuration file is invalid.": "Файл конфигурации Local State недействителен.",
+    "The encryption key is missing from Local State.": "В Local State отсутствует ключ шифрования.",
+    "The encryption key in Local State is invalid.": "Ключ шифрования в Local State недействителен.",
+    "Local State changed during credential validation.": "Local State изменился во время проверки учётных данных.",
+    "The Windows credential validator could not start.": "Не удалось запустить программу проверки учётных данных Windows.",
+    "The Windows credential validator timed out.": "Истекло время ожидания программы проверки учётных данных Windows.",
+    "The Windows credential validator failed.": "Программа проверки учётных данных Windows завершилась с ошибкой.",
+    "Windows credential validation is unavailable on this system.": "Проверка учётных данных Windows недоступна в этой системе.",
+    "Windows could not decrypt the existing credential key.": "Windows не удалось расшифровать существующий ключ учётных данных.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
     "Credential storage needs recovery": "Необходимо восстановить хранилище учётных данных",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Этот механизм хранения системных учётных данных не поддерживает проверку идентификатора без взаимодействия с пользователем. Запуск остановлен для сохранения существующих зашифрованных данных.",
@@ -145,11 +156,18 @@
     "Retry startup": "Повторить запуск",
     "Open startup logs": "Открыть журналы запуска",
     "Could not open the logs folder.": "Не удалось открыть папку журналов.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены.",
+    "Installing the Open-Science update…": "Установка обновления Open-Science…",
+    "Opening the updated Open-Science…": "Открытие обновлённого Open-Science…",
+    "The Open-Science update could not finish.": "Не удалось завершить обновление Open-Science.",
+    "Close update window": "Закрыть окно обновления",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "Не удалось подтвердить состояние обновления. Закрытие этого окна не остановит установку."
   },
   "renderer": {
     "Content first": "Приоритет содержимого",
     "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Перевести основной текст и подписи, по возможности сохраняя изображения, таблицы, формулы, код и библиографию в исходном виде. Результат зависит от качества извлечения содержимого PDF. Снимите флажок, чтобы по возможности сохранить исходную вёрстку PDF.",
+    "Update preparation failed": "Не удалось подготовить обновление",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",
     "Your conversation is preserved. Try Resume again.": "Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "Агент не ответил вовремя. Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
@@ -7665,7 +7683,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Проверка незавершённых задач и возможности установки обновления.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Завершите работу в другом приложении и выйдите из него через меню, затем повторите проверку.",
     "Force update…": "Принудительно обновить…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "Установка началась, и её нельзя отменить. После установки приложение откроется снова.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "Установка началась, и её нельзя отменить. Это может занять несколько минут. Если система запросит разрешение, разрешите обновление, чтобы продолжить. После завершения установки приложение откроется снова.",
     "Installation result is unknown": "Результат установки неизвестен",
     "Installation starts only after shutdown has finished and its result is confirmed.": "Установка начинается только после завершения остановки и подтверждения её результата.",
     "Installing update…": "Установка обновления…",
@@ -7745,6 +7763,8 @@
     "Save body area": "Сохранить область основного текста",
     "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
-    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
+    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
+    "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены."
   }
 }

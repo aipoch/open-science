@@ -280,6 +280,7 @@
         "src/main/notifications/desktop-badge.ts",
         "src/main/permission-grants/capability.ts",
         "src/main/process-tree.ts",
+        "src/main/runtime-ownership.ts",
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
         "src/main/settings/agent-runtime-manager.ts",

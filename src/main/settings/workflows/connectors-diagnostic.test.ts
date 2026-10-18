@@ -1,4 +1,7 @@
 import { createRequire } from 'node:module'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -147,15 +150,54 @@ it.each(['streamable_http', 'sse'] as const)(
   15_000
 )
 
-it('bounds a stalled stdio server by the diagnostic timeout', async () => {
-  const { workflow } = makeWorkflow(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
-  await expect(workflow.testCustomServer({ id: 'fixture' })).resolves.toEqual({
-    success: false,
-    message: 'MCP connection timed out.',
-    stage: 'handshake',
-    code: 'timeout'
-  })
-}, 15_000)
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
+it.each(['timeout', 'cancelled'] as const)(
+  'waits for a stalled stdio server to exit after diagnostic %s',
+  async (reason) => {
+    const directory = await mkdtemp(join(tmpdir(), 'mcp-diagnostic-cleanup-'))
+    const pidFile = join(directory, 'server.pid')
+    const { workflow } = makeWorkflow(process.execPath, [
+      '-e',
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+       setInterval(() => {}, 1000)`
+    ])
+    const controller = new AbortController()
+    const pending = workflow.testCustomServer({ id: 'fixture' }, controller.signal)
+    let pid: number | undefined
+    try {
+      await vi.waitFor(
+        async () => {
+          pid = Number(await readFile(pidFile, 'utf8'))
+          expect(pid).toBeGreaterThan(0)
+        },
+        { timeout: 5_000 }
+      )
+      if (reason === 'cancelled') controller.abort()
+      await expect(pending).resolves.toMatchObject({
+        success: false,
+        stage: 'handshake',
+        code: reason
+      })
+      expect(isProcessAlive(pid!)).toBe(false)
+    } finally {
+      controller.abort()
+      await pending
+      // Assert before fixture cleanup: killing a leaked fixture must not turn the test green.
+      if (pid && isProcessAlive(pid)) process.kill(pid, 'SIGKILL')
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  20_000
+)
 
 it('distinguishes a missing executable without exposing its path', async () => {
   const missing =

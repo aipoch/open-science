@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { CredentialIdentityError } from './credential-identity/selection'
+import { credentialDiagnosticSchema } from './credential-identity/diagnostic'
 
 // Only fixed diagnostic codes cross this private pipe. Never send messages, paths, keys or stacks.
 const credentialReasonSchema = z.enum([
@@ -34,13 +35,15 @@ export const backendStartupStatusSchema = z
     stage: z.enum(['bootstrap', 'credentials', 'storage', 'database', 'runtime', 'endpoint']),
     kind: z.enum(['progress', 'failed', 'ready']),
     code: z.enum(['credential-unavailable', 'startup-failed']).optional(),
-    reason: credentialReasonSchema.optional()
+    reason: credentialReasonSchema.optional(),
+    diagnostic: credentialDiagnosticSchema.optional()
   })
   .strict()
   .superRefine((status, context) => {
     if (
       (status.kind === 'failed') !== (status.code !== undefined) ||
-      (status.reason !== undefined && status.code !== 'credential-unavailable')
+      (status.reason !== undefined && status.code !== 'credential-unavailable') ||
+      (status.diagnostic !== undefined && status.code !== 'credential-unavailable')
     )
       context.addIssue({ code: 'custom', message: 'Invalid startup status fields.' })
   })
@@ -59,19 +62,26 @@ export class DesktopBackendStartupError extends Error {
     this.name = 'DesktopBackendStartupError'
     if (status?.code === 'credential-unavailable')
       this.credentialFailure = new CredentialIdentityError(
-        status.reason ?? 'credential-unavailable'
+        status.reason ?? 'credential-unavailable',
+        undefined,
+        status.diagnostic
       )
   }
 }
 
 // The reporter is owned by this launch attempt only. Its channel must not keep an otherwise
 // finished backend alive, and losing Electron must not terminate the independent Node runtime.
+// Capture the launch identity before the reporter removes it from the environment. The backend
+// uses the same value to bind a credential inventory handoff without leaking it to descendants.
+export let backendStartupAttemptId: string | undefined
+
 export function createBackendStartupReporter(): {
   phase(stage: BackendStartupStatus['stage']): void
   failed(error: unknown): void
   ready(): void
 } {
   const attemptId = process.env.OPEN_SCIENCE_STARTUP_ATTEMPT
+  backendStartupAttemptId = attemptId
   delete process.env.OPEN_SCIENCE_STARTUP_ATTEMPT
   if (attemptId) process.channel?.unref()
   let stage: BackendStartupStatus['stage'] = 'bootstrap'
@@ -99,12 +109,16 @@ export function createBackendStartupReporter(): {
       send({})
     },
     failed(error) {
+      const diagnostic = credentialDiagnosticSchema.safeParse(
+        error instanceof CredentialIdentityError ? error.diagnostic : undefined
+      )
       const reason =
         error instanceof CredentialIdentityError
           ? credentialReasonSchema.safeParse(error.reason)
           : undefined
       send({
         kind: 'failed',
+        ...(diagnostic.success ? { diagnostic: diagnostic.data } : {}),
         code:
           error instanceof CredentialIdentityError ? 'credential-unavailable' : 'startup-failed',
         ...(reason

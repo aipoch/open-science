@@ -61,6 +61,7 @@ export function createDesktopUpdateIntegration(options: {
   legacyInstall?(status: UpdateStatus): boolean
   preparedDebGate?(): DebSystemdGate | undefined
   verifyInstallerReady?(): Promise<void>
+  flushRenderer?(phase: 'preflight' | 'final'): Promise<void>
   validateConfiguration(config: RuntimeStartupOptions): void
   setClosing(value: boolean): void
   retainLease(lease: RuntimeDirectoryLease): void
@@ -294,6 +295,8 @@ export function createDesktopUpdateIntegration(options: {
   ): Promise<InstallReadiness> => {
     options.setClosing(true)
     try {
+      await options.flushRenderer?.('preflight')
+      checkCancellation()
       const result = (await options
         .client()
         .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
@@ -302,6 +305,18 @@ export function createDesktopUpdateIntegration(options: {
         return result
       }
       checkCancellation()
+      await options.flushRenderer?.('final')
+      checkCancellation()
+      options.onProgress?.({
+        recovery: {
+          phase: 'stopping',
+          runtime: 'running',
+          installation: 'unchanged',
+          canCancel: false,
+          canRecover: false,
+          canRetryInstall: false
+        }
+      })
       const lease = await options.client().stopRuntime()
       options.retainLease(lease)
       active.stopped = true
@@ -481,6 +496,8 @@ export function createDesktopUpdateIntegration(options: {
         options.setClosing(true)
         let stopped = false
         try {
+          await options.flushRenderer?.('preflight')
+          checkCancellation()
           const result = (await options
             .client()
             .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
@@ -488,6 +505,8 @@ export function createDesktopUpdateIntegration(options: {
             options.setClosing(false)
             return { ...result, recovery: recovery() }
           }
+          checkCancellation()
+          await options.flushRenderer?.('final')
           checkCancellation()
           record = advanceInstallationUpdate(options.location, record.operationId, 'stopping')
           publish()
@@ -519,6 +538,16 @@ export function createDesktopUpdateIntegration(options: {
       return exclusive(async () => {
         checkCancellation()
         if (legacy) {
+          options.onProgress?.({
+            recovery: {
+              phase: 'handoff',
+              runtime: 'stopped-clean',
+              installation: 'unchanged',
+              canCancel: false,
+              canRecover: false,
+              canRetryInstall: false
+            }
+          })
           options.onHandoff()
           return
         }
@@ -722,6 +751,18 @@ export function createDesktopUpdateIntegration(options: {
           try {
             if (active.stopped) await options.restart(active.config)
             else await options.client().invokeHost('desktop:update-abort')
+            options.onProgress?.({
+              recovery: active.stopped
+                ? undefined
+                : {
+                    phase: 'preparing',
+                    runtime: 'running',
+                    installation: 'unchanged',
+                    canCancel: true,
+                    canRecover: false,
+                    canRetryInstall: false
+                  }
+            })
           } finally {
             options.setClosing(false)
           }

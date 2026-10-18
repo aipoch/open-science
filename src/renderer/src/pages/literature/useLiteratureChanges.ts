@@ -1,4 +1,5 @@
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useCallback, useLayoutEffect, useRef } from 'react'
 
 export const isCollectionOnlyChange = (event?: LiteratureChangedEvent): boolean =>
@@ -67,6 +68,9 @@ export const useLiteratureChanges = (
     const remove = window.api?.literature?.onChanged?.(changed)
     const removeProjectDeleted = window.api?.projects?.onDeleted?.(refresh)
     const removeProjectCleanup = window.api?.projects?.onDeletionCleanupChanged?.(refresh)
+    const removeRecovery = useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+      if (state.phase === 'connected' && previous.phase !== 'connected') refresh()
+    })
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', visible)
     window.addEventListener('open-science:web-events-open', refresh)
@@ -77,6 +81,7 @@ export const useLiteratureChanges = (
       remove?.()
       removeProjectDeleted?.()
       removeProjectCleanup?.()
+      removeRecovery()
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('open-science:web-events-open', refresh)

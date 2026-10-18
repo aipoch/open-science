@@ -92,7 +92,7 @@ test('reacquires a mounted managed image capability after recovery', async () =>
       if (!pipe) throw new Error('Desktop pipe missing')
       pipe.destroy()
     })
-    await expect(page.getByRole('button', { name: 'Quit app', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Quit', exact: true })).toBeFocused()
     await page.keyboard.press('Tab')
     await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeFocused()
     await page.keyboard.press('Enter')

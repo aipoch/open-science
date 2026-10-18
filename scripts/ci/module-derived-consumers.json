@@ -1,6 +1,33 @@
 {
   "schemaVersion": 1,
   "modules": {
+    "host_runtime_lifecycle": [
+      "src/main/update/windows-install-progress.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
+    "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
+    "i18n_main_adapter": [
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/windows-install-progress.test.ts"
+    ],
+    "i18n_shared_runtime": [
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/windows-install-progress.test.ts"
+    ],
+    "literature_presentation_model": [
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+    ],
+    "package_literature_citations": ["src/main/update/windows-update-handoff.test.ts"],
+    "package_literature_library": ["src/main/update/windows-update-handoff.test.ts"],
     "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
     "package_pdf_translation": [
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
@@ -15,6 +42,17 @@
     ],
     "pdf_structure_engine": [
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
-    ]
+    ],
+    "renderer_desktop_recovery": [
+      "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+    ],
+    "renderer_upload_transfer": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
+    "resilient_download": ["src/main/update/windows-update-handoff.test.ts"],
+    "skill_package": ["src/main/update/windows-update-handoff.test.ts"],
+    "workspace_conversation": [
+      "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx"
+    ],
+    "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"]
   }
 }

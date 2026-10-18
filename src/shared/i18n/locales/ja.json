@@ -50,6 +50,17 @@
     "Quit app": "アプリを終了"
   },
   "native": {
+    "Local State is in use by another process.": "Local State は別のプロセスで使用されています。",
+    "The Local State configuration file could not be read.": "Local State 設定ファイルを読み取れませんでした。",
+    "The Local State configuration file is invalid.": "Local State 設定ファイルが無効です。",
+    "The encryption key is missing from Local State.": "Local State に暗号化キーがありません。",
+    "The encryption key in Local State is invalid.": "Local State の暗号化キーが無効です。",
+    "Local State changed during credential validation.": "認証情報の検証中に Local State が変更されました。",
+    "The Windows credential validator could not start.": "Windows 認証情報検証プログラムを起動できませんでした。",
+    "The Windows credential validator timed out.": "Windows 認証情報検証プログラムがタイムアウトしました。",
+    "The Windows credential validator failed.": "Windows 認証情報検証プログラムが失敗しました。",
+    "Windows credential validation is unavailable on this system.": "このシステムでは Windows 認証情報を検証できません。",
+    "Windows could not decrypt the existing credential key.": "Windows は既存の認証情報キーを復号できませんでした。",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux のシステム認証情報には、元々選択されていた Secret Service または KWallet バックエンドと /usr/bin/busctl が必要です。元の既定のキーリングまたはウォレットのロックを解除して再起動してください。この確認を回避するために password-store バックエンドやプロファイルを変更しないでください。",
     "Credential storage needs recovery": "認証情報ストレージの復旧が必要です",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "このシステムの認証情報バックエンドは、操作を求めない識別情報の確認に対応していません。既存の暗号化データを保持するため、起動を停止しました。",
@@ -142,11 +153,18 @@
     "Retry startup": "起動を再試行",
     "Open startup logs": "起動ログを開く",
     "Could not open the logs folder.": "ログフォルダーを開けませんでした。",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。"
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。",
+    "Installing the Open-Science update…": "Open-Science の更新をインストールしています…",
+    "Opening the updated Open-Science…": "更新された Open-Science を開いています…",
+    "The Open-Science update could not finish.": "Open-Science の更新を完了できませんでした。",
+    "Close update window": "更新ウィンドウを閉じる",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "更新の状態を確認できませんでした。このウィンドウを閉じてもインストールは停止しません。"
   },
   "renderer": {
     "Content first": "内容優先",
     "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "本文とキャプションを翻訳し、画像、表、数式、コード、参考文献は可能な限り元のまま保持します。結果は PDF の内容抽出の品質に左右されます。チェックを外すと、元の PDF のレイアウトを可能な限り維持します。",
+    "Update preparation failed": "更新の準備に失敗しました",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "アプリは開いたままです。問題を解決して再試行するか、更新をキャンセルして作業を続けてください。",
     "Select one or more options": "1つ以上の選択肢を選択",
     "Your conversation is preserved. Try Resume again.": "会話は保持されています。もう一度再開してください。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "エージェントが時間内に応答しませんでした。会話は保持されています。もう一度再開してください。",
@@ -7198,7 +7216,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "未完了のタスクと更新のインストール条件を確認しています。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "別のアプリで作業を終え、そのアプリのメニューから終了してから再確認してください。",
     "Force update…": "強制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "インストールが開始されており、キャンセルできません。インストール後にアプリが再度開きます。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "インストールが開始されており、キャンセルできません。数分かかる場合があります。システムから許可を求められた場合は、更新を許可して続行してください。インストールが完了すると、アプリが再度開きます。",
     "Installation result is unknown": "インストール結果を確認できません",
     "Installation starts only after shutdown has finished and its result is confirmed.": "終了処理が完了し、その結果を確認してからインストールを開始します。",
     "Installing update…": "更新をインストール中…",
@@ -7275,6 +7293,8 @@
     "Save body area": "本文領域を保存",
     "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
-    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
+    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
+    "Sign in to continue this conversation": "ログインしてこの会話を続ける",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。"
   }
 }

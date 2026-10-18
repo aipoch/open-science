@@ -82,11 +82,15 @@ export function createNodeSecureStorageCipher(
       }
       const wrapped = Buffer.from(state.os_crypt?.encrypted_key ?? '', 'base64')
       if (wrapped.subarray(0, 5).toString() !== 'DPAPI')
-        throw new CredentialIdentityError('windows-profile-key-unavailable')
+        throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
+          code: 'profile-key-invalid'
+        })
       const value = operations.unprotect(wrapped.subarray(5))
       if (value.length !== 32) {
         value.fill(0)
-        throw new CredentialIdentityError('windows-profile-key-unavailable')
+        throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
+          code: 'profile-key-invalid'
+        })
       }
       key = value
     } else {
@@ -218,11 +222,15 @@ export function initializeNodeWindowsProfileKey(profilePath: string): void {
     state = {}
   }
   if (!state || typeof state !== 'object' || Array.isArray(state))
-    throw new CredentialIdentityError('windows-profile-key-unavailable')
+    throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
+      code: 'profile-invalid-shape'
+    })
   const crypt = state.os_crypt as Record<string, unknown> | undefined
   if (crypt?.encrypted_key !== undefined) return
   if (crypt !== undefined && (!crypt || typeof crypt !== 'object' || Array.isArray(crypt)))
-    throw new CredentialIdentityError('windows-profile-key-unavailable')
+    throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
+      code: 'profile-invalid-shape'
+    })
   const key = randomBytes(32)
   try {
     const wrapped = Buffer.concat([Buffer.from('DPAPI'), nativeSecret('protect', [], key)])

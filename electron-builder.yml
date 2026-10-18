@@ -6,7 +6,7 @@ directories:
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,
 # electron-builder ships an incompletely-signed bundle that Gatekeeper flags as "damaged"
 # on downloaded/quarantined copies, so the app won't launch on other machines. See the hook.
-beforePack: build/stage-desktop-runtime.cjs
+beforePack: build/prepare-desktop.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
 files:
@@ -125,10 +125,14 @@ win:
     # primary executable cannot even pass `--version` on a particular Windows machine.
     - from: resources/bin/win/${arch}/micromamba-compat.exe
       to: micromamba-compat.exe
+    - from: build/windows-update-handoff-uninstall.ps1
+      to: windows-update-handoff-uninstall.ps1
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
     - from: build/windows-notebook-sandbox-uninstall.ps1
       to: windows-notebook-sandbox-uninstall.ps1
+    - from: build/windows-update-progress/build/Release/open-science-update-progress.exe
+      to: open-science-update-progress.exe
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json

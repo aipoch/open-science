@@ -1,3 +1,4 @@
+import { patchCodexAcpAuthenticationStatusSource } from './codex-authentication-status'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { randomUUID } from 'node:crypto'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
@@ -960,7 +961,9 @@ export const ensureManagedCodexContextUsage = async (adapterPath: string): Promi
       patchCodexAcpSkillInputSource(
         patchCodexAcpTurnUsageSource(
           patchCodexAcpContextUsageSource(
-            patchCodexAcpPromptFailureSource(patchCodexAcpCompactionSource(source))
+            patchCodexAcpPromptFailureSource(
+              patchCodexAcpCompactionSource(patchCodexAcpAuthenticationStatusSource(source))
+            )
           )
         )
       )

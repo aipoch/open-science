@@ -3,9 +3,11 @@ import {
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
+  synchronizeActiveConversationActivities,
   type PersistedMessageNode
 } from '../../../shared/conversation-graph'
 
+import { resolveRuntimeToolActivityId } from '../../../shared/runtime-tool-identity'
 import type { ElicitationAnswer } from '../../../shared/acp'
 import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../../shared/acp-usage-contract'
 import {
@@ -182,7 +184,8 @@ const projectSession = (
 
 const findOffBranchRunPrompt = (
   session: ChatSession,
-  promptMessageId: string | undefined
+  promptMessageId: string | undefined,
+  messageBranchId?: string
 ): PersistedMessageNode | undefined => {
   const graph = session.conversationGraph
   const promptId = promptMessageId ?? session.activeRun?.promptMessageId
@@ -193,7 +196,7 @@ const findOffBranchRunPrompt = (
   if (!graph || !prompt || !activeFrame) return undefined
   if (
     activeFrame.id === prompt.agentFrameId &&
-    activeFrame.activeBranchId === prompt.introducedOnBranchId
+    activeFrame.activeBranchId === (messageBranchId ?? prompt.introducedOnBranchId)
   )
     return undefined
   // A flat transcript that disagrees with its selected graph path is an existing integrity error,
@@ -211,12 +214,15 @@ const findOffBranchRunPrompt = (
 const projectRunBranch = (
   session: ChatSession,
   promptMessageId: string | undefined,
-  projector: (session: ChatSession) => ChatSession
+  projector: (session: ChatSession) => ChatSession,
+  messageBranchId?: string
 ): ChatSession => {
-  const prompt = findOffBranchRunPrompt(session, promptMessageId)
+  const prompt = findOffBranchRunPrompt(session, promptMessageId, messageBranchId)
   const graph = session.conversationGraph
   if (!graph || !prompt) return projector(session)
-  const runBranches = new Map([[prompt.agentFrameId, prompt.introducedOnBranchId]])
+  const runBranches = new Map([
+    [prompt.agentFrameId, messageBranchId ?? prompt.introducedOnBranchId]
+  ])
   let frame = graph.frames.find((candidate) => candidate.id === prompt.agentFrameId)
   // A hidden delegate also needs its ancestors on the branches containing each frame origin.
   // These selections exist only during projection; the caller's selections are restored below.
@@ -509,11 +515,67 @@ export const createSessionRunProjectionOwner = <
     upsertToolActivity: (input) => {
       if (!input.sessionId || !input.toolCallId || !input.eventId) return
       setSessionState((state) => ({
-        sessions: projectSession(state.sessions, input.sessionId, (session) =>
-          projectRunBranch(session, input.promptMessageId, (runSession) =>
+        sessions: projectSession(state.sessions, input.sessionId, (session) => {
+          const graph = session.conversationGraph
+          if (graph && input.toolCallId.startsWith('mcp_startup.')) {
+            // Durable event evidence also covers activities hidden by a continuation cutoff.
+            // Replaying one must not reintroduce it on the currently selected Branch.
+            if (graph.activities.some((activity) => activity.eventIds.includes(input.eventId)))
+              return session
+            const promptId = input.promptMessageId ?? session.activeRun?.promptMessageId
+            const prompt = graph.messages.find(({ id, role }) => id === promptId && role === 'user')
+            const frame = graph.frames.find(({ id }) => id === prompt?.agentFrameId)
+            if (prompt && frame) {
+              const admission = session.runtimeSessionAdmissions?.find(
+                (candidate) =>
+                  candidate.executionId === input.promptExecutionId &&
+                  candidate.promptMessageId === prompt.id &&
+                  candidate.agentFrameId === frame.id
+              )
+              const messageBranchId =
+                admission?.messageBranchId ??
+                (session.messages.some(({ id }) => id === prompt.id)
+                  ? frame.activeBranchId
+                  : prompt.introducedOnBranchId)
+              const runtimeSegmentId =
+                admission?.runtimeSegmentId ??
+                session.activeRunRuntimeSegmentId ??
+                prompt.runtimeSegmentId
+              if (runtimeSegmentId) {
+                const toolCallId = resolveRuntimeToolActivityId(
+                  input.toolCallId,
+                  {
+                    agentFrameId: frame.id,
+                    messageBranchId,
+                    promptMessageId: prompt.id,
+                    runtimeSegmentId
+                  },
+                  graph.activities
+                )
+                return projectRunBranch(
+                  session,
+                  prompt.id,
+                  (runSession) => {
+                    const projected = projectToolActivity(runSession, { ...input, toolCallId })
+                    return {
+                      ...projected,
+                      conversationGraph: synchronizeActiveConversationActivities(
+                        projected.conversationGraph!,
+                        projected.activities ?? [],
+                        projected.activityGroups ?? [],
+                        runtimeSegmentId
+                      )
+                    }
+                  },
+                  messageBranchId
+                )
+              }
+            }
+          }
+          return projectRunBranch(session, input.promptMessageId, (runSession) =>
             projectToolActivity(runSession, input)
           )
-        )
+        })
       }))
     },
 

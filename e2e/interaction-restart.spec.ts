@@ -410,3 +410,54 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
   expect(after.activeRun).toBeUndefined()
   expect(after.messages.filter((message) => message.role === 'user')).toHaveLength(2)
 })
+
+test('cancels an active provider turn on ordinary quit and resumes it after restart', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProjectViaUi(page, 'Quit active conversation')
+  const prompt = 'Hold the turn outcome fixture.'
+  await submitPromptViaUi(page, prompt)
+  await expect(
+    page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+  ).toBeVisible()
+  const before = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
+  expect(before.status).toBe('running')
+  expect(before.activeRun).toBeDefined()
+
+  const [restart, quit] = await Promise.allSettled([
+    app.restart(),
+    page.getByRole('button', { name: 'Quit', exact: true }).click()
+  ])
+  // Settle both operations before fixture cleanup, even if the window closes before the click.
+  if (restart.status === 'rejected') throw restart.reason
+  if (quit.status === 'rejected') throw quit.reason
+  page = restart.value
+  const restored = await page.evaluate(
+    async () => (await window.api.sessions.loadAll()).sessions[0]
+  )
+  await testInfo.attach('active-turn-after-ordinary-quit', {
+    body: JSON.stringify(restored),
+    contentType: 'application/json'
+  })
+  expect(restored.id).toBe(before.id)
+  expect(restored.activeRun).toBeUndefined()
+  expect(restored.messages.find((message) => message.role === 'user')?.turnOutcome).toMatchObject({
+    kind: 'cancelled',
+    recovery: 'resume'
+  })
+  await page
+    .getByRole('region', { name: 'Recent sessions' })
+    .getByRole('button', { name: prompt })
+    .click()
+  await expect(page.getByText('Turn outcome resumed successfully.', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Resume session', exact: true }).click()
+  await expect(page.getByText('Turn outcome resumed successfully.', { exact: true })).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0]?.status)
+    )
+    .toBe('idle')
+})

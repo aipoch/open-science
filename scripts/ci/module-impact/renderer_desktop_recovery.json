@@ -266,7 +266,19 @@
       "src/renderer/src/pages/settings/SkillImportApprovalDialog.render.test.tsx",
       "src/renderer/src/components/NotificationRecovery.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureSources.test.tsx",
+      "src/renderer/src/pages/literature/collections/CollectionEditorDialog.test.tsx",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
+      "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
+      "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
+      "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx"
     ]
   },
   "consumerModules": [],

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
+import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import * as occupancy from './update/installation-occupancy'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -20,7 +22,6 @@ import {
   DesktopRuntimeStartupError,
   resolveDesktopInstallationStartup
 } from './desktop-startup-recovery'
-import type { DesktopRuntimeClient } from './desktop-runtime-client'
 // Boot-query integration is covered separately; lifecycle fixtures need a stable boot.
 vi.mock('./system-boot-identity', async (original) => ({
   ...(await original<typeof import('./system-boot-identity')>()),
@@ -98,7 +99,28 @@ it('retains installation protection through early resolution and rechecks integr
   expect(restarted.startupOptions).toEqual(options)
   await restarted.completeBeforeLaunch()
   expect(inspectInstallationStartup(location)).toBeDefined()
-  await restarted.completeAfterReady()
+  let isComplete = false
+  const client = {
+    startupState: () => ({ phase: 'ready' }),
+    runtimeInfo: () => ({ startupOptions: options }),
+    invokeHost: async (name: string) =>
+      name === 'storage:get-status'
+        ? { dataRoot: options.dataRoot, dataRootMissing: false }
+        : name === 'sessions:list'
+          ? {
+              sessions: [],
+              diagnostics: { isComplete, warnings: [], isProjectDeletionRecoveryComplete: true }
+            }
+          : []
+  } as unknown as DesktopRuntimeClient
+  const finishStartup = async (): Promise<void> => {
+    await verifyDesktopRecoveryReadiness(client, options)
+    await restarted.completeAfterReady()
+  }
+  await expect(finishStartup()).rejects.toThrow('saved conversations')
+  expect(inspectInstallationStartup(location)?.startupOptions).toEqual(options)
+  isComplete = true
+  await finishStartup()
   expect(inspectInstallationStartup(location)).toBeUndefined()
 })
 
@@ -392,4 +414,52 @@ it('makes startup recover do real work when the runtime is stopping', async () =
   expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
   await (error as DesktopRuntimeStartupError).recover()
   expect(replaceRuntime).toHaveBeenCalledTimes(2)
+})
+
+it('retains modern stop authority and reviewed configuration after transient recovery failure', async () => {
+  const config = {
+    configRoot: '/config',
+    dataRoot: '/data',
+    profilePath: '/profile',
+    host: '127.0.0.1' as const,
+    port: 0,
+    credentialStore: 'os' as const
+  }
+  const stop = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('shutdown unavailable'))
+    .mockResolvedValue(undefined)
+  const failure = new DesktopRuntimeStartupError(
+    { reason: 'version-mismatch', desktopVersion: '2', canStop: true, canRecover: false },
+    'Version mismatch',
+    stop,
+    undefined,
+    config
+  )
+  await expect(failure.stopAndContinue()).rejects.toThrow('shutdown unavailable')
+  const retry = failure.withRetryDiagnostics('redacted failure')
+  expect(retry.issue).toMatchObject({
+    reason: 'version-mismatch',
+    canStop: true,
+    canRecover: false,
+    diagnostics: 'redacted failure'
+  })
+  expect(retry.startupOptions).toBe(config)
+  await expect(retry.stopAndContinue()).resolves.toBeUndefined()
+  expect(stop).toHaveBeenCalledTimes(2)
+  await expect(retry.recover()).rejects.toBe(retry)
+})
+
+it('retains recovery-only capabilities without granting stop authority', async () => {
+  const recover = vi.fn().mockResolvedValue(undefined)
+  const failure = new DesktopRuntimeStartupError(
+    { reason: 'startup-recovery-required', desktopVersion: '2', canStop: false, canRecover: true },
+    'Recovery required',
+    undefined,
+    recover
+  )
+  const retry = failure.withRetryDiagnostics('redacted failure')
+  await expect(retry.recover()).resolves.toBeUndefined()
+  expect(recover).toHaveBeenCalledOnce()
+  await expect(retry.stopAndContinue()).rejects.toBe(retry)
 })

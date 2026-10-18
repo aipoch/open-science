@@ -1,3 +1,4 @@
+import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -993,15 +994,22 @@ const ConversationPanel = ({
   )
   const resumeDiagnostic =
     operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
-  const resolvedActionError =
-    (isClaudeCliCompatibilityError(actionError ?? '')
-      ? t(
-          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
-        )
-      : undefined) ??
-    localizeImageAnnotationSourceError(actionError, t) ??
-    localizeVisionRunFailure(actionError, t) ??
-    actionError
+  const authenticationRequired = [
+    actionError,
+    composerError,
+    currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
+    showLegacyRunError ? legacyDisplayState?.error : undefined
+  ].some(isAgentAuthenticationRequired)
+  const resolvedActionError = isAgentAuthenticationRequired(actionError)
+    ? undefined
+    : ((isClaudeCliCompatibilityError(actionError ?? '')
+        ? t(
+            'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+          )
+        : undefined) ??
+      localizeImageAnnotationSourceError(actionError, t) ??
+      localizeVisionRunFailure(actionError, t) ??
+      actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
     if (/timed out/i.test(resumeDiagnostic.detail)) {
@@ -1034,7 +1042,9 @@ const ConversationPanel = ({
     isUnsupportedCodexAcpVersionError(legacyDisplayState?.error) ||
     isCodexCliCompatibilityError(legacyDisplayState?.error)
   const showLegacyRunErrorRow =
-    showLegacyRunError && (!showSessionRecovery || hasUnsupportedCodexRunError)
+    !isAgentAuthenticationRequired(legacyDisplayState?.error) &&
+    showLegacyRunError &&
+    (!showSessionRecovery || hasUnsupportedCodexRunError)
   const showCodexSettings =
     isUnsupportedCodexAcpVersionError(actionError) ||
     isCodexCliCompatibilityError(actionError) ||
@@ -1697,7 +1707,11 @@ const ConversationPanel = ({
                     )}
                   />
                 ) : null}
-                {currentTurnOutcome ? (
+                {currentTurnOutcome &&
+                !(
+                  currentTurnOutcome.outcome.kind === 'failed' &&
+                  isAgentAuthenticationRequired(currentTurnOutcome.outcome.error)
+                ) ? (
                   <TurnOutcomeNotice
                     promptMessageId={currentTurnOutcome.promptMessageId}
                     outcome={currentTurnOutcome.outcome}
@@ -1710,7 +1724,9 @@ const ConversationPanel = ({
                     session={activeSession}
                   />
                 ) : null}
-                {composerError && composerError !== actionError ? (
+                {composerError &&
+                !isAgentAuthenticationRequired(composerError) &&
+                composerError !== actionError ? (
                   <div role="alert" className="mb-2">
                     <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
@@ -1728,6 +1744,19 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
+                  />
+                ) : null}
+                {authenticationRequired ? (
+                  <ErrorNotice
+                    className="mb-2"
+                    title={t('Sign in to continue this conversation')}
+                    description={t(
+                      'The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.'
+                    )}
+                    primaryButton={{
+                      label: t('Model settings'),
+                      onClick: () => openSettingsToPanel('model')
+                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (

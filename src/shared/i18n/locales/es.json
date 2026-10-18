@@ -50,6 +50,17 @@
     "Quit app": "Cerrar la aplicación"
   },
   "native": {
+    "Local State is in use by another process.": "Otro proceso está utilizando Local State.",
+    "The Local State configuration file could not be read.": "No se pudo leer el archivo de configuración Local State.",
+    "The Local State configuration file is invalid.": "El archivo de configuración Local State no es válido.",
+    "The encryption key is missing from Local State.": "Falta la clave de cifrado en Local State.",
+    "The encryption key in Local State is invalid.": "La clave de cifrado de Local State no es válida.",
+    "Local State changed during credential validation.": "Local State cambió durante la validación de las credenciales.",
+    "The Windows credential validator could not start.": "No se pudo iniciar el validador de credenciales de Windows.",
+    "The Windows credential validator timed out.": "Se agotó el tiempo de espera del validador de credenciales de Windows.",
+    "The Windows credential validator failed.": "El validador de credenciales de Windows falló.",
+    "Windows credential validation is unavailable on this system.": "La validación de credenciales de Windows no está disponible en este sistema.",
+    "Windows could not decrypt the existing credential key.": "Windows no pudo descifrar la clave de credenciales existente.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Las credenciales del sistema Linux requieren el backend Secret Service o KWallet seleccionado originalmente y /usr/bin/busctl. Desbloquee el llavero o la cartera predeterminados originales y reinicie. No cambie el backend password-store ni el perfil para omitir esta comprobación.",
     "Credential storage needs recovery": "Es necesario recuperar el almacén de credenciales",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Este backend de credenciales del sistema no admite comprobaciones silenciosas de identidad. El inicio se ha detenido para preservar los datos cifrados existentes.",
@@ -144,11 +155,18 @@
     "Retry startup": "Reintentar el inicio",
     "Open startup logs": "Abrir registros de inicio",
     "Could not open the logs folder.": "No se ha podido abrir la carpeta de registros.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado.",
+    "Installing the Open-Science update…": "Instalando la actualización de Open-Science…",
+    "Opening the updated Open-Science…": "Abriendo Open-Science actualizado…",
+    "The Open-Science update could not finish.": "No se pudo completar la actualización de Open-Science.",
+    "Close update window": "Cerrar la ventana de actualización",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "No se pudo confirmar el estado de la actualización. Cerrar esta ventana no detiene la instalación."
   },
   "renderer": {
     "Content first": "Priorizar el contenido",
     "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Traducir el cuerpo del texto y los pies de figura y tabla, conservando las imágenes, tablas, fórmulas, código y referencias en su forma original en la medida de lo posible. El resultado depende de la calidad de extracción del contenido del PDF. Dejar la opción desmarcada para mantener el diseño del PDF original en la medida de lo posible.",
+    "Update preparation failed": "Error al preparar la actualización",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "La aplicación sigue abierta. Resuelva el problema e inténtelo de nuevo, o cancele para seguir trabajando.",
     "Select one or more options": "Seleccionar una o varias opciones",
     "Your conversation is preserved. Try Resume again.": "Su conversación se conserva. Intente reanudarla de nuevo.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "El agente no respondió a tiempo. Su conversación se conserva. Intente reanudarla de nuevo.",
@@ -7526,7 +7544,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Comprobando las tareas pendientes y si se puede instalar la actualización.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Termine su trabajo en la otra aplicación y salga desde su menú; después, vuelva a comprobarlo.",
     "Force update…": "Forzar actualización…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "La instalación ha comenzado y no se puede cancelar. La aplicación se volverá a abrir tras la instalación.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "La instalación ha comenzado y no se puede cancelar. Puede tardar unos minutos. Si el sistema solicita permiso, autorice la actualización para continuar. La aplicación se volverá a abrir cuando finalice la instalación.",
     "Installation result is unknown": "Se desconoce el resultado de la instalación",
     "Installation starts only after shutdown has finished and its result is confirmed.": "La instalación solo comienza una vez finalizado el cierre y confirmado su resultado.",
     "Installing update…": "Instalando actualización…",
@@ -7605,6 +7623,8 @@
     "Save body area": "Guardar el área del cuerpo",
     "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
     "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
-    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje."
+    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje.",
+    "Sign in to continue this conversation": "Iniciar sesión para continuar esta conversación",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "El Agente requiere autenticación. Abra la configuración del modelo, inicie sesión en su proveedor y vuelva a intentarlo. Su conversación y su borrador se conservan."
   }
 }

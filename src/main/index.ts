@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto'
+import {
+  inspectOwnedCrashpadProcesses,
+  inspectOwnedLinuxAppImageLauncher,
+  inspectOwnedLinuxZygoteProcesses
+} from './update/installation-occupancy'
 import type { ChildProcess } from 'node:child_process'
 import {
   assertInstallationChannelCertified,
@@ -5,6 +11,12 @@ import {
   usesSupervisedInstall
 } from './update/channel-certification'
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
+import {
+  acknowledgeWindowsUpdateReady,
+  cleanupWindowsUpdateHandoffs,
+  resolveWindowsUpdateStartup,
+  waitForWindowsUpdateWindow
+} from './update/windows-update-handoff'
 import {
   DesktopRuntimeStartupError,
   connectDesktopRuntimeForStartup,
@@ -34,13 +46,13 @@ import {
   session
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
 import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
-import { acquireRuntimeDirectorySync, type RuntimeDirectoryLease } from './runtime-ownership'
+import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
 import { installationRootForEntry } from './update/installation-protection'
@@ -65,6 +77,7 @@ import {
   selectStartupCredentialIdentity,
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
@@ -85,6 +98,7 @@ import {
   createLogger,
   diagnosticErrorFields,
   flushLogs,
+  initLogger,
   writeFatalLogSync
 } from '@aipoch/diagnostics/node'
 import {
@@ -206,12 +220,29 @@ async function startDesktop(): Promise<void> {
     resourcesPath: process.resourcesPath,
     packaged: app.isPackaged
   })
+  const crashReporterInstance = randomUUID()
+  const allowedInstallationProcessIds = (): number[] => [
+    process.pid,
+    ...app.getAppMetrics().map((metric) => metric.pid),
+    ...inspectOwnedLinuxAppImageLauncher(),
+    ...inspectOwnedLinuxZygoteProcesses(),
+    ...inspectOwnedCrashpadProcesses({
+      installationRoot:
+        process.platform === 'linux'
+          ? dirname(process.execPath)
+          : installationRootForEntry(initialBackendPaths.entry),
+      crashDumpsPath: app.getPath('crashDumps'),
+      instanceId: crashReporterInstance
+    })
+  ]
   let initialRecoveryError: DesktopRuntimeStartupError | undefined
+  let startupCredentialCiphertexts: Buffer[] | undefined
+  let startupCredentialInventoryCapturedAt: number | undefined
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
     installationStartup = await resolveDesktopInstallationStartup({
       installationRoot: installationRootForEntry(initialBackendPaths.entry),
-      allowedProcessIds: () => [process.pid, ...app.getAppMetrics().map((metric) => metric.pid)],
+      allowedProcessIds: allowedInstallationProcessIds,
       version: app.getVersion()
     })
   } catch (error) {
@@ -221,6 +252,19 @@ async function startDesktop(): Promise<void> {
   const completeVerifiedStartup = installationStartup?.completeAfterReady
   const verifiedStartupOutcome = installationStartup?.outcome
   let preservedStartupOptions = installationStartup?.startupOptions
+  let windowsUpdateAlreadyConfirmed = false
+  if (process.platform === 'win32') {
+    // A supplied update identity selects data and credentials: missing/corrupt configuration must
+    // fail startup, never silently fall back to a different profile.
+    const windowsUpdateStartup = await resolveWindowsUpdateStartup({
+      appData: app.getPath('appData'),
+      args: process.argv,
+      version: app.getVersion(),
+      applicationPath: process.execPath
+    })
+    preservedStartupOptions ??= windowsUpdateStartup?.startupOptions
+    windowsUpdateAlreadyConfirmed = windowsUpdateStartup?.confirmed ?? false
+  }
   const credentialArgs = preservedStartupOptions
     ? [
         `--credential-store=${preservedStartupOptions.credentialStore}`,
@@ -245,6 +289,7 @@ async function startDesktop(): Promise<void> {
       ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: preservedStartupOptions.profilePath } }
       : {})
   })
+  // Selecting paths does not open Chromium databases; scope the lock before credential preflight.
   app.setPath('userData', profilePath)
   app.setPath('sessionData', profilePath)
   if (
@@ -256,10 +301,14 @@ async function startDesktop(): Promise<void> {
   }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
+  // Configure the existing sink before credential preflight; full diagnostics start after ready.
+  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (!initialRecoveryError) {
-    const bootstrapLease = acquireRuntimeDirectorySync(
-      join(app.getPath('home'), '.open-science-credential-bootstrap')
-    )
+    const bootstrapLease = acquireCredentialBootstrapLease({
+      home: app.getPath('home'),
+      profilePath,
+      platform: process.platform
+    })
     try {
       const identity = selectStartupCredentialIdentity({
         platform: process.platform,
@@ -268,7 +317,16 @@ async function startDesktop(): Promise<void> {
         linuxPasswordStore: app.commandLine.getSwitchValue('password-store')
       })
       app.setName(identity.appName)
-      prepareCredentialValidation(identity, { configRoot, profilePath })
+      startupCredentialCiphertexts =
+        identity.backend === 'file'
+          ? undefined
+          : readCredentialCiphertexts({ configRoot, profilePath })
+      startupCredentialInventoryCapturedAt = Date.now()
+      prepareCredentialValidation(
+        identity,
+        { configRoot, profilePath },
+        startupCredentialCiphertexts
+      )
       if (identity.backend === 'windows-dpapi') initializeNodeWindowsProfileKey(profilePath)
     } finally {
       bootstrapLease.release()
@@ -351,6 +409,17 @@ async function startDesktop(): Promise<void> {
     cpuUsage: process.cpuUsage
   })
   startupDiagnostics = diagnostics.operation
+  bootstrapLog.info('desktop profile initialized', {
+    actualPaths: {
+      userData: app.getPath('userData'),
+      sessionData: app.getPath('sessionData')
+    },
+    requestedPaths: {
+      configRoot,
+      environmentUserData: process.env.OPEN_SCIENCE_USER_DATA ?? null,
+      commandLineUserData: app.commandLine.getSwitchValue('user-data-dir')
+    }
+  })
   installChildProcessGoneLogging(
     (listener) => app.on('child-process-gone', listener),
     diagnostics.log
@@ -367,7 +436,11 @@ async function startDesktop(): Promise<void> {
     productName: APP_NAME,
     companyName: 'aipoch',
     appVersion: app.getVersion(),
-    start: (options) => crashReporter.start(options)
+    start: (options) =>
+      crashReporter.start({
+        ...options,
+        globalExtra: { openScienceInstance: crashReporterInstance }
+      })
   })
   const [
     { electronApp },
@@ -673,6 +746,23 @@ async function startDesktop(): Promise<void> {
   const publishRuntimeStartup = (next: RuntimeStartupState): void => {
     runtimeStartupState = next
     broadcast(RUNTIME_STARTUP_CHANNELS.onStateChanged, next)
+    if (next.phase === 'ready' && process.platform === 'win32' && !windowsUpdateAlreadyConfirmed) {
+      // Also acknowledge a successful user-initiated startup repair after an initial failure.
+      void acknowledgeWindowsUpdateReady({
+        appData: app.getPath('appData'),
+        args: process.argv,
+        version: app.getVersion(),
+        applicationPath: process.execPath,
+        profilePath,
+        waitForPresentation: () => waitForWindowsUpdateWindow(getMainWindow() ?? undefined),
+        verifyReady: (expected) => verifyDesktopRecoveryReadiness(client!, expected)
+      }).catch((error) =>
+        bootstrapLog.warn(
+          'Update readiness could not be acknowledged',
+          diagnosticErrorFields(error)
+        )
+      )
+    }
   }
   const waitForStartupRetry = async (failure: DesktopRuntimeStartupError): Promise<void> => {
     startupBlocked = true
@@ -730,28 +820,10 @@ async function startDesktop(): Promise<void> {
         startupFailure =
           error instanceof DesktopRuntimeStartupError
             ? error
-            : new DesktopRuntimeStartupError(
-                {
-                  ...failure.issue,
-                  reason:
-                    failure.issue.reason === 'legacy-service'
-                      ? 'legacy-service'
-                      : 'startup-recovery-required',
-                  canStop: failure.issue.reason === 'legacy-service' && failure.issue.canStop,
-                  canRecover:
-                    (recover || failure.issue.reason === 'legacy-service') &&
-                    failure.issue.canRecover,
-                  diagnostics: JSON.stringify(
-                    projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
-                  )
-                },
-                'Startup recovery was not confirmed.',
-                failure.issue.reason === 'legacy-service'
-                  ? () => failure.stopAndContinue()
-                  : undefined,
-                recover || failure.issue.reason === 'legacy-service'
-                  ? () => failure.recover()
-                  : undefined
+            : failure.withRetryDiagnostics(
+                JSON.stringify(
+                  projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
+                )
               )
         publishRuntimeStartup({ phase: 'blocked', issue: startupFailure.issue })
       }
@@ -785,6 +857,8 @@ async function startDesktop(): Promise<void> {
       version: app.getVersion(),
       ...initialBackendPaths,
       packaged: app.isPackaged,
+      credentialInventory: startupCredentialCiphertexts,
+      credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
       args: [
         ...credentialArgs,
         ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
@@ -1225,6 +1299,8 @@ async function startDesktop(): Promise<void> {
   const { installElectronBroadcast } = await import('./renderer-broadcast-electron')
   installElectronNetwork()
   const removeNativeBroadcast = installElectronBroadcast()
+  let rendererPreparedForUpdate = false
+  const flushUpdateRenderer = createElectronSessionPersistenceFlush(() => getMainWindow())
   let preparedMacInstallation: PreparedMacInstallation | undefined
   const isLegacyInstall = (status: { localPath?: string }): boolean =>
     !status.localPath || !usesSupervisedInstall(process.platform, status.localPath)
@@ -1232,7 +1308,7 @@ async function startDesktop(): Promise<void> {
     location: { installationRoot: installationRootForEntry(backendPaths.entry) },
     client: () => client!,
     currentVersion: app.getVersion(),
-    allowedProcessIds: () => app.getAppMetrics().map((metric) => metric.pid),
+    allowedProcessIds: allowedInstallationProcessIds,
     preparedDebGate: () => preparedMacInstallation?.debGate,
     verifyInstallerReady: async () => {
       const gate = preparedMacInstallation?.debGate
@@ -1242,6 +1318,16 @@ async function startDesktop(): Promise<void> {
         )
     },
     legacyInstall: isLegacyInstall,
+    flushRenderer: async (phase) => {
+      const outcome = await flushUpdateRenderer()
+      diagnostics.log.info('update renderer persistence', { phase, outcome })
+      if (outcome !== 'completed')
+        throw new UpdateLifecycleError(
+          'install-failed',
+          'Your changes could not be saved. The update was stopped; keep the app open and try again.'
+        )
+      rendererPreparedForUpdate = phase === 'final'
+    },
     verifyArtifact: async (status, signal) => {
       if (!status.localPath || !status.latest)
         throw new UpdateLifecycleError(
@@ -1338,7 +1424,13 @@ async function startDesktop(): Promise<void> {
           'This Desktop cannot safely preserve the running service configuration.'
         )
     },
-    setClosing: (closing) => recovery.setClosing(closing),
+    setClosing: (closing) => {
+      recovery.setClosing(closing)
+      if (!closing) {
+        rendererPreparedForUpdate = false
+        notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
+      }
+    },
     retainLease: retainShutdownLease,
     onProgress: (status) => update.publishLifecycleStatus?.(status),
     onStopped: () => {
@@ -1398,6 +1490,7 @@ async function startDesktop(): Promise<void> {
   })
   const update = createUpdateStrategy(process.platform, {
     translate,
+    getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
     cancelInstall: async () => {
       if (preparedMacInstallation?.debGate)
@@ -1559,6 +1652,7 @@ async function startDesktop(): Promise<void> {
       }
     },
     flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
+    rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
         getWindow,
@@ -1608,7 +1702,7 @@ async function startDesktop(): Promise<void> {
   acceptStartupEvents = true
   publishStartup(client.startupState())
   await readiness
-  if (preservedStartupOptions) {
+  if (preservedStartupOptions && !windowsUpdateAlreadyConfirmed) {
     try {
       await verifyDesktopRecoveryReadiness(client, preservedStartupOptions)
       await completeVerifiedStartup?.()
@@ -1644,6 +1738,14 @@ async function startDesktop(): Promise<void> {
       publishRuntimeStartup({ phase: 'blocked', issue })
     }
   } else publishRuntimeStartup({ phase: 'ready' })
+  if (process.platform === 'win32') {
+    const timer = setTimeout(() => {
+      void cleanupWindowsUpdateHandoffs(app.getPath('appData')).catch((error) =>
+        bootstrapLog.warn('Update presentation cleanup deferred', diagnosticErrorFields(error))
+      )
+    }, 5000)
+    timer.unref()
+  }
   if (secondInstancePending) showMainWindow()
   const { isReadOnlyMacInstallation, showMacInstallationGuidance } =
     await import('./mac-installation')
@@ -1652,11 +1754,14 @@ async function startDesktop(): Promise<void> {
   diagnostics.operation.complete()
 }
 void startDesktop().catch(async (error: unknown) => {
-  bootstrapLog.error('desktop startup failed', {
+  const failureFields = {
     ...diagnosticErrorFields(error),
     phase: bootstrapPhase,
-    ...(error instanceof CredentialIdentityError ? { recoveryReason: error.reason } : {})
-  })
+    ...(error instanceof CredentialIdentityError
+      ? { recoveryReason: error.reason, validationDiagnostic: error.diagnostic }
+      : {})
+  }
+  bootstrapLog.error('desktop startup failed', failureFields)
   const message =
     error instanceof CredentialIdentityError
       ? credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
@@ -1665,6 +1770,8 @@ void startDesktop().catch(async (error: unknown) => {
         : String(error)
   // Failed identity preflight must not yield to Chromium's profile/key initialization.
   if (!app.isReady()) {
+    // This path must not await: preserve the diagnostic before the immediate process exit.
+    writeFatalLogSync('desktop-bootstrap', 'desktop startup failed', failureFields)
     dialog.showErrorBox(APP_NAME, message)
     app.exit(1)
     return

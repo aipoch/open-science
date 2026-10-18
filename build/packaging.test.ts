@@ -14,6 +14,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { finished } from 'node:stream/promises'
+import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
@@ -21,6 +22,89 @@ import { load } from 'js-yaml'
 const repoRoot = join(__dirname, '..')
 // Exercise the same packaging dependencies as the installed electron-builder.
 const require = createRequire(import.meta.url)
+
+describe('desktop packaging preparation', () => {
+  function preparation(
+    platform: string,
+    compilerStatus = 0
+  ): {
+    run: (context: unknown) => Promise<void>
+    calls: string[]
+  } {
+    const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+      beforePack: string
+    }
+    expect(config.beforePack).toBe('build/prepare-desktop.cjs')
+    const calls: string[] = []
+    const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
+    const dependencies = Object.assign(
+      (name: string): unknown => {
+        if (name === './stage-desktop-runtime.cjs')
+          return async () => {
+            calls.push('stage')
+          }
+        if (name === 'node:child_process')
+          return {
+            spawnSync: (_executable: string, args: string[]) => {
+              expect(args).toEqual([
+                require.resolve('node-gyp/bin/node-gyp.js'),
+                'rebuild',
+                '--directory',
+                join(repoRoot, 'build/windows-update-progress')
+              ])
+              calls.push('compile-progress')
+              return { status: compilerStatus }
+            }
+          }
+        return require(name)
+      },
+      { resolve: require.resolve }
+    )
+    runInNewContext(readFileSync(join(repoRoot, config.beforePack), 'utf8'), {
+      module,
+      require: dependencies,
+      process: { platform, arch: 'x64', execPath: process.execPath }
+    })
+    return { run: module.exports, calls }
+  }
+
+  it.each(['win32', 'darwin', 'linux'])(
+    'prepares application resources before staging on %s',
+    async (platform) => {
+      const { run, calls } = preparation(platform)
+      await run({
+        electronPlatformName: platform,
+        arch: require('builder-util').Arch.x64,
+        packager: { projectDir: repoRoot }
+      })
+      expect(calls).toEqual(platform === 'win32' ? ['compile-progress', 'stage'] : ['stage'])
+    }
+  )
+
+  it('does not stage a Windows application after progress compilation fails', async () => {
+    const { run, calls } = preparation('win32', 1)
+    await expect(
+      run({
+        electronPlatformName: 'win32',
+        arch: require('builder-util').Arch.x64,
+        packager: { projectDir: repoRoot }
+      })
+    ).rejects.toThrow('Windows update progress build failed')
+    expect(calls).toEqual(['compile-progress'])
+  })
+
+  it('rejects cross packaging before starting a compiler or staging', async () => {
+    const { run, calls } = preparation('win32')
+    await expect(
+      run({
+        electronPlatformName: 'win32',
+        arch: require('builder-util').Arch.arm64,
+        packager: { projectDir: repoRoot }
+      })
+    ).rejects.toThrow('target platform/architecture')
+    expect(calls).toEqual([])
+  })
+})
 const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
 const appBuilderLibPath = builderRequire.resolve('app-builder-lib/package.json')
 const appBuilderLibRoot = dirname(appBuilderLibPath)
@@ -773,5 +857,95 @@ it('protects both re-created branded data folders before retrying the old uninst
   )
   expect(recovery.indexOf('!insertmacro restoreRetryDataRoot')).toBeGreaterThan(
     recovery.indexOf('ExecWait')
+  )
+})
+
+describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
+  it.each(['valid', 'surrounded', 'duplicate', 'missing', 'invalid'])(
+    'publishes correlated receipts for %s operation arguments',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
+      try {
+        const operation = '00000000-0000-4000-8000-000000000001'
+        const directory = join(root, operation)
+        mkdirSync(directory)
+        writeFileSync(join(directory, 'request.json'), '{}')
+        const include = readFileSync(join(repoRoot, 'build/windows-update-handoff.nsh'), 'utf8')
+        const redirected = include.replace(
+          '"$APPDATA\\Open-Science\\UpdateHandoffs\\$updateOperation"',
+          `"${root}\\$updateOperation"`
+        )
+        expect(redirected).not.toBe(include)
+        const includeDirective = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8').match(
+          /^!include .*windows-update-handoff\.nsh"\r?$/m
+        )?.[0]
+        expect(includeDirective).toBeDefined()
+        writeFileSync(join(root, 'windows-update-handoff.nsh'), redirected)
+        const executable = join(root, 'probe.exe')
+        const source = join(root, 'probe.nsi')
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true
+!define BUILD_RESOURCES_DIR "${root}"
+${includeDirective}
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+Name "Isolated update receipt regression"
+OutFile "${executable}"
+RequestExecutionLevel user
+SilentInstall silent
+Var installMode
+!insertmacro defineUpdateReceiptFunctions
+Section
+StrCpy $installMode "current"
+Call initializeUpdateReceipts
+Push "installing"
+Call writeUpdateReceipt
+Push "installed"
+Call writeUpdateReceipt
+Push "failed"
+Call writeUpdateReceipt
+SectionEnd
+`
+        )
+        const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+          encoding: 'utf8',
+          timeout: 30_000
+        })
+        expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+        // Exercise the actual patched updater's argument transport, including its surrounding flags.
+        const { NsisUpdater } = require('electron-updater/out/NsisUpdater')
+        let args: string[] = []
+        expect(
+          NsisUpdater.prototype.doInstall.call(
+            {
+              installerPath: executable,
+              openScienceUpdateOperation: operation,
+              spawnLog: async (_file: string, values: string[]) => {
+                args = values
+              },
+              dispatchError: (error: Error) => {
+                throw error
+              }
+            },
+            { isSilent: false, isForceRunAfter: true }
+          )
+        ).toBe(true)
+        if (scenario === 'surrounded') args.push('/S', '--unused=value with spaces')
+        if (scenario === 'duplicate') args.push(`--open-science-update-operation=${operation}`)
+        if (scenario === 'missing') args = []
+        if (scenario === 'invalid') args = ['--open-science-update-operation=../outside']
+        const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
+        expect(execution.status, execution.stderr || execution.stdout).toBe(0)
+        for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
+          const receipt = join(directory, `${stage}.receipt`)
+          const valid = scenario === 'valid' || scenario === 'surrounded'
+          expect(existsSync(receipt)).toBe(valid)
+          if (valid) expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
   )
 })
