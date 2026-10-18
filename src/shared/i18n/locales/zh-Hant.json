@@ -5949,7 +5949,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 模型與路由說明",
     "Saved to Inbox": "已儲存至收件匣",
     "PDF downloaded to Inbox": "PDF 已下載至收件匣",
-    "Review in Inbox to add to your library.": "請前往收件匣審核，確認後加入文獻庫。",
     "Already in library": "已在文獻庫中",
     "Open reference": "開啟文獻",
     "The parent Session is unavailable.": "主工作階段無法使用。",
@@ -7282,6 +7281,14 @@
     "You can configure up to 32 pages.": "最多可設定 32 頁。",
     "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。",
     "Sign in to continue this conversation": "登入後繼續此對話",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。",
+    "Checking current library status…": "正在檢查目前文獻庫狀態…",
+    "Could not check current library status.": "無法檢查目前文獻庫狀態。",
+    "Current library status": "目前文獻庫狀態",
+    "Imported: {{total}}": "已匯入：{{total}}",
+    "Dismissed: {{total}}": "已忽略：{{total}}",
+    "Current status unavailable: {{total}}": "無法確認目前狀態：{{total}}",
+    "Open imported reference {{number}}": "開啟已匯入文獻 {{number}}",
+    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。"
   }
 }

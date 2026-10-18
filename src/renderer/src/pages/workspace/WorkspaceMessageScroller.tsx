@@ -1,3 +1,4 @@
+import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import { flushSync } from 'react-dom'
@@ -2340,7 +2341,17 @@ const areWorkspaceMessageScrollerPropsEqual = (
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
 const WorkspaceMessageScroller = memo(
-  WorkspaceMessageScrollerImpl,
+  (props: WorkspaceMessageScrollerProps) => (
+    <LiteratureCandidateSessionContext.Provider
+      value={
+        props.activeSession?.packageOrigin || props.activeSession?.forkOrigin
+          ? null
+          : (props.activeSession?.id ?? null)
+      }
+    >
+      <WorkspaceMessageScrollerImpl {...props} />
+    </LiteratureCandidateSessionContext.Provider>
+  ),
   areWorkspaceMessageScrollerPropsEqual
 )
 WorkspaceMessageScroller.displayName = 'WorkspaceMessageScroller'

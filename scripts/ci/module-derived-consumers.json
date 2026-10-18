@@ -1,12 +1,19 @@
 {
   "schemaVersion": 1,
   "modules": {
+    "environment_contracts": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
     "host_runtime_lifecycle": [
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
-    "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
-    "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_runtime_ports": [
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
+    "host_value_guards": [
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
@@ -17,18 +24,102 @@
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/windows-install-progress.test.ts"
     ],
-    "package_literature_citations": ["src/main/update/windows-update-handoff.test.ts"],
-    "package_literature_library": ["src/main/update/windows-update-handoff.test.ts"],
-    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
-    "renderer_desktop_recovery": [
-      "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx"
+    "literature_presentation_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
-    "renderer_upload_transfer": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
-    "resilient_download": ["src/main/update/windows-update-handoff.test.ts"],
-    "skill_package": ["src/main/update/windows-update-handoff.test.ts"],
+    "notebook_analysis": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "package_journal_catalog": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "package_literature_citations": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "package_literature_discovery": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "package_literature_library": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "package_literature_reading": [
+      "src/main/settings/codex-bridge-tools.test.ts"
+    ],
+    "package_literature_screening": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "pdf_document_source": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "renderer_desktop_recovery": [
+      "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+    ],
+    "renderer_package_state": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "renderer_preferences": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "renderer_state": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "renderer_ui": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "renderer_upload_transfer": [
+      "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
+    ],
+    "renderer_utilities": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "reproducibility_contracts": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "resilient_download": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "session_renderer": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "skill_package": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "workspace_artifact_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "workspace_composer_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
     "workspace_conversation": [
       "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx"
     ],
-    "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"]
+    "workspace_file_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "workspace_page": [
+      "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
+    ],
+    "workspace_plan_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "workspace_previews": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ],
+    "workspace_replay_model": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx"
+    ]
   }
 }

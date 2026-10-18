@@ -1,3 +1,7 @@
+import {
+  literatureCandidateStatesRequestSchema,
+  literatureCandidateStatesResultSchema
+} from './literature'
 import { literatureItemInputSchema as contractItemSchema } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema as itemSchema } from '@aipoch/literature-library/item'
 import { describe, expect, it } from 'vitest'
@@ -249,4 +253,27 @@ it('scopes progress reads to a run and rejects mutation or unbounded paging fiel
 
 it('keeps the public literature item schema identical to the snapshot contract', () => {
   expect(contractItemSchema).toBe(itemSchema)
+})
+
+it('bounds exact candidate reads and rejects unknown persisted states', () => {
+  expect(literatureCandidateStatesRequestSchema.parse({ candidateIds: [' candidate '] })).toEqual({
+    candidateIds: ['candidate']
+  })
+  for (const candidateIds of [
+    [],
+    [''],
+    ['x'.repeat(257)],
+    Array.from({ length: 201 }, () => 'id')
+  ]) {
+    expect(literatureCandidateStatesRequestSchema.safeParse({ candidateIds }).success).toBe(false)
+  }
+  expect(
+    literatureCandidateStatesRequestSchema.safeParse({ candidateIds: ['a'], state: 'pending' })
+      .success
+  ).toBe(false)
+  expect(
+    literatureCandidateStatesResultSchema.safeParse({
+      candidates: [{ candidateId: 'a', state: 'imported' }]
+    }).success
+  ).toBe(false)
 })

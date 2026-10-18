@@ -569,7 +569,7 @@ describe('WorkspaceToolDetailsRow', () => {
   })
 
   it.each([true, false])(
-    'offers an Inbox action only with a pending receipt (receipt: %s)',
+    'keeps standalone replay cards historical (receipt: %s)',
     async (hasReceipt) => {
       const activity = createActivity({
         providerToolName: 'mcp__open-science-library__save_to_inbox',
@@ -612,16 +612,15 @@ describe('WorkspaceToolDetailsRow', () => {
       const openInbox = Array.from(card.querySelectorAll('button')).find(
         (button) => button.textContent === 'Open Inbox'
       )
+      expect(openInbox).toBeUndefined()
+      expect(card.textContent).not.toContain('Pending review:')
       if (hasReceipt) {
-        expect(openInbox).toBeDefined()
-        act(() => openInbox!.click())
-        expect(useNavigationStore.getState().view).toBe('library')
-      } else {
-        expect(openInbox).toBeUndefined()
-        expect(card.textContent).not.toContain('Pending review:')
-        act(() => card.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-        expect(useNavigationStore.getState().view).toBe('workspace')
+        expect(card.textContent).toContain(
+          'Historical result; current library status is unavailable.'
+        )
       }
+      act(() => card.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      expect(useNavigationStore.getState().view).toBe('workspace')
     }
   )
 

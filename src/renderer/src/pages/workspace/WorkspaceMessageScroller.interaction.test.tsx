@@ -478,6 +478,62 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     container.remove()
   })
 
+  it('resolves current candidate states only in original local sessions across session switches', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const getCandidateStates = vi.fn(async () => ({
+      candidates: [{ candidateId: 'candidate-1', state: 'pending' }]
+    }))
+    const unsubscribe = vi.fn()
+    Object.assign(window.api, {
+      literature: { getCandidateStates, onChanged: vi.fn(() => unsubscribe) }
+    })
+    const original = createSession({
+      status: 'idle',
+      messages: [createMessage({ id: 'prompt-1' })],
+      activities: [
+        createActivity({
+          providerToolName: 'mcp__open-science-library__save_to_inbox',
+          title: 'save_to_inbox',
+          rawInput: { candidates: [{ item: { title: 'Paper' } }] },
+          rawOutput: { results: [{ kind: 'candidate', id: 'candidate-1', state: 'pending' }] }
+        })
+      ]
+    })
+    const origin = {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    root = createRoot(container)
+    const show = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+    await show(original)
+    expect(getCandidateStates).toHaveBeenCalledWith({ candidateIds: ['candidate-1'] })
+    expect(container.textContent).toContain('Pending review: 1')
+    for (const session of [
+      { ...original, id: 'imported', packageOrigin: origin },
+      { ...original, id: 'forked', forkOrigin: origin }
+    ]) {
+      await show(session)
+      expect(container.textContent).toContain(
+        'Historical result; current library status is unavailable.'
+      )
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(1)
+    }
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    await show({ ...original, id: 'another-local-session' })
+    expect(getCandidateStates).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Pending review: 1')
+  })
+
   it.each([false, true])(
     'opens Literature metadata with package=%s independently of bookmark scope',
     async (packaged) => {

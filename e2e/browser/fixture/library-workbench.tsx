@@ -1,3 +1,4 @@
+import { LiteratureCandidateSessionContext } from '@/pages/workspace/literature-candidate-session-context'
 import '@/assets/main.css'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceLiteratureToolCard } from '@/pages/workspace/WorkspaceLiteratureToolCard'
@@ -30,7 +31,7 @@ const locale = params.has('zh') ? 'zh-Hans' : 'en'
 document.documentElement.classList.toggle('dark', params.has('dark'))
 let reads = 0
 let subscriptions = 0
-let notify: (() => void) | undefined
+const listeners = new Set<() => void>()
 const entry: LiteratureItemView = {
   id: 'sample-paper',
   metadataRevision: 1,
@@ -152,6 +153,15 @@ if (inbox && !params.has('card'))
     .upsertAndActivateItem(createProjectLibraryPreviewItem({ section: 'inbox' }))
 window.api = {
   literature: {
+    getCandidateStates: async ({ candidateIds }: { candidateIds: string[] }) => ({
+      candidates: candidates
+        .filter(({ id }) => candidateIds.includes(id))
+        .map(({ id, state }) => ({
+          candidateId: id,
+          state,
+          ...(state === 'accepted' ? { acceptedItemId: entry.id } : {})
+        }))
+    }),
     get: async () => entry,
     search: async (request: LiteratureCatalogSearchRequest) => {
       reads += 1
@@ -183,15 +193,15 @@ window.api = {
         for (const id of command.candidateIds)
           candidates.find((candidate) => candidate.id === id)!.state = 'pending'
       }
-      notify?.()
+      listeners.forEach((listener) => listener())
       return { kind: 'candidate', id: 'fixture', state: 'pending' }
     },
     onChanged: (listener: () => void) => {
       subscriptions += 1
-      notify = listener
+      listeners.add(listener)
       return () => {
         subscriptions -= 1
-        notify = undefined
+        listeners.delete(listener)
       }
     }
   }
@@ -216,7 +226,10 @@ useSessionStore.setState({
   )
 })
 Object.assign(window, {
-  libraryFixture: { counts: () => ({ reads, subscriptions }), notify: () => notify?.() }
+  libraryFixture: {
+    counts: () => ({ reads, subscriptions }),
+    notify: () => listeners.forEach((listener) => listener())
+  }
 })
 
 export function Fixture(): React.JSX.Element {
@@ -352,5 +365,9 @@ export function Fixture(): React.JSX.Element {
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
-  createRoot(document.getElementById('root')!).render(<Fixture />)
+  createRoot(document.getElementById('root')!).render(
+    <LiteratureCandidateSessionContext.Provider value="session-0">
+      <Fixture />
+    </LiteratureCandidateSessionContext.Provider>
+  )
 })

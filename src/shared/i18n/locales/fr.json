@@ -6269,7 +6269,6 @@
     "DeepSeek API model and routing details": "Détails des modèles et du routage de l’API DeepSeek",
     "Saved to Inbox": "Enregistré dans la boîte de réception",
     "PDF downloaded to Inbox": "PDF téléchargé dans la boîte de réception",
-    "Review in Inbox to add to your library.": "Vérifiez dans la boîte de réception pour ajouter à votre bibliothèque.",
     "Already in library": "Déjà dans la bibliothèque",
     "Open reference": "Ouvrir la référence",
     "The parent Session is unavailable.": "La session parente est indisponible.",
@@ -7612,6 +7611,14 @@
     "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
     "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message.",
     "Sign in to continue this conversation": "Se connecter pour poursuivre cette conversation",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés.",
+    "Checking current library status…": "Vérification du statut actuel dans la bibliothèque…",
+    "Could not check current library status.": "Impossible de vérifier le statut actuel dans la bibliothèque.",
+    "Current library status": "Statut actuel dans la bibliothèque",
+    "Imported: {{total}}": "Importées : {{total}}",
+    "Dismissed: {{total}}": "Écartées : {{total}}",
+    "Current status unavailable: {{total}}": "Statut actuel indisponible : {{total}}",
+    "Open imported reference {{number}}": "Ouvrir la référence importée {{number}}",
+    "Historical result; current library status is unavailable.": "Résultat historique ; le statut actuel dans la bibliothèque est indisponible."
   }
 }

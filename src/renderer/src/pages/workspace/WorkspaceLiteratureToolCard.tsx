@@ -2,15 +2,13 @@
 import {
   ArrowRight,
   BookOpenText,
-  Clock3,
   FileText,
   Inbox,
   Link2,
   Search,
   TriangleAlert
 } from 'lucide-react'
-import { useContext } from 'react'
-import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
+import { LiteratureCandidateStatus } from './LiteratureCandidateStatus'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -28,7 +26,6 @@ const WorkspaceLiteratureToolCard = ({
   isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const openPreview = useContext(LibraryPreviewNavigationContext)
   const isLibrary = summary.libraryScope !== undefined
   const canOpenInbox = summary.action === 'save' && (summary.savedCount ?? 0) > 0
   const Icon =
@@ -119,26 +116,6 @@ const WorkspaceLiteratureToolCard = ({
               })}
             </span>
           ) : null}
-          {canOpenInbox ? (
-            <>
-              <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
-                <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
-                {t('Pending review: {{total}}', { total: summary.savedCount })}
-              </span>
-              <Button
-                size="sm"
-                className="gap-1.5 px-2.5"
-                title={t('Review in Inbox to add to your library.')}
-                onClick={() => {
-                  if (openPreview) openPreview({ section: 'inbox' })
-                  else useNavigationStore.getState().openLibrary('user')
-                }}
-              >
-                {t('Open Inbox')}
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </Button>
-            </>
-          ) : null}
           {isLibrary && summary.action === 'search' && searchRangeLabel ? (
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
               {searchRangeLabel}
@@ -199,6 +176,12 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
         </div>
       </div>
+
+      {!isApproval &&
+      summary.action === 'save' &&
+      (summary.candidateIds?.length || (summary.savedCount ?? 0) > 0) ? (
+        <LiteratureCandidateStatus candidateIds={summary.candidateIds} />
+      ) : null}
 
       {summary.pdfElements ? (
         <div className="space-y-2 text-[12px] leading-5 text-text-200">

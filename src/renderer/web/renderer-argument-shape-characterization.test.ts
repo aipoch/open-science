@@ -265,6 +265,18 @@ describe('renderer argument-shape characterization', () => {
     await expect(invokeWeb(webApi, 'literature.lookupMetadata', args)).resolves.toEqual(expected)
   })
 
+  it('exposes bounded candidate status reads with identical Electron and Web arguments', async () => {
+    const args = [{ candidateIds: ['candidate-a', 'candidate-b'] }]
+    const expected = { channel: 'literature:get-candidate-states', args }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: { candidates: [] } })
+    await expect(
+      invokeElectron(electronApi, 'literature.getCandidateStates', args)
+    ).resolves.toEqual(expected)
+    await expect(invokeWeb(webApi, 'literature.getCandidateStates', args)).resolves.toEqual(
+      expected
+    )
+  })
+
   it('loads the complete local Web callable surface from the real bootstrap', () => {
     const expectedPaths = [
       ...Object.entries(WEB_INVOKE_CHANNELS)

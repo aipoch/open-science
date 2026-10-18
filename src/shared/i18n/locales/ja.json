@@ -5949,7 +5949,6 @@
     "DeepSeek API model and routing details": "DeepSeek API のモデルとルーティングの詳細",
     "Saved to Inbox": "受信トレイに保存済み",
     "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",
-    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。",
     "Already in library": "ライブラリに登録済み",
     "Open reference": "文献を開く",
     "The parent Session is unavailable.": "親セッションを利用できません。",
@@ -7282,6 +7281,14 @@
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
     "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
     "Sign in to continue this conversation": "ログインしてこの会話を続ける",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。",
+    "Checking current library status…": "ライブラリの現在の状態を確認中…",
+    "Could not check current library status.": "ライブラリの現在の状態を確認できませんでした。",
+    "Current library status": "ライブラリの現在の状態",
+    "Imported: {{total}}": "インポート済み: {{total}}",
+    "Dismissed: {{total}}": "除外済み: {{total}}",
+    "Current status unavailable: {{total}}": "現在の状態を確認できません: {{total}}",
+    "Open imported reference {{number}}": "インポート済み文献 {{number}} を開く",
+    "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。"
   }
 }

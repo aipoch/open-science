@@ -423,6 +423,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          getCandidateStates: vi.fn(async () => ({ candidates: [] })),
           journals: vi.fn(async () => ({ datasets: [], matches: [] })),
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),

@@ -5949,7 +5949,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 模型与路由说明",
     "Saved to Inbox": "已保存到收件箱",
     "PDF downloaded to Inbox": "PDF 已下载到收件箱",
-    "Review in Inbox to add to your library.": "请前往收件箱审核，确认后加入文献库。",
     "Already in library": "已在文献库中",
     "Open reference": "打开文献",
     "The parent Session is unavailable.": "主会话不可用。",
@@ -7282,6 +7281,14 @@
     "You can configure up to 32 pages.": "最多可配置 32 页。",
     "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。",
     "Sign in to continue this conversation": "登录后继续此对话",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。",
+    "Checking current library status…": "正在检查当前文献库状态…",
+    "Could not check current library status.": "无法检查当前文献库状态。",
+    "Current library status": "当前文献库状态",
+    "Imported: {{total}}": "已导入：{{total}}",
+    "Dismissed: {{total}}": "已忽略：{{total}}",
+    "Current status unavailable: {{total}}": "无法确认当前状态：{{total}}",
+    "Open imported reference {{number}}": "打开已导入文献 {{number}}",
+    "Historical result; current library status is unavailable.": "这是历史结果，无法确认当前文献库状态。"
   }
 }

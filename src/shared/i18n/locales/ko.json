@@ -5947,7 +5947,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 모델 및 라우팅 안내",
     "Saved to Inbox": "받은 편지함에 저장됨",
     "PDF downloaded to Inbox": "PDF가 받은 편지함에 다운로드됨",
-    "Review in Inbox to add to your library.": "받은 편지함에서 검토한 후 라이브러리에 추가하세요.",
     "Already in library": "이미 라이브러리에 있음",
     "Open reference": "문헌 열기",
     "The parent Session is unavailable.": "상위 세션을 사용할 수 없습니다.",
@@ -7280,6 +7279,14 @@
     "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
     "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다.",
     "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다.",
+    "Checking current library status…": "현재 라이브러리 상태 확인 중…",
+    "Could not check current library status.": "현재 라이브러리 상태를 확인할 수 없습니다.",
+    "Current library status": "현재 라이브러리 상태",
+    "Imported: {{total}}": "가져옴: {{total}}",
+    "Dismissed: {{total}}": "제외됨: {{total}}",
+    "Current status unavailable: {{total}}": "현재 상태 확인 불가: {{total}}",
+    "Open imported reference {{number}}": "가져온 문헌 {{number}} 열기",
+    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다."
   }
 }

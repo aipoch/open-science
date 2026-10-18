@@ -6404,7 +6404,6 @@
     "DeepSeek API model and routing details": "Модели и маршрутизация API DeepSeek",
     "Saved to Inbox": "Сохранено во входящих",
     "PDF downloaded to Inbox": "PDF загружен во входящие",
-    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку.",
     "Already in library": "Уже в библиотеке",
     "Open reference": "Открыть публикацию",
     "The parent Session is unavailable.": "Родительская сессия недоступна.",
@@ -7752,6 +7751,14 @@
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
     "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
     "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены.",
+    "Checking current library status…": "Проверка текущего состояния в библиотеке…",
+    "Could not check current library status.": "Не удалось проверить текущее состояние в библиотеке.",
+    "Current library status": "Текущее состояние в библиотеке",
+    "Imported: {{total}}": "Импортировано: {{total}}",
+    "Dismissed: {{total}}": "Отклонено: {{total}}",
+    "Current status unavailable: {{total}}": "Текущее состояние недоступно: {{total}}",
+    "Open imported reference {{number}}": "Открыть импортированный источник {{number}}",
+    "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно."
   }
 }
