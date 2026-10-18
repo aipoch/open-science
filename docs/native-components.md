@@ -6,6 +6,13 @@ packaging reuse the exact binaries pinned in `build/native-components-lock.json`
 macOS/Windows and checksum-verified on Linux. End users receive these files inside the application;
 the application does not download them at runtime.
 
+The Windows update progress executable is an application resource, outside these three backend
+packages. `build/prepare-desktop.cjs` compiles it from `build/windows-update-progress` during Windows
+application packaging, before calling the unchanged backend staging flow. Windows application
+builds therefore need the MSVC toolchain for this resource; dependency installation and backend
+component staging do not compile it. It receives the outer application's normal Windows signing.
+This separate build does not provide a compilation fallback for a missing or stale catalog entry.
+
 An ordinary application release needs no native-component publication when the inputs below are
 unchanged and the pinned objects remain available. The outer application and installer still need
 their normal release signing. Third-party native dependencies retain their existing rebuild flow.
