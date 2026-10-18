@@ -66,11 +66,16 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE $path),$source.Replace($before,$after))
           powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $path -Output evidence/direct-operation.json
           $direct = $LASTEXITCODE
+          $instrumented = $source.Replace($before,$after).Replace('$start.RedirectStandardInput = $true', '$start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true')
+          [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE $path),$instrumented)
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $path -Output evidence/redirected-operation.json
+          $redirected = $LASTEXITCODE
+          [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE $path),$source.Replace($before,$after))
           $env:UPGRADE_DIAGNOSTIC_OUTPUT = Join-Path $env:GITHUB_WORKSPACE 'evidence/node-observer'
           node --test observer-source/scripts/windows-upgrade-diagnostics/observer.node-test.mjs
           $standard = $LASTEXITCODE
-          @{direct=$direct;standard=$standard} | ConvertTo-Json | Set-Content evidence/observer-invocation-comparison.json
-          if ($direct -ne 0 -or $standard -ne 0) { throw 'Observer invocation comparison failed; retain sample evidence' }
+          @{direct=$direct;redirected=$redirected;standard=$standard} | ConvertTo-Json | Set-Content evidence/observer-invocation-comparison.json
+          if ($redirected -ne 0 -or $standard -ne 0) { throw 'Observer positive invocation control failed; retain sample evidence' }
       - name: Verify the isolated ordinary-user environment
         shell: pwsh
         run: |
