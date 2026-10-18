@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -6,7 +7,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from '../JournalAttributes'
 import { JournalAlignment } from './JournalAlignment'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+})
 const report: NonNullable<JournalResult['alignment']> = {
   token: '11111111-1111-4111-8111-111111111111',
   counts: { matched: 20, missing: 51, ambiguous: 1 },
@@ -43,96 +47,105 @@ it('opens an expanded alignment panel without starting a scan', () => {
   expect(journals).not.toHaveBeenCalled()
 })
 
-it('checks and pages the library, keeps candidates read-only and invalidates after a change', async () => {
-  let changed!: () => void
-  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> => {
-    if (request.action === 'audit-step')
-      return { scan: { token: report.token, processed: 72, done: true } }
-    if (request.action === 'candidates')
+it.each(['event', 'desktop'] as const)(
+  'checks and pages the library, keeps candidates read-only and invalidates after a %s change',
+  async (transport) => {
+    let changed!: () => void
+    const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> => {
+      if (request.action === 'audit-step')
+        return { scan: { token: report.token, processed: 72, done: true } }
+      if (request.action === 'candidates')
+        return {
+          candidates: [
+            { id: 'invented-candidate', name: 'Imaginary Moonlight Review', aliases: [], issns: [] }
+          ]
+        }
       return {
-        candidates: [
-          { id: 'invented-candidate', name: 'Imaginary Moonlight Review', aliases: [], issns: [] }
-        ]
-      }
-    return {
-      alignment: {
-        ...report,
-        rows: request.action === 'audit' && request.offset ? [] : report.rows
-      }
-    }
-  })
-  Object.defineProperty(window, 'api', {
-    configurable: true,
-    value: {
-      literature: {
-        journals,
-        onChanged: (callback: () => void) => {
-          changed = callback
-          return () => {}
+        alignment: {
+          ...report,
+          rows: request.action === 'audit' && request.offset ? [] : report.rows
         }
       }
-    }
-  })
-  const onOpenItem = vi.fn()
-  render(<JournalAlignment onOpenItem={onOpenItem} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Journal alignment' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Check library' }))
-  await screen.findByText('Matched: 20 · Unmatched: 51 · Conflicts: 1')
-  expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy()
-  const candidateAction = screen.getByRole('button', { name: 'Find journal candidates' })
-  const actionCell = candidateAction.closest('td')!
-  expect(actionCell.cellIndex).toBe(3)
-  expect(actionCell.textContent).not.toContain('No matching journal')
-  expect(candidateAction.querySelector('svg')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Invented reference' }))
-  expect(onOpenItem).toHaveBeenCalledWith(
-    'fictional-reference',
-    screen.getByRole('button', { name: 'Invented reference' })
-  )
-  fireEvent.click(screen.getAllByRole('button', { name: 'Find journal candidates' })[0])
-  await waitFor(() =>
-    expect(journals).toHaveBeenCalledWith({
-      action: 'candidates',
-      query: 'Imaginary Moonlight Review'
     })
-  )
-  await waitFor(() =>
-    expect((screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled).toBe(
-      false
-    )
-  )
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
-  await waitFor(() =>
-    expect(journals).toHaveBeenCalledWith({
-      action: 'audit',
-      token: report.token,
-      status: 'missing',
-      offset: 25,
-      limit: 25
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          journals,
+          onChanged: (callback: () => void) => {
+            changed = callback
+            return () => {}
+          }
+        }
+      }
     })
-  )
-  await screen.findByText('No references in this group.')
-  act(() => changed())
-  expect(
-    screen.getByText(
-      'References or journal data may have changed. Recheck the library before using these results.'
+    const onOpenItem = vi.fn()
+    render(<JournalAlignment onOpenItem={onOpenItem} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Journal alignment' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check library' }))
+    await screen.findByText('Matched: 20 · Unmatched: 51 · Conflicts: 1')
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy()
+    const candidateAction = screen.getByRole('button', { name: 'Find journal candidates' })
+    const actionCell = candidateAction.closest('td')!
+    expect(actionCell.cellIndex).toBe(3)
+    expect(actionCell.textContent).not.toContain('No matching journal')
+    expect(candidateAction.querySelector('svg')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Invented reference' }))
+    expect(onOpenItem).toHaveBeenCalledWith(
+      'fictional-reference',
+      screen.getByRole('button', { name: 'Invented reference' })
     )
-  ).toBeTruthy()
-  expect(
-    (screen.getByRole('combobox', { name: 'Match status' }) as HTMLSelectElement).disabled
-  ).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Recheck library' }))
-  await waitFor(() =>
+    fireEvent.click(screen.getAllByRole('button', { name: 'Find journal candidates' })[0])
+    await waitFor(() =>
+      expect(journals).toHaveBeenCalledWith({
+        action: 'candidates',
+        query: 'Imaginary Moonlight Review'
+      })
+    )
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    await waitFor(() =>
+      expect(journals).toHaveBeenCalledWith({
+        action: 'audit',
+        token: report.token,
+        status: 'missing',
+        offset: 25,
+        limit: 25
+      })
+    )
+    await screen.findByText('No references in this group.')
+    act(() => {
+      if (transport === 'event') changed()
+      else {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      }
+    })
+    expect(
+      screen.getByText(
+        'References or journal data may have changed. Recheck the library before using these results.'
+      )
+    ).toBeTruthy()
     expect(
       (screen.getByRole('combobox', { name: 'Match status' }) as HTMLSelectElement).disabled
-    ).toBe(false)
-  )
-  expect(
-    journals.mock.calls.every(([request]) =>
-      ['audit', 'audit-step', 'candidates'].includes(request.action)
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck library' }))
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('combobox', { name: 'Match status' }) as HTMLSelectElement).disabled
+      ).toBe(false)
     )
-  ).toBe(true)
-})
+    expect(
+      journals.mock.calls.every(([request]) =>
+        ['audit', 'audit-step', 'candidates'].includes(request.action)
+      )
+    ).toBe(true)
+  }
+)
 
 it('discards a late check after closing and recovers from an expired result', async () => {
   let resolve!: (result: JournalResult) => void

@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { verifyDesktopRecoveryReadiness } from '../desktop-recovery-readiness'
+import type { DesktopRuntimeClient } from '../desktop-runtime-client'
 import {
   acknowledgeWindowsUpdateReady,
   cleanupWindowsUpdateHandoffs,
@@ -170,6 +172,40 @@ describe('Windows update presentation receipts', () => {
     await expect(acknowledgeWindowsUpdateReady(ready)).rejects.toThrow('Original data unavailable')
     expect(await readdir(directory)).not.toContain('ready.receipt')
   })
+  it.each(['isComplete', 'isProjectDeletionRecoveryComplete'] as const)(
+    'retains an unconfirmed update until %s becomes true',
+    async (incomplete) => {
+      const { directory, operationId, ready } = await setup()
+      const diagnostics = {
+        isComplete: true,
+        isProjectDeletionRecoveryComplete: true,
+        warnings: []
+      }
+      diagnostics[incomplete] = false
+      const client = {
+        startupState: () => ({ phase: 'ready' }),
+        runtimeInfo: () => ({ startupOptions: config() }),
+        invokeHost: async (channel: string) =>
+          channel === 'storage:get-status'
+            ? { dataRoot: config().dataRoot, dataRootMissing: false }
+            : channel === 'sessions:list'
+              ? { sessions: [], manifest: { version: 1 }, diagnostics }
+              : []
+      } as unknown as DesktopRuntimeClient
+      ready.verifyReady = (expected) => verifyDesktopRecoveryReadiness(client, expected)
+
+      await expect(acknowledgeWindowsUpdateReady(ready)).rejects.toThrow('saved conversations')
+      expect(await readdir(directory)).not.toContain('ready.receipt')
+      expect((await resolveWindowsUpdateStartup(ready))?.confirmed).toBe(false)
+
+      diagnostics[incomplete] = true
+      await expect(acknowledgeWindowsUpdateReady(ready)).resolves.toBe(true)
+      expect(await readFile(join(directory, 'ready.receipt'), 'utf8')).toBe(
+        windowsUpdateReceipt(operationId, 'ready')
+      )
+      expect((await resolveWindowsUpdateStartup(ready))?.confirmed).toBe(true)
+    }
+  )
   it('rejects a stale or partially written installer receipt', async () => {
     const { directory, ready } = await setup()
     for (const contents of ['other-operation\r\ninstalled\r\n', '']) {
