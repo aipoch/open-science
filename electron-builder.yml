@@ -125,6 +125,8 @@ win:
     # primary executable cannot even pass `--version` on a particular Windows machine.
     - from: resources/bin/win/${arch}/micromamba-compat.exe
       to: micromamba-compat.exe
+    - from: build/windows-update-handoff-uninstall.ps1
+      to: windows-update-handoff-uninstall.ps1
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
     - from: build/windows-notebook-sandbox-uninstall.ps1

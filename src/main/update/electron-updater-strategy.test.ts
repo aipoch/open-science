@@ -1,3 +1,4 @@
+import type { WindowsInstallProgress } from './windows-install-progress'
 import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
@@ -1551,10 +1552,10 @@ describe('ElectronUpdaterStrategy', () => {
 describe('Windows update window handoff', () => {
   it('keeps the application alive until the independent window acknowledges readiness', async () => {
     const updater = new FakeUpdater()
-    let acknowledge!: (value: { cancel: () => void }) => void
+    let acknowledge!: (value: WindowsInstallProgress) => void
     const startInstallProgress = vi.fn(
       () =>
-        new Promise<{ cancel: () => void }>((resolve) => {
+        new Promise<WindowsInstallProgress>((resolve) => {
           acknowledge = resolve
         })
     )
@@ -1568,19 +1569,25 @@ describe('Windows update window handoff', () => {
     const apply = strategy.apply()
     await vi.waitFor(() => expect(startInstallProgress).toHaveBeenCalledOnce())
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    acknowledge({ cancel: vi.fn() })
+    acknowledge({
+      operationId: '00000000-0000-4000-8000-000000000001',
+      handoff: vi.fn(),
+      cancel: vi.fn()
+    })
     await apply
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
-  it('refuses installation when the independent window cannot start', async () => {
+  it('refuses installation before backend shutdown when the independent window cannot start', async () => {
     const updater = new FakeUpdater()
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const releaseInstallHandoff = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       platform: 'win32',
       broadcast: vi.fn(),
       releaseInstallHandoff,
+      installGate,
       startInstallProgress: async () => {
         throw new Error('Window readiness failed')
       }
@@ -1591,19 +1598,24 @@ describe('Windows update window handoff', () => {
       reason: 'install-failed',
       error: 'Window readiness failed'
     })
+    expect(installGate).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(releaseInstallHandoff).toHaveBeenCalledOnce()
     expect(currentApplicationShutdownTrigger()).not.toBe('update')
   })
 
-  it('closes the progress companion when the installer reports a failure', async () => {
+  it('notifies the progress companion when installer handoff is uncertain', async () => {
     const updater = new FakeUpdater()
     const cancel = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       platform: 'win32',
       broadcast: vi.fn(),
-      startInstallProgress: async () => ({ cancel })
+      startInstallProgress: async () => ({
+        operationId: '00000000-0000-4000-8000-000000000001',
+        handoff: vi.fn(),
+        cancel
+      })
     })
     await markUpdateReady(strategy, updater)
     await strategy.apply()

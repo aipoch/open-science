@@ -12,7 +12,7 @@ const fixture = fileURLToPath(new URL('./', import.meta.url))
 const root = path.join(repository, 'tmp', 'windows-update-progress-' + Date.now())
 const application = path.join(root, 'installation', 'application.exe')
 const scenario = process.argv[2] ?? 'success'
-assert(['success', 'installer-failure', 'cancel', 'observer-gap'].includes(scenario))
+assert(['success', 'installer-failure', 'cancel', 'unconfirmed', 'observer-gap'].includes(scenario))
 if (scenario === 'observer-gap') assert(process.env.OPEN_SCIENCE_PROGRESS_OBSERVER)
 const helperPath = path.join(
   repository,
@@ -79,12 +79,22 @@ const waitExited = async (pid) => {
       installerPath: path.join(root, 'installer.exe'),
       applicationPath: application,
       helperPath,
-      cacheDirectory: path.join(root, 'installation', 'cache'),
+      appData: path.join(root, 'installation', 'cache'),
+      profilePath: path.join(root, 'profile'),
+      targetVersion: '1.0.2',
+      startupOptions: {
+        configRoot: root,
+        dataRoot: root,
+        profilePath: path.join(root, 'profile'),
+        port: 44100,
+        host: '127.0.0.1',
+        credentialStore: 'os'
+      },
       logDirectory: root,
       translate: (text) => text,
       log: console
     }),
-    /cache must be outside the installation/
+    /storage must be outside the installation/
   )
   evidence.push({ phase: 'cache-inside-installation-rejected-before-launch' })
   const invalid = path.join(root, 'invalid-parent')
@@ -100,7 +110,8 @@ const waitExited = async (pid) => {
       'Installing',
       'Starting',
       'Failed',
-      'Close'
+      'Close',
+      'Unconfirmed'
     ])
   )
   const bad = spawn(helperPath, [path.join(invalid, 'config.bin')], {
@@ -148,14 +159,14 @@ const waitExited = async (pid) => {
     assert.equal((await parentExit)[0], 0, parentOutput)
     await waitExited(ready.pid)
     assert.equal(
-      await fs.access(ready.directory).then(
+      await fs.access(path.join(ready.directory, 'closed.receipt')).then(
         () => true,
         () => false
       ),
-      false
+      true
     )
     const log = await fs.readFile(ready.logPath, 'utf8')
-    assert(log.includes('"event":"cancelled"'))
+    assert(log.includes('"event":"presentation-dismissed"'))
     assert(visible(unrelated.pid))
     await mark('close-' + unrelated.pid)
     assert.equal((await unrelatedExit)[0], 0)
@@ -209,7 +220,7 @@ const waitExited = async (pid) => {
           ...process.env,
           OPEN_SCIENCE_UPDATE_OBSERVER_APPLICATION_PATH: application,
           OPEN_SCIENCE_UPDATE_OBSERVER_INSTALLER_PATH: path.join(root, 'installer.exe'),
-          OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH: helperPath,
+          OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH: ready.helper,
           OPEN_SCIENCE_UPDATE_OBSERVER_PARENT_EXECUTABLE_PATH: process.execPath
         }
       }
@@ -235,6 +246,40 @@ const waitExited = async (pid) => {
   evidence.push({ phase: 'before-old-exit', helper: ready.pid, visible: true })
   await mark('exit-parent')
   assert.equal((await parentExit)[0], 0, parentOutput)
+  if (scenario === 'unconfirmed') {
+    await fs.writeFile(
+      path.join(ready.directory, 'unconfirmed.receipt'),
+      ready.token + '\r\nunconfirmed\r\n'
+    )
+    const deadline = Date.now() + 15000
+    while (!(await fs.readFile(ready.logPath, 'utf8')).includes('"event":"unconfirmed"')) {
+      if (Date.now() > deadline) throw Error('Unconfirmed handoff was not presented')
+      await delay(25)
+    }
+    execFileSync(application, ['close', String(ready.pid)], { windowsHide: true, timeout: 5000 })
+    await waitExited(ready.pid)
+    assert.notEqual(
+      inspect(installerPid),
+      'absent',
+      'Closing presentation must not terminate installer'
+    )
+    await mark('release-new-process')
+    await waitFile('app-started')
+    appPid = Number(await fs.readFile(path.join(root, 'app-started'), 'utf8'))
+    await mark('release-window')
+    await waitFile('app-visible')
+    await mark('release-readiness')
+    await mark('close-' + appPid)
+    await mark('close-' + unrelated.pid)
+    assert.equal((await unrelatedExit)[0], 0)
+    for (const pid of [appPid, installerPid, parent.pid, unrelated.pid]) await waitExited(pid)
+    await fs.writeFile(
+      path.join(root, 'result.json'),
+      JSON.stringify({ status: 'PASS', scenario, remaining: [], forced: false }, null, 2)
+    )
+    console.log('PASS closing unconfirmed presentation leaves installer running: ' + root)
+    return
+  }
   if (scenario === 'observer-gap') {
     // Negative control: deliberately remove the fixture's progress UI while no successor exists.
     // The independent observer must record the gap; this is not an application acceptance run.
@@ -257,6 +302,7 @@ const waitExited = async (pid) => {
     appPid = Number(await fs.readFile(path.join(root, 'app-started'), 'utf8'))
     await mark('release-window')
     await waitFile('app-visible')
+    await mark('release-readiness')
     assert.equal((await handoffObserverExit)[0], 0)
     await mark('close-' + appPid)
     await mark('close-' + unrelated.pid)
@@ -298,17 +344,17 @@ const waitExited = async (pid) => {
       log = await fs.readFile(ready.logPath, 'utf8')
       await delay(25)
     }
-    assert(log.includes('Update installer exited with code 23'))
+    assert(log.includes('Installer reported failure'))
     assert(visible(ready.pid))
-    assert(!log.includes('"event":"successor-visible"'))
+    assert(!log.includes('"event":"successor-ready"'))
     execFileSync(application, ['close', String(ready.pid)], { windowsHide: true, timeout: 5000 })
     await waitExited(ready.pid)
     assert.equal(
-      await fs.access(ready.directory).then(
+      await fs.access(path.join(ready.directory, 'closed.receipt')).then(
         () => true,
         () => false
       ),
-      false
+      true
     )
     assert(visible(unrelated.pid))
     await mark('close-' + unrelated.pid)
@@ -336,6 +382,8 @@ const waitExited = async (pid) => {
   })
   await mark('release-window')
   await waitFile('app-visible')
+  assert(visible(ready.pid), 'A visible successor without readiness must not dismiss progress')
+  await mark('release-readiness')
   if (handoffObserverExit) {
     assert.equal((await handoffObserverExit)[0], 0)
     const samples = (await fs.readFile(path.join(root, 'observer.jsonl'), 'utf8'))
@@ -357,21 +405,20 @@ const waitExited = async (pid) => {
   }
   const limit = Date.now() + 15000
   while (
-    await fs.access(ready.directory).then(
-      () => true,
-      () => false
+    await fs.access(path.join(ready.directory, 'closed.receipt')).then(
+      () => false,
+      () => true
     )
   ) {
-    if (Date.now() > limit) throw Error('Helper did not close and clean after successor visibility')
+    if (Date.now() > limit) throw Error('Helper did not close after successor readiness')
     await delay(25)
   }
   const log = await fs.readFile(ready.logPath, 'utf8')
-  assert(log.includes('"event":"successor-visible"'))
-  assert(log.includes('pid=' + appPid + ' '))
+  assert(log.includes('"event":"successor-ready"'))
   assert(visible(appPid))
   assert(visible(unrelated.pid))
   evidence.push({
-    phase: 'helper-exited-after-owned-successor-visible',
+    phase: 'helper-exited-after-owned-successor-ready',
     successor: appPid,
     unrelatedStillVisible: true
   })

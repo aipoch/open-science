@@ -178,3 +178,20 @@ index 56adc38..e28610c 100644
  }
  function checkIsRangesSupported(response, reject) {
      // Electron net handles redirects automatically, our NodeJS test server doesn't use redirects - so, we don't check 3xx codes.
+diff --git a/node_modules/electron-updater/out/NsisUpdater.js b/node_modules/electron-updater/out/NsisUpdater.js
+--- a/node_modules/electron-updater/out/NsisUpdater.js
++++ b/node_modules/electron-updater/out/NsisUpdater.js
+@@ -114,6 +114,13 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+             return false;
+         }
+         const args = ["--updated"];
++        if (this.openScienceUpdateOperation != null) {
++            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(this.openScienceUpdateOperation)) {
++                this.dispatchError(new Error("Invalid Open-Science update operation"));
++                return false;
++            }
++            args.push(`--open-science-update-operation=${this.openScienceUpdateOperation}`);
++        }
+         if (options.isSilent) {
+             args.push("/S");
+         }

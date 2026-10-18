@@ -148,7 +148,8 @@
     "Installing the Open-Science update…": "Installation de la mise à jour d’Open-Science…",
     "Opening the updated Open-Science…": "Ouverture de la version mise à jour d’Open-Science…",
     "The Open-Science update could not finish.": "La mise à jour d’Open-Science n’a pas pu se terminer.",
-    "Close update window": "Fermer la fenêtre de mise à jour"
+    "Close update window": "Fermer la fenêtre de mise à jour",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "L’état de la mise à jour n’a pas pu être confirmé. Fermer cette fenêtre n’arrête pas l’installation."
   },
   "renderer": {
     "Update preparation failed": "Échec de la préparation de la mise à jour",

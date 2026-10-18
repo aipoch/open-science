@@ -859,3 +859,68 @@ it('protects both re-created branded data folders before retrying the old uninst
     recovery.indexOf('ExecWait')
   )
 })
+
+describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
+  it.each(['valid', 'missing', 'invalid'])(
+    'publishes correlated receipts for %s operation arguments',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
+      try {
+        const operation = '00000000-0000-4000-8000-000000000001'
+        const directory = join(root, operation)
+        mkdirSync(directory)
+        writeFileSync(join(directory, 'request.json'), '{}')
+        const include = readFileSync(join(repoRoot, 'build/windows-update-handoff.nsh'), 'utf8')
+        const redirected = include.replace(
+          '"$APPDATA\\Open-Science\\UpdateHandoffs\\$updateOperation"',
+          `"${root}\\$updateOperation"`
+        )
+        expect(redirected).not.toBe(include)
+        const executable = join(root, 'probe.exe')
+        const source = join(root, 'probe.nsi')
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+Name "Isolated update receipt regression"
+OutFile "${executable}"
+RequestExecutionLevel user
+SilentInstall silent
+Var installMode
+${redirected}
+Section
+StrCpy $installMode "current"
+Call initializeUpdateReceipts
+Push "installing"
+Call writeUpdateReceipt
+Push "installed"
+Call writeUpdateReceipt
+Push "failed"
+Call writeUpdateReceipt
+SectionEnd
+`
+        )
+        const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+          encoding: 'utf8',
+          timeout: 30_000
+        })
+        expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+        const args =
+          scenario === 'missing'
+            ? []
+            : [`--open-science-update-operation=${scenario === 'valid' ? operation : '../outside'}`]
+        const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
+        expect(execution.status, execution.stderr || execution.stdout).toBe(0)
+        for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
+          const receipt = join(directory, `${stage}.receipt`)
+          expect(existsSync(receipt)).toBe(scenario === 'valid')
+          if (scenario === 'valid')
+            expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+})

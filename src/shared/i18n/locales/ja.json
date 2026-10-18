@@ -146,7 +146,8 @@
     "Installing the Open-Science update…": "Open-Science の更新をインストールしています…",
     "Opening the updated Open-Science…": "更新された Open-Science を開いています…",
     "The Open-Science update could not finish.": "Open-Science の更新を完了できませんでした。",
-    "Close update window": "更新ウィンドウを閉じる"
+    "Close update window": "更新ウィンドウを閉じる",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "更新の状態を確認できませんでした。このウィンドウを閉じてもインストールは停止しません。"
   },
   "renderer": {
     "Update preparation failed": "更新の準備に失敗しました",

@@ -149,7 +149,8 @@
     "Installing the Open-Science update…": "Установка обновления Open-Science…",
     "Opening the updated Open-Science…": "Открытие обновлённого Open-Science…",
     "The Open-Science update could not finish.": "Не удалось завершить обновление Open-Science.",
-    "Close update window": "Закрыть окно обновления"
+    "Close update window": "Закрыть окно обновления",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "Не удалось подтвердить состояние обновления. Закрытие этого окна не остановит установку."
   },
   "renderer": {
     "Update preparation failed": "Не удалось подготовить обновление",

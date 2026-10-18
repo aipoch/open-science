@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import type { RuntimeStartupOptions } from '../runtime-startup-options'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -55,6 +56,8 @@ export interface MinimalCancellationToken {
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
 export interface MinimalAutoUpdater {
+  // Consumed by the repository's NSIS patch; never a path or command string.
+  openScienceUpdateOperation?: string
   readonly installerPath?: string | null
   autoDownload: boolean
   autoInstallOnAppQuit: boolean
@@ -65,6 +68,7 @@ export interface MinimalAutoUpdater {
 }
 
 export type UpdateInstallationHooks = {
+  getStartupOptions?: () => RuntimeStartupOptions
   // Resolving 'legacy' defers to electron-updater's own quitAndInstall for uncertified channels.
   executeInstall?: (status: UpdateStatus, options: UpdateApplyOptions) => Promise<void | 'legacy'>
   prepareInstall?: (
@@ -291,11 +295,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         ? async () => {
             const installerPath = this.updater.installerPath
             if (!installerPath) throw new Error('Downloaded installer path is unavailable')
+            const startupOptions = deps.getStartupOptions?.()
+            if (!startupOptions) throw new Error('Update startup configuration is unavailable')
             return startWindowsInstallProgress({
               installerPath,
               applicationPath: process.execPath,
               helperPath: join(process.resourcesPath, 'open-science-update-progress.exe'),
-              cacheDirectory: join(app.getPath('temp'), 'open-science-update-tools'),
+              appData: app.getPath('appData'),
+              profilePath: app.getPath('userData'),
+              targetVersion: this.status.latest ?? '',
+              startupOptions,
               logDirectory: app.getPath('logs'),
               translate: deps.translate ?? englishNativeTranslator,
               log: this.log
@@ -441,9 +450,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private releaseAbortedInstallHandoff(): void {
+    const progress = this.installProgress
+    this.installProgress = undefined
+    this.updater.openScienceUpdateOperation = undefined
     try {
-      this.installProgress?.cancel()
-      this.installProgress = undefined
+      progress?.cancel()
     } catch (error) {
       this.log.warn('update progress cancellation failed', error)
     }
@@ -784,6 +795,29 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
     if (!this.applying) return this.status
 
+    // Prepare presentation before stopping the backend. A missing helper must leave the current
+    // application usable, without attempting credential bootstrap while Chromium owns its files.
+    if (options.relaunch !== false && this.startInstallProgress) {
+      try {
+        this.installProgress = await this.startInstallProgress()
+        if (!this.applying) {
+          this.releaseAbortedInstallHandoff()
+          return this.status
+        }
+      } catch (error) {
+        this.releaseAbortedInstallHandoff()
+        this.applying = false
+        this.setStatus({
+          ...this.status,
+          state: 'error',
+          reason: 'install-failed',
+          error: error instanceof Error ? error.message : 'Could not start update progress.'
+        })
+        operation.fail(error, { result: 'error' })
+        return this.status
+      }
+    }
+
     // Stop the agent, Reviewer, and notebook process trees BEFORE handing off to the installer. Its
     // uninstall step deletes the running app's files, and on Windows an executable/DLL still mapped by
     // a background child (agent CLI, python kernel, conda) is locked — the classic "Failed to uninstall
@@ -877,14 +911,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy') {
-        if (options.relaunch !== false && this.startInstallProgress) {
-          this.installProgress = await this.startInstallProgress()
-          // An updater error can arrive while the independent window is starting.
-          if (!this.applying) {
-            this.releaseAbortedInstallHandoff()
-            return this.status
-          }
-        }
+        this.installProgress?.handoff()
+        this.updater.openScienceUpdateOperation = this.installProgress?.operationId
         this.updater.quitAndInstall(
           this.platform !== 'win32' || options.relaunch === false,
           options.relaunch ?? true

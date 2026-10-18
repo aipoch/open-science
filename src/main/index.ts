@@ -12,6 +12,12 @@ import {
 } from './update/channel-certification'
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import {
+  acknowledgeWindowsUpdateReady,
+  cleanupWindowsUpdateHandoffs,
+  resolveWindowsUpdateStartup,
+  waitForWindowsUpdateWindow
+} from './update/windows-update-handoff'
+import {
   DesktopRuntimeStartupError,
   connectDesktopRuntimeForStartup,
   resolveDesktopInstallationStartup
@@ -245,6 +251,19 @@ async function startDesktop(): Promise<void> {
   const completeVerifiedStartup = installationStartup?.completeAfterReady
   const verifiedStartupOutcome = installationStartup?.outcome
   let preservedStartupOptions = installationStartup?.startupOptions
+  let windowsUpdateAlreadyConfirmed = false
+  if (process.platform === 'win32') {
+    // A supplied update identity selects data and credentials: missing/corrupt configuration must
+    // fail startup, never silently fall back to a different profile.
+    const windowsUpdateStartup = await resolveWindowsUpdateStartup({
+      appData: app.getPath('appData'),
+      args: process.argv,
+      version: app.getVersion(),
+      applicationPath: process.execPath
+    })
+    preservedStartupOptions ??= windowsUpdateStartup?.startupOptions
+    windowsUpdateAlreadyConfirmed = windowsUpdateStartup?.confirmed ?? false
+  }
   const credentialArgs = preservedStartupOptions
     ? [
         `--credential-store=${preservedStartupOptions.credentialStore}`,
@@ -724,6 +743,23 @@ async function startDesktop(): Promise<void> {
   const publishRuntimeStartup = (next: RuntimeStartupState): void => {
     runtimeStartupState = next
     broadcast(RUNTIME_STARTUP_CHANNELS.onStateChanged, next)
+    if (next.phase === 'ready' && process.platform === 'win32' && !windowsUpdateAlreadyConfirmed) {
+      // Also acknowledge a successful user-initiated startup repair after an initial failure.
+      void acknowledgeWindowsUpdateReady({
+        appData: app.getPath('appData'),
+        args: process.argv,
+        version: app.getVersion(),
+        applicationPath: process.execPath,
+        profilePath,
+        waitForPresentation: () => waitForWindowsUpdateWindow(getMainWindow() ?? undefined),
+        verifyReady: (expected) => verifyDesktopRecoveryReadiness(client!, expected)
+      }).catch((error) =>
+        bootstrapLog.warn(
+          'Update readiness could not be acknowledged',
+          diagnosticErrorFields(error)
+        )
+      )
+    }
   }
   const waitForStartupRetry = async (failure: DesktopRuntimeStartupError): Promise<void> => {
     startupBlocked = true
@@ -1469,6 +1505,7 @@ async function startDesktop(): Promise<void> {
   })
   const update = createUpdateStrategy(process.platform, {
     translate,
+    getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
     cancelInstall: async () => {
       if (preparedMacInstallation?.debGate)
@@ -1680,7 +1717,7 @@ async function startDesktop(): Promise<void> {
   acceptStartupEvents = true
   publishStartup(client.startupState())
   await readiness
-  if (preservedStartupOptions) {
+  if (preservedStartupOptions && !windowsUpdateAlreadyConfirmed) {
     try {
       await verifyDesktopRecoveryReadiness(client, preservedStartupOptions)
       await completeVerifiedStartup?.()
@@ -1716,6 +1753,14 @@ async function startDesktop(): Promise<void> {
       publishRuntimeStartup({ phase: 'blocked', issue })
     }
   } else publishRuntimeStartup({ phase: 'ready' })
+  if (process.platform === 'win32') {
+    const timer = setTimeout(() => {
+      void cleanupWindowsUpdateHandoffs(app.getPath('appData')).catch((error) =>
+        bootstrapLog.warn('Update presentation cleanup deferred', diagnosticErrorFields(error))
+      )
+    }, 5000)
+    timer.unref()
+  }
   if (secondInstancePending) showMainWindow()
   const { isReadOnlyMacInstallation, showMacInstallationGuidance } =
     await import('./mac-installation')

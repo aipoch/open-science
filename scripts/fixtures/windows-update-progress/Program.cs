@@ -9,6 +9,13 @@ class Program {
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
   static string root = Environment.GetEnvironmentVariable("OPEN_SCIENCE_PROGRESS_FIXTURE");
   static void Write(string name, string value) { File.WriteAllText(Path.Combine(root, name), value); }
+  static void Receipt(string stage) {
+    var operation = Environment.GetEnvironmentVariable("OPEN_SCIENCE_PROGRESS_OPERATION");
+    var directory = Path.Combine(root, "Open-Science", "UpdateHandoffs", operation);
+    var path = Path.Combine(directory, stage + ".receipt");
+    File.WriteAllText(path + ".tmp", operation + "\r\n" + stage + "\r\n", new System.Text.UTF8Encoding(false));
+    File.Move(path + ".tmp", path);
+  }
   static void Wait(string name) {
     var limit = DateTime.UtcNow.AddSeconds(90);
     while (!File.Exists(Path.Combine(root, name))) {
@@ -42,9 +49,11 @@ class Program {
         return 0;
       }
       if (args[0] == "installer") {
+        Receipt("accepted"); Receipt("installing");
         Write("installer-ready", Process.GetCurrentProcess().Id.ToString());
         Wait("release-new-process");
-        if (Environment.GetEnvironmentVariable("OPEN_SCIENCE_PROGRESS_SCENARIO") == "installer-failure") return 23;
+        if (Environment.GetEnvironmentVariable("OPEN_SCIENCE_PROGRESS_SCENARIO") == "installer-failure") { Receipt("failed"); return 23; }
+        Receipt("installed");
         using (var child = Process.Start(new ProcessStartInfo(Path.Combine(root, "installation", "application.exe"), "app") { UseShellExecute = false })) {
           Write("successor-pid", child.Id.ToString());
         }
@@ -58,7 +67,8 @@ class Program {
         form.Shown += (s, e) => Write(args[0] + "-visible", pid);
         using (var timer = new System.Windows.Forms.Timer()) {
           timer.Interval = 50;
-          timer.Tick += (s, e) => { if (File.Exists(Path.Combine(root, "close-" + pid)) || File.Exists(Path.Combine(root, "cancel-fixture"))) form.Close(); };
+          bool acknowledged = false;
+          timer.Tick += (s, e) => { if (args[0] == "app" && !acknowledged && File.Exists(Path.Combine(root, "release-readiness"))) { Receipt("ready"); acknowledged = true; } if (File.Exists(Path.Combine(root, "close-" + pid)) || File.Exists(Path.Combine(root, "cancel-fixture"))) form.Close(); };
           timer.Start(); Application.Run(form);
         }
       }

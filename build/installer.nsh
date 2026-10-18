@@ -9,6 +9,13 @@
   # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
   # real product uninstall removes the AppContainer resources.
   ${ifNot} ${isUpdated}
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
+    Pop $0
+    StrCmp $0 "0" updatePresentationCleanupComplete
+    DetailPrint `Open-Science update presentation cleanup failure code=$0`
+    MessageBox MB_OK|MB_ICONSTOP "An Open-Science update may still be active. Finish the update and close its update window, then retry uninstall."
+    Abort
+    updatePresentationCleanupComplete:
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
@@ -22,6 +29,7 @@
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
+!include "${BUILD_RESOURCES_DIR}/windows-update-handoff.nsh"
 
 Var perMachineInstallDirCache
 Var perUserInstallDirCache
@@ -220,6 +228,9 @@ FunctionEnd
     StrCpy $1 ""
     ${if} ${isUpdated}
       StrCpy $1 "--updated"
+      ${if} $updateOperation != ""
+        StrCpy $1 "$1 --open-science-update-operation=$updateOperation"
+      ${endif}
     ${endif}
     ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
   FunctionEnd
@@ -242,6 +253,7 @@ FunctionEnd
 !macroend
 
 !macro customInit
+  Call initializeUpdateReceipts
   # Cache both registered locations before either uninstall pass can delete their registry data.
   # More importantly, move any nested OpenScience data root OUTSIDE the install directory before
   # the first old uninstaller runs. Its /KEEP_APP_DATA flag only protects the normal OS app-data
@@ -316,6 +328,8 @@ FunctionEnd
   ${if} ${Silent}
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
+    Push "installing"
+    Call writeUpdateReceipt
   ${endif}
   openScienceCustomInit_done:
 !macroend
@@ -382,15 +396,26 @@ FunctionEnd
     !endif
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
+    Push "installing"
+    Call writeUpdateReceipt
   FunctionEnd
 
   Function restorePreservedOnAbort
     !insertmacro restoreAllNestedDataRoots
+    Push "failed"
+    Call writeUpdateReceipt
   FunctionEnd
 
   Function .onInstFailed
     !insertmacro restoreAllNestedDataRoots
+    Push "failed"
+    Call writeUpdateReceipt
   FunctionEnd
+!macroend
+
+!macro customInstall
+  Push "installed"
+  Call writeUpdateReceipt
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via

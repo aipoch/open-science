@@ -1,12 +1,21 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, realpath, rm } from 'node:fs/promises'
+import { renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import type { Logger } from '@aipoch/diagnostics/node'
 import type { NativeTranslator } from '../locale/main-process-messages'
+import type { RuntimeStartupOptions } from '../runtime-startup-options'
+import {
+  createWindowsUpdateRequest,
+  writeWindowsUpdateFile,
+  windowsUpdateReceipt
+} from './windows-update-handoff'
 
 export interface WindowsInstallProgress {
+  readonly operationId: string
+  handoff(): void
+  // Dismisses presentation after an aborted handoff; never cancels or terminates an installer.
   cancel(): void
 }
 
@@ -16,11 +25,11 @@ export function encodeWindowsProgressConfig(parentPid: number, fields: string[])
     !Number.isSafeInteger(parentPid) ||
     parentPid <= 0 ||
     parentPid > 0xffffffff ||
-    fields.length !== 9
+    fields.length !== 10
   )
     throw new Error('Invalid update handoff configuration')
   const header = Buffer.alloc(8)
-  header.writeUInt32LE(0x3150554f)
+  header.writeUInt32LE(0x3250554f)
   header.writeUInt32LE(parentPid, 4)
   return Buffer.concat([
     header,
@@ -34,64 +43,61 @@ export function encodeWindowsProgressConfig(parentPid: number, fields: string[])
   ])
 }
 
-// Cache the exact signed binary outside the installation so replacement cannot lock it. This is
-// a reusable versioned resource, not an attempt temp file. Never execute a mismatched cache entry.
-async function cacheHelper(
-  source: string,
-  cacheDirectory: string,
-  applicationPath: string
-): Promise<{ helper: string; directory: string }> {
-  await mkdir(cacheDirectory, { recursive: true })
-  const cache = await realpath(cacheDirectory)
-  const installation = await realpath(dirname(applicationPath))
-  const offset = relative(installation, cache)
-  if (offset === '' || (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`)))
-    throw new Error('Update progress cache must be outside the installation')
-  const bytes = await readFile(source)
-  const digest = createHash('sha256').update(bytes).digest('hex')
-  const directory = join(cache, digest)
-  await mkdir(directory, { recursive: true })
-  const destination = join(directory, 'open-science-update-progress.exe')
-  try {
-    await writeFile(destination, bytes, { flag: 'wx' })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-  }
-  if (
-    !(await lstat(destination)).isFile() ||
-    createHash('sha256')
-      .update(await readFile(destination))
-      .digest('hex') !== digest
-  )
-    throw new Error('Cached update progress executable does not match the installed resource')
-  return { helper: destination, directory: cache }
-}
-
 export async function startWindowsInstallProgress(options: {
   installerPath: string
   applicationPath: string
   helperPath: string
-  cacheDirectory: string
+  appData: string
+  profilePath: string
+  targetVersion: string
+  startupOptions: RuntimeStartupOptions
   logDirectory: string
   translate: NativeTranslator
   log: Logger
 }): Promise<WindowsInstallProgress> {
-  const cached = await cacheHelper(
-    options.helperPath,
-    options.cacheDirectory,
-    options.applicationPath
-  )
-  const helper = cached.helper
-  const directory = await mkdtemp(join(cached.directory, 'attempt-'))
-  const token = randomUUID()
+  const { directory, request } = await createWindowsUpdateRequest(options.appData, options)
+  const token = request.operationId
+  const helper = join(directory, 'helper.exe')
   const cancelPath = join(directory, 'cancel')
   const logPath = join(options.logDirectory, `update-handoff-${token}.jsonl`)
   let child: ChildProcess | undefined
-  const cancel = (): void => writeFileSync(cancelPath, token, { encoding: 'utf8' })
+  let handedOff = false
+  const receipt = (stage: string): void => {
+    const file = join(directory, `${stage}.receipt`)
+    const temporary = `${file}.${randomUUID()}.tmp`
+    try {
+      writeFileSync(temporary, windowsUpdateReceipt(token, stage), { flag: 'wx', mode: 0o600 })
+      renameSync(temporary, file)
+    } finally {
+      rmSync(temporary, { force: true })
+    }
+  }
+  const cancel = (): void => {
+    const temporary = join(directory, `cancel.${randomUUID()}.tmp`)
+    try {
+      if (handedOff) {
+        receipt('unconfirmed')
+        return
+      }
+      receipt('aborted')
+      writeFileSync(temporary, token, { encoding: 'utf8', flag: 'wx' })
+      renameSync(temporary, cancelPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    } finally {
+      rmSync(temporary, { force: true })
+    }
+  }
   try {
+    const installation = await realpath(dirname(options.applicationPath))
+    const offset = relative(installation, await realpath(directory))
+    if (offset === '' || (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`)))
+      throw new Error('Update progress storage must be outside the installation')
+    // Each attempt owns its own complete helper copy. A failed write cannot poison later attempts.
+    await writeWindowsUpdateFile(helper, await readFile(options.helperPath))
     await mkdir(options.logDirectory, { recursive: true })
     const configuration = join(directory, 'config.bin')
-    await writeFile(
+    await writeWindowsUpdateFile(
       configuration,
       encodeWindowsProgressConfig(process.pid, [
         token,
@@ -102,9 +108,11 @@ export async function startWindowsInstallProgress(options: {
         options.translate('Installing the Open-Science update…'),
         options.translate('Opening the updated Open-Science…'),
         options.translate('The Open-Science update could not finish.'),
-        options.translate('Close update window')
-      ]),
-      { flag: 'wx' }
+        options.translate('Close update window'),
+        options.translate(
+          'The update status could not be confirmed. Closing this window does not stop installation.'
+        )
+      ])
     )
     const launched = spawn(helper, [configuration], {
       cwd: directory,
@@ -113,7 +121,11 @@ export async function startWindowsInstallProgress(options: {
       // ShowWindow call, including the actual window whose readiness we must acknowledge.
       windowsHide: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH: undefined }
+      env: {
+        ...process.env,
+        OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH: undefined,
+        OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256: undefined
+      }
     })
     child = launched
     await new Promise<void>((resolve, reject) => {
@@ -171,10 +183,23 @@ export async function startWindowsInstallProgress(options: {
         }
       })
     })
-    return { cancel }
+    request.helperPid = launched.pid
+    await writeWindowsUpdateFile(join(directory, 'request.json'), JSON.stringify(request))
+    return {
+      operationId: token,
+      cancel,
+      handoff: () => {
+        receipt('handoff')
+        handedOff = true
+      }
+    }
   } catch (error) {
-    if (child?.pid && child.exitCode === null) cancel()
-    else await rm(directory, { recursive: true, force: true })
+    try {
+      if (child?.pid && child.exitCode === null && child.signalCode === null) cancel()
+      else await rm(directory, { recursive: true, force: true })
+    } catch (cleanupError) {
+      options.log.warn('Update presentation cleanup deferred', cleanupError)
+    }
     throw error
   }
 }

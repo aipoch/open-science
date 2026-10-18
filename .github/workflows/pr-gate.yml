@@ -1105,6 +1105,10 @@ jobs:
           path: packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
           retention-days: 5
           if-no-files-found: error
+      - name: Prepare Windows update receipt compiler
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
+        run: >-
+          node -e "require('app-builder-lib/out/toolsets/windows').getMakeNsisPath().then(x => require('node:fs').appendFileSync(process.env.GITHUB_ENV, Object.entries({ ...x.env, NSIS_TEST_COMPILER: x.path }).map(([k, v]) => k + '=' + v).join('\n') + '\n'))"
       - name: Test Windows-specific behavior
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
@@ -1113,6 +1117,14 @@ jobs:
           npx vitest run
           scripts/ci/run-windows-browser-diagnostics.test.ts
           scripts/windows-updater-certification.test.ts
+          scripts/windows-update-progress.test.ts
+          build/packaging.test.ts
+          scripts/windows-update-handoff-uninstall.test.ts
+          src/main/update/windows-install-progress.test.ts
+          src/main/update/windows-update-handoff.test.ts
+          src/main/update/electron-updater-provider-regressions.test.ts
+          src/main/update/electron-updater-strategy.test.ts
+          src/main/index-startup-failure.test.ts
           src/main/windows.test.ts
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts

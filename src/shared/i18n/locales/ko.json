@@ -146,7 +146,8 @@
     "Installing the Open-Science update…": "Open-Science 업데이트 설치 중…",
     "Opening the updated Open-Science…": "업데이트된 Open-Science 여는 중…",
     "The Open-Science update could not finish.": "Open-Science 업데이트를 완료하지 못했습니다.",
-    "Close update window": "업데이트 창 닫기"
+    "Close update window": "업데이트 창 닫기",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "업데이트 상태를 확인할 수 없습니다. 이 창을 닫아도 설치는 중지되지 않습니다."
   },
   "renderer": {
     "Update preparation failed": "업데이트 준비 실패",

@@ -113,3 +113,48 @@ is the durable signed CDN distribution. The end-user runtime cache persists acro
 upgrades. See [native host builds](../packages/notebook-network-sandbox/README.md#native-host-builds)
 for the separate AppContainer host. These existing Notebook storage and compatibility rules are
 unchanged by this native-component workflow.
+
+### Windows update presentation handoff
+
+The native progress companion owns its window only. NSIS/electron-updater retain download,
+verification, installation and recovery ownership. Interactive Windows updates create a fresh UUID
+under the current user's `%APPDATA%/Open-Science/UpdateHandoffs/<uuid>/`. The request records the
+expected version, executable, installer, profile and runtime startup options. The helper is copied
+atomically into that operation directory, outside the installation being replaced.
+
+The UUID travels through the patched NSIS updater argument and the installer's Finish-page launch.
+NSIS publishes atomic `accepted`, `installing`, `installed` or `failed` receipts. The new application
+restores the original startup options through the normal credential/profile checks and publishes
+`ready` only after backend and original-data verification and the main window has been shown. A visible window or sampled process tree
+is not an installation result. This protocol covers interactive relaunch; non-relaunching updates
+retain the existing silent installation behavior and do not create a companion.
+
+Before handoff, aborting writes a complete cancellation marker and closes the companion. After
+handoff, an ambiguous launch error or the 20-minute observation deadline displays an unconfirmed
+status with a Close button. Closing that window never cancels or terminates installation. Late
+valid completion receipts can still close an open unconfirmed window.
+
+The companion records its exit. A later startup removes recognized aborted/failed operations only
+when all recorded owners have exited. For confirmed operations, it removes the helper executable
+and binary launch input but retains the small configuration/receipt record until explicit uninstall.
+Electron relaunch preserves argv and has a gap between old/new PIDs, so PID liveness alone cannot
+prove that the configuration is no longer needed. Each successor renews its PID before opening the
+profile. Once confirmed, ordinary relaunches use current data settings without repeating the original
+update data-root assertion, allowing later data-folder migrations. Missing/corrupt launch configuration
+fails closed. Unknown outcomes are retained for diagnosis.
+Real product uninstall uses the fixed app-data root, validates ownership/ACLs and reparse points,
+checks parent/helper and exact executable paths, and removes recognized inactive operations, including
+unknown outcomes. It stops for active operations rather than terminating them. Unknown files are
+preserved. Update-time uninstall skips this cleanup. Legacy shared temporary helper caches are not
+adopted or recursively deleted because they lack the new ownership record.
+
+Compatibility: installers without an operation argument continue normally; an older target without
+receipts cannot produce confirmed success in the new companion. There is no user-data schema change.
+This does not retrofit the released macOS 1.0.0 updater.
+
+Native verification requires Windows. Build the helper through the desktop preparation command,
+then run `node scripts/fixtures/windows-update-progress/run.mjs success`, `installer-failure`, and
+`cancel`, and `unconfirmed`. The success fixture deliberately exposes the successor window before releasing readiness.
+The PR Windows runtime lane runs these four native companion cases and the uninstall regressions.
+The independent observer remains diagnostic evidence only. NSIS receipt and uninstall regressions
+run in `build/packaging.test.ts` and `scripts/windows-update-handoff-uninstall.test.ts` on Windows.

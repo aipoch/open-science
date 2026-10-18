@@ -27,14 +27,13 @@ struct Process {
 struct Config {
   DWORD parent;
   std::wstring token, parentExe, appExe, installerExe, logPath;
-  std::wstring installing, starting, failed, close;
+  std::wstring installing, starting, failed, close, unknown;
 };
 Config config;
 std::filesystem::path directory;
 std::map<DWORD, Process> owned;
-DWORD installer = 0;
 ULONGLONG boundary = 0, began = 0;
-bool failed = false, finished = false;
+bool failed = false, finished = false, uncertain = false;
 HWND window = nullptr, label = nullptr, progress = nullptr, closeButton = nullptr;
 
 ULONGLONG Time(FILETIME value) {
@@ -107,26 +106,40 @@ std::vector<PROCESSENTRY32W> Snapshot() {
   if (GetLastError() != ERROR_NO_MORE_FILES) throw std::runtime_error("Incomplete update process ancestry");
   return rows;
 }
-bool ChildDuringLifetime(const Process& child, const Process& parent) {
-  if (child.created < parent.created) return false;
-  if (!Exited(parent)) return true;
-  FILETIME start, end, kernel, user;
-  if (!GetProcessTimes(parent.handle->value, &start, &end, &kernel, &user)) throw std::runtime_error("Cannot verify exited update parent");
-  return child.created <= Time(end);
-}
-BOOL CALLBACK VisibleWindow(HWND hwnd, LPARAM parameter) {
-  auto* identity = reinterpret_cast<std::pair<DWORD, bool>*>(parameter);
-  DWORD pid = 0; GetWindowThreadProcessId(hwnd, &pid);
-  if (pid == identity->first && IsWindowVisible(hwnd) && !IsIconic(hwnd) && GetWindow(hwnd, GW_OWNER) == nullptr) {
-    identity->second = true; return FALSE;
-  }
-  return TRUE;
-}
 void Fail(const std::string& error) {
   failed = true;
   const std::wstring detail(error.begin(), error.end());
   try { Record("failed", detail); } catch (...) {}
-  SetWindowTextW(label, (config.failed + L"\r\n" + detail).c_str());
+  SetWindowTextW(label, config.failed.c_str());
+  ShowWindow(progress, SW_HIDE); ShowWindow(closeButton, SW_SHOW);
+}
+bool Receipt(const std::wstring& stage) {
+  const auto path = directory / (stage + L".receipt");
+  if (!std::filesystem::exists(path)) return false;
+  if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)) || std::filesystem::file_size(path) > 128)
+    throw std::runtime_error("Invalid update receipt file");
+  std::ifstream input(path, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(input)), {});
+  if (text != Utf8(config.token) + "\r\n" + Utf8(stage) + "\r\n")
+    throw std::runtime_error("Update receipt identity mismatch");
+  return true;
+}
+void ClosedReceipt() {
+  const auto temporary = directory / L"closed.receipt.tmp";
+  const auto destination = directory / L"closed.receipt";
+  const auto text = Utf8(config.token) + "\r\nclosed\r\n";
+  Handle file(CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+  DWORD written = 0;
+  if (file.value == INVALID_HANDLE_VALUE || !WriteFile(file.value, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) || written != text.size() || !FlushFileBuffers(file.value))
+    throw std::runtime_error("Cannot record closed update presentation");
+  CloseHandle(file.value); file.value = nullptr;
+  if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    throw std::runtime_error("Cannot publish closed update presentation");
+}
+void Unknown(const std::string& error) {
+  if (!uncertain) { try { Record("unconfirmed", std::wstring(error.begin(), error.end())); } catch (...) {} }
+  uncertain = true;
+  SetWindowTextW(label, config.unknown.c_str());
   ShowWindow(progress, SW_HIDE); ShowWindow(closeButton, SW_SHOW);
 }
 void Tick() {
@@ -134,59 +147,27 @@ void Tick() {
   if (std::filesystem::exists(cancel)) {
     std::ifstream file(cancel); std::string token((std::istreambuf_iterator<char>(file)), {});
     if (token != Utf8(config.token)) throw std::runtime_error("Invalid handoff cancellation");
-    Record("cancelled"); DestroyWindow(window); return;
+    Record("presentation-dismissed"); DestroyWindow(window); return;
   }
   if (failed) return;
-  if (GetTickCount64() - began > 20 * 60 * 1000) throw std::runtime_error("Timed out waiting for the updated application window");
-  auto rows = Snapshot();
-  bool added;
-  do {
-    added = false;
-    for (const auto& row : rows) {
-      if (row.th32ProcessID == GetCurrentProcessId() || owned.count(row.th32ProcessID) || !owned.count(row.th32ParentProcessID)) continue;
-      Process child;
-      try { child = Capture(row); }
-      catch (...) {
-        // An exit between enumeration and opening is harmless; a still-live unreadable child
-        // is not evidence of a successful handoff. The next sample or timeout retains the UI.
-        continue;
-      }
-      if (child.created < boundary || !ChildDuringLifetime(child, owned.at(child.parent))) continue;
-      owned.emplace(child.pid, child); added = true;
-    }
-  } while (added);
-  for (const auto& [pid, candidate] : owned) {
-    if (_wcsicmp(candidate.path.c_str(), config.installerExe.c_str()) != 0) continue;
-    if (installer && installer != pid) throw std::runtime_error("Ambiguous update installer identity");
-    if (!installer) { installer = pid; Record("installer", Identity(candidate)); }
+  if (Receipt(L"unconfirmed")) Unknown("The installer handoff could not be confirmed");
+  if (Receipt(L"failed")) { Fail("Installer reported failure"); return; }
+  const bool installed = Receipt(L"installed");
+  if (installed && Receipt(L"ready") && Exited(owned.at(config.parent))) {
+    Record("successor-ready"); finished = true; DestroyWindow(window); return;
   }
-  if (!installer) return;
-  const auto& root = owned.at(installer);
-  if (Exited(root)) {
-    DWORD code; if (!GetExitCodeProcess(root.handle->value, &code)) throw std::runtime_error("Cannot read installer result");
-    if (code) throw std::runtime_error("Update installer exited with code " + std::to_string(code));
+  if (GetTickCount64() - began > 20 * 60 * 1000) {
+    Unknown("Timed out waiting for a confirmed update result"); return;
   }
-  for (const auto& [pid, candidate] : owned) {
-    if (pid == config.parent || _wcsicmp(candidate.path.c_str(), config.appExe.c_str()) != 0 || candidate.created < root.created || Exited(candidate)) continue;
-    DWORD ancestor = pid;
-    while (owned.count(ancestor) && ancestor != installer) ancestor = owned.at(ancestor).parent;
-    if (ancestor != installer) continue;
-    SetWindowTextW(label, config.starting.c_str());
-    std::pair<DWORD, bool> visible{pid, false};
-    EnumWindows(VisibleWindow, reinterpret_cast<LPARAM>(&visible));
-    if (Exited(owned.at(config.parent)) && visible.second) {
-      Record("successor-visible", Identity(candidate)); finished = true;
-      DestroyWindow(window); return;
-    }
-  }
+  if (!uncertain) SetWindowTextW(label, installed ? config.starting.c_str() : config.installing.c_str());
 }
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case WM_TIMER:
-      try { Tick(); } catch (const std::exception& error) { Fail(error.what()); }
+      try { Tick(); } catch (const std::exception& error) { Unknown(error.what()); }
       return 0;
-    case WM_CLOSE: if (failed) DestroyWindow(hwnd); return 0;
-    case WM_COMMAND: if (LOWORD(wparam) == 1 && failed) DestroyWindow(hwnd); return 0;
+    case WM_CLOSE: if (failed || uncertain) DestroyWindow(hwnd); return 0;
+    case WM_COMMAND: if (LOWORD(wparam) == 1 && (failed || uncertain)) DestroyWindow(hwnd); return 0;
     case WM_DESTROY: KillTimer(hwnd, 1); PostQuitMessage(0); return 0;
   }
   return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -201,11 +182,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!file.is_absolute() || file.filename() != L"config.bin") throw std::runtime_error("Invalid handoff configuration path");
     directory = file.parent_path();
     std::ifstream input(file, std::ios::binary);
-    if (Number(input) != 0x3150554f) throw std::runtime_error("Unsupported handoff configuration");
+    if (Number(input) != 0x3250554f) throw std::runtime_error("Unsupported handoff configuration");
     config.parent = Number(input);
     config.token = Text(input); config.parentExe = Text(input); config.appExe = Text(input);
     config.installerExe = Text(input); config.logPath = Text(input);
-    config.installing = Text(input); config.starting = Text(input); config.failed = Text(input); config.close = Text(input);
+    config.installing = Text(input); config.starting = Text(input); config.failed = Text(input); config.close = Text(input); config.unknown = Text(input);
     if (input.peek() != std::char_traits<char>::eof()) throw std::runtime_error("Unexpected handoff configuration data");
     input.close();
     if (config.token.size() != 36 || config.token.find_first_not_of(L"0123456789abcdef-") != std::wstring::npos) throw std::runtime_error("Invalid handoff token");
@@ -247,14 +228,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), ready.data(), static_cast<DWORD>(ready.size()), &written, nullptr) || written != ready.size()) throw std::runtime_error("Cannot acknowledge update window readiness");
     MSG message;
     while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
-    Record("closed", finished ? L"successor-visible" : failed ? L"failed" : L"cancelled");
+    Record("closed", finished ? L"successor-ready" : failed ? L"failed" : L"dismissed");
     owned.clear();
     // A process's current directory is itself an open directory handle on Windows.
     if (!SetCurrentDirectoryW(directory.parent_path().c_str())) throw std::runtime_error("Cannot release handoff working directory");
-    // Only attempt-owned files; the signed helper itself is an intentionally cached resource.
-    std::filesystem::remove(directory / L"cancel");
-    std::filesystem::remove(directory / L"config.bin");
-    std::filesystem::remove(directory);
+    // The successor (or a later startup/uninstall) removes this exact request only after exit.
+    // Windows must not delete the executable while it is still mapped in this process.
+    ClosedReceipt();
     return failed ? 1 : 0;
   } catch (const std::exception& error) {
     DWORD written; const std::string text = error.what();

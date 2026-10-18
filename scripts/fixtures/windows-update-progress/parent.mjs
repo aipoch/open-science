@@ -13,7 +13,17 @@ const progress = await startWindowsInstallProgress({
   installerPath: join(root, 'installer.exe'),
   applicationPath: join(root, 'installation', 'application.exe'),
   helperPath: process.env.OPEN_SCIENCE_PROGRESS_HELPER,
-  cacheDirectory: join(root, 'cache'),
+  appData: root,
+  profilePath: join(root, 'profile'),
+  targetVersion: '1.0.2',
+  startupOptions: {
+    configRoot: root,
+    dataRoot: root,
+    profilePath: join(root, 'profile'),
+    port: 44100,
+    host: '127.0.0.1',
+    credentialStore: 'os'
+  },
   logDirectory: root,
   translate: (text) => text,
   log: {
@@ -38,7 +48,9 @@ if (process.env.OPEN_SCIENCE_PROGRESS_SCENARIO === 'cancel') {
   progress.cancel()
   process.exit(0)
 }
+progress.handoff()
 const installer = spawn(join(root, 'installer.exe'), ['installer'], {
+  env: { ...process.env, OPEN_SCIENCE_PROGRESS_OPERATION: progress.operationId },
   stdio: 'ignore',
   windowsHide: false,
   detached: true
