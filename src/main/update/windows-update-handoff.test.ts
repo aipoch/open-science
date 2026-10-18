@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifyDesktopRecoveryReadiness } from '../desktop-recovery-readiness'
@@ -18,8 +18,14 @@ import {
   waitForWindowsUpdateWindow
 } from './windows-update-handoff'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rename: vi.fn(actual.rename) }
+})
+
 let root: string
 beforeEach(async () => {
+  vi.mocked(rename).mockReset()
   root = await mkdtemp(join(tmpdir(), 'update-receipts-'))
 })
 afterEach(async () => {
@@ -228,6 +234,70 @@ describe('Windows update presentation receipts', () => {
     await mkdir(conflict)
     await expect(writeWindowsUpdateFile(conflict, 'cannot replace a directory')).rejects.toThrow()
     expect((await readdir(root)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+  it.skipIf(process.platform !== 'win32')(
+    'publishes the request after a real Windows reader releases the failed replacement',
+    async () => {
+      const path = join(root, 'request.json')
+      const previous = JSON.stringify({ operationId: 'same-operation', parentPid: 100 })
+      const next = JSON.stringify({ operationId: 'same-operation', parentPid: 100, helperPid: 101 })
+      await writeFile(path, previous)
+      const reader = await open(path, 'r')
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let observedConflict = false
+      vi.mocked(rename).mockImplementationOnce(async (source, destination) => {
+        try {
+          await actual.rename(source, destination)
+        } catch (error) {
+          expect(error).toMatchObject({ code: 'EPERM' })
+          expect(await reader.readFile('utf8')).toBe(previous)
+          expect(await readFile(path, 'utf8')).toBe(previous)
+          observedConflict = true
+          await reader.close()
+          throw error
+        }
+      })
+      try {
+        await writeWindowsUpdateFile(path, next)
+        expect(observedConflict).toBe(true)
+        expect(rename).toHaveBeenCalledTimes(2)
+        expect(await readFile(path, 'utf8')).toBe(next)
+        expect(await readdir(root)).toEqual(['request.json'])
+      } finally {
+        await reader.close()
+      }
+    }
+  )
+  it.skipIf(process.platform !== 'win32')(
+    'rejects a persistently held Windows request without changing it or leaking the temporary file',
+    async () => {
+      const path = join(root, 'request.json')
+      const previous = '{"operationId":"same-operation","parentPid":100}'
+      await writeFile(path, previous)
+      const reader = await open(path, 'r')
+      try {
+        await expect(writeWindowsUpdateFile(path, '{"helperPid":101}')).rejects.toMatchObject({
+          code: 'EPERM'
+        })
+        expect(rename).toHaveBeenCalledTimes(6)
+        expect(await reader.readFile('utf8')).toBe(previous)
+        expect(await readFile(path, 'utf8')).toBe(previous)
+        expect(await readdir(root)).toEqual(['request.json'])
+      } finally {
+        await reader.close()
+      }
+    }
+  )
+  it('preserves the original request and error without retrying a non-contention failure', async () => {
+    const path = join(root, 'request.json')
+    const previous = '{"operationId":"same-operation"}'
+    await writeFile(path, previous)
+    const failure = Object.assign(new Error('device failure'), { code: 'EIO' })
+    vi.mocked(rename).mockRejectedValueOnce(failure)
+    await expect(writeWindowsUpdateFile(path, '{"helperPid":101}')).rejects.toBe(failure)
+    expect(rename).toHaveBeenCalledOnce()
+    expect(await readFile(path, 'utf8')).toBe(previous)
+    expect(await readdir(root)).toEqual(['request.json'])
   })
   it('removes an aborted dead attempt including owned publication leftovers', async () => {
     const { directory, operationId } = await setup()

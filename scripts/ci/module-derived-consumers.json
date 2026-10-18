@@ -8,6 +8,15 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "durable_files": [
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/main/update/windows-install-progress.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "environment_contracts": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

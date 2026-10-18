@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
+import { retryFileReplacement } from '@aipoch/durable-files'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
 
 export const WINDOWS_UPDATE_OPERATION_ARG = '--open-science-update-operation='
@@ -41,7 +42,8 @@ export async function writeWindowsUpdateFile(
   const temporary = `${path}.${randomUUID()}.tmp`
   try {
     await writeFile(temporary, contents, { flag: 'wx', mode: 0o600 })
-    await rename(temporary, path)
+    // Windows readers can briefly deny replacement; retain the complete old file until publication.
+    await retryFileReplacement(() => rename(temporary, path))
   } finally {
     await rm(temporary, { force: true })
   }
