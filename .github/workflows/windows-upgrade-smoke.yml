@@ -49,6 +49,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 292cddde868c14092511b293cd695d3145fe5083
+          path: observer-source
+          persist-credentials: false
+      - name: Compare direct and standard observer invocation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          $path = 'observer-source/scripts/windows-upgrade-diagnostics/test-observer-operation.ps1'
+          $source = [IO.File]::ReadAllText((Join-Path $env:GITHUB_WORKSPACE $path))
+          $before = 'if ($identity.Count -ne 1 -or $identity[0].role -ne $expected)'
+          $after = '$live += @{probe="sample-before-assert";sample=$sample;childExited=$child.HasExited;childPid=$child.Id}; ' + $before
+          if ($source.Split($before).Count -ne 2) { throw 'Unexpected observer probe boundary' }
+          [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE $path),$source.Replace($before,$after))
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $path -Output evidence/direct-operation.json
+          $direct = $LASTEXITCODE
+          $env:UPGRADE_DIAGNOSTIC_OUTPUT = Join-Path $env:GITHUB_WORKSPACE 'evidence/node-observer'
+          node --test observer-source/scripts/windows-upgrade-diagnostics/observer.node-test.mjs
+          $standard = $LASTEXITCODE
+          @{direct=$direct;standard=$standard} | ConvertTo-Json | Set-Content evidence/observer-invocation-comparison.json
+          if ($direct -ne 0 -or $standard -ne 0) { throw 'Observer invocation comparison failed; retain sample evidence' }
       - name: Verify the isolated ordinary-user environment
         shell: pwsh
         run: |
