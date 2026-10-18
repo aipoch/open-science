@@ -1487,7 +1487,10 @@ const WorkspacePage = ({
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
   }
   const canOpenProjectCompute =
-    typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
+    typeof window.api.notebook?.getProjectActivity === 'function' &&
+    typeof window.api.notebook?.onChanged === 'function' &&
+    typeof window.api.compute?.jobsList === 'function' &&
+    typeof window.api.compute?.onJobUpdated === 'function'
   const bookmarkSession =
     activeSession && isSessionPersistenceReady && !activeSession.packageOrigin
       ? activeSession
