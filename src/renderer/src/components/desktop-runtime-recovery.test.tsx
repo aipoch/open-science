@@ -75,6 +75,30 @@ describe('desktop recovery notice', () => {
     expect((draft as HTMLTextAreaElement).value).toBe('retained draft')
   })
 
+  it('remembers focus before recovery makes the composer non-editable', async () => {
+    render(
+      <>
+        <textarea aria-label="draft" />
+        <DesktopRuntimeRecovery />
+      </>
+    )
+    const draft = screen.getByLabelText('draft')
+    // Model the browser losing focus when a recovery subscriber disables the composer.
+    const unsubscribe = useDesktopRuntimeRecoveryStore.subscribe((state) => {
+      if (state.phase !== 'connected') draft.blur()
+    })
+    try {
+      draft.focus()
+      await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quit' }))
+      await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
+      await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
+      await waitFor(() => expect(document.activeElement).toBe(draft))
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('keeps editable content mounted, announces loss, and disables repeated recovery while pending', async () => {
     render(
       <>
