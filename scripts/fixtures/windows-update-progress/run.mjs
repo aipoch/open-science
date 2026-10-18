@@ -243,7 +243,7 @@ const waitHelperEvent = async (event) => {
           ...process.env,
           OPEN_SCIENCE_UPDATE_OBSERVER_APPLICATION_PATH: application,
           OPEN_SCIENCE_UPDATE_OBSERVER_INSTALLER_PATH: path.join(root, 'installer.exe'),
-          OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH: ready.helper,
+          OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH: helperPath,
           OPEN_SCIENCE_UPDATE_OBSERVER_PARENT_EXECUTABLE_PATH: process.execPath
         }
       }
