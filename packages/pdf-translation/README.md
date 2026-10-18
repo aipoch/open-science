@@ -31,6 +31,59 @@ admitting a request. Cache publication serializes only owners of the same resolv
 unrelated roots do not block each other. Write-admission capabilities need not be reentrant:
 pending usage completions flush inside the already-admitted write before a new attempt starts.
 
+Readers may request mixed output with `preserveUnsupported: true` and `preserveUnmatched: true`.
+Unmatched source regions then retain their original PDF content, while verified replacements on
+the same page continue. The writer protects retained regions from neighboring replacements and
+reports their layout failures. Strict callers still reject unmatched sources. Renderer verification
+must confirm that retained text and placement survived before displaying or caching the PDF.
+The fixed-layout reader also rebuilds a page with original text if post-generation verification fails;
+that fallback is checked again, is never published as the translated cache, and runs at most once
+per affected page in an automatic recovery sequence.
+
+The desktop translation settings offer an opt-in **Content first** checkbox (off by default).
+Its `contentFirst` value is saved in each translation checkpoint and restored when reopening or
+switching editions. Historical checkpoints without the option preserve the original PDF layout.
+Preparation locates raster images, caption-supported vector diagrams and academic tables with
+matching top/header/bottom rules. In Content first mode, text wholly contained in these regions
+is excluded from inference requests. The whole table/image stays original; body text and captions
+remain eligible. The default layout retains its previous translation admission policy. Uncertain
+graphics fall back to ordinary text preparation; page backgrounds and scanned body pages are not
+treated as small figures. This policy runs after cached table ownership is applied.
+The same local detection also protects tables/images when regenerating historical Content first
+editions, without changing saved translations or paragraph indices. New snapshots record atomic
+original regions, so table borders, symbols and labels are emitted in one crop rather than as a
+list of paragraphs. Original table/figure text is intentionally excluded from reflow text checks.
+Content first always retains bibliography text in the source language, even if an older edition
+contains translations of it. Extracted formula and code ownership is stored explicitly; these
+regions retain original glyphs and code indentation rather than being reclassified as prose.
+Captioned pseudocode blocks with numbered/indented control flow use the same code policy.
+Inline mathematics stays under the existing identifier/order validation. Inference additionally
+requires literal numeric spelling, unit notation, URLs, DOI strings and inline code, and rejects
+changed protected occurrences for retry/original fallback. Source superscripts are not rewritten
+to caret notation in this mode. Ordinary headings, prose, captions and footnote prose remain eligible.
+When selected, the view uses `layout: 'reflow'`: single-column A4 pagination with all
+accepted translations, plus original image crops for figures, formulas and untranslated regions.
+Page-sized publisher Forms are traversed to locate graphics without duplicating whole source pages.
+Pages with no translated replacements are copied intact, so untranslated bibliographies keep their
+original columns and pagination. Original footer page numbers are omitted from reflowed pages.
+On mixed pages, readable original prose uses text reflow rather than paragraph screenshots.
+Column-aware ordering keeps a right-column bibliography after the left-column body; figure
+labels without translations are owned by their retained image and are not emitted a second time.
+Copied original pages are identified in the preview. Comparison shows an original page once
+across its translated continuation pages. Text flow continues across source-page boundaries,
+with at least two paragraph lines kept together when possible. Copied original pages end the
+current text flow, so bibliography pages remain intact. Each output page records every contributing
+source page; comparison and navigation also handle two source pages sharing one output page.
+Legacy source IDs and checkpoint indices are preserved.
+The reader pins a generation snapshot during translation and keeps the last verified preview
+visible. New paragraphs mark the preview as out of date; completion, cancellation or explicit
+refresh selects the latest results. A failed refresh leaves the previous preview readable, and
+export waits for a preview matching the latest accepted translations.
+Output includes source-page mappings and paragraph placements; the reader verifies complete
+translated text at those placements, uses them for navigation/highlights, and exports the same PDF.
+Reflow candidates bypass the fixed-layout cache. This local step reuses saved text and makes no
+inference requests.
+
 The host supplies inference execution, provider error interpretation, diagnostics, write admission,
 source authorization, application paths and storage connections. Model/account/Agent lifetimes,
 credential access, global usage aggregation, process supervision and application shutdown stay

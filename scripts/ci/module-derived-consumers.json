@@ -1,6 +1,20 @@
 {
   "schemaVersion": 1,
   "modules": {
-    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"]
+    "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
+    "package_pdf_translation": [
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
+    ],
+    "pdf_document_source": [
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
+    ],
+    "pdf_preview_runtime": [
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationPreparation.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-preparation.test.tsx"
+    ],
+    "pdf_structure_engine": [
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
+    ]
   }
 }

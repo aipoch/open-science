@@ -277,6 +277,7 @@ export async function extractPdfTranslationSource({
         id: unit.id,
         source: unit.source,
         ...(unit.sourceOnly ? { sourceOnly: true as const } : {}),
+        ...(unit.preserve ? { preserve: unit.preserve } : {}),
         fragments
       })
       if (unit.risks.length)

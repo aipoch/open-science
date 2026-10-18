@@ -569,9 +569,48 @@ it('requires explicit model and language, discloses remote text transfer and pas
   expect(onStart).toHaveBeenCalledWith({
     targetId: 'remote',
     language: 'Chinese',
+    contentFirst: false,
     glossary: [{ source: 'cell', target: '细胞' }]
   })
 })
+it('passes content-first selection to a new edition and locks it during translation', () => {
+  const onStart = vi.fn(),
+    onContentFirstChange = vi.fn()
+  const props = {
+    executor,
+    ready: true,
+    hasTranslatableText: true,
+    onStart,
+    onCancel: vi.fn(),
+    onNewTranslation: vi.fn(),
+    onContentFirstChange
+  }
+  const view = render(<PdfTranslationControls {...props} state={idle} />)
+  const checkbox = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Content first' })
+  expect(checkbox.checked).toBe(false)
+  fireEvent.click(checkbox)
+  expect(onContentFirstChange).toHaveBeenLastCalledWith(true)
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
+    key: 'ArrowDown'
+  })
+  fireEvent.click(screen.getByRole('option', { name: 'Chosen model' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Translate document' }))
+  expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ contentFirst: true }))
+  view.rerender(
+    <PdfTranslationControls
+      {...props}
+      state={{ status: 'running', done: 0, total: 2, options: onStart.mock.calls[0][0] }}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: /Translation settings/ }))
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Content first' }).checked).toBe(
+    true
+  )
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Content first' }).disabled).toBe(
+    true
+  )
+})
+
 it('pins retry settings, reports retained progress and exposes cancel and new translation at the right times', () => {
   const onStart = vi.fn(),
     onCancel = vi.fn(),
@@ -693,7 +732,11 @@ it.each(['completed', 'cancelled', 'error'] as const)(
     expect((reopened.getByLabelText('Target language') as HTMLInputElement).value).toBe('Chinese')
     fireEvent.change(reopened.getByLabelText('Target language'), { target: { value: 'French' } })
     fireEvent.click(reopened.getByRole('button', { name: 'Translate document' }))
-    expect(onNewTranslation).toHaveBeenCalledExactlyOnceWith({ ...options, language: 'French' })
+    expect(onNewTranslation).toHaveBeenCalledExactlyOnceWith({
+      ...options,
+      language: 'French',
+      contentFirst: false
+    })
     expect(screen.queryByRole('dialog')).toBeNull()
   }
 )
@@ -801,6 +844,7 @@ it('uses asynchronously restored settings and requires an available model before
   expect(onNewTranslation).toHaveBeenCalledExactlyOnceWith({
     targetId: 'remote',
     language: 'Japanese',
+    contentFirst: false,
     glossary: [{ source: 'custom term', target: 'custom term' }]
   })
 })
@@ -974,6 +1018,7 @@ it('keeps advanced options collapsed, defaults to serial and starts with four la
   expect(onNewTranslation).toHaveBeenCalledWith({
     targetId: 'remote',
     language: 'Chinese',
+    contentFirst: false,
     glossary: [],
     concurrency: 4
   })

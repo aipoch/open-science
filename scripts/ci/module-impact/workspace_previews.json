@@ -85,6 +85,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/reaction-markup.test.ts",
     "src/renderer/src/pages/workspace/previews/renderers/reaction-markup.ts",
     "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.ts",
     "src/renderer/src/pages/workspace/previews/spreadsheet-cache-policy.test.ts",
     "src/renderer/src/pages/workspace/previews/tiff-preview-preflight.test.ts",
     "src/renderer/src/pages/workspace/previews/tiff-preview-preflight.ts",
@@ -313,7 +315,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
       "scripts/pdfjs-resource-scope.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "contract": [],
     "consumer": [

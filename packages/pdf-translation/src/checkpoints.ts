@@ -471,7 +471,8 @@ export class PdfTranslationCheckpoints {
         previous.targetKey !== targetKey ||
         previous.language !== input.language ||
         JSON.stringify(previous.glossary) !== JSON.stringify(input.glossary) ||
-        (previous.concurrency ?? 1) !== (input.concurrency ?? 1)
+        (previous.concurrency ?? 1) !== (input.concurrency ?? 1) ||
+        Boolean(previous.contentFirst) !== Boolean(input.contentFirst)
       )
         throw new Error('Translation checkpoint does not match.')
       if (
@@ -500,6 +501,7 @@ export class PdfTranslationCheckpoints {
       language: input.language,
       glossary: input.glossary,
       ...(input.concurrency !== undefined ? { concurrency: input.concurrency } : {}),
+      ...(input.contentFirst !== undefined ? { contentFirst: input.contentFirst } : {}),
       targetKey,
       model,
       ...(input.layoutSnapshot ? { layoutSnapshot: input.layoutSnapshot } : {}),

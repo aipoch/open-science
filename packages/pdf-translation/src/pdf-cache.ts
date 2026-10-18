@@ -58,7 +58,10 @@ const headerSchema = z
   })
   .strict()
 type Header = z.infer<typeof headerSchema>
-type Render = Pick<PdfTranslationPdfRequest, 'pages' | 'units' | 'preserveUnsupported'>
+type Render = Pick<
+  PdfTranslationPdfRequest,
+  'pages' | 'units' | 'preserveUnsupported' | 'preserveUnmatched'
+>
 type Identity = {
   source: PdfTranslationCheckpointRequest
   checkpointKey: string
@@ -172,6 +175,9 @@ export class PdfTranslationPdfCache {
     caller: ApplicationCallerLease
   ): Promise<PdfTranslationPdfResult | null> {
     caller.signal.throwIfAborted()
+    // Reflow uses output-page mappings and its own independent renderer checks.
+    // The fixed-layout cache stores only same-page candidates.
+    if (input?.layout === 'reflow') return this.options.writer.generateDetailed(input, caller)
     if (!caller.isCurrent() || !this.options.writer.valid(input))
       return this.options.writer.generateDetailed(input, caller)
     if (this.active.size >= 2 || this.active.has(input.id))
@@ -195,7 +201,8 @@ export class PdfTranslationPdfCache {
             render: structuredClone({
               pages: input.pages,
               units: input.units,
-              preserveUnsupported: input.preserveUnsupported
+              preserveUnsupported: input.preserveUnsupported,
+              preserveUnmatched: input.preserveUnmatched
             })
           }
           const checkpoint = await this.options.owner.readCheckpoint(

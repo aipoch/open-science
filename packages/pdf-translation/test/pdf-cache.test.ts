@@ -301,6 +301,20 @@ it('requires exact native retained failures and never caches verification failur
   ).toBe(true)
 })
 
+it('separates mixed-output cache entries from strict source matching', async () => {
+  const f = await setup()
+  const strict = { ...f.request, preserveUnsupported: true }
+  const first = await f.cache.generate(strict, f.caller)
+  await f.cache.confirm(f.report(first!), f.caller)
+  const mixed = { ...strict, preserveUnmatched: true }
+  const second = await f.cache.generate(mixed, f.caller)
+  expect(second?.cacheHit).toBeUndefined()
+  await f.cache.confirm(f.report(second!), f.caller)
+  expect((await f.cache.generate(mixed, f.caller))?.cacheHit).toBe(true)
+  expect((await f.cache.generate(strict, f.caller))?.cacheHit).toBe(true)
+  expect(f.writer.generateDetailed).toHaveBeenCalledTimes(2)
+})
+
 it('enforces file count/byte quotas, removes only owned stale files, and serializes concurrent publication', async () => {
   const f = await setup()
   await f.publish()

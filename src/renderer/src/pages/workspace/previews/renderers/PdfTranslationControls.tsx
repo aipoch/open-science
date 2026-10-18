@@ -338,6 +338,7 @@ function TranslationSettingsFields({
   const modelLabelId = useId()
   const targetLanguageId = useId()
   const concurrencyId = useId()
+  const contentFirstHintId = useId()
   const apiModelId = useId()
   const apiModels = useAvailableApiModels()
   const agentCatalog = useAgentModels(options.agentModel?.frameworkId)
@@ -673,6 +674,26 @@ function TranslationSettingsFields({
       {target?.id === 'api' && disabled && !options.apiModel ? (
         <AgentModelDetails state={state} direct={target.id === 'api'} />
       ) : null}
+      <div className="space-y-1.5 rounded-md border border-border/60 px-3 py-2">
+        <PdfTranslationActionHint reason={lockedSettingsReason} className="w-full">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={options.contentFirst ?? false}
+              disabled={disabled}
+              aria-describedby={contentFirstHintId}
+              onChange={(event) => onChange({ ...options, contentFirst: event.target.checked })}
+              className="size-4 accent-primary"
+            />
+            {t('Content first')}
+          </label>
+        </PdfTranslationActionHint>
+        <p id={contentFirstHintId} className="text-xs leading-5 text-muted-foreground">
+          {t(
+            'Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.'
+          )}
+        </p>
+      </div>
       <Collapsible.Root className="overflow-hidden rounded-md border border-border/60 bg-background/70">
         <Collapsible.Trigger asChild>
           <Button
@@ -758,7 +779,8 @@ export function PdfTranslationControls({
   onStart,
   onCancel,
   onSkip,
-  onNewTranslation
+  onNewTranslation,
+  onContentFirstChange
 }: {
   executor?: PdfTranslationExecutor
   state: PdfTranslationJob
@@ -768,6 +790,7 @@ export function PdfTranslationControls({
   onCancel: () => void
   onSkip?: (unitId: string) => void
   onNewTranslation: (options: PdfTranslationOptions) => void
+  onContentFirstChange?: (enabled: boolean) => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const apiModels = useAvailableApiModels()
@@ -778,6 +801,7 @@ export function PdfTranslationControls({
   const [agentModel, setAgentModel] = useState<PdfTranslationOptions['agentModel']>(
     () => state.options?.agentModel
   )
+  const [contentFirst, setContentFirst] = useState(() => state.options?.contentFirst ?? false)
   const [targetId, setTargetId] = useState(() => state.options?.targetId ?? ''),
     [language, setLanguage] = useState(() =>
       defaultTargetLanguage(
@@ -809,6 +833,7 @@ export function PdfTranslationControls({
     setLanguage(pinned.language)
     setGlossary(pinned.glossary)
     setConcurrency(pinned.concurrency)
+    setContentFirst(pinned.contentFirst ?? false)
     setApiModel(pinned.apiModel)
     setAgentModel(pinned.agentModel)
   }
@@ -911,6 +936,7 @@ export function PdfTranslationControls({
       pinned ?? {
         targetId,
         language,
+        contentFirst,
         glossary: pdfTranslationGlossarySchema.parse(glossary),
         ...(targetId === 'api' && apiModel ? { apiModel } : {}),
         ...(targetId === 'agent' && agentModel ? { agentModel } : {}),
@@ -1090,6 +1116,10 @@ export function PdfTranslationControls({
                       <dd className="min-w-0 truncate font-medium">{pinned.language}</dd>
                       <dt className="text-muted-foreground">{t('Translation method')}</dt>
                       <dd className="min-w-0 truncate font-medium">{targetLabel}</dd>
+                      <dt className="text-muted-foreground">{t('Content first')}</dt>
+                      <dd className="min-w-0 truncate font-medium">
+                        {pinned.contentFirst ? t('Enabled') : t('Disabled')}
+                      </dd>
                       {target?.id === 'agent' || target?.id === 'api' || target?.id === 'local' ? (
                         <>
                           <dt className="text-muted-foreground">{t('Model')}</dt>
@@ -1115,6 +1145,7 @@ export function PdfTranslationControls({
                       pinned ?? {
                         targetId,
                         language,
+                        contentFirst,
                         glossary,
                         ...(targetId === 'api' && apiModel ? { apiModel } : {}),
                         ...(targetId === 'agent' && agentModel ? { agentModel } : {}),
@@ -1129,6 +1160,8 @@ export function PdfTranslationControls({
                       setLanguage(options.language)
                       setGlossary(options.glossary)
                       setConcurrency(options.concurrency)
+                      setContentFirst(options.contentFirst ?? false)
+                      onContentFirstChange?.(options.contentFirst ?? false)
                       setApiModel(options.apiModel)
                       setAgentModel(options.agentModel)
                     }}
@@ -1266,6 +1299,7 @@ export function PdfTranslationControls({
                             setNewOptions({
                               targetId: pinned.targetId,
                               language: pinned.language,
+                              contentFirst: pinned.contentFirst ?? false,
                               glossary: pinned.glossary,
                               ...(pinned.apiModel ? { apiModel: pinned.apiModel } : {}),
                               ...(pinned.agentModel ? { agentModel: pinned.agentModel } : {}),

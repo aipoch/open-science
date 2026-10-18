@@ -147,6 +147,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Ce format de données chiffrées n’est pas pris en charge par cette version de l’application. Utilisez une version compatible ou restaurez le profil d’origine. Les identifiants existants n’ont pas été remplacés."
   },
   "renderer": {
+    "Content first": "Priorité au contenu",
+    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Traduire le corps du texte et les légendes en conservant autant que possible les images, tableaux, formules, code et références dans leur forme d’origine. Le résultat dépend de la qualité de l’extraction du contenu du PDF. Laisser cette option décochée pour préserver autant que possible la mise en page du PDF d’origine.",
     "Select one or more options": "Sélectionnez une ou plusieurs options",
     "Your conversation is preserved. Try Resume again.": "Votre conversation est conservée. Réessayez de la reprendre.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "L’agent n’a pas répondu à temps. Votre conversation est conservée. Réessayez de la reprendre.",

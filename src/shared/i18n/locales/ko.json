@@ -145,6 +145,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
+    "Content first": "내용 우선",
+    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "본문과 캡션을 번역하고 이미지, 표, 수식, 코드와 참고문헌은 가능한 한 원문 그대로 유지합니다. 결과는 PDF 내용 추출 품질에 따라 달라집니다. 선택하지 않으면 원본 PDF 레이아웃을 가능한 한 유지합니다.",
     "Select one or more options": "하나 이상의 옵션 선택",
     "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",

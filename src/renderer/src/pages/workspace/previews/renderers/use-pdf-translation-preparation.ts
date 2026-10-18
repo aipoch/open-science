@@ -4,12 +4,14 @@ import {
   rememberPdfTranslationExtraction,
   restorePdfTranslationExtraction,
   extractPdfTranslationSource,
+  preservePdfFigureSources,
   type PdfTranslationExtraction,
   applyCachedPdfTableSources,
   type PdfTranslationSourceIdentity
 } from '@aipoch/pdf-translation/reader'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { pdfjsLib } from '../pdfjs'
 
 export type PdfPreparationState =
   | { status: 'idle' | 'cancelled' | 'error' }
@@ -101,7 +103,7 @@ export function usePdfTranslationPreparation(
       onProgress: (pagesRead) => publish({ status: 'running', pagesRead })
     })
       .then(async (extraction) => {
-        const prepared =
+        const withTables =
           attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached
             ? await applyCachedPdfTableSources({
                 extraction,
@@ -113,6 +115,15 @@ export function usePdfTranslationPreparation(
                   window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
               })
             : extraction
+        const prepared = checkpoint
+          ? withTables
+          : await preservePdfFigureSources({
+              document,
+              extraction: withTables,
+              operators: pdfjsLib.OPS,
+              skipTranslation: false,
+              signal: controller.signal
+            })
         controller.signal.throwIfAborted()
         rememberPdfTranslationExtraction(prepared)
         if (checkpoint && !checkpoint.layoutSnapshot && window.api.pdfTranslation?.saveSnapshot) {

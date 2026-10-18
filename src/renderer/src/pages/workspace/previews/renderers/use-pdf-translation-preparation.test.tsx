@@ -12,6 +12,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
+import { waitFor } from '@testing-library/react'
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
@@ -197,7 +198,7 @@ describe('reader-owned PDF preparation', () => {
     expect(current.state).toEqual({ status: 'running', pagesRead: 1 })
     await act(async () => resolve(ready))
     await render()
-    expect(current.state).toEqual({ status: 'ready', extraction: ready })
+    await waitFor(() => expect(current.state).toEqual({ status: 'ready', extraction: ready }))
   })
   it('cancels immediately and ignores old progress and completion during a fresh retry', async () => {
     const completions: ((value: PdfTranslationExtraction) => void)[] = []
@@ -217,7 +218,7 @@ describe('reader-owned PDF preparation', () => {
     })
     expect(current.state).toEqual({ status: 'running', pagesRead: 0 })
     await act(async () => completions[1](ready))
-    expect(current.state.status).toBe('ready')
+    await waitFor(() => expect(current.state.status).toBe('ready'))
   })
   it.each(['key', 'document', 'disabled'] as const)(
     'invalidates source ownership on %s change',
@@ -257,7 +258,7 @@ describe('reader-owned PDF preparation', () => {
     await act(async () => current.start())
     expect(current.state.status).toBe('error')
     await act(async () => current.start())
-    expect(current.state.status).toBe('ready')
+    await waitFor(() => expect(current.state.status).toBe('ready'))
   })
   it('publishes once after cached ownership verification and does not inspect later cache changes', async () => {
     useTables = true
@@ -279,7 +280,7 @@ describe('reader-owned PDF preparation', () => {
     expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce()
     await act(async () => deferred.resolve(ready))
     await render()
-    expect(current.state).toEqual({ status: 'ready', extraction: ready })
+    await waitFor(() => expect(current.state).toEqual({ status: 'ready', extraction: ready }))
     expect(applyCachedPdfTableSources).toHaveBeenCalledOnce()
     expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
   })

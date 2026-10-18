@@ -26,6 +26,7 @@ import { proveNumericGlyphSources } from './numeric-glyphs.mjs'
 import { createSourceFragmentRecovery } from './source-fragments.mjs'
 import { unwrapPageContainers } from './page-containers.mjs'
 import { translateFormLabels } from './form-labels.mjs'
+import { generateReflow } from './reflow.mjs'
 import { splitSharedTextRuns, recoverOverprintedTextSources } from './shared-text-runs.mjs'
 import {
   pdfLinkLabelKey,
@@ -318,7 +319,14 @@ const regionsOverlap = (
 
 // This worker owns all engine/font memory and has no filesystem input supplied by the renderer.
 // Terminating it cancels WASM work as well as JavaScript; only the bundled font is read from disk.
-async function generate({ data, units, pages, preserveUnsupported = false, selectedPages }) {
+async function generate({
+  data,
+  units,
+  pages,
+  preserveUnsupported = false,
+  preserveUnmatched = false,
+  selectedPages
+}) {
   const fontBytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url))
   const face = fontkit.create(fontBytes)
   // Greek compatibility variants may use an available outline, but must keep
@@ -1100,7 +1108,8 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
       ...unit.fragments.map((fragment) => ({
         fragment,
         rect: fragmentBounds(fragment),
-        unchanged: true
+        unchanged: true,
+        unit
       }))
     )
   }
@@ -5775,7 +5784,9 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         // Retry only this region as unchanged, through the same source/geometry preflight.
         // Invalid input and failures after page mutation still fail closed.
         const canPreserveOriginal =
-          unit.fragments.length > 2 || /^[\d\s,.;:–—-]+$/u.test(unit.source.trim())
+          preserveUnmatched ||
+          unit.fragments.length > 2 ||
+          /^[\d\s,.;:–—-]+$/u.test(unit.source.trim())
         if (
           !preserveUnsupported ||
           !['annotations', 'overflow', 'unsupported-layout', 'source-mismatch', 'font'].includes(
@@ -5838,111 +5849,140 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     } while (retained.size)
   }
   try {
-    const borrowedPages = []
+    const borrowedPages = new Map()
     try {
-      // Preflight every source object before deleting any. Ambiguous partial objects fail closed.
-      const used = new Set()
-      for (let i = 0; i < pages.length; i++) {
-        if (selectedPages && !selectedPages.has(i + 1)) continue
-        pageNumber = i + 1
-        const page = p.FPDF_LoadPage(input.doc, i)
-        check(page)
-        borrowedPages.push(page)
-        const objects = e.objects(page)
-        const { sources: overprintedSources } = recoverOverprintedTextSources(e, page, objects)
-        for (const object of objects)
-          object.text = overprintedSources.get(object.obj) ?? object.text
-        applyActualTextSources(i + 1, objects)
-        const occupied = []
-        for (const plan of plans.filter((plan) => plan.fragment.pageNumber === i + 1)) {
-          const { rect } = plan
-          check(
-            occupied.every(
-              (other) => (other.unchanged && plan.unchanged) || !regionsOverlap(other, plan)
-            ),
-            'multi-region'
-          )
-          occupied.push(plan)
-          if (plan.unchanged) continue
-          const touched = objects.filter(
-            (o) =>
-              o.type === 1 &&
-              o.bounds[0] < rect.x + rect.width &&
-              o.bounds[2] > rect.x &&
-              o.bounds[1] < rect.top &&
-              o.bounds[3] > rect.bottom
-          )
-          check(
-            touched.length > 0 &&
-              touched.every(
+      // Validate all ownership before removing any source object. In mixed output,
+      // retain the complete failing unit, then recheck its neighbors against that
+      // protected region. Every retry retires a replacement, so this loop is bounded.
+      let retryOwnership
+      do {
+        retryOwnership = false
+        let currentPlan
+        try {
+          const used = new Set()
+          for (let i = 0; i < pages.length; i++) {
+            if (selectedPages && !selectedPages.has(i + 1)) continue
+            currentPlan = undefined
+            pageNumber = i + 1
+            let page = borrowedPages.get(i)
+            if (!page) {
+              page = p.FPDF_LoadPage(input.doc, i)
+              check(page)
+              borrowedPages.set(i, page)
+            }
+            const objects = e.objects(page)
+            const { sources: overprintedSources } = recoverOverprintedTextSources(e, page, objects)
+            for (const object of objects)
+              object.text = overprintedSources.get(object.obj) ?? object.text
+            applyActualTextSources(i + 1, objects)
+            const occupied = []
+            for (const plan of plans.filter((plan) => plan.fragment.pageNumber === i + 1)) {
+              currentPlan = plan
+              const { rect } = plan
+              check(
+                occupied.every(
+                  (other) => (other.unchanged && plan.unchanged) || !regionsOverlap(other, plan)
+                ),
+                'multi-region'
+              )
+              occupied.push(plan)
+              if (plan.unchanged) continue
+              const touched = objects.filter(
                 (o) =>
-                  o.bounds[0] >= rect.x - objectTolerance &&
-                  o.bounds[2] <= rect.x + rect.width + objectTolerance &&
-                  o.bounds[3] <= rect.top + objectTolerance &&
-                  o.bounds[1] >= rect.bottom - objectTolerance
+                  o.type === 1 &&
+                  o.bounds[0] < rect.x + rect.width &&
+                  o.bounds[2] > rect.x &&
+                  o.bounds[1] < rect.top &&
+                  o.bounds[3] > rect.bottom
               )
-          )
-          check(
-            sourceMatches(
-              plan.sourceVerification ?? plan.source,
-              touched
-                .map((o, index) =>
-                  plan.sourceVerificationPrefix && index === 0
-                    ? o.text.slice(plan.sourceVerificationPrefix.length)
-                    : o.text
-                )
-                .join('')
-            ),
-            'source-mismatch'
-          )
-          const ownedGraphics = objects.filter((object) =>
-            plan.anchors.some((anchor) => anchor.graphicIndices?.includes(object.i))
-          )
-          check(
-            !overlapsGraphic(
-              page,
-              objects,
-              plan.fragment,
-              rect,
-              ownedGraphics.map((object) => object.i),
-              plan.sourceInk
-            )
-          )
-          for (const o of touched) {
-            // A wider text object must not delete an unchanged fragment, even if
-            // the caller supplied disjoint rectangles for two parts of that object.
-            check(
-              !plans.some(
-                (other) =>
-                  other.unchanged &&
-                  (!other.verifiedObjects || other.objectIndices.includes(o.i)) &&
-                  other.fragment.pageNumber === i + 1 &&
-                  o.bounds[0] < other.rect.x + other.rect.width &&
-                  o.bounds[2] > other.rect.x &&
-                  o.bounds[1] < other.rect.top &&
-                  o.bounds[3] > other.rect.bottom
+              check(
+                touched.length > 0 &&
+                  touched.every(
+                    (o) =>
+                      o.bounds[0] >= rect.x - objectTolerance &&
+                      o.bounds[2] <= rect.x + rect.width + objectTolerance &&
+                      o.bounds[3] <= rect.top + objectTolerance &&
+                      o.bounds[1] >= rect.bottom - objectTolerance
+                  )
               )
-            )
-            check(!used.has(o.obj))
-            used.add(o.obj)
-          }
-          if (plan.anchors.length)
-            check(
-              plan.anchors.every((anchor) =>
-                anchor.indices.every((index) =>
-                  [...touched, ...ownedGraphics].some((o) => o.i === index)
+              check(
+                sourceMatches(
+                  plan.sourceVerification ?? plan.source,
+                  touched
+                    .map((o, index) =>
+                      plan.sourceVerificationPrefix && index === 0
+                        ? o.text.slice(plan.sourceVerificationPrefix.length)
+                        : o.text
+                    )
+                    .join('')
+                ),
+                'source-mismatch'
+              )
+              const ownedGraphics = objects.filter((object) =>
+                plan.anchors.some((anchor) => anchor.graphicIndices?.includes(object.i))
+              )
+              check(
+                !overlapsGraphic(
+                  page,
+                  objects,
+                  plan.fragment,
+                  rect,
+                  ownedGraphics.map((object) => object.i),
+                  plan.sourceInk
                 )
-              ),
-              'annotations'
-            )
-          for (const object of ownedGraphics) {
-            check(!used.has(object.obj))
-            used.add(object.obj)
+              )
+              for (const o of touched) {
+                // A wider text object must not delete an unchanged fragment, even if
+                // the caller supplied disjoint rectangles for two parts of that object.
+                check(
+                  !plans.some(
+                    (other) =>
+                      other.unchanged &&
+                      (!other.verifiedObjects || other.objectIndices.includes(o.i)) &&
+                      other.fragment.pageNumber === i + 1 &&
+                      o.bounds[0] < other.rect.x + other.rect.width &&
+                      o.bounds[2] > other.rect.x &&
+                      o.bounds[1] < other.rect.top &&
+                      o.bounds[3] > other.rect.bottom
+                  )
+                )
+                check(!used.has(o.obj))
+                used.add(o.obj)
+              }
+              if (plan.anchors.length)
+                check(
+                  plan.anchors.every((anchor) =>
+                    anchor.indices.every((index) =>
+                      [...touched, ...ownedGraphics].some((o) => o.i === index)
+                    )
+                  ),
+                  'annotations'
+                )
+              for (const object of ownedGraphics) {
+                check(!used.has(object.obj))
+                used.add(object.obj)
+              }
+              plan.selected = [...touched, ...ownedGraphics].sort((a, b) => a.i - b.i)
+              plan.page = page
+            }
           }
-          plan.selected = [...touched, ...ownedGraphics].sort((a, b) => a.i - b.i)
-          plan.page = page
+        } catch (error) {
+          if (
+            !preserveUnsupported ||
+            !preserveUnmatched ||
+            !currentPlan?.unit ||
+            currentPlan.unchanged ||
+            !['source-mismatch', 'unsupported-layout', 'multi-region', 'annotations'].includes(
+              error.failure?.code
+            )
+          )
+            throw error
+          const unit = currentPlan.unit
+          for (const plan of plans) if (plan.unit === unit) plan.unchanged = true
+          diagnoseRetention(unit, error.failure.code, 'ownership')
+          retryOwnership = true
         }
-      }
+      } while (retryOwnership)
       const replacements = plans.filter((plan) => !plan.unchanged)
       if (!replacements.length) {
         const output = annotationsRemoved ? e.save(input.doc) : data.slice()
@@ -6275,7 +6315,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         p.FPDFPage_Delete(input.doc, pages.length)
       }
     } finally {
-      for (const page of borrowedPages) p.FPDF_ClosePage(page)
+      for (const page of borrowedPages.values()) p.FPDF_ClosePage(page)
     }
     const saveStarted = performance.now()
     const output = e.save(input.doc)
@@ -6338,47 +6378,58 @@ async function replaceChangedPages(baselineData, changedData, pageNumbers, count
   return output
 }
 try {
-  const selectedPages = workerData.incremental
-    ? new Set(workerData.incremental.pageNumbers)
-    : undefined
-  const units = selectedPages
-    ? workerData.units.filter((unit) =>
-        unit.fragments.some((fragment) => selectedPages.has(fragment.pageNumber))
+  if (workerData.layout === 'reflow') {
+    const result = await generateReflow(workerData)
+    parentPort.postMessage(result, [result.data.buffer])
+  } else {
+    const selectedPages = workerData.incremental
+      ? new Set(workerData.incremental.pageNumbers)
+      : undefined
+    const units = selectedPages
+      ? workerData.units.filter((unit) =>
+          unit.fragments.some((fragment) => selectedPages.has(fragment.pageNumber))
+        )
+      : workerData.units
+    const generationStarted = performance.now()
+    const generated = await generate({ ...workerData, units, selectedPages })
+    timings.generationMs = performance.now() - generationStarted
+    const labelsStarted = performance.now()
+    const formFailures = new Map()
+    let data = workerData.preserveUnsupported
+      ? await translateFormLabels(
+          generated,
+          units,
+          workerData.pages,
+          (input) => generate({ ...input, preserveUnmatched: workerData.preserveUnmatched }),
+          (unit, localUnit) => {
+            formFailures.set(unit, formFailures.get(unit) ?? retainedUnitObjects.get(localUnit))
+          }
+        )
+      : generated
+    timings.formLabelsMs = performance.now() - labelsStarted
+    if (workerData.incremental) {
+      const mergeStarted = performance.now()
+      data = await replaceChangedPages(
+        workerData.incremental.data,
+        data,
+        workerData.incremental.pageNumbers,
+        workerData.pages.length
       )
-    : workerData.units
-  const generationStarted = performance.now()
-  const generated = await generate({ ...workerData, units, selectedPages })
-  timings.generationMs = performance.now() - generationStarted
-  const labelsStarted = performance.now()
-  const formFailures = new Map()
-  let data = workerData.preserveUnsupported
-    ? await translateFormLabels(generated, units, workerData.pages, generate, (unit, localUnit) => {
-        formFailures.set(unit, formFailures.get(unit) ?? retainedUnitObjects.get(localUnit))
-      })
-    : generated
-  timings.formLabelsMs = performance.now() - labelsStarted
-  if (workerData.incremental) {
-    const mergeStarted = performance.now()
-    data = await replaceChangedPages(
-      workerData.incremental.data,
-      data,
-      workerData.incremental.pageNumbers,
-      workerData.pages.length
+      timings.mergeMs = performance.now() - mergeStarted
+    }
+    check(data.length <= 64 * 1024 ** 2)
+    // A successful Form rewrite supersedes the earlier top-level fallback. Only
+    // clear it after saving, and keep it if any corresponding local unit fell back.
+    for (const [unit, failure] of formFailures) {
+      const index = workerData.units.indexOf(unit)
+      if (!failure) retainedUnits.delete(index)
+      else if (retainedUnits.has(index)) Object.assign(retainedUnits.get(index), failure)
+    }
+    parentPort.postMessage(
+      { data, layoutFailures: [...retainedUnits.values()], diagnostics: diagnostics() },
+      [data.buffer]
     )
-    timings.mergeMs = performance.now() - mergeStarted
   }
-  check(data.length <= 64 * 1024 ** 2)
-  // A successful Form rewrite supersedes the earlier top-level fallback. Only
-  // clear it after saving, and keep it if any corresponding local unit fell back.
-  for (const [unit, failure] of formFailures) {
-    const index = workerData.units.indexOf(unit)
-    if (!failure) retainedUnits.delete(index)
-    else if (retainedUnits.has(index)) Object.assign(retainedUnits.get(index), failure)
-  }
-  parentPort.postMessage(
-    { data, layoutFailures: [...retainedUnits.values()], diagnostics: diagnostics() },
-    [data.buffer]
-  )
 } catch (error) {
   parentPort.postMessage({
     failure: error.failure ?? { code: 'worker-failed' },

@@ -42,6 +42,7 @@ export type PdfTranslationOptions = Readonly<{
   language: string
   glossary: PdfTranslationGlossary
   concurrency?: 1 | 2 | 4
+  contentFirst?: boolean
   attachmentVersionId?: string
   documentSource?: PdfDocumentSource
   expectedTargetKey?: string
@@ -625,6 +626,7 @@ export function restorePdfTranslationJob(
       language: checkpoint.language,
       glossary: checkpoint.glossary,
       ...(checkpoint.concurrency !== undefined ? { concurrency: checkpoint.concurrency } : {}),
+      ...(checkpoint.contentFirst !== undefined ? { contentFirst: checkpoint.contentFirst } : {}),
       ...(checkpoint.attachmentVersionId
         ? { attachmentVersionId: checkpoint.attachmentVersionId }
         : { documentSource: checkpoint.documentSource }),
