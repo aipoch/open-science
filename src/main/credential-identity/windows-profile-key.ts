@@ -86,9 +86,10 @@ export const validateWindowsKey = (ciphertext: Buffer): WindowsKeyValidation => 
               ? 'validator-unsupported'
               : 'validator-failed'
     const osStatus =
+      code === 'dpapi-unprotect-failed' &&
       typeof output.errorCode === 'number' &&
       Number.isInteger(output.errorCode) &&
-      output.errorCode >= 0 &&
+      output.errorCode > 0 &&
       output.errorCode <= 0xffffffff
         ? output.errorCode
         : undefined

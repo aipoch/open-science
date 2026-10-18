@@ -110,7 +110,35 @@ it.each([
   })
 })
 
-it.each([-1, 1.5, 0x100000000, 'PRIVATE-CODE'])(
+it.each([
+  ['invalid-key-size', 0, 'profile-key-invalid'],
+  ['input-read-failed', 0, 'validator-input-failed'],
+  ['invalid-ciphertext-size', 0, 'validator-input-failed'],
+  ['binary-input-mode-unavailable', 0, 'validator-input-failed'],
+  ['PRIVATE-REASON', 0, 'validator-failed'],
+  ['PRIVATE-REASON', 13, 'validator-failed']
+])('omits Windows status for non-DPAPI failure %s (%s)', async (reason, errorCode, code) => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  fixture.spawn.mockReturnValue({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: JSON.stringify({
+      schemaVersion: 1,
+      platform: 'win32',
+      status: 'error',
+      reason,
+      errorCode
+    })
+  })
+  const { validateWindowsKey } = await import('./windows-profile-key')
+  expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+    status: 'error',
+    diagnostic: { code }
+  })
+})
+
+it.each([0, -1, 1.5, 0x100000000, 'PRIVATE-CODE'])(
   'drops an invalid native system code: %s',
   async (errorCode) => {
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
@@ -122,14 +150,14 @@ it.each([-1, 1.5, 0x100000000, 'PRIVATE-CODE'])(
         schemaVersion: 1,
         platform: 'win32',
         status: 'error',
-        reason: 'PRIVATE-REASON',
+        reason: 'dpapi-unprotect-failed',
         errorCode
       })
     })
     const { validateWindowsKey } = await import('./windows-profile-key')
     expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
       status: 'error',
-      diagnostic: { code: 'validator-failed' }
+      diagnostic: { code: 'dpapi-unprotect-failed' }
     })
   }
 )
