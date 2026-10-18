@@ -13,7 +13,7 @@ import {
 } from '@aipoch/pdf-translation/contracts'
 import { pdfTranslationCheckpointRequestSchema } from '../../../../../../shared/pdf-translation'
 import { pdfjsLib } from '../pdfjs'
-import type { PdfTranslationDocumentState } from './use-pdf-translation-document'
+import type { PdfTranslationDocumentState } from './pdf-translation-document-state'
 
 const textKey = (text: string): string => text.normalize('NFC').replace(/\s/gu, '')
 

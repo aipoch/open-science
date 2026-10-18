@@ -18,7 +18,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
 import { usePdfReflowDocument } from './use-pdf-reflow-document'
-import type { PdfTranslationFragment } from '@aipoch/pdf-translation/reader'
+import type {
+  PdfTranslationDocumentState,
+  PdfTranslationPageGeometry as Geometry
+} from './pdf-translation-document-state'
+
+export type { PdfTranslationDocumentState } from './pdf-translation-document-state'
 
 import {
   pdfGenerationFailure,
@@ -29,29 +34,6 @@ import { type PdfTranslationRecordLayoutRequest } from '../../../../../../shared
 
 /** A generated file belongs to exactly one accepted result snapshot, never a filename alone. */
 export type PdfTranslationArtifact = Readonly<{ results: PdfTranslationResults; data: Uint8Array }>
-type Geometry = Readonly<{ width: number; height: number; rotation: number }>
-export type PdfTranslationDocumentState =
-  | { status: 'idle' }
-  | { status: 'loading'; phase: 'generating' | 'validating' }
-  | {
-      status: 'error'
-      failure: PdfGenerationFailure
-      details?: string
-      unitId?: string
-      retryUnchanged?: boolean
-    }
-  | {
-      status: 'ready'
-      document: PDFDocumentProxy
-      pages: readonly Geometry[]
-      originalUnitCount: number
-      retainedUnitIds: readonly string[]
-      unchangedLayoutUnitIds?: readonly string[]
-      sourcePageNumbers?: readonly number[]
-      sourcePages?: readonly (readonly number[])[]
-      originalPageNumbers?: readonly number[]
-      unitFragments?: Readonly<Record<string, readonly PdfTranslationFragment[]>>
-    }
 type State = PdfTranslationDocumentState
 const idle: State = { status: 'idle' }
 const textKey = (text: string): string => text.normalize('NFC').replace(/\s/gu, '')
