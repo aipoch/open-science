@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory)][int]$TargetPid,
   [Parameter(Mandatory)][string]$Started,
+  [Parameter(Mandatory)][string]$HandoffAppData,
   [string]$Application = $env:OPEN_SCIENCE_UPDATE_OBSERVER_APPLICATION_PATH,
   [string]$Installer = $env:OPEN_SCIENCE_UPDATE_OBSERVER_INSTALLER_PATH,
   [string]$HelperResource = $env:OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH,
@@ -15,7 +16,7 @@ $writer = [IO.StreamWriter]::new($Output,$false,[Text.UTF8Encoding]::new($false)
 $writer.AutoFlush = $true
 try {
   if (-not $ParentExecutable) { $ParentExecutable = $Application }
-  $observer = [HandoffObserver]::new($TargetPid,$Started,$Application,$Installer,$HelperResource,$ParentExecutable)
+  $observer = [HandoffObserver]::new($TargetPid,$Started,$Application,$Installer,$HelperResource,$ParentExecutable,$HandoffAppData)
   [Console]::Out.WriteLine('OPEN_SCIENCE_UPDATE_HANDOFF_OBSERVER_READY')
   [Console]::Out.Flush()
   $deadline = [DateTime]::UtcNow.AddMinutes(6)

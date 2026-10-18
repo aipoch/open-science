@@ -18,17 +18,27 @@ merge-queue requirement. Artifacts preserve the evidence for seven days.
 
 Launch `observe-handoff.ps1` with the original application's PID and UTC creation
 time (six fractional digits), actual application/installer paths, the packaged
-progress executable, and an output JSONL path. Keep `HandoffObserver.cs` beside
+progress executable, actual handoff app-data directory, and an output JSONL path. Keep `HandoffObserver.cs` beside
 the script when reusing it from another checkout or generated diagnostic harness.
 The original process must match both creation time and executable path.
 
 ```powershell
 ./scripts/windows-upgrade-diagnostics/observe-handoff.ps1 `
   -TargetPid $applicationPid -Started $creationTime `
+  -HandoffAppData $actualAppData `
   -Application $applicationPath -Installer $installerPath `
   -HelperResource $progressExecutable -ParentExecutable $originalExecutable `
   -Output $timelinePath
 ```
+
+`HandoffAppData` is required and must be the application's actual `app.getPath('appData')`
+for this run, obtained from its startup configuration or recorded evidence. It is not
+`userData`, a profile directory, or a config root. The observer normalizes this path
+once and accepts operation helpers only under its `Open-Science/UpdateHandoffs`
+directory; it never falls back to its own account's AppData or searches other profiles.
+Historical diagnostic invocations must supply this new argument. Product data needs
+no migration. Operation tests exercise live helper classification in a synthetic root,
+wrong-root rejection and packaged-helper digest failure.
 
 Discovery retains a native `QUERY_LIMITED_INFORMATION | SYNCHRONIZE` handle.
 Transient image-query errors 5/31/87 retain that exact identity for the next normal

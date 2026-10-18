@@ -17,7 +17,7 @@ foreach ($scenario in @('query-recovers','confirmed-exit','persistent-denial')) 
   [HandoffObserver]::DenyImage = $false
   $rootIdentity=[ObservedProcess]::GetProcessById($PID)
   $rootPath=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-  $observer=[HandoffObserver]::new($PID,$rootIdentity.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$rootPath,(Join-Path $env:TEMP 'synthetic-installer.exe'),$rootPath,$rootPath)
+  $observer=[HandoffObserver]::new($PID,$rootIdentity.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$rootPath,(Join-Path $env:TEMP 'synthetic-installer.exe'),$rootPath,$rootPath,$env:TEMP)
   $rootIdentity.Dispose()
   $start = [Diagnostics.ProcessStartInfo]::new($env:ComSpec,'/d /c set /p fixture=')
   $start.UseShellExecute = $false

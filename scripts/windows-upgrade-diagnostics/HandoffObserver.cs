@@ -78,10 +78,13 @@ public class HandoffObserver : IDisposable {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int length);
   readonly Dictionary<int,HandoffIdentity> known = new Dictionary<int,HandoffIdentity>();
   readonly int root;
-  readonly string app, installer, helperDigest;
+  readonly string app, installer, helperDigest, operationRoot;
   readonly DateTime boundary;
   int installerPid;
-  public HandoffObserver(int pid, string started, string application, string installerPath, string helper, string parentExecutable) {
+  public HandoffObserver(int pid, string started, string application, string installerPath, string helper, string parentExecutable, string handoffAppData) {
+    // .NET Framework treats drive-relative C:dir and root-relative \dir as rooted.
+    if(String.IsNullOrWhiteSpace(handoffAppData) || Path.GetPathRoot(handoffAppData).Length < 3) throw new ArgumentException("An absolute handoff app-data directory is required", "handoffAppData");
+    operationRoot = Path.Combine(Path.GetFullPath(handoffAppData),"Open-Science","UpdateHandoffs");
     root = pid; app = Path.GetFullPath(application); installer = Path.GetFullPath(installerPath); helperDigest = Digest(helper);
     var original = Capture(pid, 0);
     if (original.started != started || !Same(original.path, parentExecutable)) { original.process.Dispose(); throw new Exception("Old application identity mismatch"); }
@@ -110,7 +113,6 @@ public class HandoffObserver : IDisposable {
   }
   bool IsOperationHelper(HandoffIdentity child) {
     if(child.parent!=root || !Same(Path.GetFileName(child.path),"helper.exe")) return false;
-    string operationRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"Open-Science","UpdateHandoffs");
     string directory=Path.GetDirectoryName(child.path);
     if(!Same(Path.GetDirectoryName(directory),operationRoot)) return false;
     string requestPath=Path.Combine(directory,"request.json");
