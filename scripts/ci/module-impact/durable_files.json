@@ -31,6 +31,7 @@
     "main_specialist",
     "main_storage",
     "main_tasks",
+    "main_update",
     "main_web_service",
     "main_wsl",
     "notebook_application",
