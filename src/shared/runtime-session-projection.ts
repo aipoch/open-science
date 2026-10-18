@@ -511,17 +511,29 @@ export const applyRuntimeSessionEvents = (
       message.updatedAt = Math.max(message.updatedAt, event.timestamp)
       branch.updatedAt = Math.max(branch.updatedAt, event.timestamp)
     } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
+      // Codex reuses synthetic MCP startup ids after restarting its adapter. Keep each turn's
+      // failure evidence distinct, including continuation Branches retaining the same prompt.
+      const isMcpStartup = event.toolCallId.startsWith('mcp_startup.')
+      const toolCallId = isMcpStartup
+        ? `runtime-mcp-startup:${JSON.stringify([
+            scope.agentFrameId,
+            scope.messageBranchId,
+            scope.promptMessageId,
+            scope.runtimeSegmentId,
+            event.toolCallId
+          ])}`
+        : event.toolCallId
       if (event.kind === 'compaction') completeGroups(graph.activityGroups, scope, event.timestamp)
       if (
         event.kind === 'tool' &&
-        (isActivityGroupToolEvent(event) || groupControls.has(event.toolCallId))
+        (isActivityGroupToolEvent(event) || groupControls.has(toolCallId))
       ) {
-        groupControls.add(event.toolCallId)
+        groupControls.add(toolCallId)
         const title = getActivityGroupTitleFromToolEvent(event)
-        if (title && !graph.activityGroups.some(({ id }) => id === event.toolCallId)) {
+        if (title && !graph.activityGroups.some(({ id }) => id === toolCallId)) {
           completeGroups(graph.activityGroups, scope, event.timestamp)
           graph.activityGroups.push({
-            id: event.toolCallId,
+            id: toolCallId,
             title,
             sortIndex: event.timestamp,
             activityIds: [],
@@ -536,10 +548,22 @@ export const applyRuntimeSessionEvents = (
       }
       let activity = graph.activities.find(
         ({ id, agentFrameId, messageBranchId }) =>
-          id === event.toolCallId &&
+          id === toolCallId &&
           agentFrameId === scope.agentFrameId &&
           messageBranchId === scope.messageBranchId
       )
+      // Older sessions store the provider id directly. Reuse that record only within its
+      // original scope, preserving references and event deduplication without a migration.
+      if (!activity && isMcpStartup) {
+        activity = graph.activities.find(
+          (candidate) =>
+            candidate.id === event.toolCallId &&
+            candidate.agentFrameId === scope.agentFrameId &&
+            candidate.messageBranchId === scope.messageBranchId &&
+            candidate.promptMessageId === scope.promptMessageId &&
+            candidate.runtimeSegmentId === scope.runtimeSegmentId
+        )
+      }
       if (activity?.eventIds.includes(event.id)) continue
       const status = toolStatus(event.status === 'cancelled' ? 'completed' : event.status)
       if (!activity) {
@@ -551,7 +575,7 @@ export const applyRuntimeSessionEvents = (
             candidate.completedAt === undefined
         )
         activity = {
-          id: event.toolCallId,
+          id: toolCallId,
           kind: 'tool',
           title:
             event.title?.trim() ||

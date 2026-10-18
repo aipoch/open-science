@@ -5,6 +5,7 @@ import type { ArtifactFile } from './artifacts'
 import {
   activateConversationBranch,
   createLinearConversationGraph,
+  forkConversationAfterActivity,
   forkEditedConversationMessage
 } from './conversation-graph'
 import type { PersistedChatMessage, PersistedChatSession } from './session-persistence'
@@ -253,6 +254,130 @@ describe('runtime Session projection', () => {
     expect(projected.conversationGraph!.messages.some(({ content }) => content === 'hidden')).toBe(
       true
     )
+  })
+
+  it.each([false, true])(
+    'preserves MCP startup failures across edited prompts (legacy: %s)',
+    (legacy) => {
+      const { session, scope } = fixture()
+      session.agentFrameworkId = 'codex'
+      const startup = event('tool', {
+        id: 'startup-original',
+        timestamp: 2,
+        toolCallId: 'mcp_startup.open-science-library',
+        title: 'mcp__open-science-library__startup',
+        status: 'failed'
+      })
+      const original = applyRuntimeSessionEvents(session, scope, [startup])
+      if (legacy) original.conversationGraph!.activities[0].id = startup.toolCallId!
+      const graph = forkEditedConversationMessage(
+        original.conversationGraph!,
+        scope.promptMessageId,
+        'retry-branch',
+        3
+      )
+      const branch = graph.branches.find(({ id }) => id === 'retry-branch')!
+      graph.messages.push({
+        ...prompt('retry-prompt', 3),
+        agentFrameId: scope.agentFrameId,
+        introducedOnBranchId: branch.id,
+        parentMessageId: branch.headMessageId,
+        runtimeSegmentId: scope.runtimeSegmentId,
+        revisionRootMessageId: scope.promptMessageId,
+        supersedesMessageId: scope.promptMessageId
+      })
+      branch.headMessageId = 'retry-prompt'
+      const retryScope = {
+        ...scope,
+        promptMessageId: 'retry-prompt',
+        messageBranchId: branch.id
+      }
+      const retried = { ...original, conversationGraph: graph }
+      const retryEvent = { ...startup, id: 'startup-retry', timestamp: 4 }
+      const result = applyRuntimeSessionEvents(retried, retryScope, [retryEvent])
+
+      const activities = result.conversationGraph!.activities
+      expect(activities).toHaveLength(2)
+      expect(new Set(activities.map(({ id }) => id)).size).toBe(2)
+      expect(activities.map(({ promptMessageId }) => promptMessageId)).toEqual([
+        scope.promptMessageId,
+        'retry-prompt'
+      ])
+      expect(result.activities).toHaveLength(1)
+      expect(result.activities![0].eventIds).toEqual(['startup-retry'])
+      expect(
+        applyRuntimeSessionEvents(result, retryScope, [retryEvent]).conversationGraph!.activities
+      ).toEqual(activities)
+    }
+  )
+
+  it('separates MCP startup failures on continuation branches retaining the same prompt', () => {
+    const { session, scope } = fixture()
+    const startup = event('tool', {
+      id: 'startup-original',
+      timestamp: 2,
+      toolCallId: 'mcp_startup.example',
+      status: 'failed'
+    })
+    const original = applyRuntimeSessionEvents(session, scope, [
+      startup,
+      event('tool', {
+        id: 'question',
+        timestamp: 3,
+        toolCallId: 'question-tool',
+        status: 'completed'
+      })
+    ])
+    const graph = forkConversationAfterActivity(
+      original.conversationGraph!,
+      scope.promptMessageId,
+      'question-tool',
+      'continuation-branch',
+      4
+    )
+    const retryScope = { ...scope, messageBranchId: 'continuation-branch' }
+    const retry = { ...startup, id: 'startup-retry', timestamp: 5 }
+    const result = applyRuntimeSessionEvents(
+      { ...original, conversationGraph: graph },
+      retryScope,
+      [retry]
+    )
+    const activities = result.conversationGraph!.activities
+    expect(activities).toHaveLength(3)
+    expect(new Set(activities.map(({ id }) => id)).size).toBe(3)
+    expect(activities[0].eventIds).toEqual([startup.id])
+    expect(activities[2]).toMatchObject({
+      promptMessageId: scope.promptMessageId,
+      messageBranchId: retryScope.messageBranchId,
+      eventIds: [retry.id]
+    })
+    expect(
+      applyRuntimeSessionEvents(result, retryScope, [retry]).conversationGraph!.activities
+    ).toEqual(activities)
+  })
+
+  it('replays and updates legacy MCP startup records without duplicating their evidence', () => {
+    const { session, scope } = fixture()
+    const startup = event('tool', {
+      id: 'startup',
+      timestamp: 2,
+      toolCallId: 'mcp_startup.example',
+      status: 'failed'
+    })
+    const original = applyRuntimeSessionEvents(session, scope, [startup])
+    original.conversationGraph!.activities[0].id = startup.toolCallId!
+    const restored = JSON.parse(JSON.stringify(original)) as PersistedChatSession
+    const replayed = applyRuntimeSessionEvents(restored, scope, [startup])
+    expect(replayed.conversationGraph!.activities).toEqual(original.conversationGraph!.activities)
+    const updated = applyRuntimeSessionEvents(replayed, scope, [
+      { ...startup, id: 'startup-detail', timestamp: 3, rawOutput: 'Connection refused' }
+    ])
+    expect(updated.conversationGraph!.activities).toHaveLength(1)
+    expect(updated.conversationGraph!.activities[0]).toMatchObject({
+      id: startup.toolCallId,
+      eventIds: ['startup', 'startup-detail'],
+      rawOutput: 'Connection refused'
+    })
   })
 
   it('preserves tool metadata, elicitation, and activity group membership', () => {
