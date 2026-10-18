@@ -90,6 +90,8 @@ if ($config.script) {
 '@ | Set-Content -LiteralPath $launcher
   $credential=[PSCredential]::new("$env:COMPUTERNAME\$name",$secure)
   $process=Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -WorkingDirectory $root -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$launcher+'"')) -RedirectStandardOutput (Join-Path $root 'stdout.log') -RedirectStandardError (Join-Path $root 'stderr.log') -WindowStyle Hidden -PassThru
+  # Retain the handle before exit: Windows PowerShell's detached Process otherwise loses ExitCode.
+  $null=$process.Handle
   $controllerDeadline=[DateTime]::UtcNow.AddSeconds(330)
   while (-not $process.WaitForExit(100)) {
     if (-not $baseline -and (Test-Path -LiteralPath (Join-Path $root 'preflight.ready'))) {
