@@ -71,9 +71,10 @@ function ConvertTo-WindowsArgument([string]$Value) {
 }
 
 function Invoke-OwnedHost([string]$Command) {
-  if (Test-CurrentUserIsAdministrator) {
-    # Silent CI and already-elevated uninstalls cannot show a UAC prompt. Run in-process so the
-    # host exits before NSIS deletes this install tree.
+  if ((Test-CurrentUserIsAdministrator) -or -not (Test-OwnershipState $ownershipRoot)) {
+    # An unused standard-mode profile has no protected resources to remove. Still run the native
+    # host so it validates current ownership; a concurrent setup must not be silently skipped.
+    # Already-elevated uninstalls also run directly and wait before NSIS deletes this install tree.
     & $HostPath $Command $installationId $ownershipRoot
     return [int]$LASTEXITCODE
   }
