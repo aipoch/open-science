@@ -207,10 +207,10 @@ const waitExited = async (pid) => {
         stdio: 'pipe',
         env: {
           ...process.env,
-          PR3599_HANDOFF_APPLICATION: application,
-          PR3599_HANDOFF_INSTALLER: path.join(root, 'installer.exe'),
-          PR3599_HANDOFF_HELPER: helperPath,
-          PR3599_HANDOFF_PARENT: process.execPath
+          OPEN_SCIENCE_UPDATE_OBSERVER_APPLICATION_PATH: application,
+          OPEN_SCIENCE_UPDATE_OBSERVER_INSTALLER_PATH: path.join(root, 'installer.exe'),
+          OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH: helperPath,
+          OPEN_SCIENCE_UPDATE_OBSERVER_PARENT_EXECUTABLE_PATH: process.execPath
         }
       }
     )
@@ -225,7 +225,7 @@ const waitExited = async (pid) => {
       errors += chunk
     })
     const deadline = Date.now() + 15000
-    while (!output.includes('PR3599_HANDOFF_OBSERVER_READY')) {
+    while (!output.includes('OPEN_SCIENCE_UPDATE_HANDOFF_OBSERVER_READY')) {
       if (observer.exitCode !== null || Date.now() > deadline)
         throw Error('Handoff observer readiness failed: ' + errors)
       await delay(25)

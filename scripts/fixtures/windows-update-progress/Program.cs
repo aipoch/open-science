@@ -54,7 +54,7 @@ class Program {
       if (args[0] == "app") { Write("app-started", pid); Wait("release-window"); }
       Application.EnableVisualStyles();
       using (var form = new Form()) {
-        form.Text = "PR3599 isolated successor " + args[0];
+        form.Text = "Update handoff fixture successor " + args[0];
         form.Shown += (s, e) => Write(args[0] + "-visible", pid);
         using (var timer = new System.Windows.Forms.Timer()) {
           timer.Interval = 50;
