@@ -4,6 +4,23 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { validateWindowsProfileKey } from './windows-profile-key'
 
+it('retains the concrete parse failure without exposing profile contents', () => {
+  const profilePath = fixture()
+  writeFileSync(join(profilePath, 'Local State'), '{PRIVATE-PROFILE-CONTENTS')
+  let failure: unknown
+  try {
+    validateWindowsProfileKey({ profilePath, hasCiphertexts: false })
+  } catch (error) {
+    failure = error
+  }
+  expect(failure).toMatchObject({
+    reason: 'windows-profile-key-unavailable',
+    diagnostic: { code: 'profile-invalid-json' }
+  })
+  expect(JSON.stringify(failure)).not.toContain('PRIVATE-PROFILE-CONTENTS')
+  expect(readFileSync(join(profilePath, 'Local State'), 'utf8')).toBe('{PRIVATE-PROFILE-CONTENTS')
+})
+
 const roots: string[] = []
 const fixture = (state?: unknown): string => {
   const profilePath = mkdtempSync(join(tmpdir(), 'windows-key-fixture-'))
@@ -25,6 +42,43 @@ it('leaves an entirely fresh Windows profile to its unchanged DPAPI initializati
   expect(validate).not.toHaveBeenCalled()
 })
 
+it('retains the missing-file system code when encrypted data already exists', () => {
+  expect(() => validateWindowsProfileKey({ profilePath: fixture(), hasCiphertexts: true })).toThrow(
+    expect.objectContaining({ diagnostic: { code: 'profile-read-failed', systemCode: 'ENOENT' } })
+  )
+})
+
+it.each([
+  [[], 'profile-invalid-shape'],
+  [{}, 'profile-key-missing'],
+  [{ os_crypt: { encrypted_key: 'invalid' } }, 'profile-key-invalid']
+])('classifies invalid profile input without writing it: %j', (state, code) => {
+  const profilePath = fixture(state)
+  const original = readFileSync(join(profilePath, 'Local State'))
+  expect(() => validateWindowsProfileKey({ profilePath, hasCiphertexts: true })).toThrow(
+    expect.objectContaining({ diagnostic: { code } })
+  )
+  expect(readFileSync(join(profilePath, 'Local State'))).toEqual(original)
+})
+
+it('carries the DPAPI error through the profile boundary without replacing the key', () => {
+  const profilePath = fixture({ os_crypt: { encrypted_key: encryptedKey } })
+  const original = readFileSync(join(profilePath, 'Local State'))
+  expect(() =>
+    validateWindowsProfileKey({
+      profilePath,
+      hasCiphertexts: true,
+      validate: () => ({
+        status: 'access-blocked',
+        diagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 }
+      })
+    })
+  ).toThrow(
+    expect.objectContaining({ diagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 } })
+  )
+  expect(readFileSync(join(profilePath, 'Local State'))).toEqual(original)
+})
+
 it.each([undefined, {}, { os_crypt: {} }])(
   'blocks missing DPAPI key with existing ciphertext before Electron can replace it',
   (state) => {
@@ -39,7 +93,7 @@ it.each([undefined, {}, { os_crypt: {} }])(
 it('validates the actual DPAPI key bytes without changing Local State', () => {
   const profilePath = fixture({ os_crypt: { encrypted_key: encryptedKey }, unrelated: 'preserved' })
   const original = readFileSync(join(profilePath, 'Local State'))
-  const validate = vi.fn(() => 'valid' as const)
+  const validate = vi.fn(() => ({ status: 'valid' as const }))
   validateWindowsProfileKey({ profilePath, hasCiphertexts: true, validate })
   expect(validate).toHaveBeenCalledWith(Buffer.from([0, 26, 13, 10, 255]))
   expect(readFileSync(join(profilePath, 'Local State'))).toEqual(original)
@@ -51,7 +105,7 @@ it.each(['access-blocked', 'error', 'unsupported'] as const)(
     const profilePath = fixture({ os_crypt: { encrypted_key: encryptedKey } })
     const original = readFileSync(join(profilePath, 'Local State'))
     expect(() =>
-      validateWindowsProfileKey({ profilePath, hasCiphertexts: true, validate: () => status })
+      validateWindowsProfileKey({ profilePath, hasCiphertexts: true, validate: () => ({ status }) })
     ).toThrow(/recovery/i)
     expect(readFileSync(join(profilePath, 'Local State'))).toEqual(original)
   }
@@ -84,8 +138,8 @@ it('rejects a replaced Local State after native validation instead of trusting s
       hasCiphertexts: true,
       validate: () => {
         writeFileSync(join(profilePath, 'Local State'), '{"replaced":true}')
-        return 'valid'
+        return { status: 'valid' }
       }
     })
-  ).toThrow(/recovery/i)
+  ).toThrow(expect.objectContaining({ diagnostic: { code: 'profile-changed' } }))
 })

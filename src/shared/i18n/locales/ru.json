@@ -50,6 +50,17 @@
     "Quit app": "Выйти из приложения"
   },
   "native": {
+    "Local State is in use by another process.": "Local State используется другим процессом.",
+    "The Local State configuration file could not be read.": "Не удалось прочитать файл конфигурации Local State.",
+    "The Local State configuration file is invalid.": "Файл конфигурации Local State недействителен.",
+    "The encryption key is missing from Local State.": "В Local State отсутствует ключ шифрования.",
+    "The encryption key in Local State is invalid.": "Ключ шифрования в Local State недействителен.",
+    "Local State changed during credential validation.": "Local State изменился во время проверки учётных данных.",
+    "The Windows credential validator could not start.": "Не удалось запустить программу проверки учётных данных Windows.",
+    "The Windows credential validator timed out.": "Истекло время ожидания программы проверки учётных данных Windows.",
+    "The Windows credential validator failed.": "Программа проверки учётных данных Windows завершилась с ошибкой.",
+    "Windows credential validation is unavailable on this system.": "Проверка учётных данных Windows недоступна в этой системе.",
+    "Windows could not decrypt the existing credential key.": "Windows не удалось расшифровать существующий ключ учётных данных.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
     "Credential storage needs recovery": "Необходимо восстановить хранилище учётных данных",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Этот механизм хранения системных учётных данных не поддерживает проверку идентификатора без взаимодействия с пользователем. Запуск остановлен для сохранения существующих зашифрованных данных.",

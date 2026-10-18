@@ -12,7 +12,8 @@ import {
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
-  flushLogs
+  flushLogs,
+  initLogger
 } from '@aipoch/diagnostics/node'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -115,6 +116,8 @@ async function main(): Promise<void> {
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
+  // Credential preflight can fail before full application diagnostics are initialized.
+  initLogger({ logDir: join(configRoot, 'logs') })
   const network = createNodeRuntimeNetwork()
   configureRuntimeNetwork(network)
   let runtime: Awaited<ReturnType<typeof import('./core-runtime').createCoreRuntime>> | undefined
@@ -670,7 +673,11 @@ void main().catch((error: unknown) => {
     ...diagnosticErrorFields(error),
     ...errorLogFields(error),
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, identityProbe: error.probe }
+      ? {
+          recoveryReason: error.reason,
+          identityProbe: error.probe,
+          validationDiagnostic: error.diagnostic
+        }
       : {})
   })
   process.exitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1

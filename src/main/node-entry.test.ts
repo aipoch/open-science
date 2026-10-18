@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
 
 const f = vi.hoisted(() => ({
+  initLogs: vi.fn(),
   startupFailure: false,
   releaseInstallation: vi.fn(),
   writeExit: vi.fn(async () => {}),
@@ -82,6 +83,7 @@ vi.mock('./credential-identity/bootstrap', async () => {
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => f.log,
+  initLogger: f.initLogs,
   flushLogs: async () => {}
 }))
 
@@ -117,6 +119,7 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(f.disposeCipher).toHaveBeenCalledOnce()
   expect(process.exitCode).toBe(1)
+  expect(f.initLogs).toHaveBeenCalledWith({ logDir: expect.stringMatching(/config[/\\]logs$/) })
   expect(process.env.OPEN_SCIENCE_STARTUP_ATTEMPT).toBeUndefined()
   const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
   expect(messages).toContainEqual({

@@ -50,6 +50,17 @@
     "Quit app": "結束應用程式"
   },
   "native": {
+    "Local State is in use by another process.": "Local State 正由其他處理程序使用。",
+    "The Local State configuration file could not be read.": "無法讀取 Local State 設定檔。",
+    "The Local State configuration file is invalid.": "Local State 設定檔無效。",
+    "The encryption key is missing from Local State.": "Local State 中缺少加密金鑰。",
+    "The encryption key in Local State is invalid.": "Local State 中的加密金鑰無效。",
+    "Local State changed during credential validation.": "憑證驗證期間 Local State 發生了變更。",
+    "The Windows credential validator could not start.": "Windows 憑證驗證程式無法啟動。",
+    "The Windows credential validator timed out.": "Windows 憑證驗證程式逾時。",
+    "The Windows credential validator failed.": "Windows 憑證驗證程式失敗。",
+    "Windows credential validation is unavailable on this system.": "此系統無法進行 Windows 憑證驗證。",
+    "Windows could not decrypt the existing credential key.": "Windows 無法解密現有憑證金鑰。",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
     "Credential storage needs recovery": "認證資料儲存空間需要復原",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系統認證資料後端不支援靜默身分檢查。為保留現有加密資料，啟動已停止。",
