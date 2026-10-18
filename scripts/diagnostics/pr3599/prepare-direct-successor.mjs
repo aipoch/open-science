@@ -111,9 +111,11 @@ replace('    const closed = waitForShutdownExit(exit, child, diagnosticOutput)',
     }) : waitForShutdownExit(exit, child, diagnosticOutput)
     void closed.catch(() => undefined)`)
 replace("    const beforeOperation = await listOperationIds()", "    if (retained) await assertRetainedB(dirname(executable), 'immediately-before-second-apply')\n    const beforeOperation = await listOperationIds()")
-replace("    await evidence('persistence-order', inspectPersistenceOrder(stdout))", `    const persistence = retained ? await inspectRetainedPersistence(activeOperation, directBackendIdentity) : inspectPersistenceOrder(stdout)
+replace("    await evidence('old-app-output', {", `    const persistence = retained ? await inspectRetainedPersistence(activeOperation, directBackendIdentity) : inspectPersistenceOrder(stdout)
     await evidence('persistence-order', persistence)
-    if (persistence.status !== 'PASS') throw new Error('Persistence did not complete before backend stop')`)
+    if (persistence.status !== 'PASS') throw new Error('Persistence did not complete before backend stop')
+    await evidence('old-app-output', {`)
+replace("    await evidence('persistence-order', inspectPersistenceOrder(stdout))", '')
 replace("    await evidence('update-failure-forced-cleanup', await waitForRecordedExit(failedProcesses, { force: true, timeoutMs: 10000 }))", "    await evidence('update-failure-retained-scene', { processes: failedProcesses, forced: false })")
 replace("      await evidence('failure-only-forced-cleanup', await waitForRecordedExit(identities, { force: true, timeoutMs: 10000 }))", "      await evidence('failure-retained-scene', { identities, forced: false })")
 replace('  activeOperation = undefined', '  // Retain the first operation identity until the new product request is captured.')
@@ -143,7 +145,10 @@ function inspectPersistedHandoff(text, request, backend) {
   const require = (condition, message) => { if (!condition) throw new Error('Persistence evidence: ' + message) }
   require(Number.isInteger(request.parentPid) && Number.isInteger(request.helperPid) && Number.isInteger(backend.pid) && backend.parent === request.parentPid, 'backend is not owned by the updating main process')
   require(typeof request.operationId === 'string' && /^[a-f0-9-]{36}$/i.test(request.operationId) && Number.isFinite(request.createdAt), 'invalid operation identity')
-  const rows = text.replace(/^\uFEFF/, '').split(/\r?\n/).flatMap((line, i) => line.trim() ? [{ line: i + 1, record: JSON.parse(line) }] : [])
+  // B has exited, but C may already append to the same file. Only newline-terminated
+  // records are committed JSONL; missing/incomplete target records still fail below.
+  const complete = text.slice(0, text.lastIndexOf('\n') + 1)
+  const rows = complete.replace(/^\uFEFF/, '').split(/\r?\n/).flatMap((line, i) => line.trim() ? [{ line: i + 1, record: JSON.parse(line) }] : [])
   const anchors = rows.filter(({ record: r }) => r.scope === 'update' && r.msg === 'Windows update progress window ready' && r.data?.pid === request.helperPid && r.data?.visible === true && typeof r.data?.directory === 'string' && r.data.directory.replaceAll('\\', '/').endsWith('/Open-Science/UpdateHandoffs/' + request.operationId))
   require(anchors.length === 1, 'missing or ambiguous operation/helper anchor')
   const anchor = anchors[0]
