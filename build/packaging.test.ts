@@ -876,11 +876,18 @@ describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
           `"${root}\\$updateOperation"`
         )
         expect(redirected).not.toBe(include)
+        const includeDirective = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8').match(
+          /^!include .*windows-update-handoff\.nsh"\r?$/m
+        )?.[0]
+        expect(includeDirective).toBeDefined()
+        writeFileSync(join(root, 'windows-update-handoff.nsh'), redirected)
         const executable = join(root, 'probe.exe')
         const source = join(root, 'probe.nsi')
         writeFileSync(
           source,
           `\uFEFFUnicode true
+!define BUILD_RESOURCES_DIR "${root}"
+${includeDirective}
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 Name "Isolated update receipt regression"
@@ -888,7 +895,7 @@ OutFile "${executable}"
 RequestExecutionLevel user
 SilentInstall silent
 Var installMode
-${redirected}
+!insertmacro defineUpdateReceiptFunctions
 Section
 StrCpy $installMode "current"
 Call initializeUpdateReceipts

@@ -29,7 +29,7 @@
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
-!include "${BUILD_RESOURCES_DIR}/windows-update-handoff.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
 
 Var perMachineInstallDirCache
 Var perUserInstallDirCache
@@ -337,6 +337,7 @@ FunctionEnd
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
+  !insertmacro defineUpdateReceiptFunctions
   # NSIS extracts the new uninstaller after the application package. Probe the same write access
   # its File command will request before uninstalling the old app, and again before extraction.
   # Checking only after uninstalling can reject the update with the old executable already gone.

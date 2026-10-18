@@ -2,6 +2,9 @@
 Var updateOperation
 Var updateReceiptRoot
 
+# electron-builder loads custom includes before LogicLib and $installMode exist. Declare the
+# shared variables early, but emit functions from customHeader after those dependencies load.
+!macro defineUpdateReceiptFunctions
 Function initializeUpdateReceipts
   Push $R0
   Push $R1
@@ -102,3 +105,4 @@ Function writeUpdateReceipt
   Pop $R0
   Pop $R4
 FunctionEnd
+!macroend
