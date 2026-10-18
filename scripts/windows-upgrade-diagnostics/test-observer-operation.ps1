@@ -44,7 +44,13 @@ public static class OperationFixture {
   public static int Main() {
     Console.WriteLine("operation-fixture-ready");
     Console.Out.Flush();
-    return Console.ReadLine() == "exit" ? 0 : 42;
+    // Process.StandardInput can emit a preamble from the parent's console encoding.
+    using (var input = new System.IO.StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8, true)) {
+      string command = input.ReadLine();
+      if (command == "exit") return 0;
+      Console.Error.WriteLine("Unexpected fixture input: " + (command == null ? "EOF" : BitConverter.ToString(System.Text.Encoding.UTF8.GetBytes(command))));
+      return 42;
+    }
   }
 }
 '@ -OutputAssembly $resourceHelper -OutputType ConsoleApplication
