@@ -21,7 +21,16 @@ class Program {
     try {
       if (args[0] == "inspect") {
         try { using (var process = Process.GetProcessById(int.Parse(args[1]))) {
-            Console.WriteLine(IsWindowVisible(process.MainWindowHandle) ? "visible" : "hidden");
+            // Retain the identity before checking the window: the process may exit
+            // between enumeration and MainWindowHandle. Absence still requires
+            // confirmation from this handle; other inspection errors remain fatal.
+            try {
+              var handle = process.Handle;
+              Console.WriteLine(process.HasExited ? "absent" : IsWindowVisible(process.MainWindowHandle) ? "visible" : "hidden");
+            } catch (InvalidOperationException) {
+              if (!process.HasExited) throw;
+              Console.WriteLine("absent");
+            }
           }
         } catch (ArgumentException) { Console.WriteLine("absent"); }
         return 0;

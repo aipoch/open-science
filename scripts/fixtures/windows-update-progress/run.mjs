@@ -199,18 +199,20 @@ const waitExited = async (pid) => {
         String(parent.pid),
         '-Started',
         started,
-        '-Application',
-        application,
-        '-ParentExecutable',
-        process.execPath,
-        '-Installer',
-        path.join(root, 'installer.exe'),
-        '-HelperResource',
-        helperPath,
         '-Output',
         path.join(root, 'observer.jsonl')
       ],
-      { windowsHide: true, stdio: 'pipe' }
+      {
+        windowsHide: true,
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          PR3599_HANDOFF_APPLICATION: application,
+          PR3599_HANDOFF_INSTALLER: path.join(root, 'installer.exe'),
+          PR3599_HANDOFF_HELPER: helperPath,
+          PR3599_HANDOFF_PARENT: process.execPath
+        }
+      }
     )
     children.push(observer)
     handoffObserverExit = once(observer, 'exit')
@@ -395,6 +397,7 @@ const waitExited = async (pid) => {
   )
   console.log('PASS native handoff chain: ' + root)
 })().catch(async (error) => {
+  if (handoffObserverExit) await mark('observer.jsonl.stop')
   await mark('cancel-fixture')
   await mark('cancel-parent')
   if (ready) await fs.writeFile(path.join(ready.directory, 'cancel'), ready.token).catch(() => {})
