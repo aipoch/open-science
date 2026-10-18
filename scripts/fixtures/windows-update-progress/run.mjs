@@ -74,6 +74,10 @@ const waitHelperEvent = async (event) => {
     bundle: true,
     platform: 'node',
     format: 'cjs',
+    // Shared worktree dependencies must not select another checkout's local package build.
+    alias: {
+      '@aipoch/durable-files': path.join(repository, 'packages/durable-files/dist/index.js')
+    },
     outfile: path.join(root, 'launcher.cjs')
   })
   execFileSync(
@@ -227,6 +231,8 @@ const waitHelperEvent = async (event) => {
         String(parent.pid),
         '-Started',
         started,
+        '-HandoffAppData',
+        root,
         '-Output',
         path.join(root, 'observer.jsonl')
       ],
@@ -430,6 +436,12 @@ const waitHelperEvent = async (event) => {
       .map(JSON.parse)
     assert(samples.length > 0)
     assert(samples.every((sample) => !sample.observerError && sample.windows.length > 0))
+    assert(
+      samples.some((sample) =>
+        sample.windows.some((window) => window.pid === ready.pid && window.role === 'progress')
+      ),
+      'The owned helper must be observed as progress under the fixture appData'
+    )
     assert.equal(samples.at(-1).successorPid, appPid)
     assert(
       samples.every((sample) => sample.windows.every((window) => window.pid !== unrelated.pid))
@@ -438,6 +450,7 @@ const waitHelperEvent = async (event) => {
       phase: 'independent-observer',
       samples: samples.length,
       noVisibilityGaps: true,
+      progressPid: ready.pid,
       excludesUnrelated: true
     })
   }
