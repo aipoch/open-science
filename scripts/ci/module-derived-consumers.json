@@ -26,6 +26,9 @@
     "renderer_upload_transfer": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
     "resilient_download": ["src/main/update/windows-update-handoff.test.ts"],
     "skill_package": ["src/main/update/windows-update-handoff.test.ts"],
+    "workspace_conversation": [
+      "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx"
+    ],
     "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"]
   }
 }

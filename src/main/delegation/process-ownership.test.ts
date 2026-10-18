@@ -449,7 +449,9 @@ describe('durable delegated process ownership', () => {
         await once(unrelated.stdout, 'data')
         const cold = new DelegatedProcessOwnership(directory!)
         expect(cold.receipts(scope)).toHaveLength(1)
-        await expect(cold.recover(scope, true)).resolves.toBeUndefined()
+        // A cold scan may conservatively block while processes exit or a snapshot is incomplete.
+        // Require eventual proof, as in the macOS case above; a persistent ambiguity still fails.
+        await expect.poll(() => cold.recover(scope, true), { timeout: 5_000 }).toBeUndefined()
         expect(cold.receipts(scope)).toHaveLength(0)
         for (const pid of [child.pid!, descendantPid]) {
           expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))

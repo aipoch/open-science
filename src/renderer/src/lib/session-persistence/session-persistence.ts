@@ -2454,14 +2454,19 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (
         !source ||
         source.projectId !== scope.projectId ||
-        source.activeRun?.promptMessageId !== event.promptMessageId ||
-        source.activeRun?.startedAt !== scope.startedAt
+        (source.activeRun
+          ? source.activeRun.promptMessageId !== event.promptMessageId ||
+            source.activeRun.startedAt !== scope.startedAt
+          : !authority || source.resumeRecovery?.promptMessageId !== event.promptMessageId)
       )
         continue
+      // A local interruption may already have released activeRun. Its matching recovery target
+      // still needs Main's storage-failure overlay, or the obsolete Resume notice remains visible.
       // Ordinary sends have no renderer-only Resume segment alias. Match Main's admission
       // instead, and never let an old failed execution release a newer attempt on this prompt.
       const admission = (
-        source.runtimeSessionAdmissions ?? authority?.runtimeSessionAdmissions
+        source.runtimeSessionAdmissions ??
+        (source.activeRun ? authority?.runtimeSessionAdmissions : undefined)
       )?.findLast((candidate) => candidate.promptMessageId === event.promptMessageId)
       if (
         admission
@@ -2469,7 +2474,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             admission.agentFrameId !== scope.agentFrameId ||
             admission.messageBranchId !== scope.messageBranchId ||
             admission.runtimeSegmentId !== scope.runtimeSegmentId
-          : event.terminalCommitFailure !== 'missing-record'
+          : !source.activeRun || event.terminalCommitFailure !== 'missing-record'
       )
         continue
       if (!authority) {
