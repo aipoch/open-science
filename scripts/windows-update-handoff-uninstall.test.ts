@@ -19,7 +19,16 @@ afterEach(() => {
 })
 
 describe.skipIf(process.platform !== 'win32')('Windows update presentation uninstall', () => {
-  it.each(['unknown', 'partial', 'active', 'foreign', 'other-installation'])(
+  it.each([
+    'unknown',
+    'partial',
+    'active',
+    'foreign',
+    'other-installation',
+    'reused-parent',
+    'reused-helper',
+    'reused-successor'
+  ])(
     'handles %s operations without terminating processes or deleting unknown content',
     (scenario) => {
       const root = mkdtempSync(join(tmpdir(), 'update-uninstall-'))
@@ -35,7 +44,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           '*S-1-5-18:(OI)(CI)F',
           '*S-1-5-32-544:(OI)(CI)F'
         ],
-        { encoding: 'utf8' }
+        { encoding: 'utf8', timeout: 10_000 }
       )
       expect(acl.status, acl.stderr || acl.stdout).toBe(0)
       const operations = join(root, 'operations')
@@ -49,16 +58,24 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         JSON.stringify({
           schema: 1,
           operationId,
-          parentPid: scenario === 'active' ? process.pid : 2147483647,
+          parentPid:
+            scenario === 'active' || scenario === 'reused-parent' ? process.pid : 2147483647,
+          ...(scenario === 'reused-helper' ? { helperPid: process.pid } : {}),
+          ...(scenario === 'reused-successor' ? { successorPid: process.pid } : {}),
           applicationPath: join(
             scenario === 'other-installation' ? root : install,
             'application.exe'
           ),
-          installerPath: join(root, 'installer.exe')
+          installerPath: scenario === 'active' ? process.execPath : join(root, 'installer.exe')
         })
       )
       if (scenario !== 'partial') writeFileSync(join(directory, 'helper.exe'), 'owned fixture')
       writeFileSync(join(directory, 'closed.receipt.tmp'), 'owned partial receipt')
+      if (scenario.startsWith('reused-')) {
+        // A completed historical PID now belongs to this unrelated Node test process.
+        for (const stage of ['installed', 'ready', 'closed'])
+          writeFileSync(join(directory, `${stage}.receipt`), `${operationId}\r\n${stage}\r\n`)
+      }
       if (scenario === 'foreign') writeFileSync(join(directory, 'unrelated-file'), 'preserve')
       const script = readFileSync(resolve('build/windows-update-handoff-uninstall.ps1'), 'utf8')
       // Redirect only the fixed managed root; exercise the production ownership/process/removal code.
@@ -93,11 +110,13 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         expect(result.status).not.toBe(0)
         expect(result.stderr).toContain('still active')
       } else expect(result.status, result.stderr || result.stdout).toBe(0)
-      const removed = scenario === 'unknown' || scenario === 'partial'
+      const removed =
+        scenario === 'unknown' || scenario === 'partial' || scenario.startsWith('reused-')
       expect(existsSync(directory)).toBe(!removed)
       if (removed) expect(run().status).toBe(0)
       if (scenario === 'foreign')
         expect(readFileSync(join(directory, 'unrelated-file'), 'utf8')).toBe('preserve')
+      expect(process.kill(process.pid, 0)).toBe(true)
     }
   )
 })

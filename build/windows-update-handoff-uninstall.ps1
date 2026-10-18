@@ -36,11 +36,16 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   catch { continue }
   $helper = Join-Path $directory.FullName 'helper.exe'
   $active = @($processes | Where-Object {
-    $_.ProcessId -eq $request.parentPid -or
-    ($request.helperPid -and $_.ProcessId -eq $request.helperPid) -or
-    ($request.successorPid -and $_.ProcessId -eq $request.successorPid) -or
-    ($_.ExecutablePath -and ($_.ExecutablePath -ieq $helper -or
-      $_.ExecutablePath -ieq $request.applicationPath -or $_.ExecutablePath -ieq $request.installerPath))
+    # Historic PIDs can be reused by unrelated processes after an update or reboot. A readable
+    # different executable is not an owner; preserve uncertainty only when its identity is hidden.
+    $recordedPid = $_.ProcessId -eq $request.parentPid -or
+      ($request.helperPid -and $_.ProcessId -eq $request.helperPid) -or
+      ($request.successorPid -and $_.ProcessId -eq $request.successorPid)
+    if (-not $_.ExecutablePath) { $recordedPid }
+    else {
+      $_.ExecutablePath -ieq $helper -or $_.ExecutablePath -ieq $request.applicationPath -or
+        $_.ExecutablePath -ieq $request.installerPath
+    }
   })
   if ($active.Count -gt 0) {
     throw "Update operation $($directory.Name) is still active; close its presentation after installation finishes and retry uninstall."

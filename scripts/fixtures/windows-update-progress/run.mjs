@@ -12,7 +12,17 @@ const fixture = fileURLToPath(new URL('./', import.meta.url))
 const root = path.join(repository, 'tmp', 'windows-update-progress-' + Date.now())
 const application = path.join(root, 'installation', 'application.exe')
 const scenario = process.argv[2] ?? 'success'
-assert(['success', 'installer-failure', 'cancel', 'unconfirmed', 'observer-gap'].includes(scenario))
+assert(
+  [
+    'success',
+    'installer-failure',
+    'cancel',
+    'unconfirmed',
+    'late-ready',
+    'wrong-receipt',
+    'observer-gap'
+  ].includes(scenario)
+)
 if (scenario === 'observer-gap') assert(process.env.OPEN_SCIENCE_PROGRESS_OBSERVER)
 const helperPath = path.join(
   repository,
@@ -46,6 +56,13 @@ const waitExited = async (pid) => {
   const deadline = Date.now() + 15000
   while (inspect(pid) !== 'absent') {
     if (Date.now() > deadline) throw Error('Owned fixture process did not exit: ' + pid)
+    await delay(25)
+  }
+}
+const waitHelperEvent = async (event) => {
+  const deadline = Date.now() + 15000
+  while (!(await fs.readFile(ready.logPath, 'utf8')).includes(`"event":"${event}"`)) {
+    if (Date.now() > deadline) throw Error('Helper did not report: ' + event)
     await delay(25)
   }
 }
@@ -246,6 +263,15 @@ const waitExited = async (pid) => {
   evidence.push({ phase: 'before-old-exit', helper: ready.pid, visible: true })
   await mark('exit-parent')
   assert.equal((await parentExit)[0], 0, parentOutput)
+  if (scenario === 'late-ready') {
+    await fs.writeFile(
+      path.join(ready.directory, 'unconfirmed.receipt'),
+      ready.token + '\r\nunconfirmed\r\n'
+    )
+    await waitHelperEvent('unconfirmed')
+    assert(visible(ready.pid), 'Unconfirmed presentation must remain available for late readiness')
+    evidence.push({ phase: 'unconfirmed-before-late-readiness', helperVisible: true })
+  }
   if (scenario === 'unconfirmed') {
     await fs.writeFile(
       path.join(ready.directory, 'unconfirmed.receipt'),
@@ -383,6 +409,18 @@ const waitExited = async (pid) => {
   await mark('release-window')
   await waitFile('app-visible')
   assert(visible(ready.pid), 'A visible successor without readiness must not dismiss progress')
+  if (scenario === 'wrong-receipt') {
+    await fs.writeFile(
+      path.join(ready.directory, 'ready.receipt'),
+      '00000000-0000-4000-8000-000000000001\r\nready\r\n'
+    )
+    await waitHelperEvent('unconfirmed')
+    assert(visible(ready.pid), 'Another operation cannot confirm this update')
+    const log = await fs.readFile(ready.logPath, 'utf8')
+    assert(!log.includes('"event":"successor-ready"'))
+    evidence.push({ phase: 'wrong-operation-receipt-rejected', helperVisible: true })
+    await fs.unlink(path.join(ready.directory, 'ready.receipt'))
+  }
   await mark('release-readiness')
   if (handoffObserverExit) {
     assert.equal((await handoffObserverExit)[0], 0)

@@ -861,7 +861,7 @@ it('protects both re-created branded data folders before retrying the old uninst
 })
 
 describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
-  it.each(['valid', 'missing', 'invalid'])(
+  it.each(['valid', 'surrounded', 'duplicate', 'missing', 'invalid'])(
     'publishes correlated receipts for %s operation arguments',
     (scenario) => {
       const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
@@ -906,17 +906,35 @@ SectionEnd
           timeout: 30_000
         })
         expect(compile.status, compile.stderr || compile.stdout).toBe(0)
-        const args =
-          scenario === 'missing'
-            ? []
-            : [`--open-science-update-operation=${scenario === 'valid' ? operation : '../outside'}`]
+        // Exercise the actual patched updater's argument transport, including its surrounding flags.
+        const { NsisUpdater } = require('electron-updater/out/NsisUpdater')
+        let args: string[] = []
+        expect(
+          NsisUpdater.prototype.doInstall.call(
+            {
+              installerPath: executable,
+              openScienceUpdateOperation: operation,
+              spawnLog: async (_file: string, values: string[]) => {
+                args = values
+              },
+              dispatchError: (error: Error) => {
+                throw error
+              }
+            },
+            { isSilent: false, isForceRunAfter: true }
+          )
+        ).toBe(true)
+        if (scenario === 'surrounded') args.push('/S', '--unused=value with spaces')
+        if (scenario === 'duplicate') args.push(`--open-science-update-operation=${operation}`)
+        if (scenario === 'missing') args = []
+        if (scenario === 'invalid') args = ['--open-science-update-operation=../outside']
         const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
         expect(execution.status, execution.stderr || execution.stdout).toBe(0)
         for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
           const receipt = join(directory, `${stage}.receipt`)
-          expect(existsSync(receipt)).toBe(scenario === 'valid')
-          if (scenario === 'valid')
-            expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
+          const valid = scenario === 'valid' || scenario === 'surrounded'
+          expect(existsSync(receipt)).toBe(valid)
+          if (valid) expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
         }
       } finally {
         rmSync(root, { recursive: true, force: true })

@@ -3,9 +3,38 @@ Var updateOperation
 Var updateReceiptRoot
 
 Function initializeUpdateReceipts
+  Push $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  Push $R5
+  Push $R6
+  Push $R7
   StrCpy $updateOperation ""
   StrCpy $updateReceiptRoot ""
-  ${GetOptions} $CMDLINE "--open-science-update-operation=" $updateOperation
+  # FileFunc.GetOptions treats '-' inside UUIDs as an option separator. Parse the actual Windows
+  # argv instead, preserving UUIDs, quoted paths and surrounding electron-updater flags.
+  System::Call 'shell32::CommandLineToArgvW(w c, *i .R0) p.R1'
+  StrCmp $R1 0 updateReceipt_invalid
+  StrCpy $R2 $R1
+  StrCpy $R5 0
+  StrLen $R7 "--open-science-update-operation="
+  updateReceipt_argument:
+    IntCmp $R0 0 updateReceipt_argumentsDone updateReceipt_argumentsDone
+    System::Call '*$R2(p .R3)'
+    System::Call 'kernel32::lstrcpynW(w .R4, p R3, i ${NSIS_MAX_STRLEN})'
+    StrCpy $R6 $R4 $R7
+    ${if} $R6 == "--open-science-update-operation="
+      IntOp $R5 $R5 + 1
+      StrCpy $updateOperation $R4 "" $R7
+    ${endif}
+    IntPtrOp $R2 $R2 + ${NSIS_PTR_SIZE}
+    IntOp $R0 $R0 - 1
+    Goto updateReceipt_argument
+  updateReceipt_argumentsDone:
+    System::Call 'kernel32::LocalFree(p R1)'
+    StrCmp $R5 1 0 updateReceipt_invalid
   StrLen $R0 $updateOperation
   StrCmp $R0 36 0 updateReceipt_invalid
   StrCpy $R0 0
@@ -36,11 +65,20 @@ Function initializeUpdateReceipts
     IfFileExists "$updateReceiptRoot\request.json" 0 updateReceipt_invalid
     Push "accepted"
     Call writeUpdateReceipt
-    Return
+    Goto updateReceipt_done
   updateReceipt_invalid:
     StrCpy $updateOperation ""
     StrCpy $updateReceiptRoot ""
     ClearErrors
+  updateReceipt_done:
+    Pop $R7
+    Pop $R6
+    Pop $R5
+    Pop $R4
+    Pop $R3
+    Pop $R2
+    Pop $R1
+    Pop $R0
 FunctionEnd
 
 Function writeUpdateReceipt
@@ -53,9 +91,9 @@ Function writeUpdateReceipt
     FileOpen $R0 "$updateReceiptRoot\$R4.receipt.tmp" w
     ${ifNot} ${Errors}
       FileWrite $R0 "$updateOperation$\r$\n$R4$\r$\n"
-      System::Call 'kernel32::FlushFileBuffers(p rR0)'
+      System::Call 'kernel32::FlushFileBuffers(p R0)'
       FileClose $R0
-      System::Call 'kernel32::MoveFileEx(t "$updateReceiptRoot\$R4.receipt.tmp", t "$updateReceiptRoot\$R4.receipt", i 9) i.rR1'
+      System::Call 'kernel32::MoveFileEx(t "$updateReceiptRoot\$R4.receipt.tmp", t "$updateReceiptRoot\$R4.receipt", i 9) i.R1'
     ${endif}
     # Observation failure cannot change installation or imply success. The companion stays unknown.
     ClearErrors

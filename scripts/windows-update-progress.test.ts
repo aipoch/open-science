@@ -17,7 +17,7 @@ describe.skipIf(process.platform !== 'win32')('native Windows update presentatio
       { stdio: 'pipe', timeout: 120_000 }
     )
   }, 130_000)
-  it.each(['success', 'installer-failure', 'cancel', 'unconfirmed'])(
+  it.each(['success', 'installer-failure', 'cancel', 'unconfirmed', 'late-ready', 'wrong-receipt'])(
     'runs the real native companion through %s',
     (scenario) => {
       execFileSync(

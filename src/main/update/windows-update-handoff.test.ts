@@ -111,6 +111,29 @@ describe('Windows update presentation receipts', () => {
     )
     expect(await resolveWindowsUpdateStartup({ ...ready, args: [] })).toBeUndefined()
   })
+  it.each(['missing', 'corrupt'])(
+    'rejects %s startup configuration instead of selecting a default profile',
+    async (scenario) => {
+      const { directory, ready } = await setup()
+      const request = join(directory, 'request.json')
+      if (scenario === 'missing') await rm(request)
+      else await writeFile(request, '{invalid')
+      await expect(resolveWindowsUpdateStartup(ready)).rejects.toThrow()
+    }
+  )
+  it('does not reuse previous readiness for the next update operation', async () => {
+    const previous = await setup()
+    await acknowledgeWindowsUpdateReady(previous.ready)
+    const current = await setup()
+    expect(current.operationId).not.toBe(previous.operationId)
+    expect((await resolveWindowsUpdateStartup(previous.ready))?.confirmed).toBe(true)
+    expect((await resolveWindowsUpdateStartup(current.ready))?.confirmed).toBe(false)
+    await writeFile(
+      join(current.directory, 'ready.receipt'),
+      windowsUpdateReceipt(previous.operationId, 'ready')
+    )
+    await expect(resolveWindowsUpdateStartup(current.ready)).rejects.toThrow('readiness receipt')
+  })
   it('retains configuration through successor lifetime and a later Electron relaunch', async () => {
     const { directory, operationId, ready } = await setup()
     const requestPath = join(directory, 'request.json')

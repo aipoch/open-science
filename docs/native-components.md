@@ -145,7 +145,8 @@ fails closed. Unknown outcomes are retained for diagnosis.
 Real product uninstall uses the fixed app-data root, validates ownership/ACLs and reparse points,
 checks parent/helper and exact executable paths, and removes recognized inactive operations, including
 unknown outcomes. It stops for active operations rather than terminating them. Unknown files are
-preserved. Update-time uninstall skips this cleanup. Legacy shared temporary helper caches are not
+preserved. A historical PID that now identifies a readable unrelated executable does not block
+uninstall; an unreadable recorded identity remains conservative. Update-time uninstall skips this cleanup. Legacy shared temporary helper caches are not
 adopted or recursively deleted because they lack the new ownership record.
 
 Compatibility: installers without an operation argument continue normally; an older target without
@@ -154,7 +155,7 @@ This does not retrofit the released macOS 1.0.0 updater.
 
 Native verification requires Windows. Build the helper through the desktop preparation command,
 then run `node scripts/fixtures/windows-update-progress/run.mjs success`, `installer-failure`, and
-`cancel`, and `unconfirmed`. The success fixture deliberately exposes the successor window before releasing readiness.
-The PR Windows runtime lane runs these four native companion cases and the uninstall regressions.
+`cancel`, `unconfirmed`, `late-ready`, and `wrong-receipt`. The success fixture deliberately exposes the successor window before releasing readiness.
+The PR Windows runtime lane runs these six native companion cases and the uninstall regressions.
 The independent observer remains diagnostic evidence only. NSIS receipt and uninstall regressions
 run in `build/packaging.test.ts` and `scripts/windows-update-handoff-uninstall.test.ts` on Windows.
