@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
@@ -39,6 +40,7 @@ vi.mock('./imports/LiteratureImportDialogFrame', () => ({
 }))
 afterEach(() => {
   cleanup()
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   window.localStorage.removeItem('open-science:journal-source-years')
 })
 beforeAll(() => {
@@ -275,66 +277,93 @@ it('cancels file preparation, terminates the parser and leaves persisted data al
   }
 })
 
-it('preserves a dirty draft on remote changes and reloads after an explicit cancel', async () => {
-  let stored = structuredClone(dataset)
-  let changed: () => void = () => {}
-  const unsubscribe = vi.fn()
-  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
-    request.action === 'entries' ? { entries: [], total: 0 } : { datasets: [stored] }
-  )
-  Object.defineProperty(window, 'api', {
-    configurable: true,
-    value: {
-      literature: {
-        journals,
-        onChanged: (listener: () => void) => {
-          changed = listener
-          return unsubscribe
+it.each(['event', 'desktop'] as const)(
+  'preserves a dirty draft on %s changes and reloads after an explicit cancel',
+  async (transport) => {
+    let stored = structuredClone(dataset)
+    let changed: () => void = () => {}
+    const unsubscribe = vi.fn()
+    const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
+      request.action === 'entries' ? { entries: [], total: 0 } : { datasets: [stored] }
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          journals,
+          onChanged: (listener: () => void) => {
+            changed = listener
+            return unsubscribe
+          }
         }
       }
-    }
-  })
-  const view = render(<JournalManager onOpenItem={() => {}} onClose={() => {}} />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Customize columns' }))
-  fireEvent.change(screen.getByRole('textbox', { name: 'Attribute name' }), {
-    target: { value: 'Local draft' }
-  })
-  stored = { ...stored, revision: 2, fields: [{ ...stored.fields[0], label: 'Remote label' }] }
-  act(() => changed())
-  await screen.findByText(
-    'Journal data changed in another window. Your draft is preserved. Cancel this draft to load the latest data.'
-  )
-  expect((screen.getByRole('textbox', { name: 'Attribute name' }) as HTMLInputElement).value).toBe(
-    'Local draft'
-  )
-  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-  await screen.findByRole('button', { name: 'Remote label' })
-  expect(screen.queryByRole('alert')).toBeNull()
-  expect(journals.mock.calls.some(([request]) => request.action === 'fields')).toBe(false)
-  view.unmount()
-  expect(unsubscribe).toHaveBeenCalledTimes(1)
-})
+    })
+    const view = render(<JournalManager onOpenItem={() => {}} onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize columns' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Attribute name' }), {
+      target: { value: 'Local draft' }
+    })
+    stored = { ...stored, revision: 2, fields: [{ ...stored.fields[0], label: 'Remote label' }] }
+    act(() => {
+      if (transport === 'event') changed()
+      else {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      }
+    })
+    await screen.findByText(
+      'Journal data changed in another window. Your draft is preserved. Cancel this draft to load the latest data.'
+    )
+    expect(
+      (screen.getByRole('textbox', { name: 'Attribute name' }) as HTMLInputElement).value
+    ).toBe('Local draft')
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await screen.findByRole('button', { name: 'Remote label' })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(journals.mock.calls.some(([request]) => request.action === 'fields')).toBe(false)
+    view.unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  }
+)
 
-it('refreshes a clean manager on reconnect and handles remote deletion', async () => {
-  let datasets = [structuredClone(dataset)]
-  const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
-    request.action === 'entries' ? { entries: [], total: 0 } : { datasets }
-  )
-  Object.defineProperty(window, 'api', {
-    configurable: true,
-    value: { literature: { journals, onChanged: () => () => {} } }
-  })
-  render(<JournalManager onOpenItem={() => {}} onClose={() => {}} />)
-  await screen.findByRole('button', { name: 'Customize columns' })
-  datasets = []
-  act(() => window.dispatchEvent(new Event('open-science:web-events-open')))
-  await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'Customize columns' })).toBeNull()
-  )
-  expect(screen.queryByRole('combobox', { name: 'Journal dataset' })).toBeNull()
-  expect(screen.queryByRole('alert')).toBeNull()
-})
+it.each(['web', 'desktop'] as const)(
+  'refreshes a clean manager on %s reconnect and handles remote deletion',
+  async (transport) => {
+    let datasets = [structuredClone(dataset)]
+    const journals = vi.fn(async (request: JournalRequest): Promise<JournalResult> =>
+      request.action === 'entries' ? { entries: [], total: 0 } : { datasets }
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { literature: { journals, onChanged: () => () => {} } }
+    })
+    const view = render(<JournalManager onOpenItem={() => {}} onClose={() => {}} />)
+    await screen.findByRole('button', { name: 'Customize columns' })
+    datasets = []
+    if (transport === 'web')
+      act(() => window.dispatchEvent(new Event('open-science:web-events-open')))
+    else {
+      for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
+        await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
+        expect(screen.getByRole('button', { name: 'Customize columns' })).toBeTruthy()
+      }
+      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+    }
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Customize columns' })).toBeNull()
+    )
+    expect(screen.queryByRole('combobox', { name: 'Journal dataset' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    view.unmount()
+    journals.mockClear()
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(journals).not.toHaveBeenCalled()
+  }
+)
 
 it('downloads a workbook template with instructions and a separate example sheet', async () => {
   const journals = vi.fn(async (): Promise<JournalResult> => ({ datasets: [] }))

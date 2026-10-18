@@ -2683,6 +2683,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
         unresolvedSessionRevisionConflictTargets.clear()
         revisionConflictTargets.current.clear()
         setIsHydrated(true)
+        setLoadError(undefined)
+        setLoadWarning(undefined)
         const loadWarnings = result.diagnostics?.warnings ?? []
         const sessionWarningCount = loadWarnings.filter(
           (warning) => warning.kind !== 'manifest-corrupt' && warning.kind !== 'manifest-unreadable'
@@ -2696,12 +2698,15 @@ const useSessionPersistence = (): SessionPersistenceState => {
         )
 
         if (result.diagnostics?.isComplete === false) {
+          setIsReady(false)
           setLoadError(
             result.diagnostics.failure === 'startup-reconciliation-failed'
               ? 'Saved conversations loaded, but storage recovery could not finish. Retry before creating or saving conversations.'
               : 'Some saved conversations could not be read. Retry before creating or saving conversations.'
           )
           setIsLoading(false)
+          // Transport recovered; the existing storage notice and write gates own this failure.
+          if (recovering) completeDesktopSessionRecovery(recovery.epoch, true)
           return
         }
 
@@ -2975,7 +2980,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   return {
     isHydrated,
     isLoading,
-    isReady,
+    isReady: isReady && recovery.phase === 'connected',
     hasCompleteSessionCatalog,
     catalogRecovery,
     canDeleteSessionsAndProjects,

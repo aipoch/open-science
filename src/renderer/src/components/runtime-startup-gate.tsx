@@ -242,7 +242,9 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
                   }
           }
         >
-          {!confirmation && !failure && failed ? (
+          {!confirmation &&
+          !failure &&
+          (failed || (state.phase === 'blocked' && issue.diagnostics)) ? (
             <p role="status" className="mt-3 text-sm">
               {t('The app could not be checked. Try again.')}
             </p>

@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -345,6 +346,9 @@ export const JournalManager = memo(function JournalManager({
       if (!event?.itemIds?.length && !event?.collectionIds?.length && !event?.candidateIds?.length)
         changed()
     })
+    const removeRecovery = useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+      if (state.phase === 'connected' && previous.phase !== 'connected') changed()
+    })
     const visible = (): void => {
       if (document.visibilityState === 'visible') changed()
     }
@@ -353,6 +357,7 @@ export const JournalManager = memo(function JournalManager({
     document.addEventListener('visibilitychange', visible)
     return () => {
       unsubscribe?.()
+      removeRecovery()
       window.removeEventListener('focus', changed)
       window.removeEventListener('open-science:web-events-open', changed)
       document.removeEventListener('visibilitychange', visible)
