@@ -129,6 +129,36 @@ test('keeps source icons inside table cells after expanding a message table', as
   await expect(fullscreen).toHaveCount(0)
 })
 
+test('expands the selected table across repeated portal lifecycles', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await submitPromptViaUi(page, 'Expand distinct tables.')
+  const wrappers = page
+    .getByRole('region', { name: 'Conversation' })
+    .locator('[data-streamdown="table-wrapper"]')
+  await expect(wrappers).toHaveCount(2)
+  const inline = await wrappers.locator('table').allTextContents()
+  for (const index of [1, 0, 1]) {
+    await wrappers.nth(index).hover()
+    await wrappers.nth(index).getByTitle('View fullscreen', { exact: true }).click()
+    const fullscreen = page.locator('[data-streamdown="table-fullscreen"]')
+    await expect(fullscreen).toBeVisible()
+    // The regression happens after portal insertion, not on the first React commit.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    await expect(fullscreen.locator('table')).toHaveText(inline[index])
+    expect(await wrappers.locator('table').allTextContents()).toEqual(inline)
+    if (index === 0) await page.keyboard.press('Escape')
+    else await fullscreen.getByTitle('Exit fullscreen', { exact: true }).click()
+    await expect(fullscreen).toHaveCount(0)
+  }
+})
+
 const persistedMemoryState = async (
   page: Page
 ): Promise<{

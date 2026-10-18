@@ -1,10 +1,161 @@
 // @vitest-environment jsdom
-import { cleanup, render, fireEvent } from '@testing-library/react'
+import { act, cleanup, render, renderHook, fireEvent, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
+import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { buildLiteratureLibraryToolSummary } from './literature-tool-presentation'
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { useNavigationStore } from '../../stores/navigation-store'
+import { useLiteratureSaveState } from './use-literature-save-state'
+it('reconciles historical save receipts with current Inbox state on changes and remount', async () => {
+  const summary = buildLiteratureLibraryToolSummary(
+    'save',
+    {},
+    {
+      results: [
+        { kind: 'candidate', id: 'a', state: 'pending' },
+        { kind: 'candidate', id: 'b', state: 'pending' }
+      ]
+    }
+  )
+  let accepted = false
+  let allAccepted = false
+  let dismissed = false
+  let fail = false
+  const listeners = new Set<(event: LiteratureChangedEvent) => void>()
+  const search = vi.fn(async ({ inboxState, offset }: { inboxState?: string; offset?: number }) => {
+    if (fail) throw new Error('Offline')
+    const rows = [
+      {
+        id: 'a',
+        state: dismissed ? 'dismissed' : accepted ? 'accepted' : 'pending',
+        candidate: {},
+        ...(accepted && !dismissed ? { acceptedItemId: 'item-a' } : {})
+      },
+      {
+        id: 'b',
+        state: allAccepted ? 'accepted' : 'pending',
+        candidate: {},
+        ...(allAccepted ? { acceptedItemId: 'item-b' } : {})
+      },
+      { id: 'unrelated', state: 'pending', candidate: {} }
+    ].filter(({ state }) => state === inboxState)
+    const start = offset ?? 0
+    return {
+      entries: rows.slice(start, start + 1),
+      totalCount: rows.length,
+      ...(start + 1 < rows.length ? { nextOffset: start + 1 } : {})
+    }
+  })
+  const previousApi = window.api
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: {
+      literature: {
+        search,
+        onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        }
+      }
+    }
+  })
+  const navigate = vi
+    .spyOn(useNavigationStore.getState(), 'openLiteratureItem')
+    .mockImplementation(() => {})
+  try {
+    const rendered = render(<WorkspaceLiteratureToolCard summary={summary} />)
+    await waitFor(() => expect(search).toHaveBeenCalled())
+    expect(rendered.getByText('Pending review: 2')).toBeDefined()
+    // An unsuccessful read must not turn a pending receipt into a library item.
+    fail = true
+    await act(async () => {
+      listeners.forEach((listener) => listener({ revision: 1, candidateIds: ['a'] }))
+    })
+    expect(rendered.queryByText('Already in library: 1')).toBeNull()
+    fail = false
+    accepted = true
+    await act(async () => {
+      listeners.forEach((listener) =>
+        listener({ revision: 2, candidateIds: ['a'], itemIds: ['item-a'] })
+      )
+    })
+    await waitFor(() => expect(rendered.getByText('Pending review: 1')).toBeDefined())
+    expect(rendered.getByText('Already in library: 1')).toBeDefined()
+    fireEvent.click(rendered.getByRole('button', { name: 'Open existing reference 1' }))
+    expect(navigate).toHaveBeenCalledWith('item-a', 'user')
+    expect(summary.savedCount).toBe(2) // The transcript receipt is immutable.
+    rendered.unmount()
+    expect(listeners.size).toBe(0)
+    const remounted = render(<WorkspaceLiteratureToolCard summary={summary} />)
+    await waitFor(() => expect(remounted.getByText('Pending review: 1')).toBeDefined())
+    // Focus/reconnect reconciliation covers mutations missed while away.
+    accepted = false
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(remounted.getByText('Pending review: 2')).toBeDefined())
+    accepted = true
+    allAccepted = true
+    fireEvent(window, new Event('open-science:web-events-open'))
+    await waitFor(() => expect(remounted.getByText('Already in library: 2')).toBeDefined())
+    expect(remounted.queryByText(/Pending review:/)).toBeNull()
+    expect(remounted.queryByRole('button', { name: 'Open Inbox' })).toBeNull()
+    // Dismissal is not import, and another paper's state cannot affect this receipt.
+    dismissed = true
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(remounted.getByText('Already in library: 1')).toBeDefined())
+    expect(remounted.getByText('Other results: 1')).toBeDefined()
+  } finally {
+    cleanup()
+    window.api = previousApi
+    navigate.mockRestore()
+  }
+})
+
+it('ignores a stale catalog read after switching receipt identities', async () => {
+  const makeSummary = (id: string): ReturnType<typeof buildLiteratureLibraryToolSummary> =>
+    buildLiteratureLibraryToolSummary(
+      'save',
+      {},
+      {
+        results: [{ kind: 'candidate', id, state: 'pending' }]
+      }
+    )
+  let resolveOld!: (page: { entries: []; totalCount: number }) => void
+  const oldRead = new Promise<{ entries: []; totalCount: number }>((resolve) => {
+    resolveOld = resolve
+  })
+  const search = vi
+    .fn()
+    .mockReturnValueOnce(oldRead)
+    .mockResolvedValueOnce({ entries: [], totalCount: 0 })
+    .mockResolvedValueOnce({
+      entries: [{ id: 'new', state: 'accepted', candidate: {}, acceptedItemId: 'new-item' }],
+      totalCount: 1
+    })
+  const previousApi = window.api
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    writable: true,
+    value: { literature: { search } }
+  })
+  try {
+    const { result, rerender } = renderHook(({ summary }) => useLiteratureSaveState(summary), {
+      initialProps: { summary: makeSummary('old') }
+    })
+    rerender({ summary: makeSummary('new') })
+    await waitFor(() => expect(result.current.existingItemIds).toEqual(['new-item']))
+    await act(async () => {
+      resolveOld({ entries: [], totalCount: 0 })
+    })
+    expect(result.current.existingItemIds).toEqual(['new-item'])
+    expect(search).toHaveBeenCalledTimes(3)
+  } finally {
+    cleanup()
+    window.api = previousApi
+  }
+})
+
 it('does not describe an existing library receipt as an Inbox save', () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',

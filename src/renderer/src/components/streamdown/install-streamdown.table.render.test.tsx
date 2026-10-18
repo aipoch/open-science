@@ -7,6 +7,56 @@ import { installStreamdown } from './install-streamdown'
 
 afterEach(cleanup)
 
+it('expands the clicked table inside a positioned conversation, not the first table', async () => {
+  const uninstall = installStreamdown()
+  try {
+    const markdown =
+      '| A | Value |\n| --- | --- |\n| alpha | 1 |\n\n| B | Value |\n| --- | --- |\n| beta | 2 |'
+    const { container, rerender } = render(
+      <div className="relative agent-markdown-root">
+        <Streamdown mode="static">{markdown}</Streamdown>
+      </div>
+    )
+    const inline = [...container.querySelectorAll('table')].map((table) => table.innerHTML)
+    for (const index of [1, 0, 1]) {
+      fireEvent.click(container.querySelectorAll('button[title="View fullscreen"]')[index])
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      await vi.waitFor(() => {
+        const table = document.querySelector('[data-streamdown="table-fullscreen"] table')!
+        expect(table.textContent).toContain(index === 1 ? 'beta' : 'alpha')
+        expect(table.textContent).not.toContain(index === 1 ? 'alpha' : 'beta')
+      })
+      expect([...container.querySelectorAll('table')].map((table) => table.innerHTML)).toEqual(
+        inline
+      )
+      fireEvent.click(document.querySelector('button[title="Exit fullscreen"]')!)
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-streamdown="table-fullscreen"]')).toBeNull()
+      )
+    }
+    rerender(
+      <div className="relative agent-markdown-root">
+        <Streamdown key="new-session" mode="static">
+          {'| C | Value |\n| --- | --- |\n| gamma | 3 |'}
+        </Streamdown>
+      </div>
+    )
+    fireEvent.click(container.querySelector('button[title="View fullscreen"]')!)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-streamdown="table-fullscreen"] table')?.textContent
+      ).toContain('gamma')
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-streamdown="table-fullscreen"]')).toBeNull()
+    )
+  } finally {
+    uninstall()
+  }
+})
+
 it('owns a real Streamdown table click without opening its native menu or saving twice', async () => {
   const saveBlobFile = vi.fn().mockResolvedValue({ saved: true })
   const previousApi = window.api

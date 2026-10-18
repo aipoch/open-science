@@ -19,14 +19,29 @@ import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { useLiteratureSaveState } from './use-literature-save-state'
 
-const WorkspaceLiteratureToolCard = ({
-  summary,
-  isApproval = false
-}: {
+type LiteratureToolCardProps = {
   summary: LiteratureToolSummary
   isApproval?: boolean
-}): React.JSX.Element => {
+}
+
+const LiveLiteratureSaveCard = (props: LiteratureToolCardProps): React.JSX.Element => {
+  const summary = useLiteratureSaveState(props.summary)
+  return <LiteratureToolCard {...props} summary={summary} />
+}
+
+const WorkspaceLiteratureToolCard = (props: LiteratureToolCardProps): React.JSX.Element =>
+  props.summary.action === 'save' && props.summary.pendingCandidateIds?.length ? (
+    <LiveLiteratureSaveCard {...props} />
+  ) : (
+    <LiteratureToolCard {...props} />
+  )
+
+const LiteratureToolCard = ({
+  summary,
+  isApproval = false
+}: LiteratureToolCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const openPreview = useContext(LibraryPreviewNavigationContext)
   const isLibrary = summary.libraryScope !== undefined
