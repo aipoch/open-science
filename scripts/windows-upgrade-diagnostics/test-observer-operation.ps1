@@ -35,7 +35,20 @@ $liveOperation = [guid]::NewGuid().ToString()
 $directory = Join-Path $fixture "Open-Science\UpdateHandoffs\$liveOperation"
 [IO.Directory]::CreateDirectory($directory) | Out-Null
 $liveHelper = Join-Path $directory 'helper.exe'
-Copy-Item -LiteralPath $env:ComSpec -Destination $liveHelper
+$resourceHelper = Join-Path $fixture 'fixture-resource.exe'
+# Do not use an interactive shell command as the fixture's lifetime contract.
+# A pipe protocol acknowledges readiness and normal exit in the observed process.
+Add-Type -TypeDefinition @'
+using System;
+public static class OperationFixture {
+  public static int Main() {
+    Console.WriteLine("operation-fixture-ready");
+    Console.Out.Flush();
+    return Console.ReadLine() == "exit" ? 0 : 42;
+  }
+}
+'@ -OutputAssembly $resourceHelper -OutputType ConsoleApplication
+Copy-Item -LiteralPath $resourceHelper -Destination $liveHelper
 $self = [Diagnostics.Process]::GetCurrentProcess()
 $parentPath = $self.MainModule.FileName
 $self.Dispose()
@@ -58,17 +71,24 @@ try {
     if (-not $rejected) { throw "Non-absolute handoff root was accepted: $invalidRoot" }
     $live += @{scenario='reject-non-absolute-root';appData=$invalidRoot;rejected=$true}
   }
-  $start = [Diagnostics.ProcessStartInfo]::new($liveHelper,'/d /c set /p fixture=')
+  $start = [Diagnostics.ProcessStartInfo]::new($liveHelper)
   $start.UseShellExecute = $false
   $start.CreateNoWindow = $true
   $start.RedirectStandardInput = $true
+  $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
   $child = [Diagnostics.Process]::Start($start)
+  $ready = $child.StandardOutput.ReadLineAsync()
+  if (-not $ready.Wait(10000) -or $ready.Result -ne 'operation-fixture-ready' -or $child.HasExited) {
+    throw 'Owned helper failed its readiness handshake; retaining fixture'
+  }
+  $live += @{scenario='helper-readiness';pid=$child.Id;acknowledgement=$ready.Result}
   $liveInstaller = Join-Path $fixture 'installer.exe'
   @{schema=1;operationId=$liveOperation;parentPid=$PID;helperPid=$child.Id;applicationPath=$parentPath;installerPath=$liveInstaller} |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'request.json') -Encoding UTF8
   foreach ($scenario in @('matching-root','wrong-root','wrong-digest')) {
     $appData = if ($scenario -eq 'wrong-root') { Join-Path $fixture 'other-account' } else { $fixture }
-    $resource = if ($scenario -eq 'wrong-digest') { $parentPath } else { $env:ComSpec }
+    $resource = if ($scenario -eq 'wrong-digest') { $parentPath } else { $resourceHelper }
     $observer = [HandoffObserver]::new($PID,$parent.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$parentPath,$liveInstaller,$resource,$parentPath,$appData)
     try {
       $sample = $null
@@ -98,6 +118,7 @@ finally {
       if (-not $child.WaitForExit(10000)) { throw 'Owned helper remains alive; retaining fixture' }
       $cleanup.exited = $true
       $cleanup.exitCode = $child.ExitCode
+      $cleanup.stderr = $child.StandardError.ReadToEnd()
       if ($child.ExitCode -ne 0) { throw 'Owned helper exited unsuccessfully' }
     } catch { $cleanup.error = $_.Exception.ToString(); if (-not $failure) { $failure = $_ } }
     finally { $child.Dispose() }

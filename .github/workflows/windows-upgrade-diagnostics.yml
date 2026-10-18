@@ -24,6 +24,8 @@ jobs:
           node-version: 24
       - name: Exercise native process observation
         run: node --test scripts/windows-upgrade-diagnostics/observer.node-test.mjs
+      - name: Exercise direct PowerShell invocation
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-upgrade-diagnostics/test-observer-operation.ps1 -Output test-results/upgrade-diagnostics/direct-operation.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
