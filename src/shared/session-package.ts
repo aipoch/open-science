@@ -104,6 +104,7 @@ export type BrowserPackageTransfer = {
   filename: string
   state: 'preparing' | 'waiting' | 'receiving' | 'cancelling' | 'cancelled' | 'failed'
   cleanupPending?: boolean
+  // Received payload high-water mark for display, not the authenticated/written resume offset.
   completedBytes: number
   totalBytes: number
 }

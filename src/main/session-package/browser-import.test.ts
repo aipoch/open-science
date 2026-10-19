@@ -5,7 +5,9 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { syncBuiltinESMExports } from 'node:module'
+import { request as httpRequest } from 'node:http'
 import fs from 'node:fs/promises'
+import type { BrowserPackageTransfer } from '../../shared/session-package'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BrowserPackageImport, parseBrowserImportUrl } from './browser-import'
 
@@ -26,6 +28,7 @@ async function setup(
     idleMs?: number
     receive?: () => Promise<boolean>
     cancelReceived?: (path: string) => Promise<void>
+    onChanged?: (transfers: BrowserPackageTransfer[]) => void
   } = {}
 ) {
   const port = await findBrowserImportPort()
@@ -41,6 +44,7 @@ async function setup(
       return options.receive?.()
     },
     cancelReceived: options.cancelReceived,
+    onChanged: options.onChanged,
     idleMs: options.idleMs
   })
   disposers.push(() => bridge.close())
@@ -67,6 +71,151 @@ async function setup(
   }
   return { bridge, port, root, received, releases, request, chunk }
 }
+
+function streamingChunk(port: number, body: string, offset = 0, contentLength = true) {
+  const digest = checksum(body)
+  const path = `/v1/import/chunk?offset=${offset}`
+  const iv = randomBytes(12)
+  const key = createHash('sha256').update(`open-science-encryption-v1:${secret}`).digest()
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  cipher.setAAD(Buffer.from(`offset:${offset}`))
+  const encrypted = Buffer.concat([iv, cipher.update(body), cipher.final(), cipher.getAuthTag()])
+  const incoming = httpRequest(`http://127.0.0.1:${port}${path}`, {
+    method: 'PUT',
+    headers: {
+      Origin: origin,
+      Authorization: `HMAC ${createHmac('sha256', Buffer.from(secret, 'hex')).update(`PUT\n${path}\n${digest}`).digest('hex')}`,
+      'X-Chunk-SHA256': digest,
+      ...(contentLength ? { 'Content-Length': String(encrypted.length) } : {})
+    }
+  })
+  const response = new Promise<{ status?: number; body: string }>((resolve, reject) => {
+    incoming.once('error', reject)
+    incoming.once('response', (response) => {
+      let body = ''
+      response.on('data', (data) => {
+        body += data
+      })
+      response.once('end', () => resolve({ status: response.statusCode, body }))
+      response.once('error', reject)
+    })
+  })
+  void response.catch(() => undefined)
+  disposers.push(async () => {
+    incoming.destroy()
+    await response.catch(() => undefined)
+  })
+  return { incoming, encrypted, response }
+}
+
+it('publishes payload progress inside each chunk without advancing verified offsets or admitting early', async () => {
+  const progress: number[] = []
+  const f = await setup({
+    onChanged: (transfers) => {
+      if (transfers[0]) progress.push(transfers[0].completedBytes)
+    }
+  })
+  await f.bridge.begin(launch(f.port, 100))
+  const first = streamingChunk(f.port, 'a'.repeat(60))
+  first.incoming.write(first.encrypted.subarray(0, 12))
+  await vi.waitFor(() => expect(f.bridge.snapshot[0].state).toBe('receiving'))
+  expect(f.bridge.snapshot[0].completedBytes).toBe(0)
+  first.incoming.write(first.encrypted.subarray(12, 32))
+  await vi.waitFor(() => expect(progress).toContain(20))
+  first.incoming.write(first.encrypted.subarray(32, 52))
+  await vi.waitFor(() => expect(progress).toContain(40))
+  expect(await (await f.request(`/ready?challenge=${'cd'.repeat(32)}`)).json()).toMatchObject({
+    offset: 0,
+    accepted: false,
+    chunkBytes: 4194304
+  })
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(409)
+  first.incoming.write(first.encrypted.subarray(52, 72))
+  await vi.waitFor(() => expect(progress).toContain(60))
+  first.incoming.end(first.encrypted.subarray(72))
+  expect((await first.response).status).toBe(200)
+  const second = streamingChunk(f.port, 'b'.repeat(40), 60)
+  second.incoming.write(second.encrypted.subarray(0, 32))
+  await vi.waitFor(() => expect(progress).toContain(80))
+  second.incoming.write(second.encrypted.subarray(32, 52))
+  await vi.waitFor(() => expect(progress).toContain(100))
+  // Payload is fully received, but the authentication tag and queue admission are still pending.
+  expect(await (await f.request(`/ready?challenge=${'cd'.repeat(32)}`)).json()).toMatchObject({
+    offset: 60,
+    accepted: false
+  })
+  expect(f.received).toEqual([])
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(409)
+  second.incoming.end(second.encrypted.subarray(52))
+  expect((await second.response).status).toBe(200)
+  expect(progress).toEqual([...progress].sort((a, b) => a - b))
+  expect(Math.max(...progress)).toBe(100)
+  expect(f.received).toEqual([])
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  expect(await readFile(f.received[0], 'utf8')).toBe('a'.repeat(60) + 'b'.repeat(40))
+})
+
+it('excludes IV and reserves the trailing authentication tag when the stream has no content length', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port, 80))
+  const stream = streamingChunk(f.port, 'x'.repeat(80), 0, false)
+  stream.incoming.write(stream.encrypted.subarray(0, 48))
+  await vi.waitFor(() => expect(f.bridge.snapshot[0].completedBytes).toBe(20))
+  stream.incoming.write(stream.encrypted.subarray(48, 88))
+  await vi.waitFor(() => expect(f.bridge.snapshot[0].completedBytes).toBe(60))
+  stream.incoming.end(stream.encrypted.subarray(88))
+  expect((await stream.response).status).toBe(200)
+  expect(f.bridge.snapshot[0].completedBytes).toBe(80)
+})
+
+it('does not double count or rewind rejected payloads on retry, and still requires authentication', async () => {
+  const progress: number[] = []
+  const f = await setup({
+    onChanged: (transfers) => {
+      if (transfers[0]) progress.push(transfers[0].completedBytes)
+    }
+  })
+  await f.bridge.begin(launch(f.port, 80))
+  const rejected = streamingChunk(f.port, 'x'.repeat(60))
+  rejected.encrypted[rejected.encrypted.length - 1] ^= 1
+  rejected.incoming.end(rejected.encrypted)
+  expect((await rejected.response).status).toBe(422)
+  expect(f.bridge.snapshot[0].completedBytes).toBe(60)
+  expect(await (await f.request(`/ready?challenge=${'cd'.repeat(32)}`)).json()).toMatchObject({
+    offset: 0,
+    accepted: false
+  })
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(409)
+  expect(f.received).toEqual([])
+  expect((await f.chunk('x'.repeat(40))).status).toBe(200)
+  expect(f.bridge.snapshot[0].completedBytes).toBe(60)
+  expect((await f.chunk('x'.repeat(40), 40)).status).toBe(200)
+  expect(f.bridge.snapshot[0].completedBytes).toBe(80)
+  expect(progress).toEqual([...progress].sort((a, b) => a - b))
+  expect(Math.max(...progress)).toBe(80)
+})
+
+it('cancels a partially streamed payload and leaves other transfer progress untouched', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port, 100))
+  await f.bridge.begin(launch(await findBrowserImportPort()).replace(secret, 'ef'.repeat(32)))
+  const id = f.bridge.snapshot[0].id
+  const stream = streamingChunk(f.port, 'x'.repeat(100))
+  stream.incoming.write(stream.encrypted.subarray(0, 62))
+  await vi.waitFor(() => expect(f.bridge.snapshot[0].completedBytes).toBe(50))
+  await f.bridge.cancel(id)
+  const result = await stream.response
+  expect(result.status).toBe(410)
+  expect(JSON.parse(result.body)).toMatchObject({ code: 'cancelled' })
+  expect(f.bridge.snapshot).toMatchObject([
+    { id, state: 'cancelled', completedBytes: 50 },
+    { state: 'waiting', completedBytes: 0 }
+  ])
+  expect(f.received).toEqual([])
+  expect(await readdir(f.root)).toHaveLength(1)
+  await f.bridge.cancel(f.bridge.snapshot[1].id)
+  expect(await readdir(f.root)).toEqual([])
+})
 
 describe('browser-held research package handoff', () => {
   it('rejects remote sources, credentials, duplicate parameters, traversal and invalid origins', () => {
@@ -364,6 +513,12 @@ it('joins an in-flight write before removing a desktop-cancelled source', async 
   let cancelling: Promise<void> | undefined
   try {
     await started
+    expect(f.bridge.snapshot[0].completedBytes).toBe(5)
+    expect(await (await f.request(`/ready?challenge=${'cd'.repeat(32)}`)).json()).toMatchObject({
+      offset: 0,
+      accepted: false
+    })
+    expect((await f.request('/complete', { method: 'POST' })).status).toBe(409)
     cancelling = f.bridge.cancel(f.bridge.snapshot[0].id)
     expect((await chunk).status).toBe(410)
     expect(f.bridge.active).toBe(true)

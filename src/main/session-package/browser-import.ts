@@ -37,6 +37,7 @@ type Transfer = {
   directory?: string
   path?: string
   offset: number
+  receivedBytes: number
   busy: boolean
   accepted: boolean
   removed: boolean
@@ -144,7 +145,7 @@ export class BrowserPackageImport {
         filename: t.request.name,
         state: t.state,
         ...(t.cleanupPending ? { cleanupPending: true } : {}),
-        completedBytes: t.offset,
+        completedBytes: t.receivedBytes,
         totalBytes: t.request.size
       }))
   }
@@ -237,6 +238,7 @@ export class BrowserPackageImport {
       state: 'waiting',
       request,
       offset: 0,
+      receivedBytes: 0,
       busy: false,
       accepted: false,
       removed: false
@@ -455,7 +457,8 @@ export class BrowserPackageImport {
       return
     }
     const limit = Math.min(CHUNK_BYTES, t.request.size - t.offset)
-    if (Number(request.headers['content-length']) > limit + 28) {
+    const contentLength = Number(request.headers['content-length'])
+    if (contentLength > limit + 28) {
       reply(response, 413)
       request.resume()
       return
@@ -465,6 +468,7 @@ export class BrowserPackageImport {
     t.incoming = request
     t.state = 'receiving'
     this.publish()
+    const chunkOffset = t.offset
     t.io = (async () => {
       const chunks: Buffer[] = []
       let bytes = 0
@@ -477,6 +481,19 @@ export class BrowserPackageImport {
           return
         }
         chunks.push(chunk)
+        // Count ciphertext payload only; unknown-length streams retain a 16-byte tag lookbehind.
+        const payloadBytes = Math.max(
+          0,
+          Number.isSafeInteger(contentLength) && contentLength >= 28
+            ? Math.min(bytes - 12, contentLength - 28)
+            : bytes - 28
+        )
+        // Display a per-transfer high-water mark: a retried chunk is not new file content.
+        const receivedBytes = Math.min(t.request.size, chunkOffset + payloadBytes)
+        if (receivedBytes > t.receivedBytes) {
+          t.receivedBytes = receivedBytes
+          this.publish()
+        }
       }
       const encrypted = Buffer.concat(chunks)
       let content: Buffer
@@ -505,7 +522,6 @@ export class BrowserPackageImport {
         if (!result.bytesWritten) throw new Error('Could not write browser package.')
         written += result.bytesWritten
         t.offset += result.bytesWritten
-        this.publish()
       }
       if (t.cancelled) return
       this.touch(t)

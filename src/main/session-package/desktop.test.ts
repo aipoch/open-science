@@ -9,6 +9,10 @@ import { SessionRepository } from '../session-persistence/repository'
 import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
+import { BrowserPackageImport } from './browser-import'
+import { findBrowserImportPort } from './test-helpers/browser-import-port'
+// @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
+import { prepareBrowserImport } from '../../../packages/open-science/browser-import.mjs'
 import { sessionPackageCommandContracts } from '../../shared/session-package'
 import * as fileIo from '../bounded-file-io'
 import * as fs from 'node:fs'
@@ -1806,14 +1810,12 @@ await (
 ).configureTestElectronHost(await import('electron'))
 
 it.each(['valid', 'invalid'] as const)(
-  'validates a %s browser package before asking for a destination',
+  'validates a fully received %s browser package before asking for a destination',
   async (kind) => {
     const fixture = await createProvenanceTestFixture()
     initDataRoot(fixture.storageRoot)
     fixtures.push(fixture)
-    const source = join(fixture.storageRoot, 'browser.science')
-    await writeFile(
-      source,
+    const contents = new Uint8Array(
       kind === 'valid'
         ? await readFile(join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'))
         : Buffer.from('not a package')
@@ -1829,18 +1831,57 @@ it.each(['valid', 'invalid'] as const)(
       withDataRootWrite: async (work) => work(),
       afterImport: async () => undefined
     })
+    const progress: number[] = []
+    const staging = join(fixture.storageRoot, 'browser-staging')
+    const bridge = new BrowserPackageImport({
+      root: staging,
+      receive: (path, consumed) => desktop.enqueueFile(path, consumed, true),
+      onChanged: (transfers) => {
+        if (transfers[0]) progress.push(transfers[0].completedBytes)
+      }
+    })
+    const fetch = globalThis.fetch
+    const origin = 'https://research.example'
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      fetch(input, { ...init, headers: { ...init?.headers, Origin: origin } })
+    )
     try {
-      await desktop.enqueueFile(source, undefined, true)
+      const transfer = prepareBrowserImport(new Blob([contents]), {
+        filename: 'browser.science',
+        origin,
+        port: await findBrowserImportPort()
+      })
+      await bridge.begin(transfer.url)
+      await expect(transfer.send()).resolves.toEqual({ received: true })
+      expect(progress.at(-1)).toBe(contents.length)
       await vi.waitFor(() =>
         expect(desktop.operations.snapshot?.state).toBe(
           kind === 'valid' ? 'awaiting-selection' : 'failed'
         )
       )
-      expect(inspect).toHaveBeenCalledWith(await realpath(source), expect.any(AbortSignal))
+      expect(inspect).toHaveBeenCalledWith(
+        expect.stringContaining(await realpath(staging)),
+        expect.any(AbortSignal)
+      )
       expect(await fixture.client.session.count()).toBe(0)
       expect(dialog.showMessageBox).not.toHaveBeenCalled()
+      if (kind === 'valid') {
+        desktop.respond({
+          action: 'select-project',
+          operationId: desktop.operations.snapshot!.id,
+          target: { projectName: 'Browser import' }
+        })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
+        expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
+        expect(await fixture.client.session.count()).toBe(0)
+        desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+        expect(await fixture.client.session.count()).toBe(1)
+        await vi.waitFor(async () => expect(await readdir(staging)).toEqual([]))
+      }
     } finally {
       await desktop.close()
+      await bridge.close()
       await service.close()
     }
   }
