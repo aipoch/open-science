@@ -118,8 +118,12 @@ describe('SettingsPanelLoadingBoundary', () => {
       const alert = container.querySelector('[role="alert"]')
       expect(alert?.textContent).toContain("Settings panel couldn't be loaded.")
       expect(alert?.textContent).toContain('Retry to load it in place')
-      expect(findButton('Retry')).toBeDefined()
-      expect(findButton('Close')).toBeDefined()
+      // The full-page surface: brand mark, tone-tinted icon circle, and h1 title.
+      expect(alert?.closest('section')?.querySelector('svg[viewBox="0 0 432 432"]')).not.toBeNull()
+      expect(alert?.closest('section')?.querySelector('.size-9.rounded-full')).not.toBeNull()
+      expect(alert?.querySelector('h1')).not.toBeNull()
+      expect(findButton('Retry')?.dataset.variant).toBe('default')
+      expect(findButton('Close')?.dataset.variant).toBe('secondary')
       expect(findButton('Reload')).toBeUndefined()
 
       shouldFail = false
@@ -178,7 +182,10 @@ describe('SettingsPanelLoadingBoundary', () => {
       const alert = container.querySelector('[role="alert"]')
       expect(alert?.textContent).toContain("Retrying didn't fix it")
       expect(alert?.textContent).toContain('Reload Open-Science to try loading this panel again.')
-      expect(findButton('Retry')).toBeDefined()
+      // Escalated hierarchy: Reload is primary, Retry demoted to secondary, no Close.
+      expect(findButton('Reload')?.dataset.variant).toBe('default')
+      expect(findButton('Retry')?.dataset.variant).toBe('secondary')
+      expect(findButton('Close')).toBeUndefined()
 
       act(() => findButton('Reload')?.click())
       expect(onReload).toHaveBeenCalledOnce()
@@ -218,6 +225,10 @@ describe('SettingsPanelLoadingBoundary', () => {
         "Settings panel couldn't be loaded."
       )
 
+      // First failure: Close is the secondary action and still dismisses.
+      act(() => findButton('Close')?.click())
+      expect(onClose).toHaveBeenCalledOnce()
+
       await act(async () => {
         findButton('Retry')?.click()
         await Promise.resolve()
@@ -229,10 +240,10 @@ describe('SettingsPanelLoadingBoundary', () => {
         await Promise.resolve()
       })
 
+      // Escalated: Reload is the recovery action; Close leaves the surface.
+      expect(findButton('Close')).toBeUndefined()
       act(() => findButton('Reload')?.click())
-      act(() => findButton('Close')?.click())
       expect(onReload).toHaveBeenCalledOnce()
-      expect(onClose).toHaveBeenCalledOnce()
     } finally {
       errorSpy.mockRestore()
     }

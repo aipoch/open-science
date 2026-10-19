@@ -1,8 +1,8 @@
 import { Component, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
-import { Button } from '@/components/ui/button'
 import { SettingsPanelRetryContext } from './settings-panel-loader'
 
 type ErrorBoundaryProps = {
@@ -110,8 +110,7 @@ const SettingsPanelLoadingBoundary = ({
   // Escalate once two in-place retries have also failed (third consecutive failure surface).
   const escalated = failureCount >= 3
 
-  const centeredClassName =
-    'flex min-h-[360px] flex-col items-center justify-center gap-3 px-5 text-center text-sm text-muted-foreground'
+  const retry = (): void => setRetryKey((key) => key + 1)
 
   return (
     <SettingsPanelErrorBoundary
@@ -120,10 +119,12 @@ const SettingsPanelLoadingBoundary = ({
       retryKey={retryKey}
       onError={() => setFailureCount((count) => count + 1)}
       fallback={
-        <div className={centeredClassName}>
+        <div className="flex min-h-[360px] items-center justify-center px-5">
           <ErrorNotice
+            fullPage
             role="alert"
             tone="amber"
+            icon={TriangleAlert}
             title={
               escalated ? t("Retrying didn't fix it") : t("Settings panel couldn't be loaded.")
             }
@@ -136,20 +137,15 @@ const SettingsPanelLoadingBoundary = ({
             }
             secondaryButton={
               escalated
-                ? { label: t('Reload', { context: 'window', ns: 'common' }), onClick: onReload }
+                ? { label: t('Retry'), onClick: retry }
                 : { label: t('Close'), onClick: onClose }
             }
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () => setRetryKey((key) => key + 1)
-            }}
-          >
-            {escalated ? (
-              <Button type="button" variant="link" className="self-start px-0" onClick={onClose}>
-                {t('Close')}
-              </Button>
-            ) : null}
-          </ErrorNotice>
+            primaryButton={
+              escalated
+                ? { label: t('Reload', { context: 'window', ns: 'common' }), onClick: onReload }
+                : { label: t('Retry'), onClick: retry }
+            }
+          />
         </div>
       }
     >
