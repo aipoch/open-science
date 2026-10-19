@@ -82,6 +82,8 @@ fragment suffixes. These edges add consumers but remain incomplete for retiremen
 resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Computed
 imports and unsupported query combinations retain uncertainty. Resource consumers can be registered
 explicitly in their owning module; the generated index stores only additional memberships.
+Tests that read resource contents through filesystem APIs such as `readFileSync` need explicit
+`testFiles.consumer` entries; import analysis does not discover those relationships.
 
 ### Full fallback
 

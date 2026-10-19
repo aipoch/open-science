@@ -44,6 +44,7 @@
       "src/renderer/src/components/WindowsTitleBar.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/streamdown/AgentMarkdownFullscreenChrome.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
@@ -96,6 +97,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSessionConfigChangeRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.test.ts",
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
       "src/renderer/src/pages/workspace/preview-draft-lifecycle.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.multi-plan-progress.test.tsx",
@@ -103,6 +105,7 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/reviewer-paged-preview/main.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts"
