@@ -1372,7 +1372,6 @@
     "Delete {{provider}}?": "删除 {{provider}}？",
     "Deleting this provider affects these scenario models:": "删除此模型服务商会影响以下场景模型：",
     "For Vision, using the main model disables the separate fallback model.": "对于视觉，使用主模型会停用单独的后备模型。",
-    "Reassign first": "先重新绑定",
     "This provider will be removed from Open-Science.": "此模型服务商将从 Open-Science 中删除。",
     "Delete Session?": "删除会话？",
     "Delete Specialist": "删除专家",

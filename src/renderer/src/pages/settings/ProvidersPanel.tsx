@@ -486,18 +486,6 @@ const ProvidersPanel = ({
     }
   }
 
-  const reassignAffectedScenario = (): void => {
-    const scenarioId = affectedScenarios[0]?.id
-    setProviderPendingDeletion(undefined)
-    if (!scenarioId) return
-    requestAnimationFrame(() => {
-      const row = document.querySelector<HTMLButtonElement>(`[data-scenario-model="${scenarioId}"]`)
-      if (row?.getAttribute('aria-expanded') === 'false') row.click()
-      row?.focus()
-      row?.scrollIntoView?.({ block: 'nearest' })
-    })
-  }
-
   return (
     <div className="space-y-5 p-5">
       {/* Main model selection and reasoning effort share one section and one row, mirroring the
@@ -727,15 +715,6 @@ const ProvidersPanel = ({
             <div className={`${dialogFooterClassName} flex-wrap`}>
               {dialogAffectedScenarios.length > 0 ? (
                 <>
-                  <Button
-                    type="button"
-                    variant="link"
-                    className="mr-auto"
-                    disabled={providerDeletionPending}
-                    onClick={reassignAffectedScenario}
-                  >
-                    {t('Reassign first')}
-                  </Button>
                   <AlertDialog.Cancel asChild>
                     <Button type="button" variant="outline" disabled={providerDeletionPending}>
                       {t('Cancel')}

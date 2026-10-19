@@ -1286,7 +1286,6 @@
     "Delete {{provider}}?": "{{provider}} を削除しますか？",
     "Deleting this provider affects these scenario models:": "このプロバイダーを削除すると、次のシナリオモデルに影響します：",
     "For Vision, using the main model disables the separate fallback model.": "Vision でメインモデルを使用すると、個別のフォールバックモデルは無効になります。",
-    "Reassign first": "先に再割り当て",
     "This provider will be removed from Open-Science.": "このプロバイダーは Open-Science から削除されます。",
     "Delete Session?": "セッションを削除しますか？",
     "Delete Specialist": "スペシャリストの削除",

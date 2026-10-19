@@ -1337,7 +1337,6 @@
     "Delete {{provider}}?": "¿Eliminar {{provider}}?",
     "Deleting this provider affects these scenario models:": "Al eliminar este proveedor, se verán afectados estos modelos de escenario:",
     "For Vision, using the main model disables the separate fallback model.": "Para Visión, usar el modelo principal desactiva el modelo de respaldo independiente.",
-    "Reassign first": "Reasignar primero",
     "This provider will be removed from Open-Science.": "Este proveedor se eliminará de Open-Science.",
     "Delete Session?": "¿Eliminar sesión?",
     "Delete Specialist": "Eliminar especialista",

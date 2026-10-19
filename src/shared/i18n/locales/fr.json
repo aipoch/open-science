@@ -1337,7 +1337,6 @@
     "Delete {{provider}}?": "Supprimer {{provider}} ?",
     "Deleting this provider affects these scenario models:": "La suppression de ce fournisseur affecte les modèles de scénario suivants :",
     "For Vision, using the main model disables the separate fallback model.": "Pour Vision, l’utilisation du modèle principal désactive le modèle de secours distinct.",
-    "Reassign first": "Réaffecter d’abord",
     "This provider will be removed from Open-Science.": "Ce fournisseur sera supprimé d’Open-Science.",
     "Delete Session?": "Supprimer la session ?",
     "Delete Specialist": "Supprimer le spécialiste",

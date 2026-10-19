@@ -218,20 +218,12 @@ describe('ProvidersPanel: provider removal impact', () => {
       radios.find((radio) => radio.closest('label')?.textContent?.includes('Reset to main model'))
         ?.checked
     ).toBe(true)
-    const reassignFirst = Array.from(dialog?.querySelectorAll('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Reassign first'
-    )
 
-    await act(async () => {
-      reassignFirst?.click()
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    })
-
-    const subagentRow = document.body.querySelector<HTMLButtonElement>(
-      '[data-scenario-model="subagent"]'
+    const cancel = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Cancel'
     )
-    expect(subagentRow?.getAttribute('aria-expanded')).toBe('true')
-    expect(document.activeElement).toBe(subagentRow)
+    await act(async () => cancel?.click())
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
 
     await act(async () => deleteButtons[0]?.click())
     const reopenedForPreserve = document.body.querySelector('[role="alertdialog"]')
