@@ -176,7 +176,8 @@ const projectSessionMetadataAuthority = (
     currentRevision === incomingRevision &&
     current.enabledComputeHosts === incoming.enabledComputeHosts &&
     current.selectedComputeHosts === incoming.selectedComputeHosts &&
-    current.computeConcurrencyLimit === incoming.computeConcurrencyLimit
+    current.computeConcurrencyLimit === incoming.computeConcurrencyLimit &&
+    current.researchMembership === incoming.researchMembership
   )
     return current
   // These fields are main-owned in every full durable snapshot, including receipts for other
@@ -187,7 +188,8 @@ const projectSessionMetadataAuthority = (
     revision: incomingRevision,
     enabledComputeHosts: incoming.enabledComputeHosts && [...incoming.enabledComputeHosts],
     selectedComputeHosts: incoming.selectedComputeHosts && [...incoming.selectedComputeHosts],
-    computeConcurrencyLimit: incoming.computeConcurrencyLimit
+    computeConcurrencyLimit: incoming.computeConcurrencyLimit,
+    researchMembership: incoming.researchMembership && { ...incoming.researchMembership }
   }
   if (incoming.archivedAt === undefined) delete projected.archivedAt
   else projected.archivedAt = incoming.archivedAt
@@ -277,6 +279,7 @@ export const toPersistedSession = (
     isPending,
     pendingBindingSessionId,
     wslSetup,
+    importedResearch,
     delegationPolicyAuthorityPending,
     unsavedTitle,
     interrupted,
@@ -311,6 +314,7 @@ export const toPersistedSession = (
   void isPending
   void pendingBindingSessionId
   void wslSetup
+  void importedResearch
   void delegationPolicyAuthorityPending
   void unsavedTitle
   void interrupted
@@ -392,6 +396,9 @@ export const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivi
 export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   const hydrated: ChatSession = {
     ...session,
+    importedResearch: session.packageOrigin
+      ? { importId: session.packageOrigin.importId }
+      : undefined,
     ...sessionDetails.projectLegacySessionDetails(session),
     permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     activities: session.activities?.map(hydrateToolActivity),
@@ -413,6 +420,8 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   id: summary.id,
   projectId: summary.projectId,
   title: summary.title,
+  researchMembership: summary.researchMembership && { ...summary.researchMembership },
+  importedResearch: summary.importedResearch && { ...summary.importedResearch },
   cwd: '',
   status: summary.presentedStatus,
   pinned: summary.pinned,
@@ -695,6 +704,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           title: !incomingIsNewer || existing.unsavedTitle ? existing.title : loaded.title,
           pinned: incomingIsNewer ? loaded.pinned : existing.pinned,
           archivedAt: archive.archivedAt,
+          researchMembership: archive.researchMembership,
           revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
           filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
           updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),

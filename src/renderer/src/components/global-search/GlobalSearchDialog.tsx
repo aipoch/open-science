@@ -1,3 +1,4 @@
+import { openProjectWorkspace } from '@/pages/workspace/project-workspace-entry'
 import { JournalAttributes } from '@/pages/literature/JournalAttributes'
 import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
 import { createBookmarkPreviewItem } from '@/pages/workspace/annotations/annotation-reveal'
@@ -570,8 +571,11 @@ export const GlobalSearchDialog = ({
         if (nav.activeProjectId !== result.item.projectId || nav.view !== 'workspace')
           nav.openProject(result.item.projectId, 'user', show)
         else show()
-      } else if (result.kind === 'projects') nav.openProject(result.item.id, 'user', close)
-      else if (result.kind === 'sessions' || result.kind === 'messages') {
+      } else if (result.kind === 'projects') {
+        void openProjectWorkspace(result.item.id, close).catch(() => {
+          setActionError(t('Could not open this project. Please retry.'))
+        })
+      } else if (result.kind === 'sessions' || result.kind === 'messages') {
         const sessionId = result.kind === 'sessions' ? result.item.id : result.item.sessionId
         if (
           !sessions.some(

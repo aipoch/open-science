@@ -61,7 +61,7 @@ it('uses the packaging heap budget for Web builds in every workflow', () => {
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
   expect(scripts['build:web']).toBe('npm run build:packages && npm run build:web:compiled')
   expect(scripts['build:web:compiled']).toBe(
-    'npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
+    'npm run gen:web-api-map && npm run build:replay-viewer && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
   )
 })
 

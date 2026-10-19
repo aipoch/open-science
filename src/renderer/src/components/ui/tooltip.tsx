@@ -1,3 +1,4 @@
+import { useOverlayPortalContainer } from './overlay-portal-container'
 import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
@@ -28,8 +29,9 @@ function TooltipContent({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>): React.JSX.Element {
   const layer = useOverlayLayer()
+  const portalContainer = useOverlayPortalContainer()
   return (
-    <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Portal container={portalContainer}>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}

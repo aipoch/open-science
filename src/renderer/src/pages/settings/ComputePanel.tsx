@@ -132,6 +132,16 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   const loadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
   const initialLoadStartedRef = useRef(false)
+  const [retrying, setRetrying] = useState(false)
+
+  const retryLoadHosts = async (): Promise<void> => {
+    setRetrying(true)
+    try {
+      await loadHosts()
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   // A short-lived confirmation message shown after a delete (the prototype's "confirmation toast").
   // Stores the removed host's name rather than a rendered sentence, so a language switch inside the
@@ -193,7 +203,15 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
       <div className="mt-4 flex flex-col gap-2.5">
         {loadError ? (
-          <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
+          <ErrorNotice
+            role="alert"
+            description={t("Couldn't load hosts.")}
+            primaryButton={{
+              label: t('Retry'),
+              loading: retrying,
+              onClick: () => void retryLoadHosts()
+            }}
+          >
             <DiagnosticDetails detail={loadError} />
           </ErrorNotice>
         ) : !isLoaded ? (

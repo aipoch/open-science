@@ -272,9 +272,9 @@ describe('module impact shadow', () => {
 
     expect(report.shadow).toMatchObject({
       mode: 'selective',
-      modules: ['notebook_network_sandbox'],
-      fallbackCapabilities: ['notebook_network_sandbox'],
-      capabilityOverlays: []
+      modules: ['notebook_execution', 'notebook_network_sandbox'],
+      fallbackCapabilities: ['main_runtime', 'notebook_network_sandbox'],
+      capabilityOverlays: ['notebook_network_sandbox', 'windows_sensitive']
     })
     expect(report.shadow.testFiles).toEqual(
       expect.arrayContaining([
@@ -289,7 +289,11 @@ describe('module impact shadow', () => {
         'packages/notebook-network-sandbox/src/proxy-env.test.ts',
         'packages/notebook-network-sandbox/src/resources.test.ts',
         'packages/notebook-network-sandbox/src/runtime-config.test.ts',
-        'packages/notebook-network-sandbox/src/windows-appcontainer.test.ts'
+        'packages/notebook-network-sandbox/src/windows-appcontainer.test.ts',
+        'packages/notebook-network-sandbox/src/local-service.test.ts',
+        'src/main/notebook/local-service-lease.test.ts',
+        'src/main/notebook/local-service.macos.integration.test.ts',
+        'src/main/notebook/research-service.macos.integration.test.ts'
       ])
     )
     expect(report.comparison.requiredLanes).toEqual(

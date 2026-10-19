@@ -1629,6 +1629,9 @@ const WorkspaceMessageScrollerImpl = ({
             <EmptyConversationBanner
               onStartResearch={onStartResearch}
               researchTitle={researchTitle}
+              researchRecord={Boolean(
+                activeSession?.packageOrigin || activeSession?.importedResearch
+              )}
               sessionImport={sessionImport}
             />
           ) : null}

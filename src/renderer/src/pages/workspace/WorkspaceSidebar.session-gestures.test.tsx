@@ -9,8 +9,13 @@ import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+import { openResearchWorkspace } from './workspace-discussion-navigation'
 
 vi.mock('react-i18next', () => createI18nTestStub())
+vi.mock('./workspace-discussion-navigation', () => ({
+  openResearchWorkspace: vi.fn(),
+  openResearchDiscussion: vi.fn()
+}))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/lib/utils', () => ({
@@ -30,6 +35,7 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
 })
 
 beforeEach(() => {
+  vi.mocked(openResearchWorkspace).mockReset().mockResolvedValue(true)
   useComputeStore.setState({ pendingApprovals: [] })
   useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
   useSkillImportStore.setState(createInitialSkillImportState())
@@ -92,6 +98,7 @@ const mountSessionGestureSidebar = async (
         onNewProject={vi.fn()}
         mobileMode={mobileMode}
         isMobileOpen={isOpen}
+        onMobileClose={() => setIsOpen(false)}
         {...overrides}
       />
     )
@@ -252,6 +259,109 @@ describe('WorkspaceSidebar mobile session gestures', () => {
       await sidebar.click('second')
       await act(async () => vi.advanceTimersByTimeAsync(300))
       expect(sidebar.onOpenSession).toHaveBeenCalledExactlyOnceWith('second')
+    } finally {
+      sidebar.cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('defers mobile research navigation and opens its original research route after 300ms', async () => {
+    vi.useFakeTimers()
+    const sidebar = await mountSessionGestureSidebar()
+    const source = { ...sidebar.sessions[1], importedResearch: { importId: 'import-second' } }
+    try {
+      await sidebar.rerender({ sessions: [sidebar.sessions[0], source] })
+      await sidebar.click()
+      expect(openResearchWorkspace).not.toHaveBeenCalled()
+      expect(sidebar.container.querySelector('aside')?.hasAttribute('inert')).toBe(false)
+      await act(async () => vi.advanceTimersByTimeAsync(300))
+      expect(openResearchWorkspace).toHaveBeenCalledExactlyOnceWith(
+        {
+          sourceProjectId: source.projectId,
+          sourceSessionId: source.id,
+          sourceImportId: 'import-second',
+          sourceTitle: source.title
+        },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      expect(sidebar.onOpenSession).not.toHaveBeenCalled()
+      expect(sidebar.container.querySelector('aside')?.hasAttribute('inert')).toBe(true)
+    } finally {
+      sidebar.cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels pending mobile research navigation when a double-click opens its editor', async () => {
+    vi.useFakeTimers()
+    const sidebar = await mountSessionGestureSidebar()
+    const source = { ...sidebar.sessions[1], importedResearch: { importId: 'import-second' } }
+    try {
+      await sidebar.rerender({ sessions: [sidebar.sessions[0], source] })
+      await sidebar.click()
+      await act(async () => vi.advanceTimersByTimeAsync(100))
+      await sidebar.click('second', 2)
+      await sidebar.click('second', 2, 'dblclick')
+      expect(sidebar.onRenameSession).toHaveBeenCalledExactlyOnceWith(source)
+      await act(async () => vi.advanceTimersByTimeAsync(1000))
+      expect(openResearchWorkspace).not.toHaveBeenCalled()
+      expect(sidebar.onOpenSession).not.toHaveBeenCalled()
+    } finally {
+      sidebar.cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    { mobileMode: true, detail: 0 },
+    { mobileMode: false, detail: 0 },
+    { mobileMode: false, detail: 1 }
+  ])('opens research immediately for mobile=$mobileMode and detail=$detail', async (gesture) => {
+    const sidebar = await mountSessionGestureSidebar(gesture.mobileMode)
+    const source = { ...sidebar.sessions[1], importedResearch: { importId: 'import-second' } }
+    try {
+      await sidebar.rerender({ sessions: [sidebar.sessions[0], source] })
+      await sidebar.click('second', gesture.detail)
+      expect(openResearchWorkspace).toHaveBeenCalledOnce()
+      expect(sidebar.onOpenSession).not.toHaveBeenCalled()
+    } finally {
+      sidebar.cleanup()
+    }
+  })
+
+  it('replaces a pending research click when an ordinary session is clicked', async () => {
+    vi.useFakeTimers()
+    const sidebar = await mountSessionGestureSidebar()
+    const source = { ...sidebar.sessions[1], importedResearch: { importId: 'import-second' } }
+    try {
+      await sidebar.rerender({ sessions: [sidebar.sessions[0], source] })
+      await sidebar.click()
+      await sidebar.click('first')
+      await act(async () => vi.advanceTimersByTimeAsync(300))
+      expect(openResearchWorkspace).not.toHaveBeenCalled()
+      expect(sidebar.onOpenSession).toHaveBeenCalledExactlyOnceWith('first')
+    } finally {
+      sidebar.cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects a pending research click if the same Session now belongs to a different import', async () => {
+    vi.useFakeTimers()
+    const sidebar = await mountSessionGestureSidebar()
+    const source = { ...sidebar.sessions[1], importedResearch: { importId: 'import-second' } }
+    try {
+      await sidebar.rerender({ sessions: [sidebar.sessions[0], source] })
+      await sidebar.click()
+      await sidebar.rerender({
+        sessions: [
+          sidebar.sessions[0],
+          { ...source, importedResearch: { importId: 'replacement-import' } }
+        ]
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(300))
+      expect(openResearchWorkspace).not.toHaveBeenCalled()
+      expect(sidebar.onOpenSession).not.toHaveBeenCalled()
     } finally {
       sidebar.cleanup()
       vi.useRealTimers()

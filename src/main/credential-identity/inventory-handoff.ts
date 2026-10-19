@@ -1,3 +1,4 @@
+import type { CredentialCiphertext } from './ciphertext-inventory'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'
@@ -8,12 +9,24 @@ export const CREDENTIAL_INVENTORY_MAX_AGE_MS = 60_000
 
 const credentialInventoryDocumentSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     capturedAt: z.number().int().nonnegative(),
     attemptId: z.string().uuid(),
     configRoot: z.string().min(1),
     profilePath: z.string().min(1),
-    ciphertexts: z.array(z.string())
+    ciphertexts: z.array(
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('application'), value: z.string() }).strict(),
+        z
+          .object({
+            kind: z.literal('cookie'),
+            value: z.string(),
+            hostKey: z.string(),
+            databaseVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+          })
+          .strict()
+      ])
+    )
   })
   .strict()
 
@@ -34,16 +47,19 @@ export const writeCredentialInventory = async (options: {
   attemptId: string
   configRoot: string
   profilePath: string
-  ciphertexts: readonly Buffer[]
+  ciphertexts: readonly CredentialCiphertext[]
   capturedAt?: number
 }): Promise<string> => {
   const document = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     capturedAt: options.capturedAt ?? Date.now(),
     attemptId: options.attemptId,
     configRoot: options.configRoot,
     profilePath: options.profilePath,
-    ciphertexts: options.ciphertexts.map((value) => value.toString('base64'))
+    ciphertexts: options.ciphertexts.map((entry) => ({
+      ...entry,
+      value: entry.value.toString('base64')
+    }))
   })
   await writeFile(options.path, document, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
   return createHash('sha256').update(document).digest('hex')
@@ -64,7 +80,7 @@ export const readCredentialInventory = async (options: {
   configRoot: string
   profilePath: string
   expectedDigest?: string
-}): Promise<Buffer[]> => {
+}): Promise<CredentialCiphertext[]> => {
   try {
     const contents = await readFile(options.path, 'utf8')
     if (
@@ -87,7 +103,7 @@ export const readCredentialInventory = async (options: {
     ].filter((value): value is string => Boolean(value))
     if (mismatches.length)
       throw new Error(`Credential inventory does not match this startup (${mismatches.join(',')})`)
-    return parsed.ciphertexts.map(decodeCiphertext)
+    return parsed.ciphertexts.map((entry) => ({ ...entry, value: decodeCiphertext(entry.value) }))
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Credential inventory')) throw error
     throw new Error('Credential inventory bootstrap is unavailable or invalid', { cause: error })
@@ -100,7 +116,7 @@ export const consumeCredentialInventoryFromEnv = async (options: {
   attemptId: string
   configRoot: string
   profilePath: string
-}): Promise<Buffer[] | undefined> => {
+}): Promise<CredentialCiphertext[] | undefined> => {
   const path = process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
   const expectedDigest = process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_SHA256
   delete process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH

@@ -8,11 +8,45 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "connector_mcp_client": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "connector_url_admission": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "delegation_execution_contracts": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
     "environment_contracts": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "framework_installation": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "framework_process_launch": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "host_http_transport": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "host_rpc_transport": ["src/main/desktop-startup-recovery.integration.test.ts"],
     "host_runtime_lifecycle": [
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
@@ -36,27 +70,51 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "literature_presentation_model": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/renderer/replay-viewer/ViewerApp.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-viewer.test.tsx",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/recorded-viewer.test.tsx",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-client.test.ts",
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
-      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
+      "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx"
     ],
     "notebook_analysis": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "notebook_observation_actions": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "observation_desktop_contract": ["src/main/update/windows-update-handoff.test.ts"],
     "package_journal_catalog": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_citations": [
       "src/main/update/windows-update-handoff.test.ts",
@@ -68,8 +126,7 @@
     "package_literature_discovery": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_library": [
       "src/main/update/windows-update-handoff.test.ts",
@@ -82,8 +139,7 @@
     "package_literature_screening": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_pdf_translation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -137,8 +193,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_i18n_adapter": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_model_selection": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -217,7 +272,45 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "replay_observation": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "reproducibility_contracts": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "research_observation_composer": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "research_observation_navigation": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "research_observation_state": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "research_profile_document": [
+      "src/main/credential-identity/inventory-handoff.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
+    "research_replay_actions": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "research_runtime_contracts": [
+      "src/main/credential-identity/inventory-handoff.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "research_workspace_navigation": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "research_workspace_presentation": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "research_workspace_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
@@ -255,6 +348,11 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
+    "settings_proxy_runtime": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
+    ],
     "shared_promise_identity": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -263,6 +361,11 @@
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "skill_runtime_transport": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts"
     ],
     "specialist_package": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -282,8 +385,7 @@
     ],
     "workspace_artifact_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_artifact_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -326,22 +428,42 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_literature_presentation": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/renderer/replay-viewer/ViewerApp.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-viewer.test.tsx",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/recorded-viewer.test.tsx",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-client.test.ts",
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
+      "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx"
     ],
     "workspace_navigation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_notebook": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "workspace_notebook_model": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
     "workspace_permissions": [

@@ -1,3 +1,7 @@
+import {
+  observationNativeRequestSchema,
+  parseObservationNativeResult
+} from './observation-desktop/contract'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
@@ -118,6 +122,9 @@ const reviewerDesktopResultSchema = z
 
 export const desktopNativeOperationSchema = z.discriminatedUnion('operation', [
   z
+    .object({ operation: z.literal('observation'), request: observationNativeRequestSchema })
+    .strict(),
+  z
     .object({
       operation: z.literal('renderer-flush'),
       policy: z.enum(['ordinary-shutdown', 'data-root-handoff']).optional()
@@ -235,6 +242,8 @@ export function parseDesktopNativeResult(
   result: unknown
 ): unknown {
   switch (request.operation) {
+    case 'observation':
+      return parseObservationNativeResult(request.request, result)
     case 'runtime-relaunch':
     case 'renderer-flush':
       return z.boolean().parse(result)

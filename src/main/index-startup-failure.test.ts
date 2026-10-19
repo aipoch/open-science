@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { DesktopRuntimeClient } from './desktop-runtime-client'
+import type { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
+import type { createDesktopUpdateIntegration } from './desktop-update-integration'
+import type { createObservationNativeHost } from './observation-desktop/native-host'
 
 // Exercise the real production entry up to the process boundary. Database/runtime failures belong
 // to Node's startup owner; Electron must not construct a second store while handling those failures.
@@ -14,7 +18,9 @@ const f = vi.hoisted(() => {
     leaseRelease: vi.fn(),
     select: vi.fn(),
     validate: vi.fn(),
-    inventory: vi.fn(() => [Buffer.from('synthetic-profile-ciphertext')]),
+    inventory: vi.fn(() => [
+      { kind: 'application', value: Buffer.from('synthetic-profile-ciphertext') }
+    ]),
     key: vi.fn(),
     launch: vi.fn(),
     connect: vi.fn(),
@@ -22,8 +28,13 @@ const f = vi.hoisted(() => {
     diagnostics: vi.fn(),
     completedStartup: vi.fn(),
     windowsStartup: vi.fn(),
-    verifyRecovery: vi.fn(async () => {}),
     report: vi.fn(async () => undefined),
+    preview: vi.fn(),
+    verifyRecoveryReadiness: vi.fn(),
+    document: { id: 37, isDestroyed: () => false },
+    nativeHosts: [] as ReturnType<typeof createObservationNativeHost>[],
+    updateOptions: undefined as Parameters<typeof createDesktopUpdateIntegration>[0] | undefined,
+    recoveries: [] as ReturnType<typeof createDesktopRuntimeRecovery>[],
     app: {
       isPackaged: false,
       setName: vi.fn(),
@@ -71,9 +82,6 @@ vi.mock('./update/windows-update-handoff', async (original) => ({
   ...(await original<typeof import('./update/windows-update-handoff')>()),
   resolveWindowsUpdateStartup: f.windowsStartup
 }))
-vi.mock('./desktop-recovery-readiness', () => ({
-  verifyDesktopRecoveryReadiness: f.verifyRecovery
-}))
 vi.mock('./runtime-metadata', () => ({ configureRuntimeMetadata: vi.fn() }))
 vi.mock('./ipc-handler-registry', () => ({
   configureIpcHandlerRegistry: vi.fn(),
@@ -104,7 +112,10 @@ vi.mock('./desktop-runtime-launcher', () => ({
 }))
 vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: f.connect }))
 vi.mock('./desktop-runtime-electron-adapter', () => ({
-  installDesktopRuntimeElectronAdapter: () => ({ uninstall: vi.fn() })
+  installDesktopRuntimeElectronAdapter: () => ({
+    uninstall: vi.fn(),
+    documentFor: () => f.document
+  })
 }))
 vi.mock('./cli-install/ipc', () => ({
   createCliCommandOwner: () => ({ ensureCurrent: vi.fn() }),
@@ -120,6 +131,53 @@ vi.mock('./mac-installation', () => ({
   showMacInstallationGuidance: vi.fn()
 }))
 vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
+vi.mock('./desktop-preview-proxy', () => ({ createDesktopPreviewProxy: f.preview }))
+vi.mock('./desktop-recovery-readiness', () => ({
+  verifyDesktopRecoveryReadiness: f.verifyRecoveryReadiness
+}))
+vi.mock('./desktop-update-integration', async (original) => {
+  const actual = await original<typeof import('./desktop-update-integration')>()
+  return {
+    ...actual,
+    createDesktopUpdateIntegration: (
+      options: Parameters<typeof createDesktopUpdateIntegration>[0]
+    ) => {
+      f.updateOptions = options
+      return actual.createDesktopUpdateIntegration(options)
+    }
+  }
+})
+vi.mock('./desktop-runtime-recovery', async (original) => {
+  const actual = await original<typeof import('./desktop-runtime-recovery')>()
+  return {
+    ...actual,
+    createDesktopRuntimeRecovery: (options: Parameters<typeof createDesktopRuntimeRecovery>[0]) => {
+      const recovery = actual.createDesktopRuntimeRecovery(options)
+      f.recoveries.push(recovery)
+      return recovery
+    }
+  }
+})
+vi.mock('./observation-desktop/electron', async () => {
+  const { createObservationNativeHost } = await import('./observation-desktop/native-host')
+  const { DesktopObservationFrameRegistry } = await import('./replay-viewer/desktop-frame-registry')
+  return {
+    createDesktopObservationNativeHandler: (
+      options: Parameters<
+        typeof import('./observation-desktop/electron').createDesktopObservationNativeHandler
+      >[0]
+    ) => {
+      const native = createObservationNativeHost({
+        ...options,
+        frames: new DesktopObservationFrameRegistry(),
+        capture: async () => ({ bytes: Uint8Array.from([1, 2, 3]) }),
+        startDriver: vi.fn()
+      })
+      f.nativeHosts.push(native)
+      return native
+    }
+  }
+})
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => f.log,
@@ -210,6 +268,11 @@ beforeEach(() => {
   f.ready = false
   f.windowsStartup.mockResolvedValue(undefined)
   f.handlers.clear()
+  f.nativeHosts.length = 0
+  f.recoveries.length = 0
+  f.updateOptions = undefined
+  f.preview.mockResolvedValue({ dispose: vi.fn(), port: 44100, fetch: vi.fn() })
+  f.verifyRecoveryReadiness.mockResolvedValue(undefined)
   f.select.mockReturnValue({ backend: 'mac-keychain', appName: 'Open-Science (DEV)', exists: true })
   f.validate.mockReturnValue(vi.fn())
   f.app.isReady = () => f.ready
@@ -220,7 +283,10 @@ beforeEach(() => {
   f.launch.mockRejectedValue(new Error('authenticated backend refused the connection'))
   vi.spyOn(process, 'on').mockImplementation(() => process)
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(async () => {
+  await Promise.all(f.nativeHosts.map((host) => host.close()))
+  vi.restoreAllMocks()
+})
 
 it.each(['mac-keychain', 'windows-dpapi'] as const)(
   'completes %s identity preflight before yielding to Electron, without acquiring business ownership',
@@ -235,7 +301,7 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
     expect(f.validate).toHaveBeenCalledWith(
       expect.objectContaining({ backend }),
       { configRoot: '/test/config', profilePath: '/test/profile' },
-      [Buffer.from('synthetic-profile-ciphertext')]
+      [{ kind: 'application', value: Buffer.from('synthetic-profile-ciphertext') }]
     )
     expect(f.leaseRelease.mock.invocationCallOrder[0]).toBeLessThan(
       f.app.whenReady.mock.invocationCallOrder[0]
@@ -250,7 +316,9 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
         configRoot: '/test/config',
         command: '/test/node',
         entry: '/test/backend.cjs',
-        credentialInventory: [Buffer.from('synthetic-profile-ciphertext')]
+        credentialInventory: [
+          { kind: 'application', value: Buffer.from('synthetic-profile-ciphertext') }
+        ]
       })
     )
     expect(f.report).toHaveBeenCalledWith(
@@ -425,6 +493,110 @@ it('stops the backend it started when quitting from the attach-retry blocked pag
   )
 })
 
+const observationClientId = '1912f9bd-1eac-435c-8d2f-faeeb706c39f'
+const captureRequest = {
+  method: 'capture' as const,
+  viewerOrigin: 'http://viewer-test.localhost:1234',
+  projectOrigin: 'http://rv-test.localhost:1235'
+}
+const captureNative = (host: ReturnType<typeof createObservationNativeHost>): Promise<unknown> =>
+  host.handle(
+    { clientId: observationClientId, request: captureRequest },
+    new AbortController().signal
+  )
+
+async function startObservationDesktop(): Promise<{
+  clients: DesktopRuntimeClient[]
+  connections: Parameters<typeof import('./desktop-runtime-client').connectDesktopRuntime>[0][]
+}> {
+  const clients: DesktopRuntimeClient[] = []
+  const connections: Parameters<
+    typeof import('./desktop-runtime-client').connectDesktopRuntime
+  >[0][] = []
+  f.lifecycle.mockReturnValue({
+    showMainWindow: vi.fn(),
+    getMainWindow: () => undefined,
+    isMainWindowHidden: () => false,
+    onSystemShutdown: vi.fn()
+  })
+  f.launch.mockResolvedValue({})
+  f.connect.mockImplementation(async (options) => {
+    connections.push(options)
+    const client = {
+      ownsRuntime: () => false,
+      processId: () => process.pid,
+      runtimeInfo: () => ({ generation: 'observation-recovery' }),
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'ready' }),
+      notificationView: vi.fn(),
+      close: vi.fn()
+    } as unknown as DesktopRuntimeClient
+    clients.push(client)
+    return client
+  })
+  await import('./index')
+  await vi.waitFor(() => {
+    expect(f.report.mock.calls).toEqual([])
+    expect(f.completedStartup).toHaveBeenCalledOnce()
+  })
+  return { clients, connections }
+}
+
+it('rebuilds native observations when update recovery restarts a disconnected runtime', async () => {
+  const { connections } = await startObservationDesktop()
+  const original = f.nativeHosts[0]
+  await expect(captureNative(original)).resolves.toEqual({ bytes: Uint8Array.from([1, 2, 3]) })
+  // A failed stop reports a disconnect before a later update recovery proves the runtime exited.
+  connections[0].onDisconnect(new Error('Runtime stop confirmation timed out.'))
+  await expect(captureNative(original)).rejects.toThrow('current desktop document')
+  await f.updateOptions!.restart({
+    configRoot: '/test/config',
+    profilePath: '/test/profile',
+    dataRoot: '/test/data',
+    host: '127.0.0.1',
+    port: 44100,
+    credentialStore: 'os'
+  })
+  await expect(
+    connections[1].onNativeRequest!(
+      {
+        kind: 'native-request',
+        id: 1,
+        clientId: observationClientId,
+        request: { operation: 'observation', request: captureRequest }
+      },
+      new AbortController().signal
+    )
+  ).resolves.toEqual({ bytes: Uint8Array.from([1, 2, 3]) })
+  await expect(captureNative(original)).rejects.toThrow('current desktop document')
+})
+
+it('closes replaced and discarded native observations before another reconnect attempt', async () => {
+  const { clients, connections } = await startObservationDesktop()
+  const original = f.nativeHosts[0]
+  const recovery = f.recoveries[0]
+  // Manual recovery can retire an attachment without a transport onDisconnect callback.
+  recovery.disconnect(clients[0])
+  f.preview.mockRejectedValueOnce(new Error('Preview recovery failed.'))
+  expect((await recovery.reconnect()).phase).toBe('disconnected')
+  await expect(captureNative(original)).rejects.toThrow('current desktop document')
+  const discarded = f.nativeHosts[1]
+  await expect(captureNative(discarded)).rejects.toThrow('current desktop document')
+  expect(clients[1].close).toHaveBeenCalledOnce()
+  expect((await recovery.reconnect()).phase).toBe('connected')
+  await expect(
+    connections[2].onNativeRequest!(
+      {
+        kind: 'native-request',
+        id: 1,
+        clientId: observationClientId,
+        request: { operation: 'observation', request: captureRequest }
+      },
+      new AbortController().signal
+    )
+  ).resolves.toEqual({ bytes: Uint8Array.from([1, 2, 3]) })
+})
+
 it('rejects a missing update configuration before selecting a fallback profile or credentials', async () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
   Object.defineProperty(process, 'platform', { value: 'win32' })
@@ -475,7 +647,7 @@ it('allows a normal relaunch after confirmed upgrade to read newly committed dat
     await import('./index')
     await vi.waitFor(() => expect(f.lifecycle).toHaveBeenCalledOnce())
     await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalled())
-    expect(f.verifyRecovery).not.toHaveBeenCalled()
+    expect(f.verifyRecoveryReadiness).not.toHaveBeenCalled()
     expect(f.launch).toHaveBeenCalledWith(
       expect.objectContaining({
         configRoot: oldOptions.configRoot,

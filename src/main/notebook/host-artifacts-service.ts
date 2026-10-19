@@ -9,6 +9,7 @@ import type {
 } from '../../shared/project-files'
 import { isRecord } from '../value-guards'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
 
 type HostArtifactCatalog = {
   readHostArtifactCatalog(request: {
@@ -337,7 +338,11 @@ class HostArtifactsService {
     }
   }
 
-  async resolvePath(versionIdValue: unknown, context: HostArtifactReadContext): Promise<string> {
+  async resolvePath(
+    versionIdValue: unknown,
+    context: HostArtifactReadContext,
+    producerScope?: ArtifactProducerInputScope
+  ): Promise<string> {
     if (typeof versionIdValue !== 'string' || !versionIdValue || versionIdValue.length > 512) {
       throw new Error('host.artifactPath versionId must be a non-empty string.')
     }
@@ -345,16 +350,27 @@ class HostArtifactsService {
       projectId: context.projectId,
       versionId: versionIdValue
     })
-    if (!item)
+    if (!item && !producerScope)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
+
+    // Only Main can supply this live producer capability. Keep unpublished versions out of the
+    // Project catalog; the immutable authority checks the exact version and every owner field.
+    const unpublishedScope = item ? undefined : producerScope
+    if (unpublishedScope) {
+      if (unpublishedScope.appSessionId !== context.sessionId)
+        throw new Error('Artifact producer input is unavailable in this Session.')
+      unpublishedScope.assertActive()
+    }
 
     const path = await this.inputAuthority.stageVersion({
       projectId: context.projectId,
       targetSessionId: context.sessionId,
-      sourceKind: item.source === 'artifact' ? 'artifact-version' : 'upload-version',
+      sourceKind: item?.source === 'upload' ? 'upload-version' : 'artifact-version',
       inputFileVersionId: versionIdValue,
-      expectedSourceFileId: item.sourceFileId
+      ...(item ? { expectedSourceFileId: item.sourceFileId } : {}),
+      ...(unpublishedScope ? { producerScope: unpublishedScope } : {})
     })
+    unpublishedScope?.assertActive()
     if (!isAbsolute(path)) throw new Error('Notebook input stager returned a relative path.')
     return path
   }

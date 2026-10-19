@@ -1,5 +1,9 @@
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
+import { ResearchWorkspaceHeader } from './ResearchWorkspaceHeader'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { researchSourceFromSession } from './workspace-discussion-navigation'
+import { showSessionReplay } from './workspace-session-actions'
 import {
   PackageExportProgressButton,
   PackageOperationIndicator
@@ -20,7 +24,6 @@ import { mentionProjectFile } from './project-file-mention'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
-import { createSessionReplayItem } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
@@ -337,6 +340,10 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelView = {
   activeSession: ChatSession | undefined
+  /** Immutable source shown above a separate, unsent research question. Never a send target. */
+  researchSourceSession?: ChatSession
+  researchSourceContextError?: string
+  retryResearchSourceContext?: () => void
   composerFocusKey?: string
   canEditDraft: boolean
   persistenceBlocked?: boolean
@@ -524,6 +531,9 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const {
     activeSession,
+    researchSourceSession,
+    researchSourceContextError,
+    retryResearchSourceContext,
     composerFocusKey,
     canEditDraft,
     persistenceBlocked,
@@ -531,6 +541,20 @@ const ConversationPanel = ({
     sideChatDisabledReason,
     sessionImport
   } = view
+  const displayedSession = researchSourceSession ?? activeSession
+  const draftResearch = useResearchWorkspaceStore(
+    (state) => state.draftResearchByProject[sessionImport?.projectId ?? '']
+  )
+  const research = displayedSession
+    ? (displayedSession.researchMembership ?? researchSourceFromSession(displayedSession))
+    : draftResearch
+  const researchTitle = useSessionStore((state) =>
+    research
+      ? (state.sessions.find(
+          (row) => row.id === research.sourceSessionId && row.projectId === research.sourceProjectId
+        )?.title ?? research.sourceTitle)
+      : undefined
+  )
   const sourceSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
@@ -573,6 +597,24 @@ const ConversationPanel = ({
       dismissAutomaticReading
     }
   } = composer
+  const discussionAnnotation = annotations
+    .filter((annotation) => replayAnnotationTarget(annotation))
+    .at(-1)
+  const discussionTarget = discussionAnnotation && replayAnnotationTarget(discussionAnnotation)
+  const discussionTitle = useSessionStore((state) =>
+    discussionTarget
+      ? (state.sessions.find(
+          (row) =>
+            row.projectId === discussionTarget.projectId &&
+            row.id === discussionTarget.sourceSessionId
+        )?.title ??
+        (discussionAnnotation?.kind === 'text'
+          ? discussionAnnotation.quote
+              .match(/^(?:Session|Research): ([^\r\n]*)/)?.[1]
+              ?.slice(0, 240)
+          : undefined))
+      : activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)?.title
+  )
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
   const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
@@ -753,7 +795,8 @@ const ConversationPanel = ({
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
-  const isNewConversation = !activeSession && !optimisticMessage
+  // Research drafts keep their source-specific welcome and discussion prompts.
+  const isNewConversation = !activeSession && !optimisticMessage && !research && !discussionTitle
   useEffect(() => {
     if (!isNewConversation) return
     // The start surface has no transcript scroller to own the native find handshake.
@@ -867,7 +910,7 @@ const ConversationPanel = ({
     activeSession !== undefined &&
     (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
   const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
-  const isImported = Boolean(activeSession?.packageOrigin)
+  const isImported = Boolean(displayedSession?.packageOrigin ?? displayedSession?.importedResearch)
   const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const pendingInteractionFacts =
     activeSession && !isImported
@@ -1513,7 +1556,7 @@ const ConversationPanel = ({
         onFiles={onStageAttachmentFiles}
         data-testid="workspace-file-drop-zone"
         className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
-        data-session-id={activeSession?.id ?? ''}
+        data-session-id={displayedSession?.id ?? ''}
         data-agent-running={activeSession?.status === 'running' ? 'true' : 'false'}
       >
         <header
@@ -1530,21 +1573,48 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
-            {activeSession ? (
-              <SessionInfoPopover
-                key={activeSession.id}
-                session={activeSession}
-                sourceSession={sourceSession}
-                onOpenSession={sessionTools.openSession}
-                onEdit={sessionTools.editSession}
-                onTogglePin={sessionTools.togglePin}
-              />
-            ) : (
-              <span className="block truncate">{t('New conversation')}</span>
-            )}
-          </h1>
-          {activeSession && sessionTools.exportDiagnostics && (
+          {research ? (
+            <ResearchWorkspaceHeader
+              key={JSON.stringify([
+                research.sourceProjectId,
+                research.sourceSessionId,
+                research.sourceImportId
+              ])}
+              source={research}
+              historical={Boolean(
+                displayedSession?.packageOrigin ?? displayedSession?.importedResearch
+              )}
+            >
+              {displayedSession ? (
+                <SessionInfoPopover
+                  key={displayedSession.id}
+                  session={displayedSession}
+                  sourceSession={sourceSession}
+                  onOpenSession={sessionTools.openSession}
+                  onEdit={sessionTools.editSession}
+                  onTogglePin={sessionTools.togglePin}
+                />
+              ) : (
+                <span>{t('New discussion')}</span>
+              )}
+            </ResearchWorkspaceHeader>
+          ) : (
+            <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+              {activeSession ? (
+                <SessionInfoPopover
+                  key={activeSession.id}
+                  session={activeSession}
+                  sourceSession={sourceSession}
+                  onOpenSession={sessionTools.openSession}
+                  onEdit={sessionTools.editSession}
+                  onTogglePin={sessionTools.togglePin}
+                />
+              ) : (
+                <span className="block truncate">{t('New conversation')}</span>
+              )}
+            </h1>
+          )}
+          {displayedSession && sessionTools.exportDiagnostics && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger
@@ -1557,7 +1627,7 @@ const ConversationPanel = ({
                     type="button"
                     className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 transition-colors hover:bg-surface-control-hover hover:text-text-000 focus-visible:keyboard-focus"
                     aria-label={t('Export diagnostics…')}
-                    onClick={() => sessionTools.exportDiagnostics?.(activeSession)}
+                    onClick={() => sessionTools.exportDiagnostics?.(displayedSession)}
                   >
                     <Stethoscope className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </button>
@@ -1578,10 +1648,10 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && (
+          {displayedSession && (
             <SessionHeaderMenu
-              key={activeSession.id}
-              session={activeSession}
+              key={displayedSession.id}
+              session={displayedSession}
               bindings={sessionTools.menuBindings}
               createSideChat={sideChatController.createDraft}
               credentialPending={pendingCredentialRequest !== undefined}
@@ -1608,13 +1678,16 @@ const ConversationPanel = ({
         </header>
         <PackageOperationIndicator />
 
-        {isNewConversation ? null : activeSession?.contentLoaded === false ? (
+        {isNewConversation ? null : displayedSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
-          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+          <WorkspaceMessageEditStateProvider
+            canEditMessage={!researchSourceSession && canEditMessage}
+          >
             <WorkspaceMessageScroller
-              activeSession={activeSession}
+              activeSession={displayedSession}
               sessionImport={sessionImport}
+              researchTitle={researchTitle ?? discussionTitle}
               onStartResearch={
                 canEditDraft &&
                 !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
@@ -1651,7 +1724,7 @@ const ConversationPanel = ({
               isResumingSession={isResuming}
               notebookReference={notebookReference}
               onSendEditedMessage={onSendEditedMessage}
-              canBranchInNewSession={canBranchInNewSession}
+              canBranchInNewSession={!researchSourceSession && canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sessionPendingElicitations}
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
@@ -1725,7 +1798,8 @@ const ConversationPanel = ({
                 ) : null}
                 {composerError &&
                 !isAgentAuthenticationRequired(composerError) &&
-                composerError !== actionError ? (
+                composerError !== actionError &&
+                composerError !== researchSourceContextError ? (
                   <div role="alert" className="mb-2">
                     <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
@@ -2178,7 +2252,7 @@ const ConversationPanel = ({
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
                           {t(
-                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
+                            'The original record is read-only. Use its materials in a regular conversation to continue analysis or experiments, or create a working copy.'
                           )}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2191,7 +2265,7 @@ const ConversationPanel = ({
                               }}
                             >
                               <GitBranch className="size-4" aria-hidden="true" />
-                              {t('Fork to continue')}
+                              {t('Create a working copy')}
                             </Button>
                           ) : null}
                           <Button
@@ -2199,15 +2273,11 @@ const ConversationPanel = ({
                             size="sm"
                             aria-controls="right-panel"
                             onClick={() => {
-                              usePreviewWorkbenchStore
-                                .getState()
-                                .upsertAndActivateItem(
-                                  createSessionReplayItem(
-                                    activeSession.projectId,
-                                    activeSession.id,
-                                    activeSession.title
-                                  )
-                                )
+                              showSessionReplay(
+                                activeSession.projectId,
+                                activeSession.id,
+                                activeSession.title
+                              )
                             }}
                           >
                             <Play className="size-4" aria-hidden="true" />
@@ -2284,6 +2354,83 @@ const ConversationPanel = ({
                           fileMentionDrop.props.onDropCapture(event)
                         }}
                       >
+                        {researchSourceSession ? (
+                          <div data-testid="research-question-context" className="space-y-1 px-1">
+                            {researchSourceContextError ? (
+                              <ErrorNotice
+                                inline
+                                tone="amber"
+                                title={t('The recorded evidence is unavailable.')}
+                                description={researchSourceContextError}
+                                primaryButton={
+                                  retryResearchSourceContext
+                                    ? { label: t('Retry'), onClick: retryResearchSourceContext }
+                                    : undefined
+                                }
+                              />
+                            ) : null}
+                            <p className="text-xs leading-5 text-text-300">
+                              {t(
+                                'Send to start a discussion. The original record stays unchanged.'
+                              )}
+                            </p>
+                            {researchSourceSession.packageOrigin ? (
+                              <details className="text-xs text-text-300">
+                                <summary className="cursor-pointer">{t('Package source')}</summary>
+                                <p className="mt-1">
+                                  {t('Imported on {{date}}', {
+                                    date: new Date(
+                                      researchSourceSession.packageOrigin.importedAt
+                                    ).toLocaleString()
+                                  })}
+                                </p>
+                                <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                                  <dt>{t('Source project')}</dt>
+                                  <dd className="break-all font-mono">
+                                    {researchSourceSession.packageOrigin.sourceProjectId}
+                                  </dd>
+                                  <dt>{t('Source Session')}</dt>
+                                  <dd className="break-all font-mono">
+                                    {researchSourceSession.packageOrigin.sourceSessionId}
+                                  </dd>
+                                </dl>
+                                {researchSourceSession.packageOrigin.excludedFiles?.length ? (
+                                  <div className="mt-2">
+                                    <p>{t('Not included in this package')}</p>
+                                    <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-4">
+                                      {[
+                                        ...new Set(
+                                          researchSourceSession.packageOrigin.excludedFiles.map(
+                                            (file) => file.filename
+                                          )
+                                        )
+                                      ].map((filename) => (
+                                        <li key={filename}>{filename}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : null}
+                                {sessionForkAvailable() ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-2"
+                                    onClick={() => void forkSession(researchSourceSession)}
+                                  >
+                                    <GitBranch className="size-4" aria-hidden="true" />
+                                    {t('Create a working copy')}
+                                  </Button>
+                                ) : null}
+                                <SessionDiscussionButton
+                                  key={researchSourceSession.id}
+                                  projectId={researchSourceSession.projectId}
+                                  sessionId={researchSourceSession.id}
+                                  chooseOnly
+                                />
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {annotationDrop.over ? (
                           <div className="rounded-md border border-primary px-2 py-1 text-xs text-text-200">
                             {t('Add to main conversation')}
@@ -2867,12 +3014,14 @@ const ConversationPanel = ({
                               onUndo={onUndo}
                               onRedo={onRedo}
                               disabled={!canEditDraft}
-                              placeholder={t(
-                                'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
-                                {
-                                  shortcut: globalSearchShortcut
-                                }
-                              )}
+                              placeholder={
+                                researchSourceSession
+                                  ? t('Ask about this research')
+                                  : t(
+                                      'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
+                                      { shortcut: globalSearchShortcut }
+                                    )
+                              }
                               ariaLabel={t('Ask anything')}
                               allowedSkillIds={allowedSkillIds}
                               onSelectWslSetup={() => void handleWslSetupCommand()}

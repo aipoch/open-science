@@ -153,7 +153,8 @@
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/reviewer-paged-preview/main.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "consumerModules": [],

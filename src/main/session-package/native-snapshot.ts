@@ -560,7 +560,8 @@ export const mapPackageReferences = (
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value).map(([name, item]) => [
-        name,
+        // This message-local policy is keyed by PDF binding identity, not source prose.
+        key === 'proseRegionsByBindingId' ? (identities[name] ?? name) : name,
         mapPackageReferences(item, identities, name, checksums)
       ])
     )

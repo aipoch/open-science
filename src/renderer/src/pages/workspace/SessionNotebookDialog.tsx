@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 import { useTranslation } from 'react-i18next'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
+import { ErrorNotice } from '@/components/error-notice'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import {
@@ -63,6 +64,7 @@ type SessionNotebookContentProps = {
   frameLabels?: Readonly<Record<string, string>>
   onLoadHistorySummary?: (agentFrameId: string) => Promise<NotebookRunHistorySummary | undefined>
   onLoadEarlier?: () => void
+  onRetry?: () => void
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -88,6 +90,7 @@ const SessionNotebookContent = ({
   frameLabels = {},
   onLoadHistorySummary,
   onLoadEarlier,
+  onRetry,
   onClose,
   onExport,
   onExportAll
@@ -317,13 +320,19 @@ const SessionNotebookContent = ({
         data-testid="session-notebook-scroll-viewport"
       >
         {status === 'loading' ? (
-          <p className="px-5 py-16 text-center text-sm text-muted-foreground">
+          <p role="status" className="px-5 py-16 text-center text-sm text-muted-foreground">
             {t('Loading notebook…')}
           </p>
         ) : status === 'error' ? (
-          <p className="px-5 py-16 text-center text-sm text-danger-000">
-            {error ?? t('Failed to load notebook.')}
-          </p>
+          <div className="p-5">
+            <ErrorNotice
+              role="alert"
+              title={t('Failed to load notebook.')}
+              errorCode={error}
+              diagnosticsLabel={t('Technical details')}
+              primaryButton={onRetry ? { label: t('Retry'), onClick: onRetry } : undefined}
+            />
+          </div>
         ) : runCount === 0 ? (
           <p className="px-5 py-16 text-center text-sm text-muted-foreground">
             {t('No execution records for this session.')}
@@ -597,6 +606,7 @@ const SessionNotebookDialog = ({
   const [earlierError, setEarlierError] = useState<string>()
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const dialogSession = useRetainedDialogValue(session)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const topSentinelRef = useRef<HTMLDivElement | null>(null)
@@ -735,7 +745,7 @@ const SessionNotebookDialog = ({
       cancelled = true
       window.clearTimeout(timeoutId)
     }
-  }, [cwd, projectId, sessionId])
+  }, [cwd, projectId, sessionId, loadAttempt])
 
   return (
     <Dialog.Root
@@ -778,6 +788,11 @@ const SessionNotebookDialog = ({
               onLoadEarlier={loadEarlier}
               status={status}
               error={error}
+              onRetry={() => {
+                if (!session || status !== 'error') return
+                setStatus('loading')
+                setLoadAttempt((attempt) => attempt + 1)
+              }}
               onClose={onClose}
               onExport={async (kernel, agentFrameFilter) => {
                 await window.api.notebook.exportIpynb({

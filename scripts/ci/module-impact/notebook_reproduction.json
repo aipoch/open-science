@@ -718,7 +718,11 @@
       "src/renderer/src/stores/runtime-settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "consumerModules": ["session_persistence"],

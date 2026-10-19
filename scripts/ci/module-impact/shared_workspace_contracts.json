@@ -40,7 +40,8 @@
     "src/shared/artifact-version-locator.test.ts",
     "src/shared/notebook-network-settings.ts",
     "src/shared/desktop-runtime-recovery.ts",
-    "src/shared/notebook-language-contract.ts"
+    "src/shared/notebook-language-contract.ts",
+    "src/shared/replay-reference.test.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -87,7 +88,8 @@
       "src/shared/storage.test.ts",
       "src/shared/uploads.test.ts",
       "src/shared/session-replay.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/artifact-version-locator.test.ts",
+      "src/shared/replay-reference.test.ts"
     ],
     "contract": [],
     "consumer": []

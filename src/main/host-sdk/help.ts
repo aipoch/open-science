@@ -14,6 +14,7 @@ const HOST_SDK_OPERATION_IDS = Object.freeze(
     'host.llm',
     'host.listModels',
     'host.sessions',
+    'host.managedExecution',
     'host.viewImage'
   ].sort()
 )
@@ -29,6 +30,7 @@ type HostSdkHelpContext = Readonly<{
       llm?: boolean
       listModels?: boolean
       sessions?: boolean
+      managedExecution?: boolean
       viewImage?: boolean
     }
   >
@@ -1070,7 +1072,232 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         : { status: 'unavailable', reason: 'host.sessions is not provisioned for this Session.' }
 }
 
+const MANAGED_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.managedExecution',
+  path: 'host.managedExecution',
+  aliases: ['managedExecution'],
+  summary: 'Managed research.',
+  callForms: [
+    { signature: 'host.managedExecution.runtimes()', accepts: 'no_arguments' },
+    { signature: 'host.managedExecution.preflight(options)', accepts: 'options' },
+    {
+      signature: 'host.managedExecution.requestConfiguration(options)',
+      accepts: 'options'
+    },
+    { signature: 'host.managedExecution.getConfiguration({configurationId})', accepts: 'options' },
+    {
+      signature: 'host.managedExecution.inspectMaterials(options)',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.prepare(options)',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.execute(options)',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.getEnvironment({ environmentId })',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.releaseEnvironment({ environmentId })',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.collectOutputs(options)',
+      accepts: 'options'
+    },
+    {
+      signature: 'host.managedExecution.discardOutputs(options)',
+      accepts: 'options'
+    }
+  ],
+  request: {
+    fields: [
+      {
+        name: 'configurationId',
+        type: 'string',
+        description: 'getConfiguration: requestConfiguration result ID.'
+      },
+      {
+        name: 'sourceSessionId',
+        type: 'string',
+        description: 'Source Session.'
+      },
+      {
+        name: 'descriptorVersionId',
+        type: 'string',
+        description: 'preflight: description Version.'
+      },
+      {
+        name: 'planKey',
+        type: 'string',
+        description: 'preflight/requestConfiguration: original plan.'
+      },
+      {
+        name: 'profileId',
+        type: 'string',
+        description: 'Local profile; no raw secrets.'
+      },
+      {
+        name: 'environmentId',
+        type: 'string',
+        description: 'Environment.'
+      },
+      {
+        name: 'collectionId',
+        type: 'string',
+        description: 'Pending collection ID.'
+      },
+      {
+        name: 'requestId',
+        type: 'string',
+        description: 'Stable retry ID.'
+      },
+      {
+        name: 'sourceIdentity',
+        type: 'string',
+        description: 'Inspected identity.'
+      },
+      {
+        name: 'runtimeId',
+        type: 'string',
+        description: 'Runtime ID.'
+      },
+      {
+        name: 'materials',
+        type: 'object',
+        description:
+          '{files:[{versionId,restorePath}]} or {descriptorVersionId,materialKeys,materialVersions?}.'
+      },
+      {
+        name: 'versionIds',
+        type: 'string[]',
+        description: 'Inspected Versions.'
+      },
+      {
+        name: 'outputs',
+        type: 'object[]',
+        description: '[{path,filename,contentType?,optional?}]; relative paths.'
+      },
+      {
+        name: 'timeoutMs',
+        type: 'integer',
+        description: '1–600000 ms; default 60000.'
+      },
+      {
+        name: 'localServicePort',
+        type: 'integer',
+        description: '1–65535.'
+      },
+      {
+        name: 'recordObservation',
+        type: 'boolean',
+        description: 'Record; default false.'
+      },
+      {
+        name: 'projectView',
+        type: 'object',
+        description: '{title,entryPath?}; relative path, port >=1024.'
+      },
+      {
+        name: 'command',
+        type: 'string',
+        description: 'Reviewed command.'
+      }
+    ]
+  },
+  options: NO_OPTIONS,
+  returns: {
+    type: 'object',
+    description:
+      'runtimes: {available,runtimes,diagnostics?:{nativeServiceSupported,issues:[{code, message, action}]}}.'
+  },
+  constraints: [
+    'Main turn; does not create another Session/model.',
+    'Offline: help("offlineExecution").',
+    'Preflight; explain gaps/changes. No demo fallback.',
+    'macOS Node >=22; OPEN_SCIENCE_INPUT_DIR / OPEN_SCIENCE_OUTPUT_DIR.',
+    'Node found is not plan readiness. No installs/host-terminal fallback.',
+    'Stop turn to cancel. collectOutputs never reruns the command; finish/recover the original turn for publication.',
+    'releaseEnvironment preserves pending outputs until all exact Versions and the receipt publish; explicit discardOutputs abandons them.',
+    'Same-turn reads: host.artifactPath via producer authority; ordinary catalog stays published-only.',
+    'No caller-issued authority.'
+  ],
+  examples: [],
+  backgroundSafety: 'unsafe',
+  backgroundSafetyReason: 'Main Artifact turn.',
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.managedExecution
+      ? { status: 'available' }
+      : {
+          status: 'unavailable',
+          reason: 'Active Main turn/service required.'
+        }
+}
+
+const OFFLINE_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.managedExecution.executeOfflinePlan',
+  path: 'host.managedExecution.executeOfflinePlan',
+  aliases: ['offlineExecution', 'host.managedExecution.inspectOfflinePlans'],
+  summary: 'Run a fixed package offline plan in the current ordinary Session.',
+  callForms: [
+    {
+      signature: 'host.managedExecution.inspectOfflinePlans({ sourceSessionId, sourceIdentity? })',
+      accepts: 'options'
+    },
+    {
+      signature:
+        'host.managedExecution.executeOfflinePlan({ sourceSessionId, sourceIdentity, planVersionId, requestId })',
+      accepts: 'options'
+    }
+  ],
+  request: {
+    fields: [
+      {
+        name: 'sourceSessionId',
+        type: 'string',
+        description: 'Research material source; may be imported read-only.'
+      },
+      {
+        name: 'sourceIdentity',
+        type: 'string',
+        description: 'Fixed identity from inspection; required for execution.'
+      },
+      {
+        name: 'planVersionId',
+        type: 'string',
+        description: 'Immutable package plan Version from inspection.'
+      },
+      { name: 'requestId', type: 'string', description: 'Stable retry identity within this turn.' }
+    ]
+  },
+  options: NO_OPTIONS,
+  returns: {
+    type: 'object',
+    description:
+      'inspect: source and plans with blockers/substitutions. execute: Run result and environmentId for collection/release.'
+  },
+  constraints: [
+    'Main turn only. Destination Session and provenance are injected; no hidden Session is created.',
+    'Inspection is read-only. Explain substitutions before explicitly selecting an offline plan; never silently replace real reproduction.',
+    'Main derives commands and fixed materials. No profile, credential, network or command overrides.',
+    'Offline applies to the project process; the orchestration Agent may use a model and tokens.',
+    'These are new results under declared substitutions, not original observations or proof of reproduction.',
+    'Stop the turn to cancel; releaseEnvironment after publication. collectOutputs saves retained files without rerunning.'
+  ],
+  examples: [],
+  backgroundSafety: 'unsafe',
+  backgroundSafetyReason: 'Main Artifact turn.',
+  resolveAvailability: MANAGED_EXECUTION_DESCRIPTOR.resolveAvailability
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
+  MANAGED_EXECUTION_DESCRIPTOR,
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
   CURRENT_MODEL_DESCRIPTOR,
@@ -1097,7 +1324,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 2_900
+const MAX_CATALOG_RESULT_CHARS = 3_200
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_400
 
@@ -1131,7 +1358,7 @@ const editDistance = (left: string, right: string): number => {
 
 const entries = [...OPERATION_DESCRIPTORS].sort((left, right) => left.id.localeCompare(right.id))
 const topics = new Map<string, HostSdkHelpOperationDescriptor>()
-for (const descriptor of entries) {
+for (const descriptor of [...entries, OFFLINE_EXECUTION_DESCRIPTOR]) {
   for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases]) {
     const normalizedTopic = normalizeTopic(topic)
     const existing = topics.get(normalizedTopic)

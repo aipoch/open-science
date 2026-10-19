@@ -89,7 +89,8 @@
     "src/shared/session-pdf-contract.ts",
     "src/shared/session-run-contract.ts",
     "src/shared/session-turn-outcome-contract.ts",
-    "src/shared/side-chat-entry-contract.ts"
+    "src/shared/side-chat-entry-contract.ts",
+    "src/shared/session-replay-commands.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -234,7 +235,8 @@
     "src/shared/web-event-connection.ts",
     "src/shared/web-rpc-contract.ts",
     "src/shared/window-controls.ts",
-    "src/shared/wsl-setup.ts"
+    "src/shared/wsl-setup.ts",
+    "src/shared/session-replay-commands.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {

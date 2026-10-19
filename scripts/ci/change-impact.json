@@ -159,7 +159,7 @@
       "id": "notebook_network_sandbox",
       "role": "owner",
       "paths": ["packages/notebook-network-sandbox/**"],
-      "capabilities": ["notebook_network_sandbox"]
+      "capabilities": ["notebook_network_sandbox", "main_runtime", "windows_sensitive"]
     },
     {
       "id": "shared_contract",
@@ -183,7 +183,8 @@
         "packages/notebook-syntax/**",
         "packages/notebook-code-risk/**",
         "packages/notebook-analysis/**",
-        "packages/environment/**"
+        "packages/environment/**",
+        "scripts/research/prepare-git-snapshot.mjs"
       ],
       "capabilities": ["main_runtime"]
     },
@@ -352,7 +353,14 @@
         "src/main/update/installation-occupancy.ts",
         "src/main/update/installation-protection.ts",
         "src/main/update/installation-reboot-recovery.ts",
-        "src/main/update/verification-process.ts"
+        "src/main/update/verification-process.ts",
+        "src/shared/research-reproduction.ts",
+        "src/main/notebook/managed-environment-directory.ts",
+        "src/main/notebook/managed-research-environment.ts",
+        "src/main/notebook/managed-research-node-runtime.ts",
+        "src/main/notebook/research-materials.ts",
+        "src/shared/research-execution-profile.ts",
+        "src/shared/research-run-launcher.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },

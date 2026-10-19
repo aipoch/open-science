@@ -588,6 +588,10 @@ async function main(): Promise<void> {
       settingsStore,
       localeOwner,
       headless: true,
+      invokeObservationNative: (request, clientId, signal) => {
+        if (!desktop) throw new DesktopCapabilityUnavailable(request.operation)
+        return desktop.requestNative(request, clientId, signal)
+      },
       notificationDelivery: (translate) =>
         (notificationDelivery = createRemoteNotificationDelivery(
           async (request) => {
