@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useLayoutEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeRecoveryState } from '../../../shared/desktop-runtime-recovery'
 import { DesktopRuntimeRecovery } from './desktop-runtime-recovery'
@@ -97,6 +98,31 @@ describe('desktop recovery notice', () => {
     } finally {
       unsubscribe()
     }
+  })
+
+  it('captures focus before the application makes the background inert', async () => {
+    const Background = (): React.JSX.Element => {
+      const phase = useDesktopRuntimeRecoveryStore((state) => state.phase)
+      const draft = useRef<HTMLTextAreaElement>(null)
+      useLayoutEffect(() => {
+        // jsdom does not implement inert focus loss. Reproduce the browser's commit-time blur.
+        if (phase !== 'connected') draft.current?.blur()
+      }, [phase])
+      return <textarea ref={draft} aria-label="draft" inert={phase !== 'connected'} />
+    }
+    render(
+      <>
+        <Background />
+        <DesktopRuntimeRecovery />
+      </>
+    )
+    const draft = screen.getByLabelText('draft')
+    draft.focus()
+    await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quit' }))
+    await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
+    await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
+    await waitFor(() => expect(document.activeElement).toBe(draft))
   })
 
   it('keeps editable content mounted, announces loss, and disables repeated recovery while pending', async () => {

@@ -423,6 +423,7 @@ const ProviderForm = ({
         </div>
         <Select
           value={selectedKey}
+          disabled={disabled}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label={t('Provider type')}>
@@ -1010,6 +1011,7 @@ const ProviderForm = ({
               <span className={fieldLabelClassName}>{t('Endpoint')}</span>
               <Select
                 value={value.region ?? vendor.regions[0]?.id}
+                disabled={disabled}
                 onValueChange={(region) => onChange({ region })}
               >
                 <SelectTrigger aria-label={t('Endpoint')}>

@@ -645,7 +645,7 @@ it('retains the existing path when a missing parent prediction has a header endi
   ).toEqual(old)
 })
 
-const closedPairedParentFences = (): ReturnType<typeof JSON.parse> => {
+const closedPairedParentFences = (single = false): ReturnType<typeof JSON.parse> => {
   const viewport = {
     width: 500,
     height: 300,
@@ -686,22 +686,39 @@ const closedPairedParentFences = (): ReturnType<typeof JSON.parse> => {
     op(OPS.endText, null)
   }
   draw('Table 1: Paired measurements.', 20, 15)
-  draw('GroupA', 235, 38)
-  draw('GroupB', 375, 38)
-  draw('Kind', 30, 58)
-  draw('Text', 100, 58)
-  for (const x of [190, 240, 290, 330, 380, 430]) draw('Leaf', x, 58)
-  for (let row = 0; row < 4; row++) {
+  if (single) {
+    draw('Shared', 135, 38)
+    for (const x of [250, 325, 400]) draw('Upper', x, 38)
+  } else {
+    draw('GroupA', 235, 38)
+    draw('GroupB', 375, 38)
+  }
+  draw(single ? 'α' : 'Kind', 30, single ? 64 : 58)
+  if (single) {
+    for (const [c, x] of [100, 175, 250, 325, 400].entries())
+      draw(['Left', 'Right', 'Third', 'Fourth', 'Fifth'][c], x, 64)
+  } else {
+    draw('Text', 100, 58)
+    for (const x of [190, 240, 290, 330, 380, 430]) draw('Leaf', x, 58)
+  }
+  for (let row = 0; row < (single ? 3 : 4); row++) {
     const y = 82 + row * 16
-    if (row !== 1) draw('Kind' + row, 30, y)
-    draw('Text' + row, 100, y)
-    for (const [c, x] of [190, 240, 290, 330, 380, 430].entries())
-      draw('0.' + String(10 + row + c), x, y)
+    if (single || row !== 1) draw(single ? String(row + 1) + '.0' : 'Kind' + row, 30, y)
+    if (!single) draw('Text' + row, 100, y)
+    for (const [c, x] of (single
+      ? [100, 175, 250, 325, 400]
+      : [190, 240, 290, 330, 380, 430]
+    ).entries())
+      draw('0.' + String(10 + row + c) + (single && c >= 3 ? 'e-4' : ''), x, y)
   }
   for (const r of [
     [20, 25, 460, 25],
-    [185, 43, 315, 43],
-    [325, 43, 455, 43],
+    ...(single
+      ? [[105, 43, 192, 43]]
+      : [
+          [185, 43, 315, 43],
+          [325, 43, 455, 43]
+        ]),
     [20, 66, 460, 66],
     [20, 142, 460, 142]
   ])
@@ -716,7 +733,9 @@ const closedPairedParentFences = (): ReturnType<typeof JSON.parse> => {
     items: raw,
     styles: { font: { fontFamily: 'serif', ascent: 0.8, descent: -0.2, vertical: false } }
   }
-  const xs = [20, 80, 180, 225, 275, 320, 365, 415, 460]
+  const xs = single
+    ? [20, 80, 125, 225, 300, 375, 460]
+    : [20, 80, 180, 225, 275, 320, 365, 415, 460]
   return {
     table: {
       readingRotation: 0,
@@ -724,10 +743,19 @@ const closedPairedParentFences = (): ReturnType<typeof JSON.parse> => {
       spans: [],
       structure: {
         objects: [
-          ...xs
-            .slice(1)
-            .map((x, c) => ({ label: 'table column', rect: [xs[c] - 20, 0, x - 20, 117] })),
-          { label: 'table column header', rect: [0, 0, 440, 41] }
+          ...xs.slice(1).map((x, c) => ({
+            label: 'table column',
+            rect: [xs[c] - 20, single ? 18 : 0, x - 20, 117]
+          })),
+          { label: 'table column header', rect: [0, single ? 18 : 0, 440, 41] },
+          ...(single
+            ? [
+                [18, 41],
+                [41, 65],
+                [65, 81],
+                [81, 101]
+              ].map(([top, bottom]) => ({ label: 'table row', rect: [0, top, 440, bottom] }))
+            : [])
         ]
       }
     },
@@ -756,6 +784,46 @@ const closedPairedParentFences = (): ReturnType<typeof JSON.parse> => {
     }
   }
 }
+
+it('keeps a single native partial fence over two complete leaf lanes without clipping their fonts', () => {
+  const f = closedPairedParentFences(true)
+  expect(recoverTwoTier(f.table, f.tokens, f.captions, f.rules, f.context)?.spans).toContainEqual({
+    row: 0,
+    column: 1,
+    rowSpan: 1,
+    colSpan: 2
+  })
+  const before = structuredClone(f.tokens)
+  const result = refineTable(
+    f.table,
+    f.tokens,
+    f.captions,
+    [],
+    f.rules,
+    [],
+    undefined,
+    f.context.rulePaintBounds,
+    f.context
+  )
+  expect(result.cells).toContainEqual(
+    expect.objectContaining({ text: 'Shared', row: 0, column: 1, colSpan: 2 })
+  )
+  expect(result.grid.slice(2)).toEqual([
+    ['1.0', '0.10', '0.11', '0.12', '0.13e-4', '0.14e-4'],
+    ['2.0', '0.11', '0.12', '0.13', '0.14e-4', '0.15e-4'],
+    ['3.0', '0.12', '0.13', '0.14', '0.15e-4', '0.16e-4']
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(
+    result.cells.flatMap((c) => c.sourceItems ?? []).sort((a, b) => a.index - b.index)
+  ).toEqual(
+    f.tokens
+      .filter((i) => i.baseline > 25)
+      .map((i) => i.sourceItem)
+      .sort((a, b) => a.index - b.index)
+  )
+  expect(f.tokens).toEqual(before)
+})
 
 it('retains two closed three-leaf parent fences without interpreting a sparse body stub', () => {
   const f = closedPairedParentFences(),
@@ -808,6 +876,88 @@ const rebindPairedFencePaint = (f: ReturnType<typeof JSON.parse>): void => {
     })
   }))
 }
+
+it.each([
+  'missing fence',
+  'missing body font',
+  'changed model owner',
+  'shifted fence',
+  'duplicate whole identity',
+  'external segment alias',
+  'external nested alias',
+  'external direct token alias',
+  'external nested segment alias',
+  'missing source packet',
+  'unknown paint operator',
+  'moved original glyph'
+])('preserves existing output when a single parent fence lacks full proof: %s', (variant) => {
+  const f = closedPairedParentFences(true)
+  const op = f.context.operators
+  if (variant === 'missing fence' || variant === 'shifted fence') {
+    const n = op.fnArray.findIndex(
+      (code: number, i: number) => code === OPS.constructPath && op.argsArray[i][2][0] === 105
+    )
+    if (variant === 'missing fence') {
+      op.fnArray.splice(n, 1)
+      op.argsArray.splice(n, 1)
+    } else {
+      op.argsArray[n][1][0][4] = 170
+      op.argsArray[n][2][2] = 170
+    }
+    rebindPairedFencePaint(f)
+  }
+  if (variant === 'missing body font')
+    f.tokens.splice(
+      f.tokens.findIndex((i) => i.text === '0.10'),
+      1
+    )
+  if (variant === 'changed model owner') {
+    const cols = f.table.structure.objects.filter((o) => o.label === 'table column')
+    cols[1].rect[2] = cols[2].rect[0] = 80
+  }
+  if (variant === 'duplicate whole identity')
+    f.tokens.push(structuredClone(f.tokens.find((i) => i.text === 'Shared')))
+  if (variant.startsWith('external ')) {
+    const original = f.tokens.find((i) => i.text === 'Shared').sourceItem
+    f.tokens.push({
+      text: 'Shared',
+      rect: [470, 180, 490, 190],
+      baseline: 190,
+      height: 10,
+      horizontal: true,
+      ...(variant === 'external segment alias'
+        ? { sourceSegment: { ...original, start: 0, end: 6 } }
+        : variant === 'external direct token alias'
+          ? { sourceToken: original }
+          : variant === 'external nested segment alias'
+            ? { sourceToken: { sourceSegment: { ...original, start: 0, end: 6 } } }
+            : { sourceToken: { sourceItem: original } })
+    })
+  }
+  if (variant === 'missing source packet') f.context.content = undefined
+  if (variant === 'unknown paint operator') {
+    op.fnArray.push(OPS.setGState)
+    op.argsArray.push([])
+  }
+  if (variant === 'moved original glyph') {
+    const n = op.fnArray.findIndex((code: number) => code === OPS.setTextMatrix)
+    op.argsArray[n][0][4] += 20
+  }
+  expect(recoverTwoTier(f.table, f.tokens, f.captions, f.rules, f.context)).toBeUndefined()
+  const old = refineTable(structuredClone(f.table), f.tokens, f.captions, [], f.rules)
+  const result = refineTable(
+    structuredClone(f.table),
+    f.tokens,
+    f.captions,
+    [],
+    f.rules,
+    [],
+    undefined,
+    f.context.rulePaintBounds,
+    f.context
+  )
+  expect(result).toEqual(old)
+})
 
 it.each([
   'missing parent fence',

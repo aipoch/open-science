@@ -3,7 +3,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, LoaderCircle } from 'lucide-react'
+import { AlertTriangle, Check, Download, LoaderCircle } from 'lucide-react'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,13 +15,19 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useUpdateStore } from '@/stores/update-store'
+import { DownloadProgressLine } from './DownloadProgressLine'
+import { UpdateReleaseNotes } from './UpdateReleaseNotes'
+import { ExternalTextLink } from './ExternalTextLink'
+import { APP } from '../../../shared/app-config'
+import { formatBytes } from '../../../shared/update'
 import { RuntimeDiagnostics } from './runtime-diagnostics'
 import { runtimeUpdateCopy } from './runtime-update-copy'
 import { progressStates, recoveryStates, runtimeUpdateState } from './runtime-update-view'
 
 export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { status, isDialogOpen, apply, cancel, recheck, recover } = useUpdateStore()
+  const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
+    useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
   const [forceConfirmation, setForceConfirmation] = useState(false)
   const forceIntent = useRef(false)
@@ -47,7 +53,29 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const id = runtimeUpdateState(status)
   const recovery = recoveryStates.has(id)
   const progress = progressStates.has(id)
-  const busy = requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
+  const downloading = status.state === 'downloading'
+  const checking =
+    status.state === 'checking' &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation &&
+    !status.legacyShellRecovery
+  const needsDownload =
+    (status.state === 'available' ||
+      status.state === 'downloading' ||
+      (status.state === 'error' && Boolean(status.latest))) &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation
+  const checkFailed =
+    status.state === 'error' &&
+    !status.latest &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation &&
+    !status.legacyShellRecovery
+  const busy =
+    checking || requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
@@ -57,10 +85,35 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     if (!isDialogOpen || completed) forceIntent.current = false
   }, [isDialogOpen, completed])
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
-  const canCancel = !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? !busy)
+  const canCancel =
+    !['S23', 'S24', 'S25'].includes(id) &&
+    (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
+  const standardFlow =
+    !confirming && !blocked && !recovery && !legacyRecords && !status.error && !checkFailed
+  const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
+  const statusTitle = checking
+    ? t('Checking for updates…')
+    : needsDownload
+      ? downloading
+        ? t('Downloading…')
+        : t('Update available')
+      : copy.title
+  const statusDescription = checking
+    ? undefined
+    : needsDownload
+      ? downloading
+        ? t('You can cancel the download at any time.')
+        : t('Review what’s new, then download the update.')
+      : id === 'S23'
+        ? t('Cannot cancel; the app will reopen automatically.')
+        : status.state === 'applying'
+          ? t('Please wait for the app to close and reopen.')
+          : id === 'S01'
+            ? t('Ready to restart; running tasks will be checked.')
+            : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
     pendingRef.current = true
@@ -139,7 +192,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           data-testid="runtime-update-dialog"
           data-runtime-update-state={id}
           className={dialogPanelClassName(
-            'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(570px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
+            'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(600px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
@@ -151,18 +204,60 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
             if (!recovery) cancelUpdate()
           }}
         >
-          <div className={dialogHeaderClassName}>
+          <div className={`${dialogHeaderClassName} flex-wrap gap-y-1`}>
             <Dialog.Title className={dialogTitleClassName}>
               {confirming ? t('Update Open-Science now?') : t('Update')}
             </Dialog.Title>
             <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
-              {t('v{{current}} → v{{latest}}', {
-                current: status.current,
-                latest: status.latest ?? status.current
-              })}
+              {status.latest
+                ? t('v{{current}} → v{{latest}}', {
+                    current: status.current,
+                    latest: status.latest
+                  })
+                : status.current}
             </Dialog.Description>
           </div>
-          <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
+          {standardFlow ? (
+            <section
+              data-testid="update-status"
+              className="shrink-0 border-b border-border px-5 py-5"
+            >
+              <div className="flex items-start gap-3" role="status" aria-atomic="true">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <StatusIcon
+                    aria-hidden="true"
+                    className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
+                  />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
+                  {statusDescription ? (
+                    <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
+                  ) : null}
+                </div>
+              </div>
+              {downloading ? (
+                <div className="mt-3">
+                  <DownloadProgressLine
+                    progress={
+                      status.downloadProgress ?? {
+                        phase: 'downloading',
+                        transferred: status.downloadedBytes ?? 0,
+                        total: status.totalBytes,
+                        percent: status.progress ?? 0,
+                        bytesPerSecond: 0,
+                        attempt: 0
+                      }
+                    }
+                  />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+          <div
+            data-testid="update-scroll-body"
+            className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain ${standardFlow ? 'max-h-80' : ''}`}
+          >
             {confirming ? (
               <section
                 data-runtime-update-state={
@@ -213,31 +308,44 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </section>
             ) : (
               <>
-                <ErrorNotice
-                  role={blocked || recovery ? 'alert' : 'status'}
-                  level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
-                  icon={busy ? LoaderCircle : AlertTriangle}
-                  iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
-                  title={
-                    legacyRecords
-                      ? t('Old Shell launch records are blocking this update.')
-                      : copy.title
-                  }
-                  description={
-                    legacyRecords
-                      ? t(
-                          'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
-                        )
-                      : copy.description
-                  }
-                />
-                {status.error ? (
+                {!standardFlow && !needsDownload && !checkFailed ? (
+                  <ErrorNotice
+                    role={blocked || recovery ? 'alert' : 'status'}
+                    level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
+                    icon={busy ? LoaderCircle : AlertTriangle}
+                    iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
+                    title={
+                      legacyRecords
+                        ? t('Old Shell launch records are blocking this update.')
+                        : copy.title
+                    }
+                    description={
+                      legacyRecords
+                        ? t(
+                            'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+                          )
+                        : copy.description
+                    }
+                  />
+                ) : null}
+                {status.error || checkFailed ? (
                   <ErrorNotice
                     className="mt-3"
                     role="alert"
                     level="warning"
-                    description={t('The operation could not be completed. Try again.')}
-                  />
+                    title={checkFailed ? t('Update failed') : undefined}
+                    description={
+                      (needsDownload || checkFailed) && status.error
+                        ? redactSensitiveText(status.error)
+                        : t('The operation could not be completed. Try again.')
+                    }
+                  >
+                    {needsDownload || checkFailed ? (
+                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
+                        {t('Download manually')}
+                      </ExternalTextLink>
+                    ) : null}
+                  </ErrorNotice>
                 ) : null}
                 {recoveryAttempted && recovery && !busy && !status.error ? (
                   <p role="status" className="mt-3 text-sm">
@@ -269,7 +377,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     ))}
                   </ul>
                 ) : null}
-                <RuntimeDiagnostics text={diagnostics} />
+                {blocked || recovery || status.error ? (
+                  <RuntimeDiagnostics text={diagnostics} />
+                ) : null}
                 {id === 'S04' && status.canForce === true ? (
                   <details className="mt-4 text-sm">
                     <summary>{t('More options')}</summary>
@@ -282,9 +392,28 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     </Button>
                   </details>
                 ) : null}
+                {!recovery && !checkFailed && !checking ? (
+                  <UpdateReleaseNotes status={status} />
+                ) : null}
               </>
             )}
           </div>
+          {downloading && !standardFlow ? (
+            <div className="shrink-0 px-5 pb-5">
+              <DownloadProgressLine
+                progress={
+                  status.downloadProgress ?? {
+                    phase: 'downloading',
+                    transferred: status.downloadedBytes ?? 0,
+                    total: status.totalBytes,
+                    percent: status.progress ?? 0,
+                    bytesPerSecond: 0,
+                    attempt: 0
+                  }
+                }
+              />
+            </div>
+          ) : null}
           {confirming ? (
             <div className={`${dialogFooterClassName} shrink-0`}>
               <Button variant="ghost" onClick={cancelConfirmation}>
@@ -316,7 +445,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </Button>
             </div>
           ) : !busy || canCancel ? (
-            <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
+            <div className={`${dialogFooterClassName} shrink-0 flex-wrap [&_button]:min-h-10`}>
               {recovery && !busy ? (
                 <>
                   {status.recovery?.canRecover ? (
@@ -347,27 +476,41 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                       {t('Cancel')}
                     </Button>
                   ) : null}
-                  {!progress && !recovery && id !== 'S29' ? (
+                  {!progress && !recovery && !checking && id !== 'S29' ? (
                     <Button
-                      disabled={busy}
+                      disabled={busy || downloading}
                       onClick={() => {
-                        if (status.legacyShellRecovery)
+                        if (checkFailed) void request(check)
+                        else if (needsDownload) void request(download)
+                        else if (status.legacyShellRecovery)
                           setLegacyToken(status.legacyShellRecovery.token)
                         else if (blocked && !cli) void request(recheck)
                         else void request(() => apply())
                       }}
                     >
-                      {busy
-                        ? t('Checking…')
-                        : status.legacyShellRecovery
-                          ? t('Continue')
-                          : blocked && !cli
-                            ? t('Retry')
-                            : t('Restart to update')}
+                      {needsDownload
+                        ? downloading || requestPending
+                          ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
+                          : status.totalBytes
+                            ? t('Download update ({{size}})', {
+                                size: formatBytes(status.totalBytes)
+                              })
+                            : t('Download update')
+                        : busy
+                          ? t('Checking…')
+                          : status.legacyShellRecovery
+                            ? t('Continue')
+                            : checkFailed || (blocked && !cli)
+                              ? t('Retry')
+                              : t('Restart to update')}
                     </Button>
                   ) : null}
                 </>
               )}
+            </div>
+          ) : standardFlow ? (
+            <div className={`${dialogFooterClassName} shrink-0 [&_button]:min-h-10`}>
+              <Button disabled>{copy.title}</Button>
             </div>
           ) : null}
         </Dialog.Content>

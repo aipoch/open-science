@@ -2,6 +2,200 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { readPdfFixture } from './read-fixture'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+
+const numberedContinuation = (): ReturnType<typeof JSON.parse> => {
+  const xs = [20, 40, 100, 160, 220]
+  const make = (
+    pageNumber: number,
+    ys: number[],
+    first: number | null
+  ): ReturnType<typeof JSON.parse> => {
+    const page = {
+      pageNumber,
+      width: 300,
+      height: 1000,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: []
+    }
+    const tokens: ReturnType<typeof JSON.parse>[] = [],
+      rules: number[][] = []
+    for (const x of xs) rules.push([x, ys[0], x, ys.at(-1)!])
+    for (const y of ys) rules.push([xs[0], y, xs.at(-1)!, y])
+    for (let r = 0; r < ys.length - 1; r++)
+      for (let c = 0; c < xs.length - 1; c++) {
+        const text =
+          first === null && r === 0 ? (c ? 'Header' : '') : c ? 'Field' : String((first ?? 0) + r)
+        if (!text) continue
+        const rect = [xs[c] + 3, ys[r] + 5, xs[c] + 3 + text.length * 4, ys[r] + 13]
+        tokens.push({
+          text,
+          rect,
+          height: 8,
+          baseline: rect[3],
+          horizontal: true,
+          sourceItem: { pageNumber, index: tokens.length, text }
+        })
+      }
+    return [page, tokens, rules]
+  }
+  const current = make(2, [40, 70, 100, 130], 4),
+    previous = make(1, [660, 690, 730, 770, 810], null)
+  const viewport = {
+    width: 300,
+    height: 1000,
+    rotation: 0,
+    scale: 1,
+    transform: [1, 0, 0, -1, 0, 1000],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, 1000 - y]
+  }
+  const operators = {
+    fnArray: [OPS.setLineWidth],
+    argsArray: [[1]] as ReturnType<typeof JSON.parse>[]
+  }
+  const graphicsBounds = current[2].map((r: number[]) => {
+    const operationIndex = operators.fnArray.length
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, r[0], 1000 - r[1], 1, r[2], 1000 - r[3]])]
+    ])
+    return {
+      operationIndex,
+      kind: 'path',
+      normalizedRect: [
+        (r[0] - 0.5) / 300,
+        (r[1] - 0.5) / 1000,
+        (r[2] + 0.5) / 300,
+        (r[3] + 0.5) / 1000
+      ]
+    }
+  })
+  current[0].graphicsBounds = graphicsBounds
+  const content = {
+    items: current[1].map((t: ReturnType<typeof JSON.parse>) => ({
+      str: t.text,
+      width: t.rect[2] - t.rect[0],
+      height: 8,
+      transform: [8, 0, 0, 8, t.rect[0], 1000 - t.rect[3]],
+      sourceItem: { ...t.sourceItem }
+    }))
+  }
+  return {
+    current,
+    previous,
+    captions: [{ page: 1, lines: ['Table 1. Generic records'], rect: [20, 638, 220, 650] }],
+    context: { operators, viewport, graphicsBounds, content }
+  }
+}
+
+it.each([
+  'native',
+  'prior-overflow-untouched',
+  'prior-gap',
+  'wrong-column',
+  'missing-header',
+  'multiple-captions',
+  'unrelated-boxed-legend',
+  'nonadjacent-page',
+  'missing-border',
+  'partial-edge',
+  'crossing-prose',
+  'duplicate-source',
+  'plural-carrier',
+  'missing-field',
+  'invalid-graphics',
+  'current-gap',
+  'missing-raw-source',
+  'missing-paint',
+  'unknown-operator',
+  'unknown-clip',
+  'translucent-rule',
+  'foreign-paint',
+  'empty-end-path'
+])(
+  'excludes a closed numbered continuation from a neighboring figure only with whole native proof: %s',
+  async (variant) => {
+    const { recoverNativeNumberedContinuationRect } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-numbered-continuation.mjs')).href
+    )
+    const f = numberedContinuation()
+    const changeText = (items: ReturnType<typeof JSON.parse>[], from: string, to: string): void => {
+      const t = items.find((t) => t.text === from)
+      t.text = t.sourceItem.text = to
+    }
+    if (variant === 'prior-overflow-untouched')
+      f.previous[1].push({
+        text: 'tail',
+        rect: [110, 805, 126, 815],
+        height: 10,
+        baseline: 815,
+        horizontal: true,
+        sourceItem: { pageNumber: 1, index: 80, text: 'tail' }
+      })
+    if (variant === 'prior-gap') changeText(f.previous[1], '2', '9')
+    if (variant === 'wrong-column')
+      for (const r of f.previous[2]) if (r[0] === 100 && r[2] === 100) r[0] = r[2] = 102
+    if (variant === 'missing-header') f.previous[1].splice(0, 1)
+    if (variant === 'multiple-captions') f.captions.push(structuredClone(f.captions[0]))
+    if (variant === 'unrelated-boxed-legend') f.captions = []
+    if (variant === 'nonadjacent-page') f.current[0].pageNumber = 3
+    if (variant === 'missing-border') f.current[2][0][3] -= 12
+    if (variant === 'partial-edge') f.current[2].splice(6, 1, [20, 70, 55, 70])
+    if (variant === 'crossing-prose')
+      f.current[1].push({
+        text: 'Outside',
+        rect: [10, 50, 25, 58],
+        height: 8,
+        baseline: 58,
+        horizontal: true,
+        sourceItem: { pageNumber: 2, index: 80, text: 'Outside' }
+      })
+    if (variant === 'duplicate-source') f.current[1].push(structuredClone(f.current[1][0]))
+    if (variant === 'plural-carrier')
+      f.current[1][0].sourceItems = [structuredClone(f.current[1][0].sourceItem)]
+    if (variant === 'missing-field') f.current[1].splice(2, 1)
+    if (variant === 'invalid-graphics') f.current[0].invalidGraphicsBounds = 1
+    if (variant === 'current-gap') changeText(f.current[1], '5', '7')
+    if (variant === 'missing-raw-source') f.context.content.items.splice(0, 1)
+    if (variant === 'missing-paint') f.context.graphicsBounds.splice(0, 1)
+    if (variant === 'unknown-operator') {
+      f.context.operators.fnArray.push(-1)
+      f.context.operators.argsArray.push([])
+    }
+    if (variant === 'unknown-clip') {
+      f.context.operators.fnArray[0] = OPS.constructPath
+      f.context.operators.argsArray[0] = [OPS.clip, []]
+    }
+    if (variant === 'translucent-rule') {
+      f.context.operators.fnArray[0] = OPS.setGState
+      f.context.operators.argsArray[0] = [[['CA', 0.5]]]
+    }
+    if (variant === 'foreign-paint') {
+      const operationIndex = f.context.operators.fnArray.length
+      f.context.operators.fnArray.push(OPS.constructPath)
+      f.context.operators.argsArray.push([
+        OPS.fill,
+        [new Float32Array([0, 50, 950, 1, 60, 950, 1, 60, 940, 1, 50, 940, 4])]
+      ])
+      f.context.graphicsBounds.push({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: [50 / 300, 0.05, 60 / 300, 0.06]
+      })
+    }
+    if (variant === 'empty-end-path') {
+      f.context.operators.fnArray.push(OPS.constructPath)
+      f.context.operators.argsArray.push([OPS.endPath, []])
+    }
+    const before = JSON.stringify(f)
+    const rect = recoverNativeNumberedContinuationRect(f.current, f.previous, f.captions, f.context)
+    if (['native', 'prior-overflow-untouched', 'empty-end-path'].includes(variant))
+      expect(rect).toEqual([19.5, 39.5, 220.5, 130.5])
+    else expect(rect).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)
 
 const {
   hasTableEvidence,

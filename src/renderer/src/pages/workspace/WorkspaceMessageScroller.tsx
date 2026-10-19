@@ -1,3 +1,4 @@
+import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import { flushSync } from 'react-dom'
@@ -86,6 +87,7 @@ import type {
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
 import { isHumanUserMessage } from '../../../../shared/session-persistence'
+import { sessionUsageMessages } from '../../../../shared/session-usage'
 import { EmptyConversationBanner } from './EmptyConversationBanner'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
@@ -2339,10 +2341,45 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
-const WorkspaceMessageScroller = memo(
-  WorkspaceMessageScrollerImpl,
-  areWorkspaceMessageScrollerPropsEqual
-)
+const WorkspaceMessageScroller = memo((props: WorkspaceMessageScrollerProps) => {
+  const literatureSession = useMemo(() => {
+    const session = props.activeSession
+    if (!session || session.packageOrigin) return null
+    if (!session.forkOrigin && !session.branchSource) return { sessionId: session.id }
+    const graph = session.conversationGraph
+    const liveActivityIds = new Set<string>()
+    if (graph) {
+      const prompts = new Map(graph.messages.map((message) => [message.id, message]))
+      const inheritedPromptIds = new Set(
+        sessionUsageMessages(session)
+          .filter(({ inherited }) => inherited)
+          .map(({ message }) => message.id)
+      )
+      const visibleIds = new Set(
+        resolveActiveConversationActivities(graph).activities.map(({ id }) => id)
+      )
+      // Reuse copied-message provenance, including legacy Branch head ancestry. Resolve
+      // the exact activity's prompt: flat Main projections may omit its promptMessageId.
+      for (const activity of graph.activities) {
+        const prompt = prompts.get(activity.promptMessageId)
+        if (
+          visibleIds.has(activity.id) &&
+          prompt?.role === 'user' &&
+          !inheritedPromptIds.has(prompt.id) &&
+          prompt.agentFrameId === activity.agentFrameId
+        ) {
+          liveActivityIds.add(activity.id)
+        }
+      }
+    }
+    return { sessionId: session.id, liveActivityIds }
+  }, [props.activeSession])
+  return (
+    <LiteratureCandidateSessionContext.Provider value={literatureSession}>
+      <WorkspaceMessageScrollerImpl {...props} />
+    </LiteratureCandidateSessionContext.Provider>
+  )
+}, areWorkspaceMessageScrollerPropsEqual)
 WorkspaceMessageScroller.displayName = 'WorkspaceMessageScroller'
 
 export { WorkspaceMessageScroller }

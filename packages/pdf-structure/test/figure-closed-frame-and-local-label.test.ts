@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { readPdfFixture } from './read-fixture'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const { associateFigures, associateUncaptionedRasterFigure, associateTableCaptions } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
@@ -12,11 +13,354 @@ const { captionKind, findCaptionCandidates } = await import(
 const { collectClosedFigureFrames, collectTableRules, excludeRepeatedMarginContent } = await import(
   pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
 )
-const { closedCaptionFigureFrame } = await import(
+const { closedCaptionFigureFrame, closedFrameCompositeEvidence } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-connectivity.mjs')).href
 )
 const fixture = (name: string): ReturnType<typeof readPdfFixture> =>
   readPdfFixture(resolve(`test/fixtures/${name}.jsonl`))
+
+// Anonymous native paint/text inventory: upper connected nodes and keyed legend,
+// followed by independently closed summary boxes belonging to the same caption.
+const closedSubsetNative = (nodeCount = 2): ReturnType<typeof JSON.parse> => {
+  const width = 600,
+    height = 800,
+    frames = [
+      [70, 380, 280, 530],
+      [300, 380, 520, 530]
+    ]
+  const lines: ReturnType<typeof JSON.parse>[] = [],
+    graphicsBounds: ReturnType<typeof JSON.parse>[] = []
+  const operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] }
+  const items: ReturnType<typeof JSON.parse>[] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = []
+  const line = (text: string, x: number, y: number, w = 10): void => {
+    const sourceItem = { pageNumber: 1, index: items.length, text }
+    lines.push({ text, x, y, width: w, height: 10, fontSize: 10 })
+    items.push({
+      str: text,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, height - y - 10],
+      width: w,
+      height: 10,
+      sourceItem
+    })
+    tokens.push({
+      text,
+      rect: [x, y, x + w, y + 10],
+      horizontal: true,
+      height: 10,
+      baseline: y + 10,
+      sourceItem
+    })
+  }
+  const paint = (r: number[], closed: boolean): void => {
+    const [l, t, rgt, b] = r,
+      program = closed
+        ? [0, l, height - t, 1, rgt, height - t, 1, rgt, height - b, 1, l, height - b, 4]
+        : [0, l, height - t, 1, rgt, height - b]
+    const operationIndex = operators.fnArray.length
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      closed ? OPS.fillStroke : OPS.stroke,
+      [program],
+      [l, height - b, rgt, height - t]
+    ])
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: r.map(
+        (v, i) => (v + (closed ? 0 : i < 2 ? -0.5 : 0.5)) / (i % 2 ? height : width)
+      )
+    })
+  }
+  for (const r of frames) {
+    paint(r, true)
+    for (let i = 0; i < 8; i++)
+      line(String(i + 1), r[0] + 15 + (i % 2) * 65, r[1] + 15 + Math.floor(i / 2) * 25)
+  }
+  for (const x of [110, 330]) {
+    for (let i = 0; i < nodeCount; i++) {
+      const dx = (i * 70) / (nodeCount - 1)
+      paint([x + dx, 220, x + dx + 20, 240], true)
+      line('n', x + dx + 6, 225, 8)
+      if (i) paint([x + ((i - 1) * 70) / (nodeCount - 1) + 10, 230, x + dx + 10, 230], false)
+    }
+    line('Layer', x, 195, 30)
+    paint([x, 345, x + 25, 345], false)
+    line('link', x + 35, 340, 25)
+  }
+  const caption = { page: 1, rect: [70, 545, 520, 560], lines: ['Figure 1: Nodes and summary.'] }
+  line(caption.lines[0], 70, 545, 450)
+  const viewport = {
+    width,
+    height,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, height - y]
+  }
+  return {
+    page: {
+      pageNumber: 1,
+      width,
+      height,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds
+    },
+    captions: [caption],
+    tables: [],
+    frames,
+    tokens,
+    context: { operators, viewport, content: { items, styles: {} } }
+  }
+}
+const invokeClosedSubset = (x: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  associateFigures(x.page, x.captions, x.tables, [], x.frames, x.tokens, x.context).find(
+    (f: ReturnType<typeof JSON.parse>) => f.caption === x.captions[0]
+  )
+
+it('retains the complete native node plate above captioned closed summary boxes', () => {
+  const input = closedSubsetNative(),
+    result = invokeClosedSubset(input)
+  expect(result.rect[1]).toBeLessThanOrEqual(195)
+  expect(result.rect[0]).toBeLessThanOrEqual(70)
+  expect(result.rect[2]).toBeGreaterThanOrEqual(520)
+  expect(result.rect[3]).toBeGreaterThanOrEqual(530)
+  for (const token of input.tokens.filter((t: ReturnType<typeof JSON.parse>) => t.rect[3] < 545)) {
+    expect(token.rect[0]).toBeGreaterThanOrEqual(result.rect[0])
+    expect(token.rect[1]).toBeGreaterThanOrEqual(result.rect[1])
+    expect(token.rect[2]).toBeLessThanOrEqual(result.rect[2])
+    expect(token.rect[3]).toBeLessThanOrEqual(result.rect[3])
+  }
+})
+it.each([3, 4])('does not bind the composite proof to a fixed node count: %s', (count) => {
+  expect(invokeClosedSubset(closedSubsetNative(count)).rect[1]).toBeLessThanOrEqual(195)
+})
+it('publishes only complete original fonts proved by native nodes, titles and keyed legends', () => {
+  const input = closedSubsetNative(),
+    result = invokeClosedSubset(input)
+  expect(result.sourceItems).toEqual([
+    { pageNumber: 1, index: 16, text: 'n' },
+    { pageNumber: 1, index: 17, text: 'n' },
+    { pageNumber: 1, index: 18, text: 'Layer' },
+    { pageNumber: 1, index: 19, text: 'link' },
+    { pageNumber: 1, index: 20, text: 'n' },
+    { pageNumber: 1, index: 21, text: 'n' },
+    { pageNumber: 1, index: 22, text: 'Layer' },
+    { pageNumber: 1, index: 23, text: 'link' }
+  ])
+})
+it('keeps source ownership stable when native tokens arrive in a different order', () => {
+  const input = closedSubsetNative(),
+    expected = invokeClosedSubset(input).sourceItems
+  input.tokens.reverse()
+  expect(invokeClosedSubset(input).sourceItems).toEqual(expected)
+})
+it('does not publish text owned by two completed figure crops', () => {
+  const input = closedSubsetNative()
+  input.captions.push({ page: 1, rect: [5, 210, 65, 225], lines: ['Figure 2: Other graph.'] })
+  const results = associateFigures(
+    input.page,
+    input.captions,
+    input.tables,
+    [],
+    input.frames,
+    input.tokens,
+    input.context
+  )
+  expect(results).toHaveLength(2)
+  expect(results.every((result: ReturnType<typeof JSON.parse>) => result.rect)).toBe(true)
+  expect(results.every((result: ReturnType<typeof JSON.parse>) => !result.sourceItems)).toBe(true)
+})
+it.each([
+  'caption',
+  'table',
+  'prose',
+  'sidepaint',
+  'missing-context',
+  'duplicate-paint',
+  'sourceItem',
+  'sourceSegment',
+  'sourceToken',
+  'nested-item',
+  'nested-segment'
+])('keeps the closed crop when upper ownership is unproved: %s', (kind) => {
+  const x = closedSubsetNative()
+  if (kind === 'caption')
+    x.captions.push({ page: 1, rect: [70, 310, 520, 325], lines: ['Figure 2: Independent.'] })
+  if (kind === 'table') x.tables.push([80, 300, 500, 330])
+  if (kind === 'prose')
+    x.page.lines.push({
+      text: 'An independent paragraph.',
+      x: 80,
+      y: 300,
+      width: 400,
+      height: 10,
+      fontSize: 10
+    })
+  if (kind === 'sidepaint')
+    x.page.graphicsBounds.slice(2).forEach((g: ReturnType<typeof JSON.parse>) => {
+      g.normalizedRect = g.normalizedRect.map((v: number, i: number) =>
+        i % 2 ? v : 0.91 + v * 0.05
+      )
+    })
+  if (kind === 'missing-context') delete x.context
+  if (kind === 'duplicate-paint') x.page.graphicsBounds.push({ ...x.page.graphicsBounds[2] })
+  if (
+    ['sourceItem', 'sourceSegment', 'sourceToken', 'nested-item', 'nested-segment'].includes(kind)
+  ) {
+    const source = x.tokens[16].sourceItem,
+      alias = { ...x.tokens[16], text: 'Other', rect: [10, 10, 20, 20], sourceItem: undefined }
+    const carrier =
+      kind === 'sourceSegment' || kind === 'nested-segment'
+        ? { ...source, start: 0, end: source.text.length, rect: [10, 10, 20, 20] }
+        : source
+    if (kind === 'nested-item' || kind === 'nested-segment')
+      alias.sourceToken = { [kind === 'nested-item' ? 'sourceItem' : 'sourceSegment']: carrier }
+    else alias[kind] = carrier
+    x.tokens.push(alias)
+  }
+  expect(invokeClosedSubset(x).rect[1]).toBeGreaterThanOrEqual(379)
+  expect(invokeClosedSubset(x).sourceItems).toBeUndefined()
+})
+it.each([
+  'same-token-segment',
+  'same-token-token',
+  'missing-paint',
+  'unexplained-ink',
+  'unknown-clip',
+  'competing-node',
+  'raw-alias',
+  'title-prose'
+])('refuses incomplete native inventories: %s', (kind) => {
+  const x = closedSubsetNative(),
+    token = x.tokens[16]
+  if (kind === 'same-token-segment')
+    token.sourceSegment = { ...token.sourceItem, start: 0, end: 1, rect: token.rect }
+  if (kind === 'same-token-token') token.sourceToken = token.sourceItem
+  if (kind === 'raw-alias')
+    x.context.content.items[16].sourceToken = { sourceItem: token.sourceItem }
+  if (kind === 'missing-paint') x.page.graphicsBounds.splice(2, 1)
+  if (kind === 'unknown-clip') {
+    x.context.operators.fnArray.push(OPS.clip)
+    x.context.operators.argsArray.push(null)
+  }
+  if (kind === 'unexplained-ink' || kind === 'competing-node') {
+    const r = kind === 'competing-node' ? [110, 220, 130, 240] : [250, 260, 270, 280],
+      [l, t, rgt, b] = r,
+      operationIndex = x.context.operators.fnArray.length
+    x.context.operators.fnArray.push(OPS.constructPath)
+    x.context.operators.argsArray.push([
+      OPS.fillStroke,
+      [[0, l, 800 - t, 1, rgt, 800 - t, 1, rgt, 800 - b, 1, l, 800 - b, 4]],
+      [l, 800 - b, rgt, 800 - t]
+    ])
+    x.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: r.map((v: number, i: number) => v / (i % 2 ? 800 : 600))
+    })
+  }
+  if (kind === 'title-prose') {
+    const i = x.context.content.items.findIndex(
+      (t: ReturnType<typeof JSON.parse>) => t.str === 'Layer'
+    )
+    for (const v of [x.context.content.items[i].sourceItem, x.tokens[i].sourceItem])
+      v.text = 'A sentence.'
+    x.context.content.items[i].str = x.tokens[i].text = x.page.lines[i].text = 'A sentence.'
+  }
+  expect(invokeClosedSubset(x).rect[1]).toBeGreaterThanOrEqual(379)
+  expect(invokeClosedSubset(x).sourceItems).toBeUndefined()
+})
+it('does not use invisible white strokes as node connectivity evidence', () => {
+  const x = closedSubsetNative()
+  x.context.operators.fnArray.unshift(OPS.setStrokeRGBColor)
+  x.context.operators.argsArray.unshift(['#ffffff'])
+  x.page.graphicsBounds.forEach((g: ReturnType<typeof JSON.parse>) => g.operationIndex++)
+  expect(invokeClosedSubset(x).rect[1]).toBeGreaterThanOrEqual(379)
+})
+it('keeps an already complete closed summary unchanged', () => {
+  const x = closedSubsetNative()
+  x.page.graphicsBounds = x.page.graphicsBounds.slice(0, 2)
+  x.page.lines = x.page.lines.filter((l: ReturnType<typeof JSON.parse>) => l.y >= 380)
+  expect(invokeClosedSubset(x).rect).toEqual([69, 379, 521, 531])
+  expect(invokeClosedSubset(x).sourceItems).toBeUndefined()
+})
+it.each([
+  'missing-transform',
+  'short-transform',
+  'negative-index',
+  'token-literal',
+  'token-sourceItems',
+  'token-sourceSegments',
+  'content-sourceItems',
+  'content-sourceSegments',
+  'crossing-paint',
+  'crossing-font'
+])('rejects malformed or incomplete whole-source evidence: %s', (kind) => {
+  const x = closedSubsetNative(),
+    token = x.tokens[16]
+  if (kind === 'missing-transform') delete x.context.viewport.transform
+  if (kind === 'short-transform') x.context.viewport.transform = [1, 0]
+  if (kind === 'missing-transform' || kind === 'short-transform') {
+    expect(
+      closedFrameCompositeEvidence(
+        x.page,
+        x.captions[0],
+        x.captions,
+        x.tables,
+        x.frames,
+        x.tokens,
+        x.context
+      )
+    ).toBeUndefined()
+    return
+  }
+  if (kind === 'negative-index') token.sourceItem.index = -1
+  if (kind === 'token-literal') token.sourceItem = { ...token.sourceItem, text: 'Other' }
+  if (kind.startsWith('token-source')) token[kind.slice(6)] = [x.tokens[17].sourceItem]
+  if (kind.startsWith('content-source'))
+    x.context.content.items[16][kind.slice(8)] = [x.tokens[17].sourceItem]
+  if (kind === 'crossing-paint') {
+    const operationIndex = x.context.operators.fnArray.length
+    x.context.operators.fnArray.push(OPS.constructPath)
+    x.context.operators.argsArray.push([
+      OPS.stroke,
+      [[0, 250, 500, 1, 250, 400]],
+      [250, 400, 250, 500]
+    ])
+    x.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [249.5 / 600, 300 / 800, 250.5 / 600, 400 / 800]
+    })
+  }
+  if (kind === 'crossing-font') {
+    const text = 'Independent',
+      sourceItem = { pageNumber: 1, index: x.context.content.items.length, text }
+    x.context.content.items.push({
+      str: text,
+      dir: 'ltr',
+      width: 30,
+      height: 100,
+      transform: [100, 0, 0, 100, 250, 400],
+      sourceItem
+    })
+    x.tokens.push({
+      text,
+      rect: [250, 300, 280, 400],
+      horizontal: true,
+      height: 100,
+      baseline: 400,
+      sourceItem
+    })
+    x.page.lines.push({ text, x: 250, y: 300, width: 30, height: 100, fontSize: 100 })
+  }
+  expect(invokeClosedSubset(x).rect[1]).toBeGreaterThanOrEqual(379)
+  expect(invokeClosedSubset(x).sourceItems).toBeUndefined()
+})
 const repeatedNativeHeaders = (kind: string): ReturnType<typeof JSON.parse>[] =>
   [2, 4, 6].map((pageNumber) => {
     const line = (

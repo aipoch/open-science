@@ -93,3 +93,65 @@ it('keeps an inline figure below a neighbouring table crop', () => {
   const figure = associateFigures(page, [caption], [[60, 80, 540, 260]])[0]
   expect(figure.rect).toEqual([60, 360, 540, 600])
 })
+
+function outlineEnvelope(scale = 1): ReturnType<typeof JSON.parse> {
+  const rectangles = [
+    [35, 217, 298, 476],
+    [68, 440, 73, 450],
+    [211, 440, 216, 450],
+    [213, 440, 218, 450],
+    [202, 266, 216, 272],
+    [319, 315, 326, 325],
+    [319, 299, 326, 305]
+  ]
+  return {
+    page: {
+      pageNumber: 1,
+      width: 600 * scale,
+      height: 840 * scale,
+      invalidGraphicsBounds: 0,
+      lines: [],
+      graphicsBounds: rectangles.map((r, operationIndex) => ({
+        kind: 'path',
+        operationIndex,
+        normalizedRect: r.map((v, i) => v / (i % 2 ? 840 : 600))
+      }))
+    },
+    captions: [
+      {
+        page: 1,
+        lines: ['Figure 1. Independent result.'],
+        rect: [303, 442, 558, 521].map((v) => v * scale)
+      },
+      {
+        page: 1,
+        lines: ['Figure 2. Main result.'],
+        rect: [37, 478, 292, 547].map((v) => v * scale)
+      }
+    ]
+  }
+}
+it.each([1, 1.2])(
+  'does not extend outlined glyph bounds across another caption at scale %s',
+  (scale) => {
+    const f = outlineEnvelope(scale)
+    const result = associateFigures(f.page, f.captions)[1]
+    expect(result.rect[0]).toBeLessThanOrEqual(35 * scale + 0.01)
+    expect(result.rect[2]).toBeGreaterThanOrEqual(298 * scale - 0.01)
+    expect(result.rect[2]).toBeLessThan(f.captions[0].rect[0])
+    expect(result.rect[3]).toBeGreaterThanOrEqual(476 * scale - 0.01)
+  }
+)
+it.each(['absent', 'other page', 'outside envelope'])(
+  'retains existing outline completion without a competing caption: %s',
+  (kind) => {
+    const f = outlineEnvelope()
+    if (kind === 'absent') f.captions.shift()
+    if (kind === 'other page') f.captions[0].page = 2
+    if (kind === 'outside envelope') f.captions[0].rect[0] = 400
+    const result = associateFigures(f.page, f.captions).find(
+      (x: { caption: { lines: string[] } }) => x.caption.lines[0].startsWith('Figure 2.')
+    )
+    expect(result.rect[2]).toBe(326)
+  }
+)

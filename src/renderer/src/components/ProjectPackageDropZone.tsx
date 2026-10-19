@@ -8,14 +8,14 @@ import { importSessionPackage } from '@/lib/session-package-import'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 
 type Props = ComponentPropsWithRef<'section'> & {
-  projectId: string
-  projectName: string
+  projectId?: string
+  projectName?: string
   canImport: boolean
   canAttach?: boolean
   onFiles?: (files: File[]) => void
 }
 
-// One conversation-scoped owner routes native file drops before nested editors see them.
+// One surface-scoped owner routes native file drops before nested editors see them.
 export const ProjectPackageDropZone = ({
   projectId,
   projectName,
@@ -28,7 +28,7 @@ export const ProjectPackageDropZone = ({
   const { t } = useTranslation()
   const [notice, setNotice] = useState<string>()
   const importAvailable = sessionPackageImportAvailable()
-  const importEnabled = importAvailable && canImport && Boolean(projectId)
+  const importEnabled = importAvailable && canImport && projectId !== ''
   const { isDragging, dropZoneProps } = useFileDropZone({
     // Even a disabled target consumes native drops to prevent browser navigation.
     enabled: true,
@@ -85,7 +85,9 @@ export const ProjectPackageDropZone = ({
               ? importEnabled
                 ? t('Drop files to attach or import a .science package')
                 : t('Drop files to attach')
-              : t('Drop a .science file to import into “{{project}}”', { project: projectName })
+              : projectId
+                ? t('Drop a .science file to import into “{{project}}”', { project: projectName })
+                : t('Drop a .science file to import')
           }
           className="rounded-lg px-6 text-center"
         />

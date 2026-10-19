@@ -1,4 +1,138 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import {
+  nativeWholeOwnerRepairPacket,
+  nativeCompleteRuledRecordPaintCrop
+} from './literature-pdf-native-leaf-record-repair.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+
+// This independent final-grid path does not relax the wider closed-face proof.
+function narrowNativeCountTable(table, tokens, rules, page, captions, context) {
+  const native = context?.nativeContext,
+    v = native?.viewport
+  if (
+    !v ||
+    !Array.isArray(context?.tables) ||
+    context.tables.length !== 1 ||
+    context.tables[0] !== table ||
+    !Array.isArray(table.grid) ||
+    table.grid.length < 4 ||
+    table.grid.some(
+      (r) =>
+        !Array.isArray(r) || r.length !== 2 || r.some((t) => typeof t !== 'string' || !t.trim())
+    ) ||
+    !Array.isArray(table.cells) ||
+    table.cells.length !== table.grid.length * 2 ||
+    table.cells.some((c) => !c || typeof c !== 'object' || c.rowSpan !== 1 || c.colSpan !== 1) ||
+    table.parts ||
+    table.cropRects ||
+    table.issues?.length ||
+    table.clipped?.length ||
+    table.unassigned?.length ||
+    ![v.width, v.height, v.scale].every((n) => Number.isFinite(n) && n > 0) ||
+    table.cropRect[1] > v.height * 0.15 ||
+    !Number.isInteger(page.pageNumber) ||
+    page.pageNumber < 1 ||
+    page.rotation !== 0 ||
+    page.renderRotation !== 0 ||
+    v.rotation !== 0 ||
+    page.width * v.scale !== v.width ||
+    page.height * v.scale !== v.height ||
+    (table.page !== undefined && table.page !== page.pageNumber) ||
+    (table.sourceViewport !== undefined &&
+      ['width', 'height', 'scale'].some((k) => table.sourceViewport[k] !== v[k]))
+  )
+    return false
+  const proof = nativeWholeOwnerRepairPacket(
+    {
+      ...table,
+      page: page.pageNumber,
+      sourceViewport: { width: v.width, height: v.height, scale: v.scale }
+    },
+    tokens,
+    rules,
+    native
+  )
+  if (
+    !proof ||
+    proof.columns !== 2 ||
+    proof.groups.length !== table.grid.length ||
+    !proveNativeUniqueWholeFonts(proof.fonts, tokens)
+  )
+    return false
+  const clean = (text) => text.replace(/\s/gu, '')
+  const lanes = [[], []],
+    rows = []
+  for (let row = 0; row < table.grid.length; row++) {
+    const pair = table.cells.filter((c) => c.row === row).sort((a, b) => a.column - b.column)
+    if (pair.length !== 2 || pair[0].column !== 0 || pair[1].column !== 1) return false
+    const fonts = pair.map((c) => proof.owners.get(c))
+    if (fonts.some((f) => !f?.length)) return false
+    const band = fonts.flat(),
+      baseline = band[0].baseline
+    if (
+      band.some((f) => f.baseline !== baseline || f.height !== band[0].height) ||
+      band.length !== proof.groups[row].length ||
+      band.some((f) => !proof.groups[row].includes(f))
+    )
+      return false
+    for (let col = 0; col < 2; col++) {
+      const ordered = [...fonts[col]].sort((a, b) => a.rect[0] - b.rect[0])
+      if (clean(ordered.map((f) => f.text).join('')) !== clean(pair[col].text)) return false
+      lanes[col].push(...ordered)
+    }
+    if (
+      row === 0
+        ? pair.some((c) => !/\p{L}/u.test(c.text))
+        : !/^[+−-]?\d+(?:[.,]\d+)?$/u.test(pair[1].text.trim())
+    )
+      return false
+    rows.push(band)
+  }
+  if (Math.max(...lanes[0].map((f) => f.rect[2])) >= Math.min(...lanes[1].map((f) => f.rect[0])))
+    return false
+  const crop = table.cropRect
+  const edges = rules
+    .filter(
+      (r) =>
+        Math.max(r[0], r[2]) >= crop[0] &&
+        Math.min(r[0], r[2]) <= crop[2] &&
+        Math.max(r[1], r[3]) >= crop[1] &&
+        Math.min(r[1], r[3]) <= crop[3]
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    edges.length !== 3 ||
+    edges.some((r) => r[1] !== r[3] || r[0] !== edges[0][0] || r[2] !== edges[0][2]) ||
+    !(edges[0][1] < edges[1][1] && edges[1][1] < edges[2][1])
+  )
+    return false
+  if (
+    tokens.some((f) => f.text?.trim() && f.rect[1] < edges[0][1]) ||
+    page.lines.some((l) => l.text.trim() && l.y * v.scale < edges[0][1])
+  )
+    return false
+  const paint = edges.map((r) => native.rulePaintBounds?.get(r.join(',')))
+  if (paint.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite)))
+    return false
+  if (
+    rows[0].some(
+      (f) =>
+        f.rect[1] <= paint[0][3] ||
+        f.rect[3] >= paint[1][1] ||
+        f.rect[0] < edges[0][0] ||
+        f.rect[2] > edges[0][2]
+    ) ||
+    rows
+      .slice(1)
+      .flat()
+      .some((f) => f.rect[1] <= paint[1][3] || f.rect[3] >= paint[2][1]) ||
+    captions.some((c) => c.page === page.pageNumber && c.rect[1] * v.scale <= edges[2][1])
+  )
+    return false
+  const closed = nativeCompleteRuledRecordPaintCrop(crop, edges, rules, native, proof.fonts)
+  return !!closed && closed.every((n, i) => n === crop[i])
+}
+
 const union = (rects) => [
   Math.min(...rects.map((r) => r[0])),
   Math.min(...rects.map((r) => r[1])),
@@ -21,10 +155,11 @@ export function recoverPriorPageTableCaption(
   pageGeometry,
   pages,
   captions,
-  currentCaption
+  currentCaption,
+  context
 ) {
   const previous = pages.find((p) => p.pageNumber === pageGeometry.pageNumber - 1)
-  if (!previous || !table.structure?.objects || !table.cropRect) return
+  if (!previous || !table.cropRect) return
   const prior = captions.filter(
     (c) =>
       c.page === previous.pageNumber && /^Table\s+(?:[AS]?\d+|[A-Z]\.\d+)[.:]/i.test(c.lines[0])
@@ -48,6 +183,12 @@ export function recoverPriorPageTableCaption(
     (currentCaption.page !== pageGeometry.pageNumber || !isTerminal(currentCaption, pageGeometry))
   )
     return
+  if (
+    !currentCaption &&
+    narrowNativeCountTable(table, tokens, rules, pageGeometry, captions, context)
+  )
+    return caption
+  if (!table.structure?.objects) return
   const columns = table.structure.objects.filter((o) => o.label === 'table column').length
   if (columns < 2 || columns > 8 || table.cropRect[1] > pageGeometry.height * 1.5 * 0.15) return
   const horizontal = []

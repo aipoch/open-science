@@ -356,6 +356,72 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it.each([
+    { mobileMode: false, canMutateConversations: true },
+    { mobileMode: true, canMutateConversations: true },
+    { mobileMode: false, canMutateConversations: false },
+    { mobileMode: true, canMutateConversations: false }
+  ])(
+    'opens the existing Session editor on double-click when permitted (mobile: $mobileMode, mutate: $canMutateConversations)',
+    async ({ mobileMode, canMutateConversations }) => {
+      const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+      const active = createSession({ id: 'active', status: 'idle' })
+      const target = createSession({
+        id: 'target',
+        title: 'Target session',
+        status: 'idle',
+        contentLoaded: false
+      })
+      const onOpenSession = vi.fn()
+      const onRenameSession = vi.fn()
+      const tree = WorkspaceSidebarView({
+        now: Date.now(),
+        projectName: 'Example project',
+        sessions: [active, target],
+        activeSessionId: active.id,
+        canCreateConversation: true,
+        canMutateConversations,
+        canDeleteConversations: true,
+        onGoHome: vi.fn(),
+        onNewConversation: vi.fn(),
+        isFilesOpen: false,
+        onOpenFiles: vi.fn(),
+        onOpenSession,
+        onRenameSession,
+        canDownloadArtifacts: true,
+        onDownloadArtifacts: vi.fn(),
+        onViewNotebook: vi.fn(),
+        onTogglePin: vi.fn(),
+        onDeleteSession: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onOpenProjectSettings: vi.fn(),
+        onNewProject: vi.fn(),
+        mobileMode
+      })
+      const elements = collectElements(tree)
+      const button = elements.find(
+        (element) =>
+          element.props['data-slot'] === 'session-open-button' &&
+          getTextContent(element).includes(target.title)
+      )
+      expect(button).toBeDefined()
+
+      ;(button?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(target.id, 1)
+      expect(onRenameSession).not.toHaveBeenCalled()
+
+      ;(button?.props.onDoubleClick as () => void)()
+      if (canMutateConversations) {
+        expect(onRenameSession).toHaveBeenCalledExactlyOnceWith(target)
+      } else {
+        expect(onRenameSession).not.toHaveBeenCalled()
+      }
+      const row = elements.find((element) => element.props['data-session-id'] === target.id)
+      expect(row).toBeDefined()
+      expect(row?.props.onDoubleClick).toBeUndefined()
+    }
+  )
+
   it('renders only affected rows when fresh page callbacks accompany selection and Session updates', async () => {
     const rowComponent = SessionRow as unknown as {
       type: (props: Record<string, unknown>) => ReactElement
@@ -2507,8 +2573,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const secondTarget = getSessionActionTargetProps(tree, sessions[1].id)
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
-    ;(notebookButton?.props.onClick as () => void)()
-    expect(onOpenSession).toHaveBeenCalledWith('session-a')
+    ;(notebookButton?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+    expect(onOpenSession).toHaveBeenCalledWith('session-a', 1)
 
     await secondTarget.bindings.edit?.execute(secondTarget.invocation)
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])

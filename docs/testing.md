@@ -39,6 +39,14 @@ Module's curated owner, contract, and representative consumer tests; it is not c
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
 
+Large `test:module` and `test:affected` selections use a temporary argument file to avoid operating
+system command-line limits, including Windows npm's shell limit. The internal
+`test:module:arguments` script runs the same `pretest` preparation and restores the complete argument
+list before starting the installed Vitest CLI. Filters, exclusions, coverage and shard options keep
+their normal meaning; the selection is neither truncated nor expanded to the full suite. The parent
+removes the temporary file after the command exits, including test or spawn failures. Forced parent
+termination can leave a file in the OS temporary directory; it contains test arguments only.
+
 ### Dependency boundaries and explainable convergence
 
 `test:affected` refines a declared selection against immutable merge-base, head and actual checkout
@@ -69,6 +77,21 @@ Layers describe file roles; a mixed legacy module can occupy several roles. The 
 prevents foundation dependencies, shared-to-host/presentation imports, owner-to-composition imports
 and private imports across the PDF/isolated-helper public boundaries. It does not claim complete
 encapsulation of every existing domain.
+
+Static diagnostics and selection use different engines: `npm run analyze:test-impact --
+--revision HEAD` uses the private package's external dependency engine, while generated consumers
+use the repository's TypeScript-based reader. Neither missing static edges nor a bounded runtime
+coverage sample proves independence. Dynamic evidence only covers the tests and inputs actually
+executed; IPC, events and filesystem relationships still need explicit contracts.
+
+The derived-consumer reader also follows literal relative and renderer-alias imports of SVG, PNG,
+JPEG, GIF, WebP, AVIF, ICO and CSS files, including `?raw`, `?url`, `?inline`, `?no-inline` and
+fragment suffixes. These edges add consumers but remain incomplete for retirement/pruning:
+resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Computed
+imports and unsupported query combinations retain uncertainty. Resource consumers can be registered
+explicitly in their owning module; the generated index stores only additional memberships.
+Tests that read resource contents through filesystem APIs such as `readFileSync` need explicit
+`testFiles.consumer` entries; import analysis does not discover those relationships.
 
 ### Full fallback
 

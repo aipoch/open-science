@@ -199,7 +199,7 @@ AIPOCH Open-Science logró **79.05** con **gpt-5.6-sol (xhigh)** en una evaluaci
 
 La comparación mezcla registros con distinta cobertura de jueces y no constituye una clasificación oficial bajo condiciones uniformes de evaluación.
 
-**Alcance de la evaluación:** Son resultados locales/internos comunicados por el propio equipo. Encabezar las comparaciones incluidas no acredita un primer puesto oficial ni mejoras estadísticamente significativas. Consulte el [informe detallado (en inglés)](../benchmarks/README.md) para fechas de las fuentes, configuración de modelos y ejecución, alcance y el resultado independiente de PaperFinding sobre 66 consultas de validación.
+**Alcance de la evaluación:** Son resultados locales/internos comunicados por el propio equipo. Encabezar las comparaciones incluidas no acredita un primer puesto oficial ni mejoras estadísticamente significativas.
 
 ## Capacidades principales
 

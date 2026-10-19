@@ -286,6 +286,24 @@ test('save card opens Inbox in the same Preview and review actions update the qu
   await expect(inbox.getByRole('listitem')).toHaveCount(4)
   await inbox.getByRole('button', { name: 'Accept', exact: true }).first().click()
   await expect(inbox.getByRole('listitem')).toHaveCount(3)
+  const card = page.getByTestId('literature-tool-card')
+  await expect(card.getByText('Imported: 1', { exact: true })).toBeVisible()
+  await expect(card.getByText('Pending review: 3', { exact: true })).toBeVisible()
+  const reference = card.getByRole('button', {
+    name: 'Example reference: assessing reproducibility across scientific workflows',
+    exact: true
+  })
+  const url = page.url()
+  await reference.click()
+  const detail = page.getByRole('dialog', {
+    name: 'Example reference: assessing reproducibility across scientific workflows'
+  })
+  await expect(detail).toBeVisible()
+  await expect(detail.getByText(/Sample abstract for layout testing/)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(detail).toHaveCount(0)
+  await expect(reference).toBeFocused()
+  expect(page.url()).toBe(url)
   await page.getByRole('searchbox').fill('missing')
   await expect(page.getByText('No matching references', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Open Inbox', exact: true }).click()
@@ -353,6 +371,54 @@ for (const width of [320, 375, 414, 768]) {
         path: testInfo.outputPath(`message-cards-${width}-${dark ? 'dark' : 'light'}.png`),
         fullPage: true
       })
+    })
+  }
+}
+
+for (const width of [320, 375, 414, 768]) {
+  for (const dark of [false, true]) {
+    test(`saved references remain compact and open in place at ${width}px ${dark ? 'dark' : 'light'}`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`/library-workbench.html?card-design${dark ? '&dark' : ''}`)
+      const cards = page.getByTestId('literature-tool-card')
+      const card = cards.first()
+      await expect(card.getByText('Imported: 6', { exact: true })).toBeVisible()
+      await expect(card.getByRole('listitem')).toHaveCount(3)
+      expect((await card.boundingBox())!.height).toBeLessThan(290)
+      expect((await cards.nth(1).boundingBox())!.height).toBeLessThan(100)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+      expect(
+        await cards.evaluateAll((elements) =>
+          elements.every((element) => element.scrollWidth <= element.clientWidth)
+        )
+      ).toBe(true)
+      await page.screenshot({
+        path: testInfo.outputPath(`saved-card-${width}-${dark ? 'dark' : 'light'}.png`),
+        fullPage: true
+      })
+      await card.getByRole('button', { name: 'Show more', exact: true }).click()
+      await expect(card.getByRole('listitem')).toHaveCount(6)
+      const reference = card.getByRole('button', { name: /— sample 6$/ })
+      const url = page.url()
+      await reference.focus()
+      await page.keyboard.press('Enter')
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await expect(dialog.getByRole('heading', { name: /— sample 6$/ })).toBeVisible()
+      await page.screenshot({
+        path: testInfo.outputPath(`saved-detail-${width}-${dark ? 'dark' : 'light'}.png`),
+        fullPage: true
+      })
+      await page.keyboard.press('Escape')
+      await expect(dialog).toHaveCount(0)
+      await expect(reference).toBeFocused()
+      expect(page.url()).toBe(url)
+      await card.getByRole('button', { name: 'Show less', exact: true }).click()
+      await expect(card.getByRole('listitem')).toHaveCount(3)
     })
   }
 }

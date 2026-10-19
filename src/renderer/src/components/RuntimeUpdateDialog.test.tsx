@@ -461,3 +461,184 @@ it('describes preparation failure without claiming an unknown installation resul
   expect(document.body.textContent).not.toContain('Installation result is unknown')
   expect(buttons('Cancel')).toHaveLength(1)
 })
+
+describe('continuous in-place update dialog', () => {
+  it('keeps one dialog and release notes from download through installation preparation', () => {
+    const base: UpdateStatus = {
+      state: 'available',
+      current: '1.0.11',
+      latest: '1.0.12',
+      applyKind: 'restart',
+      notes: 'Preserve the release notes throughout the update.',
+      totalBytes: 1024
+    }
+    useUpdateStore.setState({ status: base })
+    act(() => root.render(<UpdateDialog />))
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(buttons('Download update (1.0 KB)')).toHaveLength(1)
+    for (const state of ['downloading', 'error', 'ready', 'applying'] as const) {
+      act(() =>
+        useUpdateStore.setState({
+          status: {
+            ...base,
+            state,
+            progress: 50,
+            error: state === 'error' ? 'Synthetic download failed' : undefined
+          }
+        })
+      )
+      expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(dialog?.textContent).toContain(base.notes)
+      if (state === 'ready') {
+        expect(buttons('Restart to update')).toHaveLength(1)
+        expect(dialog?.textContent).not.toContain('Diagnostics')
+      }
+    }
+    expect(dialog?.textContent).toContain('Preparing update')
+  })
+
+  it('cancels a pending download without starting installation', async () => {
+    let finish!: () => void
+    const download = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const cancel = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      download,
+      cancel,
+      apply,
+      status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+    })
+    act(() => root.render(<UpdateDialog />))
+    act(() => buttons('Download update')[0].click())
+    expect(buttons('Cancel')[0].disabled).toBe(false)
+    await act(async () => buttons('Cancel')[0].click())
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(apply).not.toHaveBeenCalled()
+    await act(async () => finish())
+  })
+})
+
+describe('update check and download admission', () => {
+  it.each(['idle', 'up-to-date'] as const)(
+    'hides installation actions when an open offer changes to %s, even with a stale version',
+    (state) => {
+      useUpdateStore.setState({
+        status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+      })
+      act(() => root.render(<UpdateDialog />))
+      expect(buttons('Download update')).toHaveLength(1)
+      act(() => useUpdateStore.setState({ status: { ...useUpdateStore.getState().status, state } }))
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Download update')).toHaveLength(0)
+    }
+  )
+
+  it.each([undefined, '2'])(
+    'keeps an open dialog mounted during provider checks with target %s',
+    (latest) => {
+      useUpdateStore.setState({
+        status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+      })
+      act(() => root.render(<UpdateDialog />))
+      const dialog = document.querySelector('[role="dialog"]')
+      act(() =>
+        useUpdateStore.setState({
+          status: { state: 'checking', current: '1', latest, applyKind: 'restart' }
+        })
+      )
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(dialog?.textContent).toContain('Checking for updates…')
+      expect(dialog?.textContent).not.toContain('Ready to install')
+      expect(buttons('Download update')).toHaveLength(0)
+      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Cancel')[0].disabled).toBe(false)
+      act(() =>
+        useUpdateStore.setState({
+          status: { state: 'error', current: '1', applyKind: 'restart', error: 'Check failed' }
+        })
+      )
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(buttons('Retry')).toHaveLength(1)
+    }
+  )
+
+  it('rechecks a versionless failure instead of downloading or installing', async () => {
+    let finish!: () => void
+    const check = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const download = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      check,
+      download,
+      apply,
+      status: {
+        state: 'error',
+        current: '1',
+        applyKind: 'restart',
+        error: 'Synthetic check failure'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Synthetic check failure')
+    expect(document.body.textContent).not.toContain('Ready to install')
+    expect(buttons('Download update')).toHaveLength(0)
+    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Retry')).toHaveLength(1)
+    act(() => buttons('Retry')[0].click())
+    expect(buttons('Checking…')[0].disabled).toBe(true)
+    expect(check).toHaveBeenCalledOnce()
+    expect(download).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    await act(async () => finish())
+    expect(buttons('Retry')[0].disabled).toBe(false)
+  })
+
+  it('retries a failed transfer with a known release through download', async () => {
+    const check = vi.fn(async () => {})
+    const download = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      check,
+      download,
+      apply,
+      status: {
+        state: 'error',
+        current: '1',
+        latest: '2',
+        applyKind: 'restart',
+        error: 'Transfer failed'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    await act(async () => buttons('Download update')[0].click())
+    expect(download).toHaveBeenCalledOnce()
+    expect(check).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('keeps runtime recovery visible when the update provider reports checking', () => {
+    useUpdateStore.setState({
+      status: {
+        state: 'checking',
+        current: '1',
+        applyKind: 'restart',
+        recovery: r({ runtime: 'stopped-clean', canRecover: true })
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(buttons('Retry')).toHaveLength(1)
+  })
+})

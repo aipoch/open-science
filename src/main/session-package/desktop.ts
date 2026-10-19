@@ -793,7 +793,11 @@ export class SessionPackageDesktop {
                   this.options.service.importFrom(
                     archive,
                     signal,
-                    this.operations.report,
+                    // Service progress starts after confirmation; final validation belongs to import.
+                    (progress) =>
+                      this.operations.report(
+                        progress.phase === 'validating' ? { phase: 'importing' } : progress
+                      ),
                     async (preview, budgetSignal) => {
                       await this.operations.waitForImport(
                         { preview, filename: basename(input) },

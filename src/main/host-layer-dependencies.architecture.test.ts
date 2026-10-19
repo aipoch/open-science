@@ -10,6 +10,11 @@ import { loadModuleImpactManifest } from '../../scripts/ci/load-module-impact.mj
 
 type Graph = Map<string, Set<string>>
 const projectRoot = resolve(import.meta.dirname, '../..')
+const lowerLayerBoundaries = new Map([
+  ['notebook_execution_model', 'notebook_application'],
+  ['settings_repository', 'settings_operations'],
+  ['host_runtime_ports', 'main_cli_install']
+])
 
 function cycles(graph: Graph): string[] {
   const visited = new Set<string>()
@@ -106,6 +111,16 @@ function hostGraphs(overrides: Record<string, string> = {}): {
     consumerModules,
     violations: [
       ...boundaryViolations(boundaryEdges, manifest.modules),
+      ...[...boundaryEdges].flatMap(([source, targets]) => {
+        const upperOwner = lowerLayerBoundaries.get(owners.get(source) ?? '')
+        return upperOwner
+          ? [...targets]
+              .filter((target) => owners.get(target) === upperOwner)
+              .map(
+                (target) => `${source} -> ${target}: lower layer imports application implementation`
+              )
+          : []
+      }),
       ...[...production]
         .filter((path) => dependencyLayer(path) === 'foundation')
         .flatMap((path) => {
@@ -124,12 +139,27 @@ describe('host dependency layers', () => {
   it('checks resolved package and preload targets outside the host cycle graph', () => {
     const graphs = hostGraphs({
       'src/shared/in-flight-promise.ts': "import '@aipoch/diagnostics'",
-      'src/shared/bootstrap.ts': "import '../preload/index'"
+      'src/shared/bootstrap.ts': "import '../preload/index'",
+      'src/main/notebook/session-aggregate.ts':
+        "import type { TransientViewImage } from './host-view-image-service'",
+      'src/main/settings/repository.ts':
+        "import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'",
+      'src/main/desktop-interaction.ts':
+        "export type Environment = import('./cli-install/launcher').CliLauncherEnv"
     })
     expect(graphs.violations).toEqual(
       expect.arrayContaining([
         expect.stringContaining('src/shared/in-flight-promise.ts -> packages/diagnostics/'),
-        expect.stringContaining('src/shared/bootstrap.ts -> src/preload/index.ts')
+        expect.stringContaining('src/shared/bootstrap.ts -> src/preload/index.ts'),
+        expect.stringContaining(
+          'src/main/notebook/session-aggregate.ts -> src/main/notebook/host-view-image-service.ts'
+        ),
+        expect.stringContaining(
+          'src/main/settings/repository.ts -> src/main/settings/local-shell-runtime-mutation.ts'
+        ),
+        expect.stringContaining(
+          'src/main/desktop-interaction.ts -> src/main/cli-install/launcher.ts'
+        )
       ])
     )
   }, 180_000)

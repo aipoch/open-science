@@ -102,6 +102,58 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('reads current candidate states without changing receipts and follows import, merge, and deletion', async () => {
+    const catalog = await setup()
+    const receipt = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const request = { candidateIds: [receipt.id, receipt.id, 'missing'] }
+    expect(await catalog.getCandidateStates(request)).toEqual({
+      candidates: [{ candidateId: receipt.id, state: 'pending' }]
+    })
+    const imported = await catalog.transact({ kind: 'accept-candidate', candidateId: receipt.id })
+    expect(await catalog.getCandidateStates(request)).toEqual({
+      candidates: [{ candidateId: receipt.id, state: 'accepted', acceptedItemId: imported.id }]
+    })
+    const survivor = await catalog.transact({
+      kind: 'create-item',
+      item: { ...candidate().item, identifiers: [], title: 'Survivor' }
+    })
+    const reviewed = await Promise.all([survivor.id, imported.id].map((id) => catalog.get(id)))
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: survivor.id,
+      duplicateIds: [imported.id],
+      expectedMetadataRevision: reviewed[0]!.metadataRevision,
+      expectedItems: reviewed.map((view) => ({
+        id: view!.id,
+        metadataRevision: view!.metadataRevision,
+        updatedAt: view!.updatedAt
+      })),
+      item: reviewed[0]!.item
+    })
+    expect(await catalog.getCandidateStates(request)).toEqual({
+      candidates: [{ candidateId: receipt.id, state: 'accepted', acceptedItemId: survivor.id }]
+    })
+    await client!.literatureItem.update({
+      where: { id: survivor.id },
+      data: { deletedAt: new Date() }
+    })
+    expect(await catalog.getCandidateStates(request)).toEqual({
+      candidates: [{ candidateId: receipt.id, state: 'accepted' }]
+    })
+    expect(receipt.state).toBe('pending')
+    await client!.literatureInboxCandidate.delete({ where: { id: receipt.id } })
+    expect(await catalog.getCandidateStates(request)).toEqual({ candidates: [] })
+  })
+
+  it('reports dismissed candidates without inventing a Library destination', async () => {
+    const catalog = await setup()
+    const receipt = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: receipt.id })
+    expect(await catalog.getCandidateStates({ candidateIds: [receipt.id] })).toEqual({
+      candidates: [{ candidateId: receipt.id, state: 'dismissed' }]
+    })
+  })
+
   it('creates one reference for concurrent Add PDF requests and rolls back a failed new reference', async () => {
     const catalog = await setup()
     const checksum = 'd'.repeat(64)

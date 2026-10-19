@@ -89,6 +89,150 @@ const numberedDeclaration = (declaration: string): ProcedureInput['page'] => ({
   }))
 })
 
+const closedNumberedProcedure = (): ProcedureInput['page'] => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  lines: [
+    ['Algorithm 1 Accumulate', 50, 202],
+    ['1: Precompute samples', 55, 230],
+    ['2: for sample in batch do', 55, 246],
+    ['3: Accumulate total ← total + sample', 55, 262],
+    ['4: end for', 55, 278],
+    ['Independent adjacent paragraph.', 320, 230]
+  ].map(([text, x, y]) => ({
+    text: text as string,
+    x: x as number,
+    y: y as number,
+    width: Math.min(230, (text as string).length * 5),
+    height: 10,
+    fontSize: 10
+  })),
+  graphicsBounds: [
+    [50, 200, 300, 204],
+    [50, 215, 300, 219],
+    [50, 295, 300, 299]
+  ].map((rect) => ({
+    kind: 'path',
+    normalizedRect: rect.map((value, n) => value / (n % 2 ? 800 : 600))
+  }))
+})
+
+it('retains a complete numbered accumulation loop without inventing input or return labels', () => {
+  const page = closedNumberedProcedure(),
+    before = structuredClone(page)
+  expect(findAlgorithmCandidates(page)).toEqual([
+    {
+      caption: { page: 1, lines: ['Algorithm 1 Accumulate'], rect: [50, 202, 160, 212] },
+      rect: [48, 198, 302, 301]
+    }
+  ])
+  expect(page).toEqual(before)
+})
+
+it.each(['for', 'while'])(
+  'retains matching explicit %s closures and native trailing comments',
+  (kind) => {
+    const page = closedNumberedProcedure()
+    page.lines[2].text = `2: ${kind} sample in batch do ▷ Parallel execution`
+    page.lines[4].text = `4: end ${kind}`
+    expect(findAlgorithmCandidates(page)[0]?.rect).toEqual([48, 198, 302, 301])
+  }
+)
+
+const nestedNumberedProcedure = (): ProcedureInput['page'] => {
+  const page = closedNumberedProcedure()
+  const statements = [
+    'Precompute samples',
+    'for sample in batch do',
+    'if sample is first then',
+    'Assign total ← sample',
+    'else',
+    'Accumulate total ← total + sample',
+    'end if',
+    'for field in sample do',
+    'Evaluate field',
+    'end for',
+    'end for',
+    'Emit total'
+  ]
+  page.lines = [
+    page.lines[0],
+    ...statements.map((statement, n) => ({
+      text: `${n + 1}: ${statement}`,
+      x: n < 9 ? 55 : 50,
+      y: 230 + n * 16,
+      width: 230,
+      height: 10,
+      fontSize: 10
+    })),
+    page.lines.at(-1)!
+  ]
+  page.graphicsBounds[2].normalizedRect = [50 / 600, 433 / 800, 300 / 600, 437 / 800]
+  return page
+}
+
+it('retains nested numbered loops and both conditional branches with a right-aligned ordinal gutter', () => {
+  expect(findAlgorithmCandidates(nestedNumberedProcedure())[0]?.rect).toEqual([48, 198, 302, 439])
+})
+
+it.each(['crossed', 'double-else', 'orphan-else', 'empty-else', 'missing-then', 'missing-do'])(
+  'rejects malformed nested numbered control flow: %s',
+  (fault) => {
+    const page = nestedNumberedProcedure()
+    if (fault === 'crossed') page.lines[7].text = '7: end for'
+    if (fault === 'double-else') page.lines[6].text = '6: else'
+    if (fault === 'orphan-else') page.lines[1].text = '1: else'
+    if (fault === 'empty-else') page.lines[6].text = '6: end if'
+    if (fault === 'missing-then') page.lines[3].text = '3: if sample is first'
+    if (fault === 'missing-do') page.lines[2].text = '2: for sample in batch'
+    expect(findAlgorithmCandidates(page)).toEqual([])
+  }
+)
+
+it.each([
+  'title',
+  'listing',
+  'opening',
+  'divider',
+  'closing',
+  'sequence',
+  'duplicate',
+  'unclosed',
+  'wrong-close',
+  'empty-body',
+  'prose',
+  'gutter',
+  'detached-prose',
+  'crossing-font',
+  'competing-title'
+])('requires a complete numbered native loop proof: %s', (missing) => {
+  const page = closedNumberedProcedure()
+  if (missing === 'title') page.lines[0].text = 'Native procedure'
+  if (missing === 'listing') page.lines[0].text = 'Listing 1 Accumulate'
+  if (missing === 'opening') page.graphicsBounds.shift()
+  if (missing === 'divider') page.graphicsBounds.splice(1, 1)
+  if (missing === 'closing') page.graphicsBounds.pop()
+  if (missing === 'sequence') page.lines[3].text = '8: Accumulate total ← total + sample'
+  if (missing === 'duplicate') page.lines[3].text = '2: Accumulate total ← total + sample'
+  if (missing === 'unclosed') page.lines[4].text = '4: Continue computation'
+  if (missing === 'wrong-close') page.lines[4].text = '4: end while'
+  if (missing === 'empty-body') page.lines[3].text = '3: end for'
+  if (missing === 'prose') {
+    page.lines[2].text = '2: The samples differ'
+    page.lines[3].text = '3: Further explanation follows'
+    page.lines[4].text = '4: A final observation'
+  }
+  if (missing === 'gutter') page.lines[3].x += 15
+  if (missing === 'detached-prose')
+    page.lines.push({ ...page.lines[1], text: 'Independent native body paragraph', y: 284 })
+  if (missing === 'crossing-font')
+    page.lines.push({ ...page.lines[1], text: 'Foreign', x: 295, width: 30 })
+  if (missing === 'competing-title')
+    page.lines.push({ ...page.lines[1], text: 'Algorithm 2 Adjacent routine', y: 240 })
+  expect(findAlgorithmCandidates(page)).toEqual([])
+})
+
 it.each(['Require', 'Ensure', 'Input', 'Output', 'Inputs', 'Outputs', 'inputs', 'outputs'])(
   'preserves the complete native numbered frame with a literal %s declaration',
   (label) => {

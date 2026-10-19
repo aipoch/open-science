@@ -4,7 +4,7 @@ import { sessionPackageImportAvailable } from '@/lib/session-package-capabilitie
 
 let importing = false
 
-export const importSessionPackage = async (projectId: string, file?: File): Promise<void> => {
+export const importSessionPackage = async (projectId?: string, file?: File): Promise<void> => {
   if (!sessionPackageImportAvailable()) return
   if (importing || packageOperationActive(usePackageOperationStore.getState().operation)) {
     usePackageOperationStore.getState().setOpen(true)
@@ -15,9 +15,10 @@ export const importSessionPackage = async (projectId: string, file?: File): Prom
   usePackageOperationStore.getState().setImportError(undefined)
   const previousId = usePackageOperationStore.getState().operation?.id
   try {
+    const target = projectId === undefined ? {} : { projectId }
     const result = await (file
-      ? window.api.sessions.importPackage({ projectId }, file)
-      : window.api.sessions.importPackage({ projectId }))
+      ? window.api.sessions.importPackage(target, file)
+      : window.api.sessions.importPackage(target))
     if (result) await useProjectStore.getState().loadProjects()
   } catch (caught) {
     // IPC rejection may reach the renderer before the terminal progress event. Read the

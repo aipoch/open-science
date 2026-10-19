@@ -459,8 +459,8 @@ export const sessionPackageCommandContracts = {
             .optional()
         ])
         .refine(
-          ([target, sourcePath]) => !sourcePath || Boolean(target?.projectId),
-          'Dropped packages require an existing Project.'
+          ([target, sourcePath]) => !sourcePath || !target?.projectName,
+          'Dropped packages require an existing Project or destination selection.'
         )
     ),
     validationCodec(sessionPackageRequestSchema.nullable())

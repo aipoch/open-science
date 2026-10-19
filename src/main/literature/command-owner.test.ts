@@ -71,6 +71,20 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('routes exact candidate reads through the catalog without publishing mutations', async () => {
+    const result = {
+      candidates: [{ candidateId: 'a', state: 'accepted', acceptedItemId: 'paper' }]
+    }
+    const getCandidateStates = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literatureCatalog: { getCandidateStates }
+    } as unknown as Services)
+    const request = { candidateIds: ['a'] }
+    await expect(owner.getCandidateStates(request)).resolves.toBe(result)
+    expect(getCandidateStates).toHaveBeenCalledWith(request)
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
+
   it('routes journal requests through the dataset service', async () => {
     const result = { datasets: [] }
     const journalAttributes = { run: vi.fn().mockResolvedValue(result) }

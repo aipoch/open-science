@@ -20,7 +20,7 @@ import {
   Toolbox,
   X
 } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -154,7 +154,6 @@ type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
 
 type SessionRowCallbacks = Pick<
   WorkspaceSidebarViewProps,
-  | 'onOpenSession'
   | 'onPreviewSession'
   | 'onRenameSession'
   | 'onRenameSessionTitle'
@@ -171,7 +170,10 @@ type SessionRowCallbacks = Pick<
   | 'onArchiveSession'
   | 'onDeleteSession'
   | 'onSessionActionsOpenChange'
->
+> & {
+  onOpenSession: (sessionId: string, clickDetail?: number) => void
+  onSessionContextMenu?: () => void
+}
 
 const sessionRowCallbacks = ({
   onOpenSession,
@@ -586,7 +588,10 @@ const SessionRow = memo(function SessionRow({
           .filter(Boolean)
           .join(' ') || undefined
       }
-      onClick={() => actions.onOpenSession(session.id)}
+      onClick={(event) => actions.onOpenSession(session.id, event.detail)}
+      onDoubleClick={() => {
+        if (canMutateConversations) actions.onRenameSession(session)
+      }}
     >
       <span className="inline-flex size-3 shrink-0 items-center justify-center" aria-hidden="true">
         <span
@@ -633,6 +638,7 @@ const SessionRow = memo(function SessionRow({
   const row = (
     <ActionMenuTarget<SessionActionId, SessionActionInvocation>
       targetId={`${SESSION_ACTION_TARGET_PREFIX}${session.id}`}
+      onContextMenu={actions.onSessionContextMenu}
       identityKey={sessionActionIdentityKey}
       catalog={SESSION_ACTION_CATALOG}
       recipe={SESSION_ACTION_RECIPE}
@@ -1339,6 +1345,15 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   const { t } = useTranslation()
   const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
   const mounted = useRef(true)
+  const pendingOpen = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const cancelPendingOpen = useCallback(() => {
+    clearTimeout(pendingOpen.current)
+    pendingOpen.current = undefined
+  }, [])
+  useLayoutEffect(
+    () => cancelPendingOpen,
+    [props.mobileMode, props.isMobileOpen, cancelPendingOpen]
+  )
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -1372,14 +1387,34 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
     }
   }
   const latestCallbacks = useRef(callbacks)
+  const latestProps = useRef(props)
   useLayoutEffect(() => {
     latestCallbacks.current = callbacks
+    latestProps.current = props
   })
   const rowActions = useMemo<SessionRowCallbacks>(
     () => ({
-      onOpenSession: (sessionId) => latestCallbacks.current.onOpenSession(sessionId),
+      onSessionContextMenu: cancelPendingOpen,
+      onOpenSession: (sessionId, clickDetail = 0) => {
+        cancelPendingOpen()
+        if (latestProps.current.mobileMode && clickDetail > 0) {
+          // Opening closes the mobile sidebar and makes it inert. Keep it interactive
+          // briefly so a second pointer click can reach the existing editor action.
+          pendingOpen.current = setTimeout(() => {
+            pendingOpen.current = undefined
+            if (latestProps.current.sessions.some((session) => session.id === sessionId)) {
+              latestCallbacks.current.onOpenSession(sessionId)
+            }
+          }, 300)
+        } else {
+          latestCallbacks.current.onOpenSession(sessionId)
+        }
+      },
       onPreviewSession: (sessionId) => latestCallbacks.current.onPreviewSession?.(sessionId),
-      onRenameSession: (session) => latestCallbacks.current.onRenameSession(session),
+      onRenameSession: (session) => {
+        cancelPendingOpen()
+        latestCallbacks.current.onRenameSession(session)
+      },
       onRenameSessionTitle: (session, title, expectedTitle) =>
         latestCallbacks.current.onRenameSessionTitle?.(session, title, expectedTitle),
       onDownloadArtifacts: (session) => latestCallbacks.current.onDownloadArtifacts(session),
@@ -1400,10 +1435,12 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       onTogglePin: (session) => latestCallbacks.current.onTogglePin(session),
       onArchiveSession: (session) => latestCallbacks.current.onArchiveSession?.(session),
       onDeleteSession: (session) => latestCallbacks.current.onDeleteSession(session),
-      onSessionActionsOpenChange: (sessionId, open) =>
+      onSessionActionsOpenChange: (sessionId, open) => {
+        if (open) cancelPendingOpen()
         latestCallbacks.current.onSessionActionsOpenChange?.(sessionId, open)
+      }
     }),
-    []
+    [cancelPendingOpen]
   )
   return (
     <>

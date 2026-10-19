@@ -49,7 +49,7 @@ import {
 } from './custom-server-identity'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
-import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch } from './provider-validation-state'
 import { sanitizePackageMirror } from './record-codec'

@@ -4,7 +4,8 @@ import {
   getPdfTranslationLayoutSnapshot,
   extractPdfTranslationSource,
   type PdfTranslationExtraction,
-  applyCachedPdfTableSources
+  applyCachedPdfTableSources,
+  applyCachedPdfFigureSources
 } from '@aipoch/pdf-translation/reader'
 
 // @vitest-environment jsdom
@@ -17,6 +18,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/pdf-translation/reader')>()),
   applyCachedPdfTableSources: vi.fn(),
+  applyCachedPdfFigureSources: vi.fn(),
   extractPdfTranslationSource: vi.fn()
 }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -77,6 +79,9 @@ describe('reader-owned PDF preparation', () => {
     document = { numPages: 2, fingerprints: ['test'], getPage: vi.fn() }
     vi.mocked(extractPdfTranslationSource).mockReset()
     vi.mocked(applyCachedPdfTableSources).mockReset()
+    vi.mocked(applyCachedPdfFigureSources)
+      .mockReset()
+      .mockImplementation(async ({ extraction }) => extraction)
     useTables = false
     checkpoint = undefined
     window.api = {
@@ -282,6 +287,51 @@ describe('reader-owned PDF preparation', () => {
     expect(current.state).toEqual({ status: 'ready', extraction: ready })
     expect(applyCachedPdfTableSources).toHaveBeenCalledOnce()
     expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+  })
+  it('publishes and pins figure ownership only after both cached stages complete', async () => {
+    useTables = true
+    const verified = {
+      ...ready,
+      source: createPdfTranslationSource({
+        ...ready.source,
+        units: ready.source.units.map((unit) => ({ ...unit, sourceOnly: true }))
+      })
+    }
+    const figure = Promise.withResolvers<PdfTranslationExtraction>()
+    const saveSnapshot = vi.fn().mockResolvedValue(undefined)
+    checkpoint = { key: 'legacy', attachmentVersionId: 'version' } as PdfTranslationCheckpoint
+    window.api.pdfTranslation = { saveSnapshot } as never
+    vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
+    vi.mocked(applyCachedPdfTableSources).mockResolvedValue(ready)
+    vi.mocked(applyCachedPdfFigureSources).mockReturnValue(figure.promise)
+    await render()
+    await act(async () => current.start())
+    expect(current.state.status).toBe('running')
+    expect(saveSnapshot).not.toHaveBeenCalled()
+    expect(vi.mocked(applyCachedPdfFigureSources).mock.calls[0][0]).toMatchObject({
+      extraction: ready,
+      document,
+      sourceIdentity,
+      sourceId: 'version'
+    })
+    await act(async () => figure.resolve(verified))
+    expect(current.state).toEqual({ status: 'ready', extraction: verified })
+    expect(saveSnapshot.mock.calls[0][0].snapshot.units[0].sourceOnly).toBe(true)
+    expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+  })
+  it('discards late figure verification after cancellation', async () => {
+    useTables = true
+    const figure = Promise.withResolvers<PdfTranslationExtraction>()
+    vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
+    vi.mocked(applyCachedPdfTableSources).mockResolvedValue(ready)
+    vi.mocked(applyCachedPdfFigureSources).mockReturnValue(figure.promise)
+    await render()
+    await act(async () => current.start())
+    const request = vi.mocked(applyCachedPdfFigureSources).mock.calls[0][0]
+    await act(async () => current.cancel())
+    expect(request.signal.aborted).toBe(true)
+    await act(async () => figure.resolve(ready))
+    expect(current.state.status).toBe('cancelled')
   })
   it.each(['cancel', 'switch', 'unmount'] as const)(
     'ignores late table verification after %s',

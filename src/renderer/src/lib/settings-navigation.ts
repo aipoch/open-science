@@ -142,8 +142,7 @@ export type SettingsRoute = {
 }[SettingsPanelId]
 
 export const INITIAL_SETTINGS_ROUTE: SettingsRoute = {
-  panel: 'model',
-  view: { kind: 'list' }
+  panel: 'general'
 }
 
 export const settingsPanelRoute = (panel: SettingsPanelId): SettingsRoute => {

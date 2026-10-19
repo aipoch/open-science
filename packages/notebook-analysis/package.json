@@ -29,7 +29,8 @@
     "build": "node tsc.cjs -p tsconfig.json",
     "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
     "test": "vitest run --config vitest.config.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "test:native": "vitest run --config test/native/vitest.config.ts"
   },
   "dependencies": {
     "@aipoch/notebook-syntax": "0.1.0",
