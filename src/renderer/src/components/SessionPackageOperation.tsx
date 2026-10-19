@@ -1,3 +1,7 @@
+import {
+  packageOperationPresentation,
+  primaryBrowserTransfer
+} from '@/lib/package-operation-presentation'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { PackageImportSelection } from './PackageImportSelection'
 import { PackageImportQueue } from './PackageImportQueue'
@@ -93,16 +97,17 @@ const operationStatus = (
     confirming: t('Waiting for import confirmation…'),
     cleaning: t('Cleaning temporary files…')
   }[operation.progress.phase]
+  const receiptState = primaryBrowserTransfer(operation)?.state
   const status = operation.browserReceiptOnly
-    ? operation.browserTransfers?.some((t) => t.state === 'preparing')
+    ? receiptState === 'preparing'
       ? t('Preparing to receive package…')
-      : operation.browserTransfers?.some((t) => t.state === 'failed')
+      : receiptState === 'failed'
         ? t('Package operation failed')
-        : operation.browserTransfers?.some((t) => t.state === 'receiving')
+        : receiptState === 'receiving'
           ? t('Receiving package…')
-          : operation.browserTransfers?.some((t) => t.state === 'waiting')
+          : receiptState === 'waiting'
             ? t('Waiting for browser…')
-            : operation.browserTransfers?.some((t) => t.state === 'cancelling')
+            : receiptState === 'cancelling'
               ? t('Cancelling and cleaning up…')
               : t('Transfer cancelled')
     : operation.state === 'succeeded'
@@ -299,7 +304,8 @@ export const PackageExportProgressButton = ({
   iconOnly?: boolean
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const { operation, open, dismissedId, setOpen } = usePackageOperationStore()
+  const { operation: sourceOperation, open, dismissedId, setOpen } = usePackageOperationStore()
+  const operation = packageOperationPresentation(sourceOperation)
   if (
     !operation ||
     operation.kind !== 'export' ||
@@ -343,7 +349,14 @@ export const PackageExportProgressButton = ({
 
 export const PackageOperationIndicator = (): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const { operation, open, dismissedId, setOpen, dismiss } = usePackageOperationStore()
+  const {
+    operation: sourceOperation,
+    open,
+    dismissedId,
+    setOpen,
+    dismiss
+  } = usePackageOperationStore()
+  const operation = packageOperationPresentation(sourceOperation)
   const [cancellingId, setCancellingId] = useState<string>()
   const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
   if (
@@ -429,7 +442,7 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           </Button>
         ) : null}
       </div>
-      {active && cancelError?.id === operation.id ? (
+      {active && !operation.browserReceiptOnly && cancelError?.id === operation.id ? (
         <ErrorNotice
           inline
           role="alert"
@@ -451,7 +464,8 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
   const riskId = useId()
-  const { operation, open, receive, setOpen, dismiss } = usePackageOperationStore()
+  const { operation: sourceOperation, open, receive, setOpen, dismiss } = usePackageOperationStore()
+  const operation = packageOperationPresentation(sourceOperation)
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
   const retryPending = useRef(false)
@@ -489,13 +503,13 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   useEffect(() => {
     if (
       isWeb ||
-      navigationIntent.current?.operationId !== operation?.id ||
-      operation?.state !== 'succeeded' ||
-      !operation.result?.imported ||
-      openedImport.current === operation.id
+      navigationIntent.current?.operationId !== sourceOperation?.id ||
+      sourceOperation?.state !== 'succeeded' ||
+      !sourceOperation.result?.imported ||
+      openedImport.current === sourceOperation.id
     )
       return
-    openedImport.current = operation.id
+    openedImport.current = sourceOperation.id
     const revision = navigationIntent.current?.revision
     if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
     void useProjectStore
@@ -503,12 +517,15 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       .loadProjects()
       .then(() => {
         if (revision !== useNavigationStore.getState().explicitNavigationRevision) return
-        openPackageSession(operation)
+        openPackageSession(sourceOperation)
       })
       .catch(() => undefined)
-  }, [operation, isWeb])
+  }, [sourceOperation, isWeb])
   if (isWeb || !operation) return null
-  const error = operationError?.id === operation.id ? operationError.message : undefined
+  const errorId = operation.browserReceiptOnly
+    ? (primaryBrowserTransfer(operation)?.id ?? operation.id)
+    : operation.id
+  const error = operationError?.id === errorId ? operationError.message : undefined
   const active = packageOperationActive(operation)
   const title =
     operation.kind === 'fork'
@@ -541,7 +558,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       if (navigationIntent.current?.operationId === operation.id)
         navigationIntent.current = undefined
       setError({
-        id: operation.id,
+        id: errorId,
         message: caught instanceof Error ? caught.message : String(caught)
       })
     }
@@ -576,7 +593,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       else await window.api.sessions.importPackage(operation.importTarget)
     } catch (caught) {
       setError({
-        id: operation.id,
+        id: errorId,
         message: caught instanceof Error ? caught.message : String(caught)
       })
     } finally {
@@ -674,7 +691,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       if (openPackageSession(operation)) dismiss()
     } catch (caught) {
       setError({
-        id: operation.id,
+        id: errorId,
         message: caught instanceof Error ? caught.message : String(caught)
       })
     }
@@ -709,7 +726,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   <div className="flex shrink-0 items-center gap-1">
                     <PackageImportQueue
                       key={operation.id}
-                      operation={operation}
+                      operation={sourceOperation!}
                       onAction={respond}
                     />
                     <TooltipProvider delayDuration={200}>
@@ -802,6 +819,25 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   <ErrorNotice inline role="alert" tone="amber" description={error} />
                 ) : null}
               </div>
+            ) : null}
+            {operation.browserReceiptOnly &&
+            sourceOperation?.cleanupPending &&
+            !packageOperationActive(sourceOperation) ? (
+              <ErrorNotice
+                inline
+                className="mx-5 mb-3"
+                role="status"
+                tone="amber"
+                title={sourceOperation.importFilename}
+                description={t(
+                  'Some temporary files could not be removed. Retry cleanup without repeating the transfer.'
+                )}
+                primaryButton={{
+                  label: t('Retry cleanup'),
+                  onClick: () =>
+                    void respond({ action: 'retry-cleanup', operationId: sourceOperation.id })
+                }}
+              />
             ) : null}
             {operation.browserReceiptOnly ? null : !selecting ? (
               <div
