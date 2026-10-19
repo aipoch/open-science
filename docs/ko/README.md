@@ -341,7 +341,7 @@ npm run pack:backend
 
 Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhost 웹 UI에 연결할 수 있습니다. 6자리 AIPOCH Open-Science 코드로 브라우저를 페어링하고 데스크톱에서 한 번 승인하면 루프백 서버를 직접 공개하지 않고 워크스페이스에 연결할 수 있습니다. 브라우저 신뢰는 취소할 수 있으며 모드 변경이나 서비스 종료는 활성 원격 세션을 즉시 무효화합니다.
 
-호스트를 켜고 온라인 상태로 유지하며 AIPOCH Open-Science와 Remote.It 에이전트를 실행하고, 로그인된 Remote.It 계정에 호스트를 추가해야 합니다. 브라우저 승인은 만료되며 취소할 수 있습니다. [원격 제어 가이드](../REMOTE_CONTROL.md)를 참고하세요.
+호스트를 켜고 온라인 상태로 유지하며 AIPOCH Open-Science와 Remote.It 에이전트를 실행하고, 로그인된 Remote.It 계정에 호스트를 추가해야 합니다. 브라우저 승인은 만료되며 취소할 수 있습니다. [원격 제어 가이드](../remote-control.md)를 참고하세요.
 
 ### 헤드리스 CLI 및 SDK
 

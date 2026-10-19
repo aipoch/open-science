@@ -341,7 +341,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 可透過 Remote.It 配對，從手機或平板電腦存取同一 localhost Web UI。使用六位數 AIPOCH Open-Science 代碼配對瀏覽器，並在桌面端核准一次；不必直接公開回送伺服器，工作區即可保持可存取。瀏覽器信任可撤銷，模式變更或服務關閉會立即讓作用中遠端會話失效。
 
-遠端存取需要主機保持開機與連網，持續執行 AIPOCH Open-Science 和 Remote.It 代理，並已將主機加入登入後的 Remote.It 帳戶。瀏覽器授權會到期，也可撤銷；詳見[遠端控制指南](../REMOTE_CONTROL.md)。
+遠端存取需要主機保持開機與連網，持續執行 AIPOCH Open-Science 和 Remote.It 代理，並已將主機加入登入後的 Remote.It 帳戶。瀏覽器授權會到期，也可撤銷；詳見[遠端控制指南](../remote-control.md)。
 
 ### 無介面 CLI 與 SDK
 

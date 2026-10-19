@@ -342,7 +342,7 @@ Desktop und Browser teilen denselben Dienst. Beim Beenden stoppt der Desktop nur
 
 Über die Remote.It-Kopplung ist dieselbe Localhost-Web-UI auch auf einem Smartphone oder Tablet erreichbar. Koppeln Sie einen Browser mit einem sechsstelligen AIPOCH Open-Science-Code und geben Sie ihn einmal auf dem Desktop frei. Der Arbeitsbereich bleibt erreichbar, ohne den Loopback-Server direkt freizugeben. Das Vertrauen für einen Browser kann widerrufen werden; Änderungen des Modus oder das Beenden des Dienstes machen aktive Remote-Sitzungen sofort ungültig.
 
-Der Host muss eingeschaltet und online bleiben; AIPOCH Open-Science und der Remote.It-Agent müssen laufen. Der Host muss einem angemeldeten Remote.It-Konto hinzugefügt sein. Browserfreigaben laufen ab und sind widerrufbar; siehe die [Fernzugriffsanleitung](../REMOTE_CONTROL.md).
+Der Host muss eingeschaltet und online bleiben; AIPOCH Open-Science und der Remote.It-Agent müssen laufen. Der Host muss einem angemeldeten Remote.It-Konto hinzugefügt sein. Browserfreigaben laufen ab und sind widerrufbar; siehe die [Fernzugriffsanleitung](../remote-control.md).
 
 ### Headless CLI und SDK
 

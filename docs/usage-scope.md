@@ -68,7 +68,7 @@ appropriate resource budget; local sandbox settings do not configure the remote 
 
 Remote browser access controls the workspace on the host computer. Approve pairing only for the
 browser you intend to authorize, avoid persistent trust on shared browser profiles, revoke unused
-browsers, and turn remote access off when it is not needed. Follow the [remote setup guide](REMOTE_CONTROL.md).
+browsers, and turn remote access off when it is not needed. Follow the [remote setup guide](remote-control.md).
 
 For unattended CLI/SDK work, review the effective permission profile and existing grants before
 starting. Stopping a client wait is not task cancellation. Confirm task or remote-job termination

@@ -342,7 +342,7 @@ El escritorio y el navegador comparten el servicio. Al salir, el escritorio deti
 
 Se puede acceder a la misma interfaz web de localhost desde un teléfono o una tableta mediante el emparejamiento de Remote.It. Empareje un navegador con un código de AIPOCH Open-Science de seis dígitos, apruébelo una vez en el escritorio y el espacio de trabajo permanecerá accesible sin exponer directamente el servidor de loopback. Puede revocar la confianza del navegador; además, los cambios de modo o el cierre del servicio invalidan de inmediato las sesiones remotas activas.
 
-El equipo anfitrión debe permanecer encendido y conectado, con AIPOCH Open-Science y el agente Remote.It en ejecución, y debe estar añadido a una cuenta de Remote.It con sesión iniciada. La autorización del navegador caduca y puede revocarse; consulte la [guía de control remoto](../REMOTE_CONTROL.md).
+El equipo anfitrión debe permanecer encendido y conectado, con AIPOCH Open-Science y el agente Remote.It en ejecución, y debe estar añadido a una cuenta de Remote.It con sesión iniciada. La autorización del navegador caduca y puede revocarse; consulte la [guía de control remoto](../remote-control.md).
 
 ### CLI y SDK sin interfaz gráfica
 

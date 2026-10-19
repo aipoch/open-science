@@ -344,7 +344,7 @@ un navigateur avec un code AIPOCH Open-Science à six chiffres, approuvez-le une
 reste joignable sans exposer directement le serveur en boucle locale. La confiance du navigateur est révocable, et
 les changements de mode ou l'arrêt du service invalident immédiatement les sessions distantes actives.
 
-L’ordinateur hôte doit rester allumé et connecté, avec AIPOCH Open-Science et l’agent Remote.It en cours d’exécution, et être ajouté à un compte Remote.It connecté. L’autorisation du navigateur expire et peut être révoquée ; voir le [guide du contrôle à distance](../REMOTE_CONTROL.md).
+L’ordinateur hôte doit rester allumé et connecté, avec AIPOCH Open-Science et l’agent Remote.It en cours d’exécution, et être ajouté à un compte Remote.It connecté. L’autorisation du navigateur expire et peut être révoquée ; voir le [guide du contrôle à distance](../remote-control.md).
 
 ### CLI et SDK headless
 

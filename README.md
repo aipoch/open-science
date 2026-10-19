@@ -341,7 +341,7 @@ a browser with a six-digit AIPOCH Open-Science code, approve it once on the desk
 stays reachable without exposing the loopback server directly. Browser trust is revocable, and
 mode changes or service shutdown immediately invalidate active remote sessions.
 
-Remote access requires the host to stay on and online, with AIPOCH Open-Science and the Remote.It agent running, and the host added to a signed-in Remote.It account. Browser approval has an expiry and can be revoked; see the [Remote control guide](docs/REMOTE_CONTROL.md).
+Remote access requires the host to stay on and online, with AIPOCH Open-Science and the Remote.It agent running, and the host added to a signed-in Remote.It account. Browser approval has an expiry and can be revoked; see the [Remote control guide](docs/remote-control.md).
 
 ### Headless CLI and SDK
 
@@ -415,7 +415,7 @@ Before opening a public issue, remove API Keys, tokens, private file paths, unpu
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-For remote access setup, see the [Remote control guide](docs/REMOTE_CONTROL.md).
+For remote access setup, see the [Remote control guide](docs/remote-control.md).
 
 For shipped, partial, and planned capabilities, see the [Capability Map](docs/ROADMAP.md#capability-map).
 

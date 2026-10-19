@@ -341,7 +341,7 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 
 可以通过 Remote.It 配对，从手机或平板电脑访问同一 localhost Web UI。使用六位 AIPOCH Open-Science 代码配对浏览器，并在桌面端批准一次；无需直接暴露回环服务器，工作区即可保持可访问。浏览器信任可撤销，模式变更或服务关闭会立即使活动远程会话失效。
 
-远程访问要求主机保持开机和联网，持续运行 AIPOCH Open-Science 与 Remote.It 代理，并已将主机添加到登录后的 Remote.It 账户。浏览器授权会到期，也可撤销；详见[远程控制指南](../REMOTE_CONTROL.md)。
+远程访问要求主机保持开机和联网，持续运行 AIPOCH Open-Science 与 Remote.It 代理，并已将主机添加到登录后的 Remote.It 账户。浏览器授权会到期，也可撤销；详见[远程控制指南](../remote-control.md)。
 
 ### 无界面 CLI 和 SDK
 
