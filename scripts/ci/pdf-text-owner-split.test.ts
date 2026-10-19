@@ -22,7 +22,10 @@ describe.each([
     : 'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'
   const uncertain = 'src/runtime.test.ts'
 
-  function fixture(implementation = 'export const joinPdfTextItems = () => "text"') {
+  function fixture(
+    implementation = 'export const joinPdfTextItems = () => "text"',
+    independentContract = false
+  ) {
     const cwd = mkdtempSync(join(tmpdir(), 'pdf-owner-split-'))
     roots.push(cwd)
     const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -50,6 +53,12 @@ describe.each([
       [consumer, uncertain, ...(!includeOwnerTest ? [test] : [])],
       [consumer, uncertain, ...(!includeOwnerTest ? [test] : [])]
     )
+    if (independentContract) {
+      original.testFiles.contract.push('src/independent.test.ts')
+      host.ownerPaths.push('src/independent.test.ts')
+      host.testFiles.owner.push('src/independent.test.ts')
+      put('src/independent.test.ts', "import './shared/other'")
+    }
     const save = (id: string, value: object) =>
       put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(value))
     const commit = () => {
@@ -144,6 +153,23 @@ describe.each([
         (path) => path !== consumer
       )
       state.target.testFiles.contract.push(consumer)
+      expect(state.inspect().ok).toBe(false)
+    })
+
+  it('keeps independent shared contracts on the full owner while preserving legacy split rules', () => {
+    const state = fixture(undefined, true)
+    expect(state.inspect().ok).toBe(!includeOwnerTest)
+  })
+
+  if (!includeOwnerTest)
+    it('rejects removing an independent contract from the remaining full owner', () => {
+      const state = fixture(undefined, true)
+      state.remaining.testFiles = {
+        ...state.remaining.testFiles,
+        contract: state.remaining.testFiles.contract.filter(
+          (path) => path !== 'src/independent.test.ts'
+        )
+      }
       expect(state.inspect().ok).toBe(false)
     })
 

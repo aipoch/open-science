@@ -601,7 +601,10 @@ function verifiedPureHelperSplit(
     if (inspectors.some((inspect) => !inspect(paths[0], new Set()).complete)) return new Set()
     const evidence = new Set(Object.values(target.testFiles).flat())
     const originalEvidence = Object.values(original.testFiles).flat()
-    if (originalEvidence.some((test) => !evidence.has(test))) return new Set()
+    // Legacy paired source/test exceptions retain their full evidence inheritance.
+    // The source-only fuzzy boundary uses the required composer suite and the complete
+    // reachability proof below; ordinary checks still protect the remaining full owner.
+    if (includeOwnerTest && originalEvidence.some((test) => !evidence.has(test))) return new Set()
     const owners = new Set(paths)
     // Keep the existing trusted package direction: host-only edits do not run independent
     // upstream package suites. Candidate registry changes are forbidden in this transition.
