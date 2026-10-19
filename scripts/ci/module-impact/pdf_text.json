@@ -2045,6 +2045,6 @@
       "test/renderer-failure-gate.test.ts"
     ]
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["notebook_network_sandbox"],
   "fallbackCapability": "shared_contract"
 }
