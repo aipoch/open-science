@@ -50,11 +50,6 @@
     "Quit app": "退出应用"
   },
   "native": {
-    "Updating Open-Science…": "正在更新 Open-Science…",
-    "Updating to version {{version}}": "正在更新至 {{version}} 版本",
-    "Open-Science will reopen automatically when the update is ready.": "更新就绪后，Open-Science 会自动重新打开。",
-    "Hide this window": "隐藏此窗口",
-    "Hiding this window does not stop the update.": "隐藏此窗口不会停止更新。",
     "Local State is in use by another process.": "Local State 正被其他进程占用。",
     "The Local State configuration file could not be read.": "无法读取 Local State 配置文件。",
     "The Local State configuration file is invalid.": "Local State 配置文件无效。",

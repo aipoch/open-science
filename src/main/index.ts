@@ -1,4 +1,3 @@
-import { acknowledgeMacUpdateReady } from './update/macos-install-progress'
 import { randomUUID } from 'node:crypto'
 import {
   inspectOwnedCrashpadProcesses,
@@ -747,20 +746,6 @@ async function startDesktop(): Promise<void> {
   const publishRuntimeStartup = (next: RuntimeStartupState): void => {
     runtimeStartupState = next
     broadcast(RUNTIME_STARTUP_CHANNELS.onStateChanged, next)
-    if (next.phase === 'ready' && process.platform === 'darwin') {
-      void acknowledgeMacUpdateReady({
-        profilePath,
-        applicationPath: process.execPath,
-        version: app.getVersion(),
-        waitForPresentation: () => waitForWindowsUpdateWindow(getMainWindow() ?? undefined),
-        verifyReady: (expected) => verifyDesktopRecoveryReadiness(client!, expected)
-      }).catch((error) =>
-        bootstrapLog.warn(
-          'Update readiness could not be acknowledged',
-          diagnosticErrorFields(error)
-        )
-      )
-    }
     if (next.phase === 'ready' && process.platform === 'win32' && !windowsUpdateAlreadyConfirmed) {
       // Also acknowledge a successful user-initiated startup repair after an initial failure.
       void acknowledgeWindowsUpdateReady({

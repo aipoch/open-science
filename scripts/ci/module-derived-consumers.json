@@ -12,28 +12,22 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "host_runtime_lifecycle": [
-      "scripts/macos-update-progress.test.ts",
-      "src/main/update/macos-install-progress.test.ts",
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
     "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
     "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
-      "scripts/macos-update-progress.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
-      "src/main/update/macos-install-progress.test.ts",
       "src/main/update/windows-install-progress.test.ts"
     ],
     "i18n_renderer_adapter": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "i18n_shared_runtime": [
-      "scripts/macos-update-progress.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
-      "src/main/update/macos-install-progress.test.ts",
       "src/main/update/windows-install-progress.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],

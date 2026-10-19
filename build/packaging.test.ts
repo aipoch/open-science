@@ -46,17 +46,12 @@ describe('desktop packaging preparation', () => {
         if (name === 'node:child_process')
           return {
             spawnSync: (_executable: string, args: string[]) => {
-              if (platform === 'darwin') {
-                expect(args).toContain('-framework')
-                expect(args).toContain('Cocoa')
-                expect(args).toContain(join(repoRoot, 'build/macos-update-progress/progress.m'))
-              } else
-                expect(args).toEqual([
-                  require.resolve('node-gyp/bin/node-gyp.js'),
-                  'rebuild',
-                  '--directory',
-                  join(repoRoot, 'build/windows-update-progress')
-                ])
+              expect(args).toEqual([
+                require.resolve('node-gyp/bin/node-gyp.js'),
+                'rebuild',
+                '--directory',
+                join(repoRoot, 'build/windows-update-progress')
+              ])
               calls.push('compile-progress')
               return { status: compilerStatus }
             }
@@ -82,7 +77,7 @@ describe('desktop packaging preparation', () => {
         arch: require('builder-util').Arch.x64,
         packager: { projectDir: repoRoot }
       })
-      expect(calls).toEqual(platform !== 'linux' ? ['compile-progress', 'stage'] : ['stage'])
+      expect(calls).toEqual(platform === 'win32' ? ['compile-progress', 'stage'] : ['stage'])
     }
   )
 

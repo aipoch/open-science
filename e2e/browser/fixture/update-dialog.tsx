@@ -37,6 +37,31 @@ useUpdateStore.setState({
     }
   }
 })
+if (params.has('continuous')) {
+  const status: UpdateStatus = {
+    state: 'available',
+    current: '1.0.11',
+    latest: '1.0.12',
+    applyKind: 'restart',
+    notes,
+    localizedNotes,
+    totalBytes: 314.5 * 1024 * 1024
+  }
+  useUpdateStore.setState({
+    status,
+    download: async () => {
+      useUpdateStore.setState({ status: { ...status, state: 'downloading', progress: 50 } })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      useUpdateStore.setState({ status: { ...status, state: 'ready' } })
+    },
+    apply: async () => {
+      useUpdateStore.setState({ status: { ...status, state: 'applying' } })
+    },
+    cancel: async () => {
+      useUpdateStore.setState({ status })
+    }
+  })
+}
 if (params.has('refused-restart')) {
   let status: UpdateStatus = {
     state: 'ready',

@@ -461,3 +461,65 @@ it('describes preparation failure without claiming an unknown installation resul
   expect(document.body.textContent).not.toContain('Installation result is unknown')
   expect(buttons('Cancel')).toHaveLength(1)
 })
+
+describe('continuous in-place update dialog', () => {
+  it('keeps one dialog and release notes from download through installation preparation', () => {
+    const base: UpdateStatus = {
+      state: 'available',
+      current: '1.0.11',
+      latest: '1.0.12',
+      applyKind: 'restart',
+      notes: 'Preserve the release notes throughout the update.',
+      totalBytes: 1024
+    }
+    useUpdateStore.setState({ status: base })
+    act(() => root.render(<UpdateDialog />))
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(buttons('Download update (1.0 KB)')).toHaveLength(1)
+    for (const state of ['downloading', 'error', 'ready', 'applying'] as const) {
+      act(() =>
+        useUpdateStore.setState({
+          status: {
+            ...base,
+            state,
+            progress: 50,
+            error: state === 'error' ? 'Synthetic download failed' : undefined
+          }
+        })
+      )
+      expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(dialog?.textContent).toContain(base.notes)
+      if (state === 'ready') {
+        expect(buttons('Restart to update')).toHaveLength(1)
+        expect(dialog?.textContent).not.toContain('Diagnostics')
+      }
+    }
+    expect(dialog?.textContent).toContain('Preparing update')
+  })
+
+  it('cancels a pending download without starting installation', async () => {
+    let finish!: () => void
+    const download = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const cancel = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      download,
+      cancel,
+      apply,
+      status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+    })
+    act(() => root.render(<UpdateDialog />))
+    act(() => buttons('Download update')[0].click())
+    expect(buttons('Cancel')[0].disabled).toBe(false)
+    await act(async () => buttons('Cancel')[0].click())
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(apply).not.toHaveBeenCalled()
+    await act(async () => finish())
+  })
+})

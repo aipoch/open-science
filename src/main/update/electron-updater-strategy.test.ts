@@ -1549,7 +1549,8 @@ describe('ElectronUpdaterStrategy', () => {
   })
 })
 
-describe.each(['win32', 'darwin'] as const)('%s update window handoff', (platform) => {
+describe('Windows update window handoff', () => {
+  const platform = 'win32' as const
   it('keeps the application alive until the independent window acknowledges readiness', async () => {
     const updater = new FakeUpdater()
     let acknowledge!: (value: WindowsInstallProgress) => void
@@ -1575,7 +1576,7 @@ describe.each(['win32', 'darwin'] as const)('%s update window handoff', (platfor
       cancel: vi.fn()
     })
     await apply
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(platform !== 'win32', true)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
   it('refuses installation before backend shutdown when the independent window cannot start', async () => {

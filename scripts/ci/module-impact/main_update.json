@@ -49,12 +49,7 @@
     "src/main/update/installation-preparation.test.ts",
     "src/main/update/windows-update-handoff.ts",
     "src/main/update/windows-update-handoff.test.ts",
-    "src/main/update/windows-install-progress.test.ts",
-    "src/main/update/macos-install-progress.ts",
-    "src/main/update/macos-install-progress.test.ts",
-    "build/macos-update-progress/progress.m",
-    "scripts/macos-update-progress.test.ts",
-    "scripts/fixtures/macos-update-progress/parent.mjs"
+    "src/main/update/windows-install-progress.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -104,9 +99,7 @@
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
-      "src/main/update/windows-install-progress.test.ts",
-      "src/main/update/macos-install-progress.test.ts",
-      "scripts/macos-update-progress.test.ts"
+      "src/main/update/windows-install-progress.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

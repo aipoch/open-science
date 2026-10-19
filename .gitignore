@@ -118,5 +118,3 @@ __pycache__/
 
 # Playwright shard reports (merged by CI).
 blob-report/
-
-/build/macos-update-progress/open-science-update-progress

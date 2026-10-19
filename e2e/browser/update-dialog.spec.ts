@@ -31,7 +31,9 @@ test('recovers historical records only after confirmation in the update dialog',
   await recover.click()
   await confirmation.getByRole('button', { name: 'Back up records and retry', exact: true }).click()
   await expect(
-    dialog.getByText('Open-Science is stopping background tasks', { exact: false })
+    page
+      .getByRole('dialog', { name: 'Update', exact: true })
+      .getByText('Open-Science is stopping background tasks', { exact: false })
   ).toBeVisible()
   await expect(recover).toBeHidden()
 })
@@ -145,4 +147,51 @@ test('keeps short release notes compact', async ({ page }) => {
     1
   )
   expect((await dialog.boundingBox())!.height).toBeLessThan(450)
+})
+
+for (const locale of ['en', 'zh-Hans']) {
+  test(`keeps one update dialog and release notes through download and preparation (${locale})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/update-dialog.html?continuous&short&locale=${locale}`)
+    const dialog = page.getByRole('dialog')
+    const original = await dialog.elementHandle()
+    const notes = locale === 'en' ? 'Release note 1:' : '更新内容 1：'
+    await expect(dialog).toContainText(notes)
+    await dialog
+      .getByRole('button', { name: locale === 'en' ? /^Download update/ : /^下载更新/ })
+      .click()
+    const restart = dialog.getByRole('button', {
+      name: locale === 'en' ? 'Restart to update' : '重启以更新',
+      exact: true
+    })
+    await expect(restart).toBeVisible()
+    expect(
+      await original!.evaluate((node) => node === document.querySelector('[role="dialog"]'))
+    ).toBe(true)
+    await expect(dialog).toContainText(notes)
+    await expect(dialog.locator('details')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`unified-update-ready-${locale}.png`) })
+    await restart.click()
+    await expect(dialog).toContainText(locale === 'en' ? 'Preparing update' : '正在准备更新')
+    await expect(dialog).toContainText(notes)
+    expect(
+      await original!.evaluate((node) => node === document.querySelector('[role="dialog"]'))
+    ).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`unified-update-preparing-${locale}.png`) })
+  })
+}
+
+test('keeps the shared restart action visible with long notes in a small window', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 560, height: 420 })
+  await page.goto('/update-dialog.html?continuous')
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: /^Download update/ }).click()
+  const restart = dialog.getByRole('button', { name: 'Restart to update', exact: true })
+  await expect(restart).toBeInViewport()
+  await expect(dialog).toContainText('Release note 35:')
+  await dialog.getByText('Release note 35:', { exact: false }).scrollIntoViewIfNeeded()
+  await expect(restart).toBeInViewport()
 })

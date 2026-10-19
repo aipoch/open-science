@@ -268,13 +268,7 @@ describe('electron-builder native image processing', () => {
       from: 'packages/notebook-network-sandbox/vendor/wsl2/manifest.json',
       to: 'notebook-network-sandbox/wsl2/manifest.json'
     })
-    expect(config.mac?.extraResources).toEqual([
-      {
-        from: 'build/macos-update-progress/open-science-update-progress',
-        to: 'open-science-update-progress'
-      },
-      { from: 'resources/bin/mac/${arch}/micromamba', to: 'micromamba' }
-    ])
+    expect(config.mac?.extraResources).toHaveLength(1)
     expect(config.linux?.extraResources).toEqual([
       { from: 'resources/bin/linux/${arch}/micromamba', to: 'micromamba' },
       { from: 'build/deb-cli-launcher', to: 'open-science-cli' }

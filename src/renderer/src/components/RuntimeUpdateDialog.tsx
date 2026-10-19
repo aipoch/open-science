@@ -15,13 +15,18 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useUpdateStore } from '@/stores/update-store'
+import { DownloadProgressLine } from './DownloadProgressLine'
+import { UpdateReleaseNotes } from './UpdateReleaseNotes'
+import { ExternalTextLink } from './ExternalTextLink'
+import { APP } from '../../../shared/app-config'
+import { formatBytes } from '../../../shared/update'
 import { RuntimeDiagnostics } from './runtime-diagnostics'
 import { runtimeUpdateCopy } from './runtime-update-copy'
 import { progressStates, recoveryStates, runtimeUpdateState } from './runtime-update-view'
 
 export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { status, isDialogOpen, apply, cancel, recheck, recover } = useUpdateStore()
+  const { status, isDialogOpen, apply, cancel, recheck, recover, download } = useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
   const [forceConfirmation, setForceConfirmation] = useState(false)
   const forceIntent = useRef(false)
@@ -47,6 +52,12 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const id = runtimeUpdateState(status)
   const recovery = recoveryStates.has(id)
   const progress = progressStates.has(id)
+  const downloading = status.state === 'downloading'
+  const needsDownload =
+    ['available', 'downloading', 'error'].includes(status.state) &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation
   const busy = requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
@@ -57,7 +68,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     if (!isDialogOpen || completed) forceIntent.current = false
   }, [isDialogOpen, completed])
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
-  const canCancel = !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? !busy)
+  const canCancel =
+    !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? (needsDownload || !busy))
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
@@ -213,31 +225,54 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </section>
             ) : (
               <>
-                <ErrorNotice
-                  role={blocked || recovery ? 'alert' : 'status'}
-                  level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
-                  icon={busy ? LoaderCircle : AlertTriangle}
-                  iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
-                  title={
-                    legacyRecords
-                      ? t('Old Shell launch records are blocking this update.')
-                      : copy.title
-                  }
-                  description={
-                    legacyRecords
-                      ? t(
-                          'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
-                        )
-                      : copy.description
-                  }
-                />
+                {!needsDownload && !blocked && !recovery && !legacyRecords ? (
+                  <div role="status" className="mb-4 space-y-1 text-sm">
+                    <p className="font-medium">{copy.title}</p>
+                    <p className="text-muted-foreground">
+                      {status.state === 'applying' && !status.recovery
+                        ? t(
+                            "Open-Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
+                          )
+                        : copy.description}
+                    </p>
+                  </div>
+                ) : !needsDownload ? (
+                  <ErrorNotice
+                    role={blocked || recovery ? 'alert' : 'status'}
+                    level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
+                    icon={busy ? LoaderCircle : AlertTriangle}
+                    iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
+                    title={
+                      legacyRecords
+                        ? t('Old Shell launch records are blocking this update.')
+                        : copy.title
+                    }
+                    description={
+                      legacyRecords
+                        ? t(
+                            'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+                          )
+                        : copy.description
+                    }
+                  />
+                ) : null}
                 {status.error ? (
                   <ErrorNotice
                     className="mt-3"
                     role="alert"
                     level="warning"
-                    description={t('The operation could not be completed. Try again.')}
-                  />
+                    description={
+                      needsDownload
+                        ? redactSensitiveText(status.error)
+                        : t('The operation could not be completed. Try again.')
+                    }
+                  >
+                    {needsDownload ? (
+                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
+                        {t('Download manually')}
+                      </ExternalTextLink>
+                    ) : null}
+                  </ErrorNotice>
                 ) : null}
                 {recoveryAttempted && recovery && !busy && !status.error ? (
                   <p role="status" className="mt-3 text-sm">
@@ -269,7 +304,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     ))}
                   </ul>
                 ) : null}
-                <RuntimeDiagnostics text={diagnostics} />
+                {blocked || recovery || status.error ? (
+                  <RuntimeDiagnostics text={diagnostics} />
+                ) : null}
                 {id === 'S04' && status.canForce === true ? (
                   <details className="mt-4 text-sm">
                     <summary>{t('More options')}</summary>
@@ -282,9 +319,26 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     </Button>
                   </details>
                 ) : null}
+                {!recovery ? <UpdateReleaseNotes status={status} /> : null}
               </>
             )}
           </div>
+          {downloading ? (
+            <div className="shrink-0 px-5 pb-5">
+              <DownloadProgressLine
+                progress={
+                  status.downloadProgress ?? {
+                    phase: 'downloading',
+                    transferred: status.downloadedBytes ?? 0,
+                    total: status.totalBytes,
+                    percent: status.progress ?? 0,
+                    bytesPerSecond: 0,
+                    attempt: 0
+                  }
+                }
+              />
+            </div>
+          ) : null}
           {confirming ? (
             <div className={`${dialogFooterClassName} shrink-0`}>
               <Button variant="ghost" onClick={cancelConfirmation}>
@@ -349,21 +403,30 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                   ) : null}
                   {!progress && !recovery && id !== 'S29' ? (
                     <Button
-                      disabled={busy}
+                      disabled={busy || downloading}
                       onClick={() => {
-                        if (status.legacyShellRecovery)
+                        if (needsDownload) void request(download)
+                        else if (status.legacyShellRecovery)
                           setLegacyToken(status.legacyShellRecovery.token)
                         else if (blocked && !cli) void request(recheck)
                         else void request(() => apply())
                       }}
                     >
-                      {busy
-                        ? t('Checking…')
-                        : status.legacyShellRecovery
-                          ? t('Continue')
-                          : blocked && !cli
-                            ? t('Retry')
-                            : t('Restart to update')}
+                      {needsDownload
+                        ? downloading || requestPending
+                          ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
+                          : status.totalBytes
+                            ? t('Download update ({{size}})', {
+                                size: formatBytes(status.totalBytes)
+                              })
+                            : t('Download update')
+                        : busy
+                          ? t('Checking…')
+                          : status.legacyShellRecovery
+                            ? t('Continue')
+                            : blocked && !cli
+                              ? t('Retry')
+                              : t('Restart to update')}
                     </Button>
                   ) : null}
                 </>
