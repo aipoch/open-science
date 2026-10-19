@@ -253,6 +253,12 @@ The generated `scripts/ci/module-derived-consumers.json` supplements explicit mo
 selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
 missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+An unrelated documentation-only diff (root Markdown or Markdown, text and images under `docs/`)
+does not reject an inherited stale index when recomputation proves identical derived consumers
+before and after the change. This exemption is computed from the Git merge base, checks both sides
+of renames, and excludes resources registered in module evidence or runtime-consumer declarations.
+Image additions/deletions that change import resolution still fail. Source, configuration, registration, index
+and mixed changes retain strict validation. Standalone index audits remain unconditional.
 Older bases retain legacy rules; existing explicit contracts are not retired automatically.
 Static resource imports also contribute consumer evidence. Current resource consumers are declared
 explicitly in their owning modules so trusted-base verification can preserve coverage while the

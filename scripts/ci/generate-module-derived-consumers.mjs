@@ -84,6 +84,45 @@ export function checkDerivedConsumersAtRevision(revision, cwd = process.cwd()) {
   checkDerivedConsumers(source, loadModuleImpactManifestAtRevision(revision, { cwd }))
 }
 
+function onlyUnrelatedDocumentationChanged(base, head, cwd) {
+  const git = (...args) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  // Disable rename detection so both the old and new paths must qualify.
+  const paths = git('diff', '--no-renames', '--name-only', '-z', base, head)
+    .split('\0')
+    .filter(Boolean)
+  if (
+    !paths.length ||
+    !paths.every((path) =>
+      /^(?:[^/]+\.md|docs\/.*\.(?:md|txt|svg|png|jpe?g|gif|webp|avif|ico))$/.test(path)
+    )
+  )
+    return false
+
+  // These manifests cannot change in a documentation-only diff. Registered resources
+  // and runtime intermediates remain graph inputs even when they live under docs/.
+  const manifest = loadModuleImpactManifestAtRevision(base, { cwd })
+  const runtime = JSON.parse(git('show', `${base}:scripts/ci/module-runtime-consumers.json`))
+  const inputs = new Set([
+    ...Object.values(manifest.modules).flatMap((module) => [
+      ...module.ownerPaths,
+      ...module.interfacePaths,
+      ...Object.values(module.testFiles).flat()
+    ]),
+    ...Object.entries(runtime).flatMap(([target, consumers]) => [target, ...consumers])
+  ])
+  if (paths.some((path) => inputs.has(path))) return false
+
+  // An added/deleted image can shadow a TypeScript import (icon.svg.ts). Prove that
+  // generated memberships are unchanged instead of assuming docs paths are inert.
+  const expectedAt = (revision) =>
+    generateDerivedConsumers(
+      manifest,
+      consumerDependencyGraph(sourceSnapshot(revision, cwd), Object.entries(runtime)).reverse
+    )
+  return isDeepStrictEqual(expectedAt(base), expectedAt(head))
+}
+
 // Older bases without an index remain supported; once introduced it cannot disappear.
 export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
   const hasIndex = (revision) =>
@@ -95,7 +134,10 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
     cwd,
     encoding: 'utf8'
   }).trim()
-  if (hasIndex(mergeBase) || hasIndex(head)) checkDerivedConsumersAtRevision(head, cwd)
+  if (hasIndex(mergeBase) || hasIndex(head)) {
+    if (onlyUnrelatedDocumentationChanged(mergeBase, head, cwd)) return
+    checkDerivedConsumersAtRevision(head, cwd)
+  }
 }
 
 export function workingConsumerSource(cwd = process.cwd()) {
