@@ -132,3 +132,50 @@ it('requires three complete compound fields in each record for a two-record tabl
   x.items = x.items.filter((i: { rect: number[] }) => i.rect[0] < 375)
   expect(recoverNativeScalarRecordPlan(x.table, x.items, x.captions, x.rules)).toBeUndefined()
 })
+
+function closeDescriptorHeaders(): ReturnType<typeof JSON.parse> {
+  const x = fixture()
+  x.items[0].text = 'Case label'
+  x.items[0].rect[2] = 105
+  const cuts = [0, 108, 150, 250, 350, 500]
+  x.table.structure.objects = x.table.structure.objects
+    .filter((o: { label: string }) => o.label !== 'table column')
+    .concat(
+      cuts.slice(1).map((right, n) => ({
+        label: 'table column',
+        score: 1,
+        rect: [cuts[n], 0, right, 91]
+      }))
+    )
+  return x
+}
+
+it('does not erase a model descriptor boundary shared by complete header and body records', () => {
+  const x = closeDescriptorHeaders()
+  expect(recoverNativeScalarRecordPlan(x.table, x.items, x.captions, x.rules)).toBeUndefined()
+  const result = refineTable(x.table, x.items, x.captions, [], x.rules)
+  expect(result.grid.map((r: string[]) => r.slice(0, 2))).toEqual([
+    ['Case label', 'Mode'],
+    ['Alpha', 'Group'],
+    ['Beta', 'Group'],
+    ['Gamma', 'Group']
+  ])
+  expect(result.grid.every((r: string[]) => r.length === 5)).toBe(true)
+  expect(result.unassigned).toEqual([])
+})
+
+it.each(['no model boundary', 'header crosses boundary', 'record crosses boundary'])(
+  'does not infer an independent descriptor lane from proximity alone: %s',
+  (variant) => {
+    const x = closeDescriptorHeaders()
+    if (variant === 'no model boundary')
+      x.table.structure.objects = x.table.structure.objects.filter(
+        (o: { label: string; rect: number[] }) => !(o.label === 'table column' && o.rect[0] === 108)
+      )
+    if (variant === 'header crosses boundary') x.items[0].rect[2] = 109
+    if (variant === 'record crosses boundary') x.items[5].rect[2] = 109
+    expect(
+      recoverNativeScalarRecordPlan(x.table, x.items, x.captions, x.rules)?.grid.columns
+    ).toHaveLength(4)
+  }
+)

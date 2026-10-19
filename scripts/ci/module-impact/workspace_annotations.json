@@ -155,7 +155,8 @@
       "src/renderer/src/pages/workspace/annotations/AnnotationCards.test.tsx",
       "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
       "src/renderer/src/pages/workspace/annotations/annotation-reveal.test.ts",
-      "src/renderer/src/pages/workspace/annotations/annotation-transfer.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/annotations/annotation-transfer.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx"
     ]
   },
   "capabilityOverlays": [],

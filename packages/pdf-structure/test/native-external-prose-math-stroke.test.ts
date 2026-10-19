@@ -34,9 +34,14 @@ it.each([0.75, 1.7])(
     expect({ page, captions }).toEqual(before)
   }
 )
-it.each(['no upper prose', 'no lower prose', 'no independent column', 'unmatched typography'])(
-  'retains a remote native stroke without independent bracketed prose evidence: %s',
-  (missing) => {
+it.each([
+  { missing: 'no upper prose', scale: 0.75 },
+  { missing: 'no lower prose', scale: 1.7 },
+  { missing: 'no independent column', scale: 0.75 },
+  { missing: 'unmatched typography', scale: 1.7 }
+])(
+  'retains a remote native stroke without independent bracketed prose evidence: $missing at $scale',
+  ({ missing, scale }) => {
     const { page, captions } = fixture()
     if (missing === 'no upper prose')
       page.lines = page.lines.filter((l: ReturnType<typeof JSON.parse>) => l.x < 300 || l.y > 195)
@@ -46,9 +51,14 @@ it.each(['no upper prose', 'no lower prose', 'no independent column', 'unmatched
     if (missing === 'unmatched typography')
       for (const l of page.lines.filter((l: ReturnType<typeof JSON.parse>) => l.x > 300))
         l.fontSize += 2
+    page.width *= scale
+    page.height *= scale
+    for (const line of page.lines)
+      for (const key of ['x', 'y', 'width', 'height', 'fontSize']) line[key] *= scale
+    for (const caption of captions) caption.rect = caption.rect.map((v: number) => v * scale)
     const before = structuredClone({ page, captions }),
       [figure] = associateFigures(page, captions, [])
-    expect(figure.rect[2]).toBeGreaterThan(400)
+    expect(figure.rect[2]).toBeGreaterThan(400 * scale)
     expect({ page, captions }).toEqual(before)
   }
 )

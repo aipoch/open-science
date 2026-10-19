@@ -5023,6 +5023,75 @@ export function populateTableCellText({
           anchor.height * 0.02
       )
     })
+  // Angular notation may overprint a raised prime on the decimal point.
+  // Its whole, uniquely owned decimal/prime/fraction triplet establishes order
+  // without enlarging the generic script gap or ordinary line tolerance.
+  const angularMarks = new Map()
+  for (const cell of cells) {
+    const owned = items
+      .filter((i) => assignments.get(i) === cell)
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (owned.length !== 3) continue
+    const [base, mark, fraction] = owned
+    if (
+      !/^\d+\.$/u.test(base.text) ||
+      !/^(?:′{1,2}|″)$/u.test(mark.text) ||
+      !/^\d+$/u.test(fraction.text) ||
+      !owned.every(validScriptBox) ||
+      Math.abs(base.baseline - fraction.baseline) >= 0.02 ||
+      Math.abs(base.height - fraction.height) >= 0.02 ||
+      mark.height >= base.height * 0.8 ||
+      mark.baseline >= base.baseline ||
+      mark.baseline <= base.rect[1] ||
+      mark.rect[0] <= base.rect[0] ||
+      mark.rect[0] >= base.rect[2] ||
+      mark.rect[2] <= base.rect[2] ||
+      mark.rect[2] > fraction.rect[0] ||
+      fraction.rect[0] - mark.rect[2] > base.height * 0.15 ||
+      rules.some(
+        (r) =>
+          r[0] === r[2] &&
+          r[0] > base.rect[0] &&
+          r[0] < fraction.rect[2] &&
+          r[1] < base.baseline &&
+          r[3] > mark.rect[1]
+      )
+    )
+      continue
+    const identities = owned.map((i) => i.sourceItem)
+    if (
+      identities.some(
+        (source, n) =>
+          !source ||
+          source.text !== owned[n].text ||
+          !Number.isSafeInteger(source.pageNumber) ||
+          source.pageNumber < 1 ||
+          !Number.isSafeInteger(source.index) ||
+          source.index < 0 ||
+          owned[n].sourceSegment ||
+          owned[n].sourceToken ||
+          pageItems.some(
+            (i) =>
+              i !== owned[n] &&
+              [
+                i.sourceItem,
+                i.sourceSegment,
+                i.sourceToken,
+                i.sourceToken?.sourceItem,
+                i.sourceToken?.sourceSegment
+              ].some(
+                (origin) =>
+                  origin?.pageNumber === source.pageNumber && origin?.index === source.index
+              )
+          )
+      ) ||
+      new Set(identities.map((i) => `${i.pageNumber}:${i.index}`)).size !== 3 ||
+      new Set(identities.map((i) => i.pageNumber)).size !== 1
+    )
+      continue
+    angularMarks.set(mark, base)
+    repairs.push('native-overprinted-angular-mark-anchored')
+  }
   for (const item of items.filter((i) => i.horizontal).sort((a, b) => b.height - a.height)) {
     const matches = items
       .filter((anchor) => {
@@ -5033,6 +5102,7 @@ export function populateTableCellText({
           (isRaisedNoteMarker(item, anchor, cell) ||
             isRepeatedRaisedSymbol(item, anchor, cell) ||
             touchingRaisedDigits.get(item) === anchor ||
+            angularMarks.get(item) === anchor ||
             isAdjacentTableScript(item, anchor)) &&
           (item.rect[0] + item.rect[2]) / 2 >= cell.rect[0] &&
           ((item.rect[0] + item.rect[2]) / 2 <= cell.rect[2] ||

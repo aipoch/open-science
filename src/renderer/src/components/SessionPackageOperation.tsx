@@ -73,6 +73,86 @@ const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
   })
 }
 
+const isImportCheck = (operation: PackageOperationSnapshot): boolean =>
+  operation.kind === 'import' &&
+  operation.state === 'running' &&
+  ['preparing', 'copying', 'validating'].includes(operation.progress.phase)
+
+const PackageOperationSteps = ({
+  operation
+}: {
+  operation: PackageOperationSnapshot
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  if (
+    operation.kind === 'fork' ||
+    !['running', 'awaiting-selection'].includes(operation.state) ||
+    operation.progress.phase === 'cleaning'
+  )
+    return null
+  const importing = operation.kind === 'import'
+  const steps = importing
+    ? [t('Check package'), t('Review contents'), t('Import')]
+    : [t('Choose contents'), t('Create package'), t('Save package')]
+  const phase = operation.progress.phase
+  const current = importing
+    ? phase === 'importing'
+      ? 2
+      : phase === 'confirming'
+        ? 1
+        : 0
+    : phase === 'saving'
+      ? 2
+      : ['preparing', 'selecting', 'choosing-location'].includes(phase)
+        ? 0
+        : 1
+  return (
+    <ol
+      aria-label={t('Package steps')}
+      className="flex shrink-0 items-start px-5 pt-4 pb-1 text-xs"
+    >
+      {steps.map((label, index) => (
+        <li
+          key={label}
+          aria-current={index === current ? 'step' : undefined}
+          className="flex min-w-0 flex-auto items-start last:flex-none"
+        >
+          <span
+            className={cn(
+              'flex min-w-0 items-start gap-1.5 leading-5',
+              index === current ? 'font-medium text-foreground' : 'text-muted-foreground'
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
+                index === current
+                  ? 'bg-primary text-primary-foreground'
+                  : index < current
+                    ? 'bg-primary/10 text-primary'
+                    : 'bg-muted text-muted-foreground'
+              )}
+            >
+              {index < current ? <Check className="size-3" /> : index + 1}
+            </span>
+            <span className="min-w-0">{label}</span>
+          </span>
+          {index < steps.length - 1 ? (
+            <span
+              aria-hidden="true"
+              className={cn(
+                'mx-1.5 mt-2.5 h-px min-w-2 flex-1 sm:mx-3',
+                index < current ? 'bg-primary/30' : 'bg-border'
+              )}
+            />
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 const operationStatus = (
   operation: PackageOperationSnapshot,
   t: TFunction
@@ -94,11 +174,13 @@ const operationStatus = (
   }[operation.progress.phase]
   const status =
     operation.state === 'succeeded'
-      ? operation.cleanupPending
+      ? operation.cleanupPending && operation.kind === 'fork'
         ? t('Completed, cleanup pending')
         : operation.kind === 'fork'
           ? t('Fork completed')
-          : t('Package operation completed')
+          : operation.kind === 'import'
+            ? t('Session imported')
+            : t('Session package exported')
       : operation.state === 'failed'
         ? operation.kind === 'fork'
           ? t('Fork failed')
@@ -109,14 +191,17 @@ const operationStatus = (
             : t('Package operation cancelled')
           : operation.state === 'cancelling'
             ? t('Cancelling and cleaning up…')
-            : phase
+            : isImportCheck(operation)
+              ? t('Checking Session package…')
+              : phase
   const waiting =
     operation.state !== 'cancelling' &&
     packageOperationActive(operation) &&
     ['selecting', 'choosing-location', 'confirming'].includes(operation.progress.phase)
   const busy = packageOperationActive(operation) && !waiting
   const description =
-    operation.state === 'cancelling' || operation.progress.phase === 'cleaning'
+    operation.state === 'cancelling' ||
+    (packageOperationActive(operation) && operation.progress.phase === 'cleaning')
       ? t('Removing temporary files. Keep the app open until cleanup finishes.')
       : waiting
         ? operation.progress.phase === 'confirming'
@@ -124,9 +209,11 @@ const operationStatus = (
           : operation.progress.phase === 'choosing-location'
             ? t('Choose where to save the package in the system dialog.')
             : t('Choose package contents')
-        : busy
-          ? t('Keep the app open. You can work in other Sessions while this finishes.')
-          : undefined
+        : isImportCheck(operation)
+          ? t('Review the package contents next. No Session has been created yet.')
+          : busy
+            ? t('Keep the app open. You can work in other Sessions while this finishes.')
+            : undefined
   return { phase, status, waiting, busy, description }
 }
 
@@ -141,6 +228,22 @@ const PackageProgressMeter = ({
   const { waiting, phase } = operationStatus(operation, t)
   if (operation.state !== 'running' || waiting) return null
   const { completedBytes, totalBytes } = operation.progress
+  if (isImportCheck(operation))
+    return (
+      <div className="space-y-2 text-xs text-muted-foreground">
+        <p>{phase}</p>
+        {completedBytes !== undefined && totalBytes !== undefined ? (
+          <p className="tabular-nums">
+            {bytes(completedBytes)} / {bytes(totalBytes)}
+          </p>
+        ) : null}
+        {operation.ioBytesPerSecond !== undefined ? (
+          <p className="tabular-nums">
+            {t('Disk activity: {{speed}}/s', { speed: bytes(operation.ioBytesPerSecond) })}
+          </p>
+        ) : null}
+      </div>
+    )
   const measurable = totalBytes !== undefined && totalBytes > 0 && completedBytes !== undefined
   const percent = measurable
     ? Math.min(100, Math.max(0, Math.floor((completedBytes / totalBytes) * 100)))
@@ -165,7 +268,7 @@ const PackageProgressMeter = ({
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-xs text-muted-foreground">
-          {compact ? `${bytes(completedBytes)} / ${bytes(totalBytes)}` : t('Current stage')}
+          {compact ? `${bytes(completedBytes)} / ${bytes(totalBytes)}` : phase}
         </span>
         {percent !== undefined ? (
           <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
@@ -175,7 +278,7 @@ const PackageProgressMeter = ({
       </div>
       <progress
         aria-label={t('Package progress')}
-        aria-valuetext={percent !== undefined ? `${t('Current stage')}: ${percent}%` : undefined}
+        aria-valuetext={percent !== undefined ? `${phase}: ${percent}%` : undefined}
         className="block h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
         max={measurable ? totalBytes : undefined}
         value={measurable ? completedBytes : undefined}
@@ -352,6 +455,14 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const speedId = useId()
   const riskId = useId()
   const { operation, open, receive, setOpen, dismiss } = usePackageOperationStore()
+  const destinationName = useProjectStore(
+    (state) =>
+      state.projects.find(
+        (project) =>
+          project.id ===
+          (operation?.result?.imported?.projectId ?? operation?.importTarget?.projectId)
+      )?.name
+  )
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
   const retryPending = useRef(false)
@@ -654,6 +765,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 </Dialog.Description>
               </div>
             </div>
+            <PackageOperationSteps operation={operation} />
             {operation.importQueueFull ? (
               <div className="mx-5 mt-4 flex shrink-0 items-start gap-3">
                 <ErrorNotice
@@ -707,6 +819,19 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                       </div>
                     </div>
                     <PackageProgressMeter operation={operation} />
+                    {operation.state === 'succeeded' && operation.result?.filePath ? (
+                      <p className="break-all text-sm text-muted-foreground">
+                        {operation.result.filePath}
+                      </p>
+                    ) : null}
+                    {operation.state === 'succeeded' &&
+                    operation.kind === 'import' &&
+                    (destinationName || operation.importTarget?.projectName) ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t('Destination project')}:{' '}
+                        {destinationName ?? operation.importTarget?.projectName}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
                 {transferSettings}
@@ -861,6 +986,19 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     }
                   >
                     {t('Retry cleanup')}
+                  </Button>
+                ) : null}
+                {!active &&
+                !operation.cleanupPending &&
+                Boolean(operation.pendingImports?.length) ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void respond({ action: 'next-import', operationId: operation.id })
+                    }
+                  >
+                    {t('Open next package')}{' '}
+                    <span className="tabular-nums">({operation.pendingImports?.length})</span>
                   </Button>
                 ) : null}
                 {operation.state === 'succeeded' && operation.result?.filePath ? (

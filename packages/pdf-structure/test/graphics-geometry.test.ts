@@ -16,6 +16,263 @@ const { getDocument, OPS } = await import(
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
+const {
+  captureNativeFigureRenderContext,
+  matchNativeFigureRenderContext,
+  recordNativeFigurePaths
+} = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+
+const renderContextInput = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+    width: 200,
+    height: 300,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 300]
+  }
+  const content = {
+    items: [
+      {
+        str: 'Generic panel heading',
+        dir: 'ltr',
+        width: 90,
+        height: 10,
+        transform: [10, 0, 0, 10, 20, 250],
+        fontName: 'first-font',
+        hasEOL: true
+      }
+    ],
+    styles: {
+      'first-font': { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'sans-serif' }
+    }
+  }
+  const graphics = [{ operationIndex: 2, kind: 'image', normalizedRect: [0.1, 0.2, 0.5, 0.6] }]
+  const operators = {
+    fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+    argsArray: [[], [80, 0, 0, 120, 20, 120], ['generic-image', 100, 100], []]
+  }
+  const render = {
+    _internalRenderTask: {
+      operatorList: operators,
+      params: {
+        viewport: {
+          width: 300,
+          height: 450,
+          scale: 1.5,
+          rotation: 0,
+          transform: [1.5, 0, 0, -1.5, 0, 450]
+        }
+      }
+    }
+  }
+  return { viewport, content, graphics, render, checksum: 'a'.repeat(64), page: 1 }
+}
+
+it('retains only same-operation decoded RGB image opacity evidence', () => {
+  const f = renderContextInput()
+  f.render._internalRenderTask.objs = {
+    get: () => ({ width: 100, height: 100, kind: 2, data: new Uint8Array(30000) })
+  }
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(snapshot?.opaqueRasterImages).toEqual([
+    { operationIndex: 2, imageId: 'generic-image', width: 100, height: 100, kind: 2 }
+  ])
+  expect(
+    matchNativeFigureRenderContext(snapshot, f.page, f.content, f.viewport, f.graphics, f.checksum)
+      ?.opaqueRasterImages
+  ).toEqual(snapshot.opaqueRasterImages)
+})
+it.each(['rgba', 'bitmap', 'missing bytes', 'wrong dimensions', 'unresolved', 'wrong operation'])(
+  'does not infer opaque image evidence from %s',
+  (mode) => {
+    const f = renderContextInput(),
+      image: ReturnType<typeof JSON.parse> = {
+        width: 100,
+        height: 100,
+        kind: 2,
+        data: new Uint8Array(30000)
+      }
+    if (mode === 'rgba') {
+      image.kind = 3
+      image.data = new Uint8Array(40000)
+    }
+    if (mode === 'bitmap') {
+      delete image.data
+      image.bitmap = {}
+    }
+    if (mode === 'missing bytes') image.data = new Uint8Array(29999)
+    if (mode === 'wrong dimensions') image.width = 99
+    if (mode === 'wrong operation')
+      f.render._internalRenderTask.operatorList.fnArray[2] = OPS.paintImageXObjectRepeat
+    f.render._internalRenderTask.objs = {
+      get: () => {
+        if (mode === 'unresolved') throw new Error('not loaded')
+        return image
+      }
+    }
+    const snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+    expect(snapshot).toBeDefined()
+    expect(snapshot.opaqueRasterImages).toBeUndefined()
+  }
+)
+it('shares one snapshot budget between glyph bounds and decoded-image metadata', () => {
+  const f = renderContextInput(),
+    operators = f.render._internalRenderTask.operatorList
+  f.render._internalRenderTask.params.viewport = { ...f.viewport }
+  f.content = { items: [], styles: { padding: 'x'.repeat(8050000) } }
+  operators.fnArray = [OPS.setFont, OPS.showText]
+  operators.argsArray = [
+    ['font', 10],
+    [Array.from({ length: 1000 }, (_, n) => ({ fontChar: 'g' + n }))]
+  ]
+  for (let n = 0; n < 1000; n++) {
+    operators.fnArray.push(OPS.paintImageXObject)
+    operators.argsArray.push(['image' + n, 1, 1])
+  }
+  f.render._internalRenderTask.objs = {
+    get: () => ({ kind: 2, width: 1, height: 1, data: new Uint8Array(3) })
+  }
+  const fonts = {
+    get: () => ({
+      loadedName: 'font',
+      missingFile: false,
+      getPathGenerator: () => ({ getBounds: () => [0, 0, 1, 1] })
+    })
+  }
+  const plain = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    [],
+    f.checksum
+  )
+  expect(plain?.opaqueRasterImages).toHaveLength(1000)
+  const combined = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    [],
+    f.checksum,
+    fonts
+  )
+  expect(combined?.glyphBounds[0].glyphs).toHaveLength(1000)
+  expect(combined?.opaqueRasterImages).toBeUndefined()
+})
+it('hands off an isolated same-render context with exact source identities across font cache names', () => {
+  const f = renderContextInput(),
+    snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+  expect(snapshot).toBeDefined()
+  const current = structuredClone(f.content)
+  current.items[0].fontName = 'second-font'
+  current.styles = { 'second-font': current.styles['first-font'] }
+  const matched = matchNativeFigureRenderContext(
+    snapshot,
+    f.page,
+    current,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(matched?.graphicsBounds).toEqual(f.graphics)
+  expect(matched?.viewport.convertToViewportPoint(20, 250)).toEqual([20, 50])
+  expect(matched?.operators.fnArray[2]).toBe(OPS.paintImageXObject)
+  expect(matched?.content.items[0].sourceItem).toEqual({
+    pageNumber: 1,
+    index: 0,
+    text: 'Generic panel heading'
+  })
+  f.render._internalRenderTask.operatorList.fnArray[2] = OPS.showText
+  f.content.items[0].str = 'Changed after capture'
+  expect(matched?.operators.fnArray[2]).toBe(OPS.paintImageXObject)
+  expect(matched?.content.items[0].str).toBe('Generic panel heading')
+})
+it.each([
+  'document',
+  'page',
+  'text',
+  'identity-order',
+  'font',
+  'transform',
+  'width',
+  'direction',
+  'viewport',
+  'graphics',
+  'missing-item'
+])('refuses a render-context handoff with different %s evidence', (failure) => {
+  const f = renderContextInput(),
+    snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+  if (failure === 'document') f.checksum = 'b'.repeat(64)
+  if (failure === 'page') f.page = 2
+  if (failure === 'text') f.content.items[0].str = 'Other'
+  if (failure === 'identity-order')
+    f.content.items.unshift({ ...f.content.items[0], str: 'Inserted' })
+  if (failure === 'font') f.content.styles['first-font'].ascent = 0.6
+  if (failure === 'transform') f.content.items[0].transform[4] += 1
+  if (failure === 'width') f.content.items[0].width += 1
+  if (failure === 'direction') f.content.items[0].dir = 'rtl'
+  if (failure === 'viewport') f.viewport.transform[5] += 1
+  if (failure === 'graphics') f.graphics[0].operationIndex = 3
+  if (failure === 'missing-item') f.content.items = []
+  expect(
+    matchNativeFigureRenderContext(snapshot, f.page, f.content, f.viewport, f.graphics, f.checksum)
+  ).toBeUndefined()
+})
+it('refuses offset render coordinates and a context over the bounded snapshot budget', () => {
+  const f = renderContextInput()
+  f.render._internalRenderTask.params.viewport.transform[4] = 5
+  expect(
+    captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+  ).toBeUndefined()
+  f.render._internalRenderTask.params.viewport.transform[4] = 0
+  f.render._internalRenderTask.operatorList.argsArray[0] = [new Uint8Array(17 * 1024 * 1024)]
+  expect(
+    captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+  ).toBeUndefined()
+})
 
 it('preserves separate straight rules in a compound stroke without bridging their gaps', () => {
   const path = new Float32Array([0, 10, 20, 1, 80, 20, 0, 20, 40, 1, 40, 40, 0, 50, 40, 1, 80, 40])
@@ -125,6 +382,45 @@ it('excludes repeated running headers near an image but keeps labels inside its 
       .rect
   ).toEqual([60, 48, 540, 400])
   expect(excludeRepeatedMarginContent([page])[0].lines).toEqual(page.lines)
+})
+
+it('bounds native geometry reads when excluding a header above a dense vector plot', () => {
+  const count = 400
+  let reads = 0
+  const header = {
+    text: 'A repeated journal header',
+    x: 40,
+    y: 30,
+    width: 180,
+    height: 9,
+    fontSize: 9
+  }
+  const graphics = Array.from({ length: count }, (_, index) => ({
+    kind: 'path',
+    get normalizedRect() {
+      reads++
+      const x = 0.2 + (index % 20) * 0.02
+      const y = 0.2 + Math.floor(index / 20) * 0.02
+      return [x, y, x + 0.005, y + 0.005]
+    }
+  }))
+  const pages = [1, 2].map((pageNumber) => ({
+    pageNumber,
+    width: 600,
+    height: 800,
+    lines: [header],
+    graphicsBounds: graphics,
+    invalidGraphicsBounds: 0
+  }))
+  const cleaned = excludeRepeatedMarginContent(pages)
+  expect(cleaned.map((page: { lines: unknown[] }) => page.lines)).toEqual([[], []])
+  expect(cleaned.map((page: { graphicsBounds: unknown[] }) => page.graphicsBounds.length)).toEqual([
+    count,
+    count
+  ])
+  // Count real geometry access, not wall time: a scan nested inside the graphic
+  // overlap check must fail even on a fast machine without a timing threshold.
+  expect(reads).toBeLessThan(count * 50)
 })
 
 it.each([
@@ -272,6 +568,7 @@ it('uses the same optimized instruction stream as the recorded image bounds', as
       viewport: page.getViewport({ scale: 1.5 }),
       recordOperations: true
     })
+    recordNativeFigurePaths(render)
     await render.promise
     // PDF.js 5.4.624 CanvasGraphics.constructPath(opIdx, op, data, minMax)
     // receives a scalar paint operation first, not the older path-op array.
@@ -288,6 +585,29 @@ it('uses the same optimized instruction stream as the recorded image bounds', as
       expect(page.recordedBBoxes.isEmpty(path.index)).toBe(false)
     }
     const result = collectGraphicsBounds(render, page.recordedBBoxes)
+    const source = await page.getTextContent()
+    const nativeViewport = page.getViewport({ scale: 1 })
+    const snapshot = captureNativeFigureRenderContext(
+      render,
+      1,
+      source,
+      nativeViewport,
+      result.graphicsBounds,
+      'a'.repeat(64)
+    )
+    const matched = matchNativeFigureRenderContext(
+      snapshot,
+      1,
+      source,
+      nativeViewport,
+      result.graphicsBounds,
+      'a'.repeat(64)
+    )
+    expect(matched?.operators.fnArray).toEqual(operators.fnArray)
+    for (const graphic of result.graphicsBounds)
+      expect(matched?.operators.fnArray[graphic.operationIndex]).toBe(
+        operators.fnArray[graphic.operationIndex]
+      )
     expect(result.graphicsBounds.filter((g: { imageHash?: string }) => g.imageHash)).toHaveLength(3)
     const images = result.graphicsBounds.filter(
       (g: { kind: string; normalizedRect: number[] }) =>
@@ -939,3 +1259,145 @@ it('limits mask invalidation to proven raster overlap and declines unknown trans
   expect(collectTableRules(unknown, viewport, paint)).toEqual([])
   expect([...paint.values()]).toEqual([])
 })
+
+it('observes pre-execution path arrays and empty clips at their original chunk indices', () => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  const path = new Float32Array([0, 10, 20, 1, 30, 20])
+  ops.fnArray.push(OPS.constructPath, OPS.constructPath)
+  ops.argsArray.push([OPS.stroke, [path], [10, 20, 30, 20]], [OPS.endPath, [null], null])
+  let resumed = 0,
+    previous = 0
+  f.render.onContinue = (resume: () => void): void => {
+    previous++
+    resume()
+  }
+  recordNativeFigurePaths(f.render)
+  f.render.onContinue(() => {
+    resumed++
+    ops.argsArray[4][1][0] = new (class OpaquePath {})()
+  })
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(snapshot?.operators.argsArray[4][1][0]).toEqual(path)
+  expect(snapshot?.operators.argsArray[5][1][0]).toBeNull()
+  expect([resumed, previous]).toEqual([1, 1])
+})
+
+it('counts a typed view entire backing store before cloning the native render snapshot', () => {
+  const f = renderContextInput()
+  f.render._internalRenderTask.operatorList.argsArray[0] = [
+    new Uint8Array(new ArrayBuffer(17 * 1024 * 1024), 0, 1)
+  ]
+  expect(
+    captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum
+    )
+  ).toBeUndefined()
+})
+it('stops observing an excessive native stream but still resumes rendering', () => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  ops.fnArray = new Array(100001).fill(OPS.constructPath)
+  ops.argsArray = new Proxy([], {
+    get: (): never => {
+      throw new Error('must not scan oversized stream')
+    }
+  })
+  recordNativeFigurePaths(f.render)
+  let resumed = false
+  expect(() =>
+    f.render.onContinue(() => {
+      resumed = true
+    })
+  ).not.toThrow()
+  expect(resumed).toBe(true)
+})
+
+it('captures each same-render font glyph path once and retains only isolated numeric bounds', () => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  const glyph = { fontChar: 'A', unicode: 'A', width: 500, isInFont: true }
+  ops.fnArray.push(OPS.setFont, OPS.showText, OPS.showText)
+  ops.argsArray.push(['first-font', 10], [[glyph, glyph]], [[glyph]])
+  let reads = 0
+  const bounds = [0, -0.2, 0.5, 0.8]
+  const objects = {
+    get: (name: string): unknown => ({
+      loadedName: name,
+      getPathGenerator: (): unknown => {
+        reads++
+        return { getBounds: (): number[] => bounds }
+      }
+    })
+  }
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum,
+    objects
+  )
+  expect(snapshot.glyphBounds).toEqual([
+    { fontName: 'first-font', glyphs: [{ fontChar: 'A', bounds: [0, -0.2, 0.5, 0.8] }] }
+  ])
+  expect(reads).toBe(1)
+  bounds[0] = 99
+  expect(snapshot.glyphBounds[0].glyphs[0].bounds[0]).toBe(0)
+  const matched = matchNativeFigureRenderContext(
+    snapshot,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(matched.glyphBounds).toEqual(snapshot.glyphBounds)
+})
+it.each(['missing-font', 'invalid-bounds', 'over-budget'])(
+  'leaves the legacy snapshot intact when optional glyph proof is %s',
+  (failure) => {
+    const f = renderContextInput(),
+      ops = f.render._internalRenderTask.operatorList
+    ops.fnArray.push(OPS.setFont, OPS.showText)
+    ops.argsArray.push(
+      ['first-font', 10],
+      [[{ fontChar: 'A', unicode: 'A', width: 500, isInFont: true }]]
+    )
+    if (failure === 'over-budget') ops.argsArray[0] = [new Uint8Array(16 * 1024 * 1024 - 12000)]
+    const objects = {
+      get: (): unknown => ({
+        loadedName: failure === 'missing-font' ? 'Other' : 'first-font',
+        getPathGenerator: (): unknown => ({
+          getBounds: (): number[] => (failure === 'invalid-bounds' ? [0, NaN, 1, 1] : [0, 0, 1, 1])
+        })
+      })
+    }
+    if (failure === 'over-budget') ops.argsArray.at(-1)[0][0].fontChar = 'A'.repeat(3000)
+    const snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum,
+      objects
+    )
+    expect(snapshot).toBeDefined()
+    expect(snapshot.glyphBounds).toBeUndefined()
+    expect(snapshot.content).toEqual(f.content)
+  }
+)

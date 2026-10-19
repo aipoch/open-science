@@ -71,6 +71,177 @@ const input = (): ReturnType<typeof JSON.parse> => {
   }
   return { page, caption, captions: [caption, tableCaption], rules }
 }
+
+// Four anonymized faces are enough to reproduce independently trimmed plot
+// widths. Titles and exact closed frames prove columns without widening a gap.
+function intervalTitleGrid(): ReturnType<typeof JSON.parse> {
+  const caption = { page: 1, lines: ['Figure 1. Sample measurements.'], rect: [40, 355, 480, 365] }
+  const frames = [
+    [80, 80, 215, 180],
+    [280, 80, 415, 180],
+    [80, 230, 205, 330],
+    [280, 230, 415, 330]
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 40, y: 355, width: 440, height: 10, fontSize: 10 }],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const rules: number[][] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = []
+  for (const [index, [x, y, right, bottom]] of frames.entries()) {
+    rules.push(
+      [x, y, right, y],
+      [x, bottom, right, bottom],
+      [x, y, x, bottom],
+      [right, y, right, bottom]
+    )
+    const title = {
+      text: `Sample ${index + 1}`,
+      x: x + 30,
+      y: y - 12,
+      width: 60,
+      height: 8,
+      fontSize: 8
+    }
+    page.lines.push(title)
+    tokens.push({
+      text: title.text,
+      rect: [title.x, title.y, title.x + title.width, title.y + 8],
+      height: 8,
+      baseline: title.y + 8,
+      horizontal: true
+    })
+    for (let n = 0; n < 5; n++)
+      page.lines.push({
+        text: String(n),
+        x: x - 9,
+        y: y + 10 + n * 17,
+        width: 5,
+        height: 6,
+        fontSize: 6
+      })
+    for (let n = 0; n < 3; n++)
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [x + 5 + n, y + 10 + n, right - 10 - n, bottom - 10 - n].map(
+          (v, i) => v / (i % 2 ? 800 : 600)
+        )
+      })
+  }
+  return { page, caption, captions: [caption], frames, tokens, rules }
+}
+
+it('completes independently trimmed native plot columns from whole unique titles and closed faces', () => {
+  const f = intervalTitleGrid(),
+    before = structuredClone(f)
+  const result = nativeCaptionedPlotBand(
+    f.page,
+    f.caption,
+    f.captions,
+    [],
+    f.rules,
+    f.frames,
+    f.tokens
+  )
+  expect(result?.graphicsCount).toBe(4)
+  expect(result?.rect[1]).toBe(68)
+  expect(result?.rect[3]).toBe(330)
+  expect(
+    associateFigures(f.page, f.captions, [], f.rules, f.frames, f.tokens)[0]?.rect[1]
+  ).toBeLessThanOrEqual(68)
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'missing-title',
+  'duplicate-title',
+  'short-title-font',
+  'wrong-title-height',
+  'missing-frame',
+  'orphan-frame',
+  'competing-title',
+  'foreign-caption',
+  'foreign-title-row-caption',
+  'foreign-table',
+  'foreign-prose'
+])('refuses ambiguous independently trimmed native plot columns: %s', (reason) => {
+  const f = intervalTitleGrid()
+  if (reason === 'missing-title') f.tokens.splice(0, 1)
+  if (reason === 'duplicate-title') {
+    f.page.lines[7].text = f.page.lines[1].text
+    f.tokens[1].text = f.tokens[0].text
+  }
+  if (reason === 'short-title-font') f.tokens[0].rect[2] -= 1
+  if (reason === 'wrong-title-height') f.tokens[0].height = 7
+  if (reason === 'missing-frame') f.frames.splice(0, 1)
+  if (reason === 'orphan-frame') f.frames.push([220, 100, 260, 150])
+  if (reason === 'competing-title') f.page.lines.push({ ...f.page.lines[1], text: 'Other title' })
+  if (reason === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Separate owner.'], rect: [90, 200, 200, 210] })
+  if (reason === 'foreign-title-row-caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Separate owner.'], rect: [220, 70, 275, 76] })
+  if (reason === 'foreign-prose')
+    f.page.lines.push({
+      text: 'Independent article paragraph. '.repeat(4),
+      x: 90,
+      y: 200,
+      width: 400,
+      height: 10,
+      fontSize: 10
+    })
+  const result = nativeCaptionedPlotBand(
+    f.page,
+    f.caption,
+    f.captions,
+    reason === 'foreign-table' ? [[90, 200, 200, 220]] : [],
+    f.rules,
+    f.frames,
+    f.tokens
+  )
+  expect(result?.graphicsCount).not.toBe(4)
+})
+it('keeps separately captioned adjacent plots separate through final association', () => {
+  const f = input()
+  f.captions = [100, 330].map((left, i) => ({
+    page: 1,
+    lines: [`Figure ${i + 1}: Measurement.`],
+    rect: [left, 270, left + 170, 280]
+  }))
+  f.page.lines = f.page.lines.filter(
+    (line: ReturnType<typeof JSON.parse>) => !line.text.startsWith('Figure')
+  )
+  for (const caption of f.captions) {
+    f.page.lines.push({
+      text: caption.lines[0],
+      x: caption.rect[0],
+      y: 270,
+      width: 170,
+      height: 10,
+      fontSize: 10
+    })
+    f.page.lines.push({
+      text: 'Outcome axis',
+      x: caption.rect[0] + 20,
+      y: 65,
+      width: 90,
+      height: 8,
+      fontSize: 8
+    })
+  }
+  const before = structuredClone(f)
+  const figures = associateFigures(f.page, f.captions, [], f.rules)
+  expect(figures).toHaveLength(2)
+  expect(figures[0].rect[2]).toBeLessThan(figures[1].rect[0])
+  expect(figures[0].rect[0]).toBeLessThanOrEqual(100)
+  expect(figures[0].rect[2]).toBeGreaterThanOrEqual(270)
+  expect(figures[1].rect[0]).toBeLessThanOrEqual(330)
+  expect(figures[1].rect[2]).toBeGreaterThanOrEqual(500)
+  expect(f).toEqual(before)
+})
 const positionedClosedPlots = (): ReturnType<typeof JSON.parse> => {
   const caption = {
       page: 1,
@@ -1656,4 +1827,81 @@ it.each([
     f.tokens
   )
   expect(result?.graphicsCount).not.toBe(8)
+})
+
+const twoCurveStack = (): ReturnType<typeof JSON.parse> => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Top: first measurement. Bottom: second measurement.'],
+    rect: [50, 310, 300, 330]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 310, width: 250, height: 10, fontSize: 10 }],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const frames = [
+    [100, 70, 280, 170],
+    [100, 180, 280, 280]
+  ]
+  const rules: number[][] = []
+  for (const [left, top, right, bottom] of frames) {
+    rules.push(
+      [left, top, right, top],
+      [left, bottom, right, bottom],
+      [left, top, left, bottom],
+      [right, top, right, bottom]
+    )
+    for (const rect of [
+      [left, top, right, bottom],
+      [left + 10, top + 10, right - 10, bottom - 20],
+      [left + 10, top + 15, right - 10, bottom - 10]
+    ]) {
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+      })
+    }
+    for (let i = 0; i < 4; i++)
+      page.lines.push({
+        text: String(i),
+        x: 80,
+        y: top + 10 + i * 20,
+        width: 8,
+        height: 8,
+        fontSize: 8
+      })
+  }
+  return { page, caption, captions: [caption], rules, frames }
+}
+
+it('recovers two native closed curve faces explicitly named top and bottom', () => {
+  const f = twoCurveStack(),
+    snapshot = structuredClone(f)
+  expect(
+    nativeCaptionedPlotBand(f.page, f.caption, f.captions, [], f.rules, f.frames)?.rect
+  ).toEqual([80, 70, 280, 280])
+  expect(f).toEqual(snapshot)
+})
+
+it.each([
+  'no layout wording',
+  'missing native frame',
+  'unequal frame',
+  'only one curve',
+  'foreign caption'
+])('does not infer a two-curve stack with %s', (reason) => {
+  const f = twoCurveStack()
+  if (reason === 'no layout wording') f.caption.lines = ['Figure 1. Two measurements.']
+  if (reason === 'missing native frame') f.frames.pop()
+  if (reason === 'unequal frame') f.frames[1][2] -= 10
+  if (reason === 'only one curve') f.page.graphicsBounds.splice(2, 1)
+  if (reason === 'foreign caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Another owner.'], rect: [100, 172, 280, 179] })
+  expect(
+    nativeCaptionedPlotBand(f.page, f.caption, f.captions, [], f.rules, f.frames)
+  ).toBeUndefined()
 })

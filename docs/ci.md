@@ -254,6 +254,11 @@ selection explanations identify derived tests. See [registration steps](testing.
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
 missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
 Older bases retain legacy rules; existing explicit contracts are not retired automatically.
+Static resource imports also contribute consumer evidence. Current resource consumers are declared
+explicitly in their owning modules so trusted-base verification can preserve coverage while the
+reader is updated. Future additional consumers are captured by the generated index in its existing
+format. Resource edges add coverage without proving a complete dependency cone or authorizing
+consumer retirement.
 
 ## CI control-plane approval
 
@@ -303,6 +308,12 @@ test evidence and routing obligations retained, and every reachable or uncertain
 registered in the new owner. The original shared owner keeps its full-validation marker
 and surviving evidence. This is not a general exception for shared files or package edits;
 merge the protected policy before proposing the registration split.
+The same bounded pure-helper proof permits `src/shared/fuzzy-match.ts` to move into
+`shared_fuzzy_match`, retaining its composer-owned behavior suite as consumer evidence. It does
+not transfer that test's ownership or weaken the original full owner. For this source-only split,
+provably unrelated original contracts remain on the full owner; the target must retain the exact
+composer suite and every reachable or uncertain test from the complete traversal. The existing
+`shared_promise_identity` exception remains limited to the in-flight promise helper and its test.
 Host owners under `src/main/` and `src/renderer/` may split into new modules in a
 registration-only revision with unchanged source and tests. Trusted Integrity verifies that each
 new owner takes paths from exactly one surviving non-full owner, preserves moved interfaces,

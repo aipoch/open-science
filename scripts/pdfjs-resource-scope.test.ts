@@ -1,7 +1,117 @@
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import ts from 'typescript'
 
-import { PDFDocument, PDFName, type PDFRef } from 'pdf-lib'
+import { PDFDocument, PDFName, StandardFonts, type PDFRef } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
+
+it.each(['legacy', 'modern'] as const)(
+  'PDF.js %s exposes only proved missing-Unicode glyph paths without changing font rendering',
+  (flavor) => {
+    const require = createRequire(import.meta.url)
+    const source = ts.createSourceFile(
+      'worker.mjs',
+      readFileSync(
+        require.resolve(`pdfjs-dist/${flavor === 'legacy' ? 'legacy/' : ''}build/pdf.worker.mjs`),
+        'utf8'
+      ),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS
+    )
+    const evaluator = source.statements.find(
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) && node.name?.text === 'PartialEvaluator'
+    )!
+    const method = evaluator.members.find(
+      (node): node is ts.MethodDeclaration =>
+        ts.isMethodDeclaration(node) && node.name.getText(source) === 'handleText'
+    )!
+    const calls: unknown[][] = []
+    let throwPath = false
+    // Execute the installed worker method, retaining its original branch and
+    // error semantics. Anonymous glyphs require no external font/PDF fixture.
+    const handle = new Function(
+      'PartialEvaluator',
+      'TextRenderingMode',
+      `return function(chars, state) ${method.body!.getText(source)}`
+    )(
+      {
+        buildFontPaths: (...args: unknown[]) => {
+          calls.push(args)
+          if (throwPath) throw new Error('invalid outline')
+        }
+      },
+      { ADD_TO_PATH_FLAG: 4 }
+    )
+    const missing = {
+      unicode: '\f',
+      originalCharCode: 12,
+      fontChar: '\ue00c',
+      isInFont: true,
+      isSpace: false,
+      accent: null
+    }
+    const normal = { ...missing, unicode: 'A', originalCharCode: 65, fontChar: 'A' }
+    const glyphs = [normal, missing]
+    const font = {
+      data: new Uint8Array([1]),
+      disableFontFace: false,
+      missingFile: false,
+      vertical: false,
+      isType3Font: false,
+      toUnicode: { _map: {} as Record<number, string> },
+      charsToGlyphs: () => glyphs
+    }
+    const state = {
+      font,
+      textRenderingMode: 0,
+      fillColorSpace: { name: 'DeviceRGB' },
+      strokeColorSpace: { name: 'DeviceRGB' }
+    }
+    const owner = { options: { fontExtraProperties: true, ignoreErrors: false }, handler: {} }
+    expect(handle.call(owner, 'encoded', state)).toBe(glyphs)
+    expect(calls).toEqual([[font, [missing], owner.handler, owner.options]])
+    expect(font.disableFontFace).toBe(false)
+    calls.length = 0
+    owner.options.fontExtraProperties = false
+    handle.call(owner, 'encoded', state)
+    expect(calls).toEqual([])
+    owner.options.fontExtraProperties = true
+    for (const override of [
+      { isInFont: false },
+      { isSpace: true },
+      { accent: {} },
+      { fontChar: '' },
+      { unicode: 'A' },
+      { originalCharCode: -1 },
+      { originalCharCode: 1.5 }
+    ]) {
+      font.charsToGlyphs = () => [Object.assign({}, missing, override) as typeof missing]
+      handle.call(owner, 'encoded', state)
+      expect(calls).toEqual([])
+    }
+    font.charsToGlyphs = () => glyphs
+    for (const key of ['missingFile', 'vertical', 'isType3Font'] as const) {
+      font[key] = true
+      handle.call(owner, 'encoded', state)
+      expect(calls).toEqual([])
+      font[key] = false
+    }
+    font.toUnicode._map[12] = 'known'
+    handle.call(owner, 'encoded', state)
+    expect(calls).toEqual([])
+    delete font.toUnicode._map[12]
+    throwPath = true
+    expect(() => handle.call(owner, 'encoded', state)).not.toThrow()
+    expect(calls).toHaveLength(1)
+    calls.length = 0
+    font.disableFontFace = true
+    expect(() => handle.call(owner, 'encoded', state)).toThrow('invalid outline')
+    expect(calls[0][1]).toBe(glyphs)
+  }
+)
 
 // Equal Tf names/sizes deliberately select different fonts in the parent and
 // Form. Code 31 is a real fi ligature in one encoding and NBSP in the other.
@@ -140,3 +250,112 @@ describe.each(['legacy', 'modern'] as const)('PDF.js %s worker Form resource sco
     expect(text('real-ligature')).toEqual(['BeforefiText', 'FirstfiLast', 'AfterfiText'])
   })
 })
+
+async function numberedPagesPdf(label: string, count: number): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (let number = 1; number <= count; number++) {
+    const page = pdf.addPage([240, 180])
+    page.drawText(`${label} page ${number}`, { font, size: 12, x: 20, y: 100 })
+  }
+  return pdf.save()
+}
+
+const isolatedDocumentMappingProbe = `
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { DOMMatrix, Path2D, ImageData } from '@napi-rs/canvas';
+Object.assign(globalThis, { DOMMatrix, Path2D, ImageData });
+const require = createRequire(process.cwd() + '/package.json');
+const { flavor, wide, short } = JSON.parse(readFileSync(0, 'utf8'));
+const entry = flavor === 'legacy' ? 'legacy/build' : 'build';
+if (flavor === 'modern') await import(pathToFileURL(require.resolve('pdfjs-dist/legacy/build/pdf.mjs')).href);
+const worker = pathToFileURL(require.resolve('pdfjs-dist/' + entry + '/pdf.worker.mjs')).href;
+globalThis.pdfjsWorker = await import(worker);
+const { getDocument, GlobalWorkerOptions } = await import(pathToFileURL(require.resolve('pdfjs-dist/' + entry + '/pdf.mjs')).href);
+GlobalWorkerOptions.workerSrc = worker;
+const load = data => getDocument({ data: Uint8Array.from(Buffer.from(data, 'base64')), useSystemFonts: true, verbosity: 0 });
+const text = async (pdf, n) => (await (await pdf.getPage(n)).getTextContent()).items.filter(i => 'str' in i).map(i => i.str).join('');
+const results = [];
+for (const reverse of [false, true]) {
+ const tasks = [];
+ let reopened;
+ try {
+  // Resolve each opening in a controlled order while keeping both documents
+  // alive. This makes the old shared-state failure deterministic.
+  for (const data of reverse ? [short, wide] : [wide, short]) {
+   const task = load(data);
+   tasks.push(task);
+   await task.promise;
+  }
+  const docs = await Promise.all(tasks.map(t => t.promise));
+  const [a, b] = reverse ? docs.toReversed() : docs;
+  assert.equal(a.numPages, 3);
+  assert.equal(b.numPages, 1);
+  // This public read fails under the previous singleton when the shorter
+  // document replaces the larger document's page-count/mapping state.
+  assert.equal(await text(a, 3), 'Wide page 3');
+  assert.equal(await text(b, 1), 'Short page 1');
+  assert.notEqual(a.pagesMapper, b.pagesMapper);
+  const aPages = await Promise.all([1, 2, 3].map(n => a.getPage(n)));
+  let aEvents = 0, bEvents = 0;
+  a.pagesMapper.addListener(() => aEvents++);
+  b.pagesMapper.addListener(() => bEvents++);
+  a.pagesMapper.movePages(new Set([3]), [3], 0);
+  assert.deepEqual([...a.pagesMapper.getMapping()], [3, 1, 2]);
+  assert.equal(b.pagesMapper.pagesNumber, 1);
+  assert.equal(await text(b, 1), 'Short page 1');
+  assert.equal(aEvents, 1);
+  assert.equal(bEvents, 0);
+  assert.equal(await a.getPage(1), aPages[2]);
+  assert.equal(await a.getPageIndex(aPages[2].ref), 0);
+  assert.equal(a.cachedPageNumber(aPages[2].ref), 1);
+  // PDFViewer updates reused proxies after its page-edit notification.
+  for (let n = 1; n <= a.numPages; n++) (await a.getPage(n)).pageNumber = n;
+  await assert.rejects(b.getPage(2), /Invalid page request/);
+  await (reverse ? tasks[0] : tasks[1]).destroy();
+  assert.equal(await text(a, 1), 'Wide page 3');
+  reopened = load(short);
+  const fresh = await reopened.promise;
+  assert.equal(await text(fresh, 1), 'Short page 1');
+  assert.deepEqual([...a.pagesMapper.getMapping()], [3, 1, 2]);
+  await (reverse ? tasks[1] : tasks[0]).destroy();
+  assert.equal(await text(fresh, 1), 'Short page 1');
+  results.push({ reverse, passed: true });
+ } finally {
+  await Promise.all([...tasks, ...(reopened ? [reopened] : [])].map(t => t.destroy()));
+ }
+}
+console.log(JSON.stringify({ results }));
+`
+
+it.each(['legacy', 'modern'] as const)(
+  'PDF.js %s keeps page reads, mappings and lifetimes local to each document',
+  async (flavor) => {
+    const [wide, short] = await Promise.all([
+      numberedPagesPdf('Wide', 3),
+      numberedPagesPdf('Short', 1)
+    ])
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', isolatedDocumentMappingProbe],
+      {
+        input: JSON.stringify({
+          flavor,
+          wide: Buffer.from(wide).toString('base64'),
+          short: Buffer.from(short).toString('base64')
+        }),
+        encoding: 'utf8'
+      }
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout.trim().split('\n').at(-1)!)).toEqual({
+      results: [
+        { reverse: false, passed: true },
+        { reverse: true, passed: true }
+      ]
+    })
+  }
+)

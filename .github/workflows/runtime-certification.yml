@@ -99,7 +99,7 @@ jobs:
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
             --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl openpyxl pycirclize patsy
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
-            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass \
+            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass r-purrr \
             r-circlize r-dplyr r-ggrepel r-ggvenndiagram r-magrittr r-openxlsx \
             r-patchwork r-ragg r-rcolorbrewer r-readxl r-scales r-showtext \
             r-sysfonts r-systemfonts r-tidyr r-venn r-venndiagram
@@ -143,14 +143,13 @@ jobs:
           "$OPEN_SCIENCE_TEST_PY_ENV" -c \
             'import matplotlib, numpy, pandas, openpyxl, pycirclize, patsy; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
-            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
+            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "purrr", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
 
       - name: Test package native analysis regressions
         env:
           RUN_KERNEL: '1'
         run: >-
-          npm test --prefix packages/notebook-analysis --
-          .native.test.ts
+          npm run test:notebook-analysis-native
 
       - name: Test real source runtime chain
         env:
@@ -181,3 +180,11 @@ jobs:
           --maxWorkers=1
           --testTimeout=60000
           --hookTimeout=60000
+
+      - name: Upload native analysis evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: notebook-analysis-native
+          path: packages/notebook-analysis/test-results/notebook-analysis-native.json
+          if-no-files-found: error

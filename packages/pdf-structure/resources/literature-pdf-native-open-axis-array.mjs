@@ -4,7 +4,13 @@ import { area, intersection, lineRect, union } from './literature-pdf-page-geome
 
 // Open axes are native drawing evidence, not a closed table frame. Require a
 // complete rectangular array of independent populated faces and repeated ticks.
-export function nativeOpenAxisArray(page, captions, tables, rules) {
+export function nativeOpenAxisArray(
+  page,
+  captions,
+  tables,
+  rules,
+  { includeIncomplete = false } = {}
+) {
   if (
     captions.length !== 1 ||
     !rules.length ||
@@ -172,20 +178,40 @@ export function nativeOpenAxisArray(page, captions, tables, rules) {
     ...keyInk,
     ...faceInk
   ])
-  // This shortcut owns vector faces. An external raster legend/color bar
-  // needs the existing complete association rather than a partial replacement.
+  // This shortcut owns vector faces. Raster panels above them, or an external
+  // legend below, need the complete association rather than a partial replacement.
+  let requiresCompleteAssociation = false
   if (
     (page.graphicsBounds ?? []).some((g) => {
       if (g.kind !== 'image') return false
       const r = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
-      return (
-        r.every(Number.isFinite) &&
-        area(r) > 0 &&
-        r[1] >= bounds[3] &&
-        r[3] < caption.rect[1] &&
-        r[0] < bounds[2] &&
-        r[2] > bounds[0]
+      if (
+        !r.every(Number.isFinite) ||
+        area(r) <= 0 ||
+        r[3] >= caption.rect[1] ||
+        r[0] >= bounds[2] ||
+        r[2] <= bounds[0]
       )
+        return false
+      if (r[1] >= bounds[3]) return true
+      if (r[1] >= bounds[1] || bounds[1] - r[3] > h) return false
+      // Only a local upper raster can invalidate this shortcut. Independent
+      // content anywhere in the added envelope must not be swallowed by fallback.
+      const envelope = union([r, rect])
+      if (tables.some((t) => intersection(t, envelope) > 0)) return false
+      if (
+        page.lines.some(
+          (l) =>
+            /\p{L}/u.test(l.text) &&
+            l.fontSize >= fontLimit &&
+            l.y >= r[3] &&
+            l.y + l.height <= bounds[1] &&
+            intersection(lineRect(l), envelope) > 0
+        )
+      )
+        return false
+      requiresCompleteAssociation = true
+      return false
     })
   )
     return
@@ -228,9 +254,11 @@ export function nativeOpenAxisArray(page, captions, tables, rules) {
     tables.some((t) => intersection(t, rect) > 0)
   )
     return
+  if (requiresCompleteAssociation && !includeIncomplete) return
   return {
     caption,
     rect,
+    ...(requiresCompleteAssociation ? { requiresCompleteAssociation: true } : {}),
     graphicsCount: paths.filter((p) => intersection(p, rect) / area(p) > 0.9).length
   }
 }

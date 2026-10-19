@@ -367,3 +367,224 @@ it('does not replace a header that also owns a numeric body record', () => {
   expect(state.cells).toEqual(cells)
   expect(state.rows).toEqual(rows)
 })
+
+function measuredDescriptorFixture(pitch = 64): ReturnType<typeof JSON.parse> {
+  const width = pitch * 6
+  const input: ReturnType<typeof JSON.parse> = {
+    table: {
+      id: 'anonymous-table',
+      cropRect: [0, 0, width, 120],
+      structure: {
+        objects: [
+          ...[
+            [0, pitch],
+            [pitch, pitch * 5],
+            [pitch * 5, width]
+          ].map(([a, b]) => ({
+            label: 'table column',
+            rect: [a, 0, b, 120]
+          })),
+          ...[
+            [0, 25],
+            [25, 46],
+            [46, 62],
+            [62, 78],
+            [78, 94],
+            [94, 120]
+          ].map(([a, b]) => ({
+            label: 'table row',
+            rect: [0, a, width, b]
+          })),
+          { label: 'table column header', rect: [0, 0, width, 25] }
+        ]
+      }
+    },
+    tokens: [],
+    measuredRuns: [],
+    expected: [],
+    captions: [{ lines: ['Table 1: Measurements'], rect: [0, -18, 130, -5] }],
+    rules: [0, 25, 120].map((y) => [0, y, width, y])
+  }
+  const row = (fields: string[], y: number): void => {
+    const text = fields.join(' '),
+      glyphs: string[] = [],
+      gaps: { left: number; right: number; index: number }[] = []
+    let right = 0
+    fields.forEach((field, column) => {
+      let x = 5 + column * pitch
+      if (column) gaps.push({ left: right, right: x, index: glyphs.length })
+      for (const letter of field) {
+        if (letter === ' ') {
+          gaps.push({ left: x, right: x + 3, index: glyphs.length })
+          x += 3
+        } else {
+          glyphs.push(letter)
+          x += 4
+        }
+      }
+      right = x
+    })
+    const rect = [5, y, right, y + 10]
+    input.tokens.push({
+      text,
+      rect,
+      height: 10,
+      baseline: y + 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: input.tokens.length, text }
+    })
+    input.measuredRuns.push({
+      text,
+      rect: [...rect],
+      glyphRuns: glyphs.map(() => 0),
+      literalGlyphs: glyphs,
+      gaps
+    })
+    input.expected.push(fields)
+  }
+  row(['Measure', 'Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'], 10)
+  row(['Description', 'Small units', 'Large units', 'Short range', 'Long range', 'Total value'], 35)
+  for (let r = 0; r < 4; r++) {
+    row(
+      [
+        `Record ${String.fromCharCode(65 + r)}`,
+        ...Array.from({ length: 5 }, (_, c) => `${r + 1}.${c + 1}e-3 (2.${c + 1}e-4)`)
+      ],
+      51 + r * 16
+    )
+  }
+  return input
+}
+
+it.each([64, 110])(
+  'retains an independent descriptive record above numeric lanes with native pitch %s',
+  (pitch) => {
+    const f = measuredDescriptorFixture(pitch),
+      original = structuredClone(f)
+    const result = refineTable(f.table, f.tokens, f.captions, [], f.rules, f.measuredRuns)
+    expect(result.grid).toEqual(f.expected)
+    expect(result.unassigned).toEqual([])
+    expect(f).toEqual(original)
+    const plan = proveNativeMeasuredLeafHeader(
+      f.table,
+      f.tokens,
+      f.captions,
+      f.rules,
+      f.measuredRuns
+    )
+    expect(
+      plan.bodyRecords.map((record: { text: string }[]) => record.map((item) => item.text))
+    ).toEqual(f.expected.slice(1))
+  }
+)
+
+it.each([
+  'peer',
+  'caption',
+  'closing',
+  'run',
+  'literal',
+  'operator',
+  'later-description',
+  'incomplete-description',
+  'overlapping-domain'
+])('requires independent native proof for a leading descriptive record: %s', (change) => {
+  const f = measuredDescriptorFixture()
+  if (change === 'peer') {
+    f.tokens.pop()
+    f.measuredRuns.pop()
+  }
+  if (change === 'caption') f.captions = []
+  if (change === 'closing') f.rules.pop()
+  if (change === 'run') f.measuredRuns.shift()
+  if (change === 'literal') f.measuredRuns[1].literalGlyphs[0] = 'Z'
+  if (change === 'operator') f.measuredRuns[1].glyphRuns[f.measuredRuns[1].gaps[0].index] = 1
+  if (change === 'later-description') {
+    const delta = f.tokens[2].baseline - f.tokens[1].baseline
+    for (const [index, amount] of [
+      [1, delta],
+      [2, -delta]
+    ]) {
+      f.tokens[index].rect[1] += amount
+      f.tokens[index].rect[3] += amount
+      f.tokens[index].baseline += amount
+      f.measuredRuns[index].rect[1] += amount
+      f.measuredRuns[index].rect[3] += amount
+    }
+  }
+  if (change === 'incomplete-description') f.measuredRuns[1].gaps.splice(0, 1)
+  if (change === 'overlapping-domain') {
+    f.measuredRuns[1].gaps[0].left += 100
+    f.measuredRuns[1].gaps[0].right += 100
+  }
+  expect(
+    proveNativeMeasuredLeafHeader(f.table, f.tokens, f.captions, f.rules, f.measuredRuns)
+  ).toBeUndefined()
+})
+
+it.each([
+  'duplicate-origin',
+  'same-text-origin',
+  'outside-whole-alias',
+  'outside-segment-alias',
+  'nested-carrier',
+  'foreign-page',
+  'nonnumeric-prefix'
+])('does not use unproved original owners to restore descriptive numeric lanes: %s', (change) => {
+  const f = measuredDescriptorFixture()
+  if (change === 'duplicate-origin')
+    f.tokens[2].sourceItem = structuredClone(f.tokens[1].sourceItem)
+  if (change === 'foreign-page') f.tokens[1].sourceItem.pageNumber = 2
+  if (change === 'same-text-origin') {
+    f.tokens[3].text = f.tokens[2].text
+    f.tokens[3].sourceItem = structuredClone(f.tokens[2].sourceItem)
+    f.measuredRuns[3].text = f.measuredRuns[2].text
+    f.measuredRuns[3].literalGlyphs = [...f.measuredRuns[2].literalGlyphs]
+  }
+  if (change === 'outside-whole-alias') {
+    f.tokens.push({ ...structuredClone(f.tokens[1]), rect: [700, 35, 1000, 45] })
+  }
+  if (change === 'outside-segment-alias') {
+    f.tokens.push({
+      text: 'Description',
+      rect: [700, 35, 744, 45],
+      height: 10,
+      baseline: 45,
+      horizontal: true,
+      sourceSegment: { ...f.tokens[1].sourceItem, start: 0, end: 11, rect: [700, 35, 744, 45] }
+    })
+  }
+  if (change === 'nested-carrier') {
+    f.tokens[1].sourceToken = {
+      ...structuredClone(f.tokens[1]),
+      sourceItem: { ...f.tokens[1].sourceItem, index: 999 }
+    }
+  }
+  if (change === 'nonnumeric-prefix') {
+    for (let n = 2; n < f.tokens.length; n++) {
+      const text = f.tokens[n].text.replace(/\d\.\de-3/g, '1.note')
+      f.tokens[n].text = text
+      f.tokens[n].sourceItem.text = text
+      f.measuredRuns[n].text = text
+      f.measuredRuns[n].literalGlyphs = [...text.replace(/\s/gu, '')]
+    }
+  }
+  expect(
+    proveNativeMeasuredLeafHeader(f.table, f.tokens, f.captions, f.rules, f.measuredRuns)
+  ).toBeUndefined()
+  const result = refineTable(f.table, f.tokens, f.captions, [], f.rules, f.measuredRuns)
+  expect(result.repairs).not.toContain('native-measured-leaf-body-records-recovered')
+  expect(result.grid[0]).toHaveLength(3)
+})
+
+it('permits unrelated whole sources outside the table without sharing a native owner', () => {
+  const f = measuredDescriptorFixture()
+  f.tokens.push({
+    ...structuredClone(f.tokens[1]),
+    rect: [700, 35, 1000, 45],
+    sourceItem: { ...f.tokens[1].sourceItem, index: 999 }
+  })
+  const result = refineTable(f.table, f.tokens, f.captions, [], f.rules, f.measuredRuns)
+  expect(result.grid).toEqual(f.expected)
+  expect(result.unassigned).toEqual([])
+})

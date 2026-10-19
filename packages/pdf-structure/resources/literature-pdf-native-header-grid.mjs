@@ -7,6 +7,7 @@ import {
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import {
+  nativeWholeFontOrigins,
   nativeWholeOwnerRepairPacket,
   nativeWholeOwnerRepairCell
 } from './literature-pdf-native-leaf-record-repair.mjs'
@@ -2293,12 +2294,39 @@ export function proveNativeMeasuredLeafHeader(table, items, captions, rules, run
     else bands.push([item])
   }
   const complete = bands.filter((g) => g.length === leaves.length)
+  const startsNumeric = (item) => /^[+−–-]?(?:\d|\[)/u.test(item.text.trim())
+  // One descriptive record still needs four complete scalar peers and unique whole owners.
+  const firstIsDescriptor = complete[0]?.every(
+    (item) => /\p{L}/u.test(item.text) && !startsNumeric(item)
+  )
+  const numericRecords = firstIsDescriptor ? complete.slice(1) : complete
   if (
-    complete.length < 4 ||
+    numericRecords.length < 4 ||
     complete[0] !== bands[0] ||
-    complete.some((g) => g.slice(-3).some((i) => !/^[+−–-]?(?:\d|\[)/u.test(i.text.trim())))
+    numericRecords.some((g) => g.slice(-3).some((item) => !startsNumeric(item)))
   )
     return
+  if (firstIsDescriptor) {
+    const origins = nativeWholeFontOrigins(items)
+    const measurement =
+      /^[+−–-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+−–-]?\d+)?(?:\s*\([+−–-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+−–-]?\d+)?\))?$/iu
+    if (
+      !origins ||
+      origins.length !== items.length ||
+      origins.some((origin) => origin.pageNumber !== origins[0].pageNumber) ||
+      items.some(
+        (item) =>
+          !item.sourceItem ||
+          item.text !== item.sourceItem.text ||
+          item.sourceToken !== undefined ||
+          item.sourceSegment !== undefined ||
+          item.sourceItems !== undefined ||
+          item.sourceSegments !== undefined
+      ) ||
+      numericRecords.some((g) => g.slice(1).some((item) => !measurement.test(item.text.trim())))
+    )
+      return
+  }
   const domains = leaves.map((item, c) => [
     Math.min(item.rect[0], ...complete.map((g) => g[c].rect[0])),
     Math.max(item.rect[2], ...complete.map((g) => g[c].rect[2]))
