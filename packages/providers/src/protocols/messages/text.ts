@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { TextCodec } from '../text-types'
+import { isMiniMaxM31Model } from '../reasoning'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const tokenCount = z.number().int().nonnegative().safe()
@@ -25,6 +26,7 @@ export const messagesTextCodec: TextCodec = {
     const provider = input.target
     const effort = input.target.reasoningEffort
     const explicitEffort = effort && effort !== 'default' ? effort : undefined
+    const miniMaxM31 = isMiniMaxM31Model(provider.vendorId, provider.model)
     // Known Claude models that allow disabling thinking. Unknown / always-on models keep
     // their declared lowest effort instead of receiving an unsupported disable request.
     const disableClaudeThinking =
@@ -42,13 +44,18 @@ export const messagesTextCodec: TextCodec = {
       max_tokens: maxTokens,
       system: input.systemPrompt,
       messages: [{ role: 'user', content: input.prompt }],
-      ...(explicitEffort === 'none' || (explicitEffort === 'low' && disableClaudeThinking)
-        ? { thinking: { type: 'disabled' } }
-        : explicitEffort
-          ? provider.vendorId === 'minimax' || provider.reasoningEffortTransport === 'minimax'
-            ? { thinking: { type: 'adaptive' } }
-            : { output_config: { effort: explicitEffort } }
-          : {})
+      ...(explicitEffort && miniMaxM31
+        ? {
+            thinking: { type: 'adaptive' },
+            output_config: { effort: explicitEffort === 'none' ? 'low' : explicitEffort }
+          }
+        : explicitEffort === 'none' || (explicitEffort === 'low' && disableClaudeThinking)
+          ? { thinking: { type: 'disabled' } }
+          : explicitEffort
+            ? provider.vendorId === 'minimax' || provider.reasoningEffortTransport === 'minimax'
+              ? { thinking: { type: 'adaptive' } }
+              : { output_config: { effort: explicitEffort } }
+            : {})
     }
   },
   usage(value) {

@@ -471,34 +471,45 @@ describe('Responses conversion matrix', () => {
     expect(request).not.toHaveProperty('reasoning_effort')
   })
 
-  it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
-    'preserves MiniMax M3.1 %s effort through the Chat bridge',
-    (effort) => {
+  describe.each(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'])('%s reasoning', (model) => {
+    it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
+      'preserves MiniMax M3.1 %s effort through the Chat bridge',
+      (effort) => {
+        const request = responsesToChatCompletionsRequest(
+          { model: 'catalog', input: 'hi' },
+          model,
+          undefined,
+          [],
+          { vendorId: 'minimax', reasoningEffortOverride: effort }
+        )
+        expect(request).toMatchObject({
+          model,
+          reasoning_effort: effort,
+          thinking: { type: 'adaptive' }
+        })
+      }
+    )
+
+    it('leaves MiniMax M3.1 default effort to the provider', () => {
       const request = responsesToChatCompletionsRequest(
         { model: 'catalog', input: 'hi' },
-        'MiniMax-M3.1-Flash-Preview',
+        model,
         undefined,
         [],
-        { vendorId: 'minimax', reasoningEffortOverride: effort }
+        { vendorId: 'minimax' }
       )
-      expect(request).toMatchObject({
-        model: 'MiniMax-M3.1-Flash-Preview',
-        reasoning_effort: effort,
-        thinking: { type: 'adaptive' }
-      })
-    }
-  )
+      expect(request).not.toHaveProperty('reasoning_effort')
+      expect(request).not.toHaveProperty('thinking')
+    })
 
-  it('leaves MiniMax M3.1 default effort to the provider', () => {
-    const request = responsesToChatCompletionsRequest(
-      { model: 'catalog', input: 'hi' },
-      'MiniMax-M3.1-Flash-Preview',
-      undefined,
-      [],
-      { vendorId: 'minimax' }
-    )
-    expect(request).not.toHaveProperty('reasoning_effort')
-    expect(request).not.toHaveProperty('thinking')
+    it('uses low effort when an auxiliary caller requests no thinking', () => {
+      expect(
+        responsesToChatCompletionsRequest({ model: 'catalog', input: 'hi' }, model, undefined, [], {
+          vendorId: 'minimax',
+          reasoningEffortOverride: 'none'
+        })
+      ).toMatchObject({ reasoning_effort: 'low', thinking: { type: 'adaptive' } })
+    })
   })
 
   it('keeps the explicit custom MiniMax transport independent of model names', () => {

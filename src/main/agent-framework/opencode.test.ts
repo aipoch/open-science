@@ -502,14 +502,16 @@ describe('opencodeFramework.prepareModelConfig', () => {
   it.each([
     ['minimax', 'MiniMax-M3', 'none', { thinking: { type: 'disabled' } }],
     ['minimax', 'MiniMax-M3', 'high', { thinking: { type: 'adaptive' } }],
-    ...(['low', 'medium', 'high', 'xhigh', 'max'] as const).map(
-      (effort) =>
-        [
-          'minimax',
-          'MiniMax-M3.1-Flash-Preview',
-          effort,
-          { reasoningEffort: effort, thinking: { type: 'adaptive' } }
-        ] as const
+    ...(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'] as const).flatMap((model) =>
+      (['low', 'medium', 'high', 'xhigh', 'max'] as const).map(
+        (effort) =>
+          [
+            'minimax',
+            model,
+            effort,
+            { reasoningEffort: effort, thinking: { type: 'adaptive' } }
+          ] as const
+      )
     ),
     ['xiaomimimo', 'mimo-v2.5-pro', 'none', { thinking: { type: 'disabled' } }],
     ['xiaomimimo', 'mimo-v2.5-pro', 'high', { thinking: { type: 'enabled' } }],

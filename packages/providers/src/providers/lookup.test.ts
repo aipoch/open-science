@@ -501,23 +501,26 @@ describe('provider registry', () => {
     expect(resolveVendorChatCompletionsBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
   })
 
-  it('offers the MiniMax M3.1 Token Plan preview without replacing the pay-as-you-go default', () => {
-    const model = 'MiniMax-M3.1-Flash-Preview'
-    for (const region of ['global', 'china']) {
-      expect(getVendorModelIds('minimax', region)).toContain(model)
+  it.each(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'])(
+    'offers %s without replacing the pay-as-you-go default',
+    (model) => {
+      for (const region of ['global', 'china']) {
+        expect(getVendorModelIds('minimax', region)).toContain(model)
+        expect(getVendorModelIds('minimax', region)[0]).toBe('MiniMax-M3')
+      }
+      expect(getVendorModelContextWindow('minimax', model)).toBe(1_000_000)
+      expect(isVendorModelMultimodal('minimax', model)).toBe(true)
+      expect(resolveVendorModelApiEndpoints('minimax', model)).toEqual([
+        'messages',
+        'chat-completions',
+        'responses'
+      ])
+      expect(getVendorModelReasoningCapability('minimax', model)).toEqual({
+        supported: true,
+        values: ['low', 'medium', 'high', 'xhigh', 'max']
+      })
     }
-    expect(getVendorModelContextWindow('minimax', model)).toBe(1_000_000)
-    expect(isVendorModelMultimodal('minimax', model)).toBe(true)
-    expect(resolveVendorModelApiEndpoints('minimax', model)).toEqual([
-      'messages',
-      'chat-completions',
-      'responses'
-    ])
-    expect(getVendorModelReasoningCapability('minimax', model)).toEqual({
-      supported: true,
-      values: ['low', 'medium', 'high', 'xhigh', 'max']
-    })
-  })
+  )
 
   it('routes GLM to Z.AI overseas and BigModel in China, on both endpoints', () => {
     expect(vendorHasRegions('zhipu')).toBe(true)

@@ -2216,6 +2216,7 @@ describe('Responses bridge Skill selector', () => {
 
   it.each([
     ['MiniMax-M3', { type: 'disabled' }, undefined],
+    ['MiniMax-M3.1-Flash', { type: 'adaptive' }, 'low'],
     ['MiniMax-M3.1-Flash-Preview', { type: 'adaptive' }, 'low']
   ] as const)(
     'uses the lowest supported reasoning for %s Skill routing',

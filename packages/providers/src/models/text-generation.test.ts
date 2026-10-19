@@ -690,3 +690,57 @@ it.each([
     expect(onUsage).not.toHaveBeenCalled()
   }
 )
+
+describe.each(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'])(
+  '%s direct text generation',
+  (model) => {
+    describe.each(['chat-completions', 'messages', 'responses'] as const)(
+      '%s thinking controls',
+      (protocol) => {
+        it.each(['low', 'medium', 'high', 'xhigh', 'max', 'none', 'default'] as const)(
+          'maps %s effort without disabling thinking',
+          async (effort) => {
+            const fetchImpl = vi.fn(async () =>
+              Response.json({
+                ...completion,
+                ...responsesCompletion,
+                stop_reason: 'end_turn',
+                content: [{ type: 'text', text: 'cell' }]
+              })
+            )
+            await expect(
+              textRunner(fetchImpl).run({
+                ...request,
+                target: {
+                  ...target,
+                  model,
+                  vendorId: 'minimax',
+                  protocol,
+                  url: protocolUrls[protocol],
+                  reasoningEffort: effort
+                }
+              })
+            ).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
+            const body = JSON.parse(
+              String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body)
+            )
+            if (effort === 'default') {
+              for (const field of ['thinking', 'reasoning', 'reasoning_effort', 'output_config'])
+                expect(body).not.toHaveProperty(field)
+            } else {
+              const expectedEffort = effort === 'none' ? 'low' : effort
+              const fields =
+                protocol === 'messages'
+                  ? { thinking: { type: 'adaptive' }, output_config: { effort: expectedEffort } }
+                  : protocol === 'responses'
+                    ? { reasoning: { effort: expectedEffort } }
+                    : { thinking: { type: 'adaptive' }, reasoning_effort: expectedEffort }
+              expect(body).toMatchObject({ model, ...fields })
+            }
+            expect(fetchImpl).toHaveBeenCalledOnce()
+          }
+        )
+      }
+    )
+  }
+)

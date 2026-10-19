@@ -467,9 +467,14 @@ const definitions: readonly OfficialVendor[] = [
         contextWindow: 1_000_000,
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
-      // Token Plan preview; keep M3 as the default for pay-as-you-go keys. Unlike M3, this model
-      // always thinks and supports five effort levels (default: max).
-      // https://platform.minimax.io/docs/api-reference/text-anthropic-api
+      // M3.1 always thinks and supports five effort levels (default: max). Keep M3 as the
+      // default and retain the Preview id for existing selections.
+      // https://platform.minimax.cn/docs/guides/text-generation
+      {
+        id: 'MiniMax-M3.1-Flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       {
         id: 'MiniMax-M3.1-Flash-Preview',
         contextWindow: 1_000_000,
@@ -480,7 +485,7 @@ const definitions: readonly OfficialVendor[] = [
     ],
     // M3 and M3.1 are natively multimodal; older M2 models remain text-only.
     multimodal: {
-      multimodalModels: ['MiniMax-M3', 'MiniMax-M3.1-Flash-Preview']
+      multimodalModels: ['MiniMax-M3', 'MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview']
     }
   },
   {

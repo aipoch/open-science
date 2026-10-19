@@ -1,5 +1,12 @@
 import type { CustomReasoningEffortTransport, ModelReasoningEffort } from './types'
 
+export const isMiniMaxM31Model = (
+  vendorId: string | undefined,
+  model: string | undefined
+): boolean =>
+  vendorId === 'minimax' &&
+  (model === 'MiniMax-M3.1-Flash' || model === 'MiniMax-M3.1-Flash-Preview')
+
 export type ChatReasoningTransport = {
   reasoningEffort?: ModelReasoningEffort
   thinking?: { type: 'adaptive' | 'disabled' | 'enabled' }
@@ -34,8 +41,8 @@ export const resolveChatReasoningTransport = (
   }
 
   if (transport === 'minimax') {
-    if (vendorId === 'minimax' && model === 'MiniMax-M3.1-Flash-Preview') {
-      // The preview always thinks. Auxiliary callers requesting no thinking use its lowest tier;
+    if (isMiniMaxM31Model(vendorId, model)) {
+      // M3.1 always thinks. Auxiliary callers requesting no thinking use its lowest tier;
       // sending `none` or disabled thinking would fail with HTTP 400.
       // https://platform.minimax.io/docs/api-reference/text-openai-api
       return {
