@@ -5064,7 +5064,6 @@
     "Saving stopped. Completed results are kept.": "保存を停止しました。完了した結果は保持されます。",
     "Could not save reference {{number}}. Earlier results are kept.": "文献 {{number}} を保存できませんでした。それまでの結果は保持されます。",
     "Open Inbox": "受信トレイを開く",
-    "Open existing reference {{number}}": "既存の文献 {{number}} を開く",
     "The selected file is not valid CSL XML.": "選択したファイルは有効な CSL XML ではありません。",
     "CSL files with a document type declaration are not supported.": "文書型宣言を含む CSL ファイルには対応していません。",
     "The selected file must be an independent CSL 1.0 style.": "独立した CSL 1.0 スタイルのファイルを選択してください。",
@@ -7299,7 +7298,6 @@
     "Imported: {{total}}": "インポート済み: {{total}}",
     "Dismissed: {{total}}": "除外済み: {{total}}",
     "Current status unavailable: {{total}}": "現在の状態を確認できません: {{total}}",
-    "Open imported reference {{number}}": "インポート済み文献 {{number}} を開く",
     "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。"
   }
 }

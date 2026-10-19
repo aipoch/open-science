@@ -33,6 +33,7 @@
     ],
     "literature_presentation_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
@@ -48,25 +49,30 @@
     ],
     "package_journal_catalog": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_citations": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_discovery": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_library": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
     "package_literature_screening": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "package_pdf_translation": [
@@ -76,6 +82,7 @@
     "pdf_annotations": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "pdf_document_source": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "pdf_preview_runtime": [
@@ -100,6 +107,7 @@
     "renderer_desktop_recovery": [
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
@@ -153,6 +161,8 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_shared_components": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_state": [
@@ -164,6 +174,7 @@
     ],
     "renderer_ui": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_upload_transfer": [
@@ -201,7 +212,10 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "settings_presentation_primitives": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
     "shared_promise_identity": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -263,7 +277,14 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_literature_presentation": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
+      "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
     "workspace_navigation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"

@@ -1,19 +1,10 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import {
-  ArrowRight,
-  BookOpenText,
-  FileText,
-  Inbox,
-  Link2,
-  Search,
-  TriangleAlert
-} from 'lucide-react'
+import { BookOpenText, FileText, Inbox, Link2, Search, TriangleAlert } from 'lucide-react'
+import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'
 import { LiteratureCandidateStatus } from './LiteratureCandidateStatus'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
-import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -44,7 +35,11 @@ const WorkspaceLiteratureToolCard = ({
       : summary.pdfElements
         ? t('PDF figures and tables')
         : summary.action === 'save'
-          ? t('Save')
+          ? canOpenInbox
+            ? summary.pdfDownloaded
+              ? t('PDF downloaded to Inbox')
+              : t('Saved to Inbox')
+            : t('Save')
           : summary.action === 'search'
             ? t('Search')
             : summary.action === 'format'
@@ -105,7 +100,9 @@ const WorkspaceLiteratureToolCard = ({
         </span>
         <div className="min-w-0 flex-1 basis-28">
           <div className="text-[13px] font-medium text-text-000">{title}</div>
-          <div className="text-xs text-text-200">{subtitle}</div>
+          {summary.action !== 'save' || isApproval ? (
+            <div className="text-xs text-text-200">{subtitle}</div>
+          ) : null}
         </div>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
           {!summary.documentNames.length &&
@@ -127,20 +124,6 @@ const WorkspaceLiteratureToolCard = ({
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
               {t('Already in library: {{total}}', { total: summary.existingItemIds.length })}
             </span>
-          ) : null}
-          {summary.action === 'save' && summary.existingItemIds?.length === 1 && !canOpenInbox ? (
-            <Button
-              size="sm"
-              className="gap-1.5 px-2.5"
-              onClick={() =>
-                useNavigationStore
-                  .getState()
-                  .openLiteratureItem(summary.existingItemIds![0], 'user')
-              }
-            >
-              {t('Open reference')}
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </Button>
           ) : null}
           {isLibrary &&
           (summary.action === 'format' ||
@@ -283,20 +266,11 @@ const WorkspaceLiteratureToolCard = ({
               }
             />
           ) : null}
-          {summary.existingItemIds?.length &&
-          (canOpenInbox || summary.existingItemIds.length > 1) ? (
-            <div className="flex flex-wrap gap-2">
-              {summary.existingItemIds?.map((id, index) => (
-                <Button
-                  key={id}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => useNavigationStore.getState().openLiteratureItem(id, 'user')}
-                >
-                  {t('Open existing reference {{number}}', { number: index + 1 })}
-                </Button>
-              ))}
-            </div>
+          {!isApproval && summary.existingItemIds?.length ? (
+            <LiteratureToolReferenceList
+              itemIds={summary.existingItemIds}
+              activityId={activityId}
+            />
           ) : null}
         </>
       ) : null}

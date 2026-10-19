@@ -528,7 +528,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       expect(container.textContent).not.toContain('Pending review:')
       expect(getCandidateStates).toHaveBeenCalledTimes(1)
     }
-    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(unsubscribe).toHaveBeenCalledTimes(
+      vi.mocked(window.api.literature.onChanged).mock.calls.length
+    )
     await show({ ...original, id: 'another-local-session' })
     expect(getCandidateStates).toHaveBeenCalledTimes(2)
     expect(container.textContent).toContain('Pending review: 1')
@@ -641,7 +643,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       })
       expect(container.textContent).not.toContain('Pending review:')
       expect(getCandidateStates).toHaveBeenCalledTimes(1)
-      expect(unsubscribe).toHaveBeenCalledOnce()
+      expect(unsubscribe).toHaveBeenCalledTimes(
+        vi.mocked(window.api.literature.onChanged).mock.calls.length
+      )
       await show(session)
       expect(getCandidateStates).toHaveBeenCalledTimes(2)
       // An unresolvable activity must not acquire live identities from another card.

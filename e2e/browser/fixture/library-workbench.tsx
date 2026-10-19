@@ -140,6 +140,24 @@ const candidates: LiteratureInboxCandidateView[] = [
       }
     : {})
 }))
+const cardReferences: LiteratureItemView[] = params.has('card-design')
+  ? Array.from({ length: 6 }, (_, index) => ({
+      ...entry,
+      id: `imported-${index}`,
+      item: {
+        ...candidates[index % candidates.length].candidate.item,
+        title: `${candidates[index % candidates.length].candidate.item.title} — sample ${index + 1}`
+      }
+    }))
+  : [entry]
+if (params.has('card-design'))
+  candidates.push(
+    ...cardReferences.map((reference) => ({
+      ...candidates[0],
+      id: reference.id,
+      state: 'accepted' as const
+    }))
+  )
 useProjectStore.setState({
   projects: [
     { id: 'fixture-project', name: locale === 'zh-Hans' ? '咖啡因与睡眠' : 'Caffeine and sleep' }
@@ -159,10 +177,12 @@ window.api = {
         .map(({ id, state }) => ({
           candidateId: id,
           state,
-          ...(state === 'accepted' ? { acceptedItemId: entry.id } : {})
+          ...(state === 'accepted'
+            ? { acceptedItemId: id.startsWith('imported-') ? id : entry.id }
+            : {})
         }))
     }),
-    get: async () => entry,
+    get: async (id: string) => cardReferences.find((reference) => reference.id === id),
     search: async (request: LiteratureCatalogSearchRequest) => {
       reads += 1
       if (mode === 'error') throw new Error('Fixture read failure')
@@ -177,7 +197,9 @@ window.api = {
                     .toLowerCase()
                     .includes(request.query.toLowerCase()))
             )
-          : [entry]
+          : cardReferences.filter(
+              (reference) => !request.itemIds || request.itemIds.includes(reference.id)
+            )
       const entries =
         mode === 'empty' || (request.scope !== 'inbox' && request.query) ? [] : filtered
       return { entries, totalCount: entries.length }
@@ -239,6 +261,29 @@ export function Fixture(): React.JSX.Element {
   })
   const [added, setAdded] = useState('')
   const [active, setActive] = useState(true)
+  if (params.has('card-design'))
+    return (
+      <main className="mx-auto max-w-xl space-y-3 p-4">
+        <WorkspaceLiteratureToolCard
+          summary={buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            { results: candidates.map(({ id }) => ({ kind: 'candidate', id, state: 'pending' })) }
+          )}
+        />
+        <WorkspaceLiteratureToolCard
+          summary={buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            {
+              results: candidates
+                .filter(({ state }) => state === 'pending')
+                .map(({ id }) => ({ kind: 'candidate', id, state: 'pending' }))
+            }
+          )}
+        />
+      </main>
+    )
   if (params.has('density')) {
     return (
       <main className="mx-auto max-w-2xl space-y-3 bg-bg-10 p-4">

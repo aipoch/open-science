@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -8,6 +10,16 @@ import { LiteratureCandidateSessionContext } from './literature-candidate-sessio
 import { buildLiteratureLibraryToolSummary } from './literature-tool-presentation'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 
+const reference = (id: string): LiteratureItemView => ({
+  id,
+  metadataRevision: 1,
+  item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: `Reference ${id}` }),
+  attachments: [],
+  collectionIds: [],
+  projectIds: [],
+  createdAt: 1,
+  updatedAt: 1
+})
 const previousApi = window.api
 const read =
   vi.fn<(request: { candidateIds: string[] }) => Promise<LiteratureCandidateStatesResult>>()
@@ -22,6 +34,10 @@ beforeEach(() => {
     configurable: true,
     value: {
       literature: {
+        search: vi.fn(async ({ itemIds }: { itemIds: string[] }) => ({
+          entries: itemIds.map(reference)
+        })),
+        get: vi.fn(async (id: string) => reference(id)),
         getCandidateStates: read,
         onChanged: (listener: () => void) => {
           listeners.add(listener)
@@ -65,8 +81,9 @@ it('updates the real saved-tool card after import without rewriting its receipt'
   expect(await view.findByText('Imported: 1')).toBeDefined()
   expect(view.queryByText('Pending review: 1')).toBeNull()
   expect(view.queryByRole('button', { name: 'Open Inbox' })).toBeNull()
-  fireEvent.click(view.getByRole('button', { name: 'Open reference' }))
-  expect(open).toHaveBeenCalledWith('paper', 'user')
+  fireEvent.click(await view.findByRole('button', { name: 'Reference paper' }))
+  expect(await view.findByRole('dialog', { name: 'Reference paper' })).toBeDefined()
+  expect(open).not.toHaveBeenCalled()
   expect(summary.savedCount).toBe(1)
   expect(JSON.stringify(output)).toBe(original)
   view.unmount()
@@ -164,7 +181,7 @@ it('ignores late responses after switching identities, refreshing, and unmountin
     window.dispatchEvent(new Event('focus'))
   })
   expect(read).toHaveBeenCalledTimes(calls)
-  expect(remove).toHaveBeenCalledOnce()
+  expect(listeners.size).toBe(0)
 })
 
 it('revalidates after focus and reconnect and never resolves imported history locally', async () => {
@@ -199,18 +216,18 @@ it('rechecks deleted, restored, and missing destinations without keeping failed 
   }
   read.mockResolvedValue(accepted)
   const view = render(status())
-  await view.findByRole('button', { name: 'Open reference' })
+  await view.findByRole('button', { name: 'Reference paper' })
   read.mockRejectedValueOnce(new Error('offline'))
   await act(async () => notify())
   await view.findByText('Could not check current library status.')
-  expect(view.queryByRole('button', { name: 'Open reference' })).toBeNull()
+  expect(view.queryByRole('button', { name: 'Reference paper' })).toBeNull()
   read.mockResolvedValue({ candidates: [{ candidateId: 'a', state: 'accepted' }] })
   fireEvent(window, new Event('focus'))
   await view.findByText('Current status unavailable: 1')
   expect(view.queryByText(/Pending review:/)).toBeNull()
   read.mockResolvedValue(accepted)
   fireEvent(window, new Event('open-science:web-events-open'))
-  await view.findByRole('button', { name: 'Open reference' })
+  await view.findByRole('button', { name: 'Reference paper' })
   read.mockResolvedValue({ candidates: [] })
   await act(async () => notify())
   await view.findByText('Current status unavailable: 1')

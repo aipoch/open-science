@@ -5064,7 +5064,6 @@
     "Saving stopped. Completed results are kept.": "儲存已停止。已完成的結果會保留。",
     "Could not save reference {{number}}. Earlier results are kept.": "無法儲存第 {{number}} 筆文獻。先前的結果會保留。",
     "Open Inbox": "開啟收件匣",
-    "Open existing reference {{number}}": "開啟已有文獻 {{number}}",
     "The selected file is not valid CSL XML.": "所選檔案不是有效的 CSL XML。",
     "CSL files with a document type declaration are not supported.": "不支援含有文件類型宣告的 CSL 檔案。",
     "The selected file must be an independent CSL 1.0 style.": "所選檔案必須是獨立的 CSL 1.0 樣式。",
@@ -7299,7 +7298,6 @@
     "Imported: {{total}}": "已匯入：{{total}}",
     "Dismissed: {{total}}": "已忽略：{{total}}",
     "Current status unavailable: {{total}}": "無法確認目前狀態：{{total}}",
-    "Open imported reference {{number}}": "開啟已匯入文獻 {{number}}",
     "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。"
   }
 }

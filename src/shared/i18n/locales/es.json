@@ -5374,7 +5374,6 @@
     "Saving stopped. Completed results are kept.": "Se detuvo el guardado. Se conservan los resultados completados.",
     "Could not save reference {{number}}. Earlier results are kept.": "No se pudo guardar la referencia {{number}}. Se conservan los resultados anteriores.",
     "Open Inbox": "Abrir bandeja de entrada",
-    "Open existing reference {{number}}": "Abrir referencia existente {{number}}",
     "The selected file is not valid CSL XML.": "El archivo seleccionado no contiene XML de CSL válido.",
     "CSL files with a document type declaration are not supported.": "No se admiten archivos CSL con una declaración de tipo de documento.",
     "The selected file must be an independent CSL 1.0 style.": "El archivo seleccionado debe ser un estilo CSL 1.0 independiente.",
@@ -7629,7 +7628,6 @@
     "Imported: {{total}}": "Importadas: {{total}}",
     "Dismissed: {{total}}": "Descartadas: {{total}}",
     "Current status unavailable: {{total}}": "Estado actual no disponible: {{total}}",
-    "Open imported reference {{number}}": "Abrir referencia importada {{number}}",
     "Historical result; current library status is unavailable.": "Resultado histórico; el estado actual en la biblioteca no está disponible."
   }
 }

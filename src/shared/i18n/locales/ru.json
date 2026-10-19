@@ -5504,7 +5504,6 @@
     "Saving stopped. Completed results are kept.": "Сохранение остановлено. Завершённые результаты сохранены.",
     "Could not save reference {{number}}. Earlier results are kept.": "Не удалось сохранить источник {{number}}. Предыдущие результаты сохранены.",
     "Open Inbox": "Открыть входящие",
-    "Open existing reference {{number}}": "Открыть существующий источник {{number}}",
     "The selected file is not valid CSL XML.": "Выбранный файл не является корректным XML-файлом CSL.",
     "CSL files with a document type declaration are not supported.": "Файлы CSL с объявлением типа документа не поддерживаются.",
     "The selected file must be an independent CSL 1.0 style.": "Выбранный файл должен содержать независимый стиль CSL 1.0.",
@@ -7769,7 +7768,6 @@
     "Imported: {{total}}": "Импортировано: {{total}}",
     "Dismissed: {{total}}": "Отклонено: {{total}}",
     "Current status unavailable: {{total}}": "Текущее состояние недоступно: {{total}}",
-    "Open imported reference {{number}}": "Открыть импортированный источник {{number}}",
     "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно."
   }
 }

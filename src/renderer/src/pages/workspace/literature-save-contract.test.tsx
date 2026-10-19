@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { cleanup, render as renderComponent, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
@@ -6,12 +8,26 @@ import { buildLiteratureLibraryToolSummary } from './literature-tool-presentatio
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { useNavigationStore } from '../../stores/navigation-store'
+const reference = (id: string): LiteratureItemView => ({
+  id,
+  metadataRevision: 1,
+  item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: `Reference ${id}` }),
+  attachments: [],
+  collectionIds: [],
+  projectIds: [],
+  createdAt: 1,
+  updatedAt: 1
+})
 const previousApi = window.api
 beforeEach(() => {
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
       literature: {
+        search: vi.fn(async ({ itemIds }: { itemIds: string[] }) => ({
+          entries: itemIds.map(reference)
+        })),
+        get: vi.fn(async (id: string) => reference(id)),
         getCandidateStates: vi.fn(async ({ candidateIds }: { candidateIds: string[] }) => ({
           candidates: candidateIds.map((candidateId) => ({ candidateId, state: 'pending' }))
         })),
@@ -31,7 +47,7 @@ const render = (node: React.ReactNode): ReturnType<typeof renderComponent> =>
     </LiteratureCandidateSessionContext.Provider>
   )
 
-it('does not describe an existing library receipt as an Inbox save', () => {
+it('does not describe an existing library receipt as an Inbox save', async () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',
     { refs: ['doi:10.1234/existing'] },
@@ -63,8 +79,9 @@ it('does not describe an existing library receipt as an Inbox save', () => {
     const card = rendered.getByTestId('literature-tool-card')
     expect(card.textContent).not.toContain('Inbox')
     expect(card.textContent).toContain('Already in library: 1')
-    fireEvent.click(rendered.getByRole('button', { name: 'Open reference' }))
-    expect(navigate).toHaveBeenCalledWith('existing', 'user')
+    fireEvent.click(await rendered.findByRole('button', { name: 'Reference existing' }))
+    expect(await rendered.findByRole('dialog', { name: 'Reference existing' })).toBeDefined()
+    expect(navigate).not.toHaveBeenCalled()
   } finally {
     cleanup()
     navigate.mockRestore()
@@ -99,8 +116,9 @@ it('shows mixed outcomes and opens the corresponding destinations', async () => 
     ).toBeDefined()
     fireEvent.click(rendered.getByRole('button', { name: 'Open Inbox' }))
     expect(inbox).toHaveBeenCalledWith('user')
-    fireEvent.click(rendered.getByRole('button', { name: 'Open existing reference 1' }))
-    expect(existing).toHaveBeenCalledWith('existing', 'user')
+    fireEvent.click(await rendered.findByRole('button', { name: 'Reference existing' }))
+    expect(await rendered.findByRole('dialog', { name: 'Reference existing' })).toBeDefined()
+    expect(existing).not.toHaveBeenCalled()
   } finally {
     cleanup()
     inbox.mockRestore()

@@ -5062,7 +5062,6 @@
     "Saving stopped. Completed results are kept.": "저장이 중지되었습니다. 완료된 결과는 유지됩니다.",
     "Could not save reference {{number}}. Earlier results are kept.": "문헌 {{number}}을(를) 저장하지 못했습니다. 이전 결과는 유지됩니다.",
     "Open Inbox": "받은 편지함 열기",
-    "Open existing reference {{number}}": "기존 문헌 {{number}} 열기",
     "The selected file is not valid CSL XML.": "선택한 파일은 유효한 CSL XML이 아닙니다.",
     "CSL files with a document type declaration are not supported.": "문서 유형 선언이 포함된 CSL 파일은 지원하지 않습니다.",
     "The selected file must be an independent CSL 1.0 style.": "선택한 파일은 독립형 CSL 1.0 스타일이어야 합니다.",
@@ -7297,7 +7296,6 @@
     "Imported: {{total}}": "가져옴: {{total}}",
     "Dismissed: {{total}}": "제외됨: {{total}}",
     "Current status unavailable: {{total}}": "현재 상태 확인 불가: {{total}}",
-    "Open imported reference {{number}}": "가져온 문헌 {{number}} 열기",
     "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다."
   }
 }

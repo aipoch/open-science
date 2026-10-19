@@ -8,14 +8,17 @@ import type { LiteratureCandidateStatesResult } from '../../../../shared/literat
 import { isCollectionOnlyChange, useLiteratureChanges } from '../literature/useLiteratureChanges'
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 
+import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 
 const CurrentCandidateStatus = ({
   candidateIds,
-  sessionId
+  sessionId,
+  activityId
 }: {
   candidateIds: readonly string[]
   sessionId: string
+  activityId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const openPreview = useContext(LibraryPreviewNavigationContext)
@@ -78,18 +81,31 @@ const CurrentCandidateStatus = ({
   const itemIds = [...new Set(accepted.map((candidate) => candidate!.acceptedItemId!))]
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-2"
-      role="status"
-      aria-busy={result.revision !== revision}
-    >
-      <span>{t('Current library status')}</span>
-      {pending > 0 ? (
-        <>
-          <span>{t('Pending review: {{total}}', { total: pending })}</span>
+    <div className="space-y-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <div
+          className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-[11px]"
+          role="status"
+          aria-busy={result.revision !== revision}
+        >
+          <span className="sr-only">{t('Current library status')}</span>
+          {accepted.length > 0 ? (
+            <span className="text-text-100">
+              {t('Imported: {{total}}', { total: accepted.length })}
+            </span>
+          ) : null}
+          {pending > 0 ? <span>{t('Pending review: {{total}}', { total: pending })}</span> : null}
+          {dismissed > 0 ? <span>{t('Dismissed: {{total}}', { total: dismissed })}</span> : null}
+          {unavailable > 0 ? (
+            <span>{t('Current status unavailable: {{total}}', { total: unavailable })}</span>
+          ) : null}
+        </div>
+        {pending > 0 ? (
           <Button
+            type="button"
             size="sm"
-            variant="outline"
+            variant="ghost"
+            className="h-6 shrink-0 px-1.5 text-[11px] text-primary"
             onClick={() => {
               if (openPreview) openPreview({ section: 'inbox' })
               else useNavigationStore.getState().openLibrary('user')
@@ -97,27 +113,9 @@ const CurrentCandidateStatus = ({
           >
             {t('Open Inbox')}
           </Button>
-        </>
-      ) : null}
-      {accepted.length > 0 ? (
-        <span>{t('Imported: {{total}}', { total: accepted.length })}</span>
-      ) : null}
-      {dismissed > 0 ? <span>{t('Dismissed: {{total}}', { total: dismissed })}</span> : null}
-      {unavailable > 0 ? (
-        <span>{t('Current status unavailable: {{total}}', { total: unavailable })}</span>
-      ) : null}
-      {itemIds.map((id, index) => (
-        <Button
-          key={id}
-          size="sm"
-          variant="outline"
-          onClick={() => useNavigationStore.getState().openLiteratureItem(id, 'user')}
-        >
-          {itemIds.length === 1
-            ? t('Open reference')
-            : t('Open imported reference {{number}}', { number: index + 1 })}
-        </Button>
-      ))}
+        ) : null}
+      </div>
+      <LiteratureToolReferenceList itemIds={itemIds} activityId={activityId} />
     </div>
   )
 }
@@ -138,7 +136,11 @@ export const LiteratureCandidateStatus = ({
   return (
     <div className="text-xs text-text-200">
       {sessionId && candidateIds?.length ? (
-        <CurrentCandidateStatus candidateIds={candidateIds} sessionId={sessionId} />
+        <CurrentCandidateStatus
+          candidateIds={candidateIds}
+          sessionId={sessionId}
+          activityId={activityId}
+        />
       ) : (
         <p>{t('Historical result; current library status is unavailable.')}</p>
       )}
