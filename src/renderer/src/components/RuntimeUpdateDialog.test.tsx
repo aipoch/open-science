@@ -523,3 +523,93 @@ describe('continuous in-place update dialog', () => {
     await act(async () => finish())
   })
 })
+
+describe('update check and download admission', () => {
+  it.each(['idle', 'checking', 'up-to-date'] as const)(
+    'hides installation actions when an open offer changes to %s, even with a stale version',
+    (state) => {
+      useUpdateStore.setState({
+        status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+      })
+      act(() => root.render(<UpdateDialog />))
+      expect(buttons('Download update')).toHaveLength(1)
+      act(() => useUpdateStore.setState({ status: { ...useUpdateStore.getState().status, state } }))
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Download update')).toHaveLength(0)
+    }
+  )
+
+  it('rechecks a versionless failure instead of downloading or installing', async () => {
+    let finish!: () => void
+    const check = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const download = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      check,
+      download,
+      apply,
+      status: {
+        state: 'error',
+        current: '1',
+        applyKind: 'restart',
+        error: 'Synthetic check failure'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.body.textContent).toContain('Synthetic check failure')
+    expect(document.body.textContent).not.toContain('Ready to install')
+    expect(buttons('Download update')).toHaveLength(0)
+    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Retry')).toHaveLength(1)
+    act(() => buttons('Retry')[0].click())
+    expect(buttons('Checking…')[0].disabled).toBe(true)
+    expect(check).toHaveBeenCalledOnce()
+    expect(download).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    await act(async () => finish())
+    expect(buttons('Retry')[0].disabled).toBe(false)
+  })
+
+  it('retries a failed transfer with a known release through download', async () => {
+    const check = vi.fn(async () => {})
+    const download = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({
+      check,
+      download,
+      apply,
+      status: {
+        state: 'error',
+        current: '1',
+        latest: '2',
+        applyKind: 'restart',
+        error: 'Transfer failed'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    await act(async () => buttons('Download update')[0].click())
+    expect(download).toHaveBeenCalledOnce()
+    expect(check).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('keeps runtime recovery visible when the update provider reports checking', () => {
+    useUpdateStore.setState({
+      status: {
+        state: 'checking',
+        current: '1',
+        applyKind: 'restart',
+        recovery: r({ runtime: 'stopped-clean', canRecover: true })
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(buttons('Retry')).toHaveLength(1)
+  })
+})

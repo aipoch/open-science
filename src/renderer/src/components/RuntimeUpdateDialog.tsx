@@ -26,7 +26,8 @@ import { progressStates, recoveryStates, runtimeUpdateState } from './runtime-up
 
 export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { status, isDialogOpen, apply, cancel, recheck, recover, download } = useUpdateStore()
+  const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
+    useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
   const [forceConfirmation, setForceConfirmation] = useState(false)
   const forceIntent = useRef(false)
@@ -54,10 +55,19 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const progress = progressStates.has(id)
   const downloading = status.state === 'downloading'
   const needsDownload =
-    ['available', 'downloading', 'error'].includes(status.state) &&
+    (status.state === 'available' ||
+      status.state === 'downloading' ||
+      (status.state === 'error' && Boolean(status.latest))) &&
     !status.reason &&
     !status.recovery &&
     !status.cliConfirmation
+  const checkFailed =
+    status.state === 'error' &&
+    !status.latest &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation &&
+    !status.legacyShellRecovery
   const busy = requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
@@ -69,11 +79,13 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   }, [isDialogOpen, completed])
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel =
-    !['S23', 'S24', 'S25'].includes(id) && (status.recovery?.canCancel ?? (needsDownload || !busy))
+    !['S23', 'S24', 'S25'].includes(id) &&
+    (status.recovery?.canCancel ?? (needsDownload || checkFailed || !busy))
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
-  const standardFlow = !confirming && !blocked && !recovery && !legacyRecords && !status.error
+  const standardFlow =
+    !confirming && !blocked && !recovery && !legacyRecords && !status.error && !checkFailed
   const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
   const statusTitle = needsDownload
     ? downloading
@@ -186,10 +198,12 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               {confirming ? t('Update Open-Science now?') : t('Update')}
             </Dialog.Title>
             <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
-              {t('v{{current}} → v{{latest}}', {
-                current: status.current,
-                latest: status.latest ?? status.current
-              })}
+              {status.latest
+                ? t('v{{current}} → v{{latest}}', {
+                    current: status.current,
+                    latest: status.latest
+                  })
+                : status.current}
             </Dialog.Description>
           </div>
           {standardFlow ? (
@@ -281,7 +295,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </section>
             ) : (
               <>
-                {!standardFlow && !needsDownload ? (
+                {!standardFlow && !needsDownload && !checkFailed ? (
                   <ErrorNotice
                     role={blocked || recovery ? 'alert' : 'status'}
                     level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
@@ -301,18 +315,19 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     }
                   />
                 ) : null}
-                {status.error ? (
+                {status.error || checkFailed ? (
                   <ErrorNotice
                     className="mt-3"
                     role="alert"
                     level="warning"
+                    title={checkFailed ? t('Update failed') : undefined}
                     description={
-                      needsDownload
+                      (needsDownload || checkFailed) && status.error
                         ? redactSensitiveText(status.error)
                         : t('The operation could not be completed. Try again.')
                     }
                   >
-                    {needsDownload ? (
+                    {needsDownload || checkFailed ? (
                       <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
                         {t('Download manually')}
                       </ExternalTextLink>
@@ -364,7 +379,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     </Button>
                   </details>
                 ) : null}
-                {!recovery ? <UpdateReleaseNotes status={status} /> : null}
+                {!recovery && !checkFailed ? <UpdateReleaseNotes status={status} /> : null}
               </>
             )}
           </div>
@@ -450,7 +465,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     <Button
                       disabled={busy || downloading}
                       onClick={() => {
-                        if (needsDownload) void request(download)
+                        if (checkFailed) void request(check)
+                        else if (needsDownload) void request(download)
                         else if (status.legacyShellRecovery)
                           setLegacyToken(status.legacyShellRecovery.token)
                         else if (blocked && !cli) void request(recheck)
@@ -469,7 +485,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                           ? t('Checking…')
                           : status.legacyShellRecovery
                             ? t('Continue')
-                            : blocked && !cli
+                            : checkFailed || (blocked && !cli)
                               ? t('Retry')
                               : t('Restart to update')}
                     </Button>

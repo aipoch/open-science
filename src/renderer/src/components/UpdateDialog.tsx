@@ -400,17 +400,20 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
 
 const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
   const status = useUpdateStore((state) => state.status)
-  return status.reason ||
-    status.recovery ||
-    status.cliConfirmation ||
-    status.outcome ||
-    (status.applyKind === 'restart' &&
+  const runtimeLifecycle =
+    status.reason || status.recovery || status.cliConfirmation || status.outcome
+  const hasUpdateState = ['available', 'downloading', 'ready', 'applying', 'error'].includes(
+    status.state
+  )
+  return runtimeLifecycle ||
+    (hasUpdateState &&
+      status.applyKind === 'restart' &&
       (!status.error || (status.state === 'error' && !status.blockedBy?.length)) &&
       status.error !== UPDATE_INSTALLATION_REQUIRED &&
       !status.legacyShellRecovery) ? (
     <RuntimeUpdateDialog active={active} />
   ) : (
-    <LegacyUpdateDialog active={active} />
+    <LegacyUpdateDialog active={active && hasUpdateState} />
   )
 }
 
