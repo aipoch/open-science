@@ -119,6 +119,9 @@
     "renderer_compute_recovery": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "renderer_compute_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_desktop_recovery": [
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -146,8 +149,23 @@
     "renderer_model_selection": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "renderer_network_indicator": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_network_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_notebook_provisioning": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "renderer_notification_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_notification_surfaces": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_package_import_surfaces": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_package_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -162,8 +180,14 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "renderer_preferences_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_preview_persistence": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "renderer_preview_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_runtime_errors": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -178,6 +202,9 @@
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_session_package_state": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_session_persistence": [
@@ -197,6 +224,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "renderer_skill_catalog_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -209,6 +239,12 @@
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_update_capsule": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_update_state": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_upload_transfer": [
@@ -295,6 +331,9 @@
     "workspace_artifacts": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "workspace_background_status": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "workspace_bookmarks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -378,16 +417,16 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_runtime": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "workspace_session_controls": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "workspace_session_dialogs": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_session_plan": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_shell": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
-    ],
+    "workspace_shell": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "workspace_side_chat": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
