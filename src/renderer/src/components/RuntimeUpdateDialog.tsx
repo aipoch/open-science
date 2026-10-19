@@ -54,6 +54,12 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const recovery = recoveryStates.has(id)
   const progress = progressStates.has(id)
   const downloading = status.state === 'downloading'
+  const checking =
+    status.state === 'checking' &&
+    !status.reason &&
+    !status.recovery &&
+    !status.cliConfirmation &&
+    !status.legacyShellRecovery
   const needsDownload =
     (status.state === 'available' ||
       status.state === 'downloading' ||
@@ -68,7 +74,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     !status.recovery &&
     !status.cliConfirmation &&
     !status.legacyShellRecovery
-  const busy = requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
+  const busy =
+    checking || requestPending || status.state === 'applying' || id === 'S25' || id === 'S29'
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
@@ -80,29 +87,33 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
-    (status.recovery?.canCancel ?? (needsDownload || checkFailed || !busy))
+    (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
   const standardFlow =
     !confirming && !blocked && !recovery && !legacyRecords && !status.error && !checkFailed
   const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
-  const statusTitle = needsDownload
-    ? downloading
-      ? t('Downloading…')
-      : t('Update available')
-    : copy.title
-  const statusDescription = needsDownload
-    ? downloading
-      ? t('You can cancel the download at any time.')
-      : t('Review what’s new, then download the update.')
-    : id === 'S23'
-      ? t('Cannot cancel; the app will reopen automatically.')
-      : status.state === 'applying'
-        ? t('Please wait for the app to close and reopen.')
-        : id === 'S01'
-          ? t('Ready to restart; running tasks will be checked.')
-          : copy.description
+  const statusTitle = checking
+    ? t('Checking for updates…')
+    : needsDownload
+      ? downloading
+        ? t('Downloading…')
+        : t('Update available')
+      : copy.title
+  const statusDescription = checking
+    ? undefined
+    : needsDownload
+      ? downloading
+        ? t('You can cancel the download at any time.')
+        : t('Review what’s new, then download the update.')
+      : id === 'S23'
+        ? t('Cannot cancel; the app will reopen automatically.')
+        : status.state === 'applying'
+          ? t('Please wait for the app to close and reopen.')
+          : id === 'S01'
+            ? t('Ready to restart; running tasks will be checked.')
+            : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
     pendingRef.current = true
@@ -220,7 +231,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 </span>
                 <div className="min-w-0 space-y-1">
                   <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
-                  <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
+                  {statusDescription ? (
+                    <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
+                  ) : null}
                 </div>
               </div>
               {downloading ? (
@@ -379,7 +392,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     </Button>
                   </details>
                 ) : null}
-                {!recovery && !checkFailed ? <UpdateReleaseNotes status={status} /> : null}
+                {!recovery && !checkFailed && !checking ? (
+                  <UpdateReleaseNotes status={status} />
+                ) : null}
               </>
             )}
           </div>
@@ -461,7 +476,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                       {t('Cancel')}
                     </Button>
                   ) : null}
-                  {!progress && !recovery && id !== 'S29' ? (
+                  {!progress && !recovery && !checking && id !== 'S29' ? (
                     <Button
                       disabled={busy || downloading}
                       onClick={() => {

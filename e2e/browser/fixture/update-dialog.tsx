@@ -71,7 +71,13 @@ if (params.has('continuous') && params.has('stage')) {
     status: {
       ...status,
       state:
-        stage === 'installing' ? 'applying' : stage === 'downloading' ? 'downloading' : 'ready',
+        stage === 'checking'
+          ? 'checking'
+          : stage === 'installing'
+            ? 'applying'
+            : stage === 'downloading'
+              ? 'downloading'
+              : 'ready',
       progress: stage === 'downloading' ? 50 : undefined,
       downloadedBytes: stage === 'downloading' ? (status.totalBytes ?? 0) / 2 : undefined,
       recovery:

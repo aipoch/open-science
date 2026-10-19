@@ -525,7 +525,7 @@ describe('continuous in-place update dialog', () => {
 })
 
 describe('update check and download admission', () => {
-  it.each(['idle', 'checking', 'up-to-date'] as const)(
+  it.each(['idle', 'up-to-date'] as const)(
     'hides installation actions when an open offer changes to %s, even with a stale version',
     (state) => {
       useUpdateStore.setState({
@@ -537,6 +537,35 @@ describe('update check and download admission', () => {
       expect(document.querySelector('[role="dialog"]')).toBeNull()
       expect(buttons('Restart to update')).toHaveLength(0)
       expect(buttons('Download update')).toHaveLength(0)
+    }
+  )
+
+  it.each([undefined, '2'])(
+    'keeps an open dialog mounted during provider checks with target %s',
+    (latest) => {
+      useUpdateStore.setState({
+        status: { state: 'available', current: '1', latest: '2', applyKind: 'restart' }
+      })
+      act(() => root.render(<UpdateDialog />))
+      const dialog = document.querySelector('[role="dialog"]')
+      act(() =>
+        useUpdateStore.setState({
+          status: { state: 'checking', current: '1', latest, applyKind: 'restart' }
+        })
+      )
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(dialog?.textContent).toContain('Checking for updates…')
+      expect(dialog?.textContent).not.toContain('Ready to install')
+      expect(buttons('Download update')).toHaveLength(0)
+      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Cancel')[0].disabled).toBe(false)
+      act(() =>
+        useUpdateStore.setState({
+          status: { state: 'error', current: '1', applyKind: 'restart', error: 'Check failed' }
+        })
+      )
+      expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+      expect(buttons('Retry')).toHaveLength(1)
     }
   )
 

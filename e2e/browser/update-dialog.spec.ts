@@ -264,3 +264,17 @@ test(`keeps status copy on one line and scrolls long notes independently`, async
   await expect(action).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath(`bounded-update-notes-en.png`) })
 })
+
+test('keeps provider check feedback visible without download or installation actions', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?continuous&stage=checking&locale=en')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('status')).toContainText('Checking for updates…')
+  await expect(dialog.getByRole('button', { name: /^Download update/ })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Restart to update', exact: true })).toHaveCount(
+    0
+  )
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toBeHidden()
+})

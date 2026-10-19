@@ -406,7 +406,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     status.state
   )
   return runtimeLifecycle ||
-    (hasUpdateState &&
+    ((hasUpdateState || status.state === 'checking') &&
       status.applyKind === 'restart' &&
       (!status.error || (status.state === 'error' && !status.blockedBy?.length)) &&
       status.error !== UPDATE_INSTALLATION_REQUIRED &&
