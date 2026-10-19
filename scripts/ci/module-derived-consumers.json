@@ -127,6 +127,8 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_session_package_capabilities": [
+      "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
+      "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_session_persistence": [

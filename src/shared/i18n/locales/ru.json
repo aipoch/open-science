@@ -6179,6 +6179,7 @@
     "Other files": "Другие файлы",
     "Drop one .science file at a time. No files were added.": "Перетаскивайте по одному файлу .science. Файлы не добавлены.",
     "This Project is unavailable for import.": "Импорт в этот проект сейчас недоступен.",
+    "Drop a .science file to import": "Перетащите файл .science для импорта",
     "Drop a .science file to import into “{{project}}”": "Перетащите файл .science для импорта в «{{project}}»",
     "Import previous research": "Импортировать предыдущее исследование",
     "Drag a .science research package onto this page, or choose a file": "Перетащите исследовательский пакет .science на эту страницу или выберите файл",

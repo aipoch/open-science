@@ -5728,6 +5728,7 @@
     "Other files": "기타 파일",
     "Drop one .science file at a time. No files were added.": ".science 파일은 한 번에 하나씩 놓으세요. 추가된 파일이 없습니다.",
     "This Project is unavailable for import.": "현재 이 프로젝트로 가져올 수 없습니다.",
+    "Drop a .science file to import": ".science 파일을 놓아 가져오기",
     "Drop a .science file to import into “{{project}}”": "“{{project}}”에 가져올 .science 파일을 놓으세요",
     "Import previous research": "이전 연구 가져오기",
     "Drag a .science research package onto this page, or choose a file": "이 페이지로 .science 연구 패키지를 드래그하거나 파일을 선택하세요",

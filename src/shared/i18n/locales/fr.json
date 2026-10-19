@@ -6046,6 +6046,7 @@
     "Other files": "Autres fichiers",
     "Drop one .science file at a time. No files were added.": "Déposez un seul fichier .science à la fois. Aucun fichier n’a été ajouté.",
     "This Project is unavailable for import.": "L’importation dans ce projet est actuellement indisponible.",
+    "Drop a .science file to import": "Déposer un fichier .science pour l’importer",
     "Drop a .science file to import into “{{project}}”": "Déposez un fichier .science pour l’importer dans « {{project}} »",
     "Import previous research": "Importer une recherche précédente",
     "Drag a .science research package onto this page, or choose a file": "Faites glisser un paquet de recherche .science sur cette page ou choisissez un fichier",

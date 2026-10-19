@@ -5730,6 +5730,7 @@
     "Other files": "其他檔案",
     "Drop one .science file at a time. No files were added.": "每次拖入一個 .science 檔案。未新增任何檔案。",
     "This Project is unavailable for import.": "此專案目前無法匯入。",
+    "Drop a .science file to import": "拖入 .science 檔案以匯入",
     "Drop a .science file to import into “{{project}}”": "拖入 .science 檔案以匯入至「{{project}}」",
     "Import previous research": "匯入之前的研究",
     "Drag a .science research package onto this page, or choose a file": "將 .science 研究套件拖曳到此頁面，或選擇檔案",

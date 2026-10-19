@@ -5730,6 +5730,7 @@
     "Other files": "その他のファイル",
     "Drop one .science file at a time. No files were added.": ".science ファイルは一度に1つドロップしてください。ファイルは追加されていません。",
     "This Project is unavailable for import.": "このプロジェクトには現在インポートできません。",
+    "Drop a .science file to import": ".scienceファイルをドロップしてインポート",
     "Drop a .science file to import into “{{project}}”": "「{{project}}」にインポートする .science ファイルをドロップ",
     "Import previous research": "以前の研究をインポート",
     "Drag a .science research package onto this page, or choose a file": "このページに .science 研究パッケージをドラッグするか、ファイルを選択",
