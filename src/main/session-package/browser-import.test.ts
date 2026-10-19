@@ -504,3 +504,32 @@ it('returns a signed cancellation without waiting for an unfinished upload body'
     await response.catch(() => undefined)
   }
 })
+
+it('honors cancellation recorded during cold startup before accepting any browser bytes', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port), true)
+  const ready = await f.request(`/ready?challenge=${'cd'.repeat(32)}`, {
+    headers: { Authorization: '' }
+  })
+  expect(ready.status).toBe(410)
+  expect(await ready.json()).toEqual({
+    code: 'cancelled',
+    proof: createHmac('sha256', Buffer.from(secret, 'hex')).update('cancelled').digest('hex')
+  })
+  expect((await f.chunk('hello')).status).toBe(410)
+  expect(f.received).toEqual([])
+  expect(await readdir(f.root)).toEqual([])
+  expect(f.bridge.snapshot).toEqual([
+    expect.objectContaining({ state: 'cancelled', completedBytes: 0 })
+  ])
+})
+
+it('applies a cold-shell cancel when the same transfer already exists in the backend', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  await f.chunk('he')
+  await f.bridge.begin(launch(f.port), true)
+  expect((await f.chunk('llo', 2)).status).toBe(410)
+  expect(f.received).toEqual([])
+  expect(await readdir(f.root)).toEqual([])
+})

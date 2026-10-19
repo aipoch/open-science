@@ -1,3 +1,4 @@
+import { ApplicationStartup } from './ApplicationStartup'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -1579,4 +1580,157 @@ it('opens newly launched receipt progress even after the previous package dialog
     ]
   })
   expect(usePackageOperationStore.getState().open).toBe(true)
+})
+
+it('shows native preparation before backend readiness and keeps one dialog through fast receipt', async () => {
+  const preparing: PackageOperationSnapshot = {
+    id: 'launch',
+    kind: 'import',
+    state: 'running',
+    browserReceiptOnly: true,
+    progress: { phase: 'preparing' },
+    browserTransfers: [
+      {
+        id: 'transfer',
+        filename: 'startup.science',
+        state: 'preparing',
+        completedBytes: 0,
+        totalBytes: 10
+      }
+    ]
+  }
+  let notify!: (value: PackageOperationSnapshot) => void
+  let runtimeReady!: (value: { phase: 'ready' }) => void
+  let databaseReady!: (value: { phase: 'ready' }) => void
+  const backend = vi.fn()
+  const cancel = vi.fn(async () => undefined)
+  vi.stubGlobal('api', {
+    runtimeStartup: {
+      getState: () => new Promise(() => undefined),
+      onStateChanged: (listener: typeof runtimeReady) => {
+        runtimeReady = listener
+        return () => undefined
+      }
+    },
+    databaseStartup: {
+      getState: async () => ({ phase: 'checking' }),
+      onStateChanged: (listener: typeof databaseReady) => {
+        databaseReady = listener
+        return () => undefined
+      }
+    },
+    packagePresentation: {
+      getState: async () => preparing,
+      onStateChanged: (listener: typeof notify) => {
+        notify = listener
+        return () => undefined
+      },
+      cancelTransfer: cancel
+    },
+    sessions: { packageOperation: backend }
+  })
+  await act(async () =>
+    root.render(
+      <ApplicationStartup>
+        <div data-testid="workspace" />
+      </ApplicationStartup>
+    )
+  )
+  expect(document.querySelector('[data-testid=workspace]')).toBeNull()
+  expect(document.body.textContent).toContain('Preparing to receive package…')
+  expect(document.body.textContent).toContain('startup.science')
+  expect(backend).not.toHaveBeenCalled()
+  const dialog = document.querySelector('[role="dialog"]')
+  await act(async () => button('Cancel transfer').click())
+  expect(cancel).toHaveBeenCalledWith('transfer')
+  for (const state of ['waiting', 'receiving'] as const) {
+    await act(async () =>
+      notify({
+        ...preparing,
+        browserTransfers: [
+          {
+            ...preparing.browserTransfers![0],
+            state,
+            completedBytes: state === 'receiving' ? 5 : 0
+          }
+        ]
+      })
+    )
+    expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+  }
+  expect(document.body.textContent).toContain('50%')
+  await act(async () =>
+    notify({
+      id: 'import',
+      kind: 'import',
+      state: 'running',
+      progress: { phase: 'validating' },
+      browserTransfers: []
+    })
+  )
+  expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+  expect(document.body.textContent).toContain('Validating package…')
+  expect(document.body.textContent).not.toContain('Transfer cancelled')
+  await act(async () => runtimeReady({ phase: 'ready' }))
+  expect(document.querySelector('[data-testid=workspace]')).toBeNull()
+  await act(async () => databaseReady({ phase: 'ready' }))
+  expect(document.querySelector('[data-testid=workspace]')).not.toBeNull()
+  expect(document.querySelector('[role=dialog]')).toBe(dialog)
+})
+
+it('does not rewind a newer validation event to a stale preparing snapshot on late mount', async () => {
+  let resolve!: (value: PackageOperationSnapshot) => void
+  let notify!: (value: PackageOperationSnapshot) => void
+  vi.stubGlobal('api', {
+    packagePresentation: {
+      getState: () =>
+        new Promise<PackageOperationSnapshot>((done) => {
+          resolve = done
+        }),
+      onStateChanged: (listener: typeof notify) => {
+        notify = listener
+        return () => undefined
+      }
+    }
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  const validating: PackageOperationSnapshot = {
+    id: 'fast',
+    kind: 'import',
+    state: 'running',
+    progress: { phase: 'validating' }
+  }
+  await act(async () => notify(validating))
+  await act(async () => resolve({ ...validating, progress: { phase: 'preparing' } }))
+  expect(document.body.textContent).toContain('Validating package…')
+  expect(usePackageOperationStore.getState().operation).toEqual(validating)
+})
+
+it('shows an explicit startup error for a pending browser package', async () => {
+  vi.stubGlobal('api', {
+    packagePresentation: {
+      getState: async () => ({
+        id: 'failed-launch',
+        kind: 'import',
+        state: 'failed',
+        browserReceiptOnly: true,
+        progress: { phase: 'preparing' },
+        browserTransfers: [
+          {
+            id: 'failed-transfer',
+            filename: 'failed.science',
+            state: 'failed',
+            completedBytes: 0,
+            totalBytes: 10
+          }
+        ]
+      }),
+      onStateChanged: () => () => undefined
+    }
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.body.textContent).toContain(
+    'Unable to prepare browser import. Resolve the startup error and try again.'
+  )
+  expect(document.body.textContent).toContain('failed.science')
 })

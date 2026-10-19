@@ -161,6 +161,8 @@
     "The update status could not be confirmed. Closing this window does not stop installation.": "업데이트 상태를 확인할 수 없습니다. 이 창을 닫아도 설치는 중지되지 않습니다."
   },
   "renderer": {
+    "Preparing to receive package…": "패키지 수신 준비 중…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "브라우저 가져오기를 준비할 수 없습니다. 시작 오류를 해결한 후 다시 시도하세요.",
     "Update preparation failed": "업데이트 준비 실패",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",

@@ -94,13 +94,17 @@ const operationStatus = (
     cleaning: t('Cleaning temporary files…')
   }[operation.progress.phase]
   const status = operation.browserReceiptOnly
-    ? operation.browserTransfers?.some((t) => t.state === 'receiving')
-      ? t('Receiving package…')
-      : operation.browserTransfers?.some((t) => t.state === 'waiting')
-        ? t('Waiting for browser…')
-        : operation.browserTransfers?.some((t) => t.state === 'cancelling')
-          ? t('Cancelling and cleaning up…')
-          : t('Transfer cancelled')
+    ? operation.browserTransfers?.some((t) => t.state === 'preparing')
+      ? t('Preparing to receive package…')
+      : operation.browserTransfers?.some((t) => t.state === 'failed')
+        ? t('Package operation failed')
+        : operation.browserTransfers?.some((t) => t.state === 'receiving')
+          ? t('Receiving package…')
+          : operation.browserTransfers?.some((t) => t.state === 'waiting')
+            ? t('Waiting for browser…')
+            : operation.browserTransfers?.some((t) => t.state === 'cancelling')
+              ? t('Cancelling and cleaning up…')
+              : t('Transfer cancelled')
     : operation.state === 'succeeded'
       ? operation.cleanupPending
         ? t('Completed, cleanup pending')
@@ -226,15 +230,20 @@ const BrowserTransferRow = ({
       <p className="break-all text-sm font-medium">{transfer.filename}</p>
       <div className="flex items-center justify-between gap-3">
         <p role="status" className="text-sm text-muted-foreground">
-          {transfer.state === 'waiting'
-            ? t('Waiting for browser…')
-            : transfer.state === 'receiving'
-              ? t('Receiving package…')
-              : transfer.state === 'cancelling'
-                ? t('Cancelling and cleaning up…')
-                : t('Transfer cancelled')}
+          {transfer.state === 'preparing'
+            ? t('Preparing to receive package…')
+            : transfer.state === 'failed'
+              ? t('Package operation failed')
+              : transfer.state === 'waiting'
+                ? t('Waiting for browser…')
+                : transfer.state === 'receiving'
+                  ? t('Receiving package…')
+                  : transfer.state === 'cancelling'
+                    ? t('Cancelling and cleaning up…')
+                    : t('Transfer cancelled')}
         </p>
-        {transfer.state !== 'cancelled' || transfer.cleanupPending ? (
+        {(transfer.state !== 'cancelled' && transfer.state !== 'failed') ||
+        transfer.cleanupPending ? (
           <Button
             variant="ghost"
             size="sm"
@@ -245,6 +254,16 @@ const BrowserTransferRow = ({
           </Button>
         ) : null}
       </div>
+      {transfer.state === 'failed' ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="red"
+          description={t(
+            'Unable to prepare browser import. Resolve the startup error and try again.'
+          )}
+        />
+      ) : null}
       {transfer.cleanupPending ? (
         <ErrorNotice
           inline
@@ -442,16 +461,22 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const navigationIntent = useRef<{ operationId: string; revision: number } | undefined>(undefined)
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
   useEffect(() => {
-    if (isWeb || !window.api?.sessions?.onPackageOperation) return
+    if (isWeb) return
+    const native = window.api?.packagePresentation
+    const subscribe = native?.onStateChanged ?? window.api?.sessions?.onPackageOperation
+    if (!subscribe) return
     let received = false
     let disposed = false
-    const remove = window.api.sessions.onPackageOperation((snapshot) => {
+    const remove = subscribe((snapshot) => {
       received = true
-      receive(snapshot)
+      if (!disposed) receive(snapshot)
     })
-    void window.api.sessions
-      .packageOperation?.({ action: 'snapshot' })
-      .then((snapshot) => {
+    // Native presentation survives startup gates and fast transfers before this component mounts.
+    const snapshot = native
+      ? native.getState()
+      : window.api.sessions.packageOperation?.({ action: 'snapshot' })
+    void snapshot
+      ?.then((snapshot) => {
         if (!disposed && !received) receive(snapshot)
       })
       .catch(() => undefined)
@@ -509,7 +534,9 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         revision: useNavigationStore.getState().explicitNavigationRevision
       }
     try {
-      await window.api.sessions.packageOperation(request)
+      if (request.action === 'cancel-browser-transfer' && window.api.packagePresentation)
+        await window.api.packagePresentation.cancelTransfer(request.transferId)
+      else await window.api.sessions.packageOperation(request)
     } catch (caught) {
       if (navigationIntent.current?.operationId === operation.id)
         navigationIntent.current = undefined

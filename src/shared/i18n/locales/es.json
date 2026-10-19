@@ -163,6 +163,8 @@
     "The update status could not be confirmed. Closing this window does not stop installation.": "No se pudo confirmar el estado de la actualización. Cerrar esta ventana no detiene la instalación."
   },
   "renderer": {
+    "Preparing to receive package…": "Preparando la recepción del paquete…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",
     "Update preparation failed": "Error al preparar la actualización",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "La aplicación sigue abierta. Resuelva el problema e inténtelo de nuevo, o cancele para seguir trabajando.",
     "Select one or more options": "Seleccionar una o varias opciones",

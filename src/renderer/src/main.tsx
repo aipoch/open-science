@@ -1,4 +1,4 @@
-import { RuntimeStartupGate } from '@/components/runtime-startup-gate'
+import { ApplicationStartup } from '@/components/ApplicationStartup'
 import { DesktopRuntimeRecovery } from '@/components/desktop-runtime-recovery'
 import './assets/main.css'
 
@@ -6,7 +6,6 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { ApplicationErrorBoundary } from '@/components/application-error-boundary'
-import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
@@ -81,12 +80,10 @@ const startRenderer = (): void => {
     <StrictMode>
       <WindowsTitleBar>
         <ApplicationErrorBoundary>
-          <RuntimeStartupGate>
-            <DatabaseStartupGate>
-              <App />
-              <DesktopRuntimeRecovery />
-            </DatabaseStartupGate>
-          </RuntimeStartupGate>
+          <ApplicationStartup>
+            <App />
+            <DesktopRuntimeRecovery />
+          </ApplicationStartup>
         </ApplicationErrorBoundary>
       </WindowsTitleBar>
     </StrictMode>

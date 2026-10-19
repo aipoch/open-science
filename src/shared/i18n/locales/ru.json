@@ -164,6 +164,8 @@
     "The update status could not be confirmed. Closing this window does not stop installation.": "Не удалось подтвердить состояние обновления. Закрытие этого окна не остановит установку."
   },
   "renderer": {
+    "Preparing to receive package…": "Подготовка к получению пакета…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",
     "Update preparation failed": "Не удалось подготовить обновление",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",

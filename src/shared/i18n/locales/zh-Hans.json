@@ -161,6 +161,8 @@
     "The update status could not be confirmed. Closing this window does not stop installation.": "无法确认更新状态。关闭此窗口不会停止安装。"
   },
   "renderer": {
+    "Preparing to receive package…": "正在准备接收包…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "无法准备浏览器导入。请解决启动错误后重试。",
     "Update preparation failed": "更新准备失败",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "应用仍保持打开。解决问题后重试，或取消更新以继续工作。",
     "Select one or more options": "选择一个或多个选项",

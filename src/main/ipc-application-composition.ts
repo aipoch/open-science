@@ -134,7 +134,10 @@ export type IpcRegistrationOptions = {
 export type ApplicationRuntimeInterfaces = {
   fetchPreview: (request: Request) => Promise<Response>
   openSessionPackageFile: (path: string | null) => void
-  beginBrowserPackageImport: (url: unknown) => Promise<void>
+  beginBrowserPackageImport: (url: unknown, cancelled?: boolean) => Promise<void>
+  cancelBrowserPackageImport: (id: string) => Promise<void>
+  packageOperationSnapshot: () =>
+    import('../shared/session-package').PackageOperationSnapshot | null
   startBrowserPackageImportDiscovery: (port?: number) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
@@ -822,7 +825,11 @@ export const createApplicationModules = async (
       if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
       else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
     },
-    beginBrowserPackageImport: (url) => sessionPackageSurfaces.browserPackageImport.begin(url),
+    beginBrowserPackageImport: (url, cancelled) =>
+      sessionPackageSurfaces.browserPackageImport.begin(url, cancelled),
+    cancelBrowserPackageImport: (id) => sessionPackageSurfaces.browserPackageImport.cancel(id),
+    packageOperationSnapshot: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.operations.snapshot,
     startBrowserPackageImportDiscovery: (port) =>
       sessionPackageSurfaces.browserPackageImport.startDiscovery(port),
     applicationCommands: {

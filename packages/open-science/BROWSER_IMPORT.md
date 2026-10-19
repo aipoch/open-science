@@ -398,7 +398,11 @@ unchanged. At most 16 transfer records and 2 GiB of advertised unconsumed data a
 - `DELETE /v1/import` cancels a partial transfer. After receipt, the desktop owns the queued import;
   cancel it in the app.
 - Desktop receipt progress is per transfer and uses actual bytes written after authentication and
-  decryption. `Waiting for browser…` precedes `Receiving package…`. Neither 100% received nor
+  decryption. A valid import launch first shows the filename and `Preparing to receive package…`
+  while startup finishes. The same desktop dialog continues through `Waiting for browser…`,
+  `Receiving package…`, and `Validating package…` before destination selection and final confirmation.
+  Presentation snapshots survive late renderer mounting; startup errors remain visible. Pure
+  `open-science://open` does not create a receipt task. Neither 100% received nor
   `received: true` means imported: package validation, target selection and final confirmation follow.
 - `Cancel transfer` stops receipt, joins any active disk write, and removes unqueued temporary bytes.
   If queue admission wins the race, the queue cancels that source and owns its release. Other

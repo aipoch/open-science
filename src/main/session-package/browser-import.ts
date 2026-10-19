@@ -1,6 +1,10 @@
-import { parseBrowserImportUrl, type BrowserImportRequest } from './browser-import-protocol'
+import {
+  browserImportTransferId,
+  parseBrowserImportUrl,
+  type BrowserImportRequest
+} from './browser-import-protocol'
 export { parseBrowserImportUrl } from './browser-import-protocol'
-import { createDecipheriv, createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, open, readdir, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -212,12 +216,12 @@ export class BrowserPackageImport {
     )
   }
 
-  begin(input: unknown): Promise<void> {
+  begin(input: unknown, cancelled = false): Promise<void> {
     if (this.closed) return Promise.reject(new Error('Browser import is closed.'))
     const request = parseBrowserImportUrl(input)
     if (!request) return Promise.reject(new Error('Invalid browser import request.'))
     const previous = this.transfers.get(request.secret)
-    if (previous) return previous.work ?? Promise.resolve()
+    if (previous) return cancelled ? this.cancel(previous.id) : (previous.work ?? Promise.resolve())
     if (
       this.transfers.size >= MAX_SESSIONS ||
       [...this.transfers.values()].reduce(
@@ -229,7 +233,7 @@ export class BrowserPackageImport {
         new Error('Browser import staging limit reached. Finish pending imports first.')
       )
     const transfer: Transfer = {
-      id: randomUUID(),
+      id: browserImportTransferId(request),
       state: 'waiting',
       request,
       offset: 0,
@@ -242,6 +246,7 @@ export class BrowserPackageImport {
       await this.remove(transfer)
       throw error
     })
+    if (cancelled) return this.cancel(transfer.id)
     this.publish()
     return transfer.work
   }

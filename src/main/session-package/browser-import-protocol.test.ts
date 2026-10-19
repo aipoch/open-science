@@ -42,7 +42,9 @@ it('keeps bounded cold-launch requests and forwards warm launches without treati
   expect(relay.receive('/tmp/local.science')).toBe(false)
   expect(relay.receive(url)).toBe(true)
   relay.receive(url)
-  relay.bind((request) => delivered.push(request))
+  relay.bind((request) => {
+    delivered.push(request)
+  })
   expect(delivered).toEqual([url])
   relay.receive(url)
   expect(delivered).toEqual([url, url])
@@ -85,4 +87,122 @@ it.each([
   expect(event.preventDefault).not.toHaveBeenCalled()
   expect(imported).not.toHaveBeenCalled()
   expect(opened).not.toHaveBeenCalled()
+})
+
+const launchUrl =
+  'open-science://import?' +
+  new URLSearchParams({
+    version: '1',
+    origin: 'https://example.com',
+    secret: 'cd'.repeat(32),
+    port: '49232',
+    name: 'early.science',
+    size: '100'
+  })
+
+it('replays safe preparing metadata for cold arguments before a backend exists', () => {
+  const relay = new BrowserImportLaunchRelay()
+  relay.receiveArgv(['app', launchUrl, launchUrl])
+  expect(relay.snapshot?.browserTransfers).toEqual([
+    expect.objectContaining({
+      filename: 'early.science',
+      state: 'preparing',
+      completedBytes: 0,
+      totalBytes: 100
+    })
+  ])
+  expect(JSON.stringify(relay.snapshot)).not.toContain('cd'.repeat(32))
+  expect(JSON.stringify(relay.snapshot)).not.toContain('https://example.com')
+  relay.receive('open-science://open')
+  expect(relay.snapshot?.browserTransfers).toHaveLength(1)
+})
+
+it('hands off once to the latest receiver/validation snapshot even before the UI mounts', async () => {
+  const relay = new BrowserImportLaunchRelay()
+  let finish!: () => void
+  relay.bind(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  relay.receiveOpenUrl({ preventDefault: vi.fn() }, launchUrl)
+  const transfer = relay.snapshot!.browserTransfers![0]
+  relay.update({
+    id: 'receipt',
+    kind: 'import',
+    state: 'running',
+    browserReceiptOnly: true,
+    progress: { phase: 'preparing' },
+    browserTransfers: [{ ...transfer, state: 'receiving', completedBytes: 60 }]
+  })
+  expect(relay.snapshot?.browserTransfers).toHaveLength(1)
+  relay.update({
+    id: 'import',
+    kind: 'import',
+    state: 'running',
+    progress: { phase: 'validating' },
+    browserTransfers: []
+  })
+  finish()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(relay.snapshot).toMatchObject({
+    id: 'import',
+    progress: { phase: 'validating' },
+    browserTransfers: []
+  })
+})
+
+it('preserves a visible startup failure and forwards early cancellation when the receiver starts', async () => {
+  const relay = new BrowserImportLaunchRelay()
+  relay.receive(launchUrl)
+  relay.failPending()
+  expect(relay.snapshot?.browserTransfers?.[0].state).toBe('failed')
+  const id = relay.snapshot!.browserTransfers![0].id
+  await relay.cancel(id)
+  expect(relay.snapshot?.browserTransfers?.[0].state).toBe('cancelled')
+  expect(relay.snapshot?.state).toBe('cancelled')
+  const begin = vi.fn(async () => undefined)
+  const cancel = vi.fn(async () => undefined)
+  relay.bind(begin, undefined, cancel)
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(begin).toHaveBeenCalledWith(launchUrl, true)
+  expect(cancel).not.toHaveBeenCalled() // Cancellation is atomic with initial admission.
+})
+
+it('keeps early cancellation when an already-running backend reports the same transfer before bind', async () => {
+  const relay = new BrowserImportLaunchRelay()
+  relay.receive(launchUrl)
+  const transfer = relay.snapshot!.browserTransfers![0]
+  await relay.cancel(transfer.id)
+  relay.update({
+    id: 'existing',
+    kind: 'import',
+    state: 'running',
+    browserReceiptOnly: true,
+    progress: { phase: 'preparing' },
+    browserTransfers: [{ ...transfer, state: 'receiving', completedBytes: 3 }]
+  })
+  const begin = vi.fn(async () => undefined)
+  relay.bind(begin)
+  await Promise.resolve()
+  expect(begin).toHaveBeenCalledWith(launchUrl, true)
+})
+
+it('allows an explicit relaunch after receiver startup failed without duplicating in-flight work', async () => {
+  const relay = new BrowserImportLaunchRelay()
+  const begin = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Receiver unavailable'))
+    .mockResolvedValue(undefined)
+  relay.bind(begin)
+  relay.receive(launchUrl)
+  relay.receive(launchUrl)
+  expect(begin).toHaveBeenCalledOnce()
+  await Promise.resolve()
+  expect(relay.snapshot?.browserTransfers?.[0].state).toBe('failed')
+  relay.receive(launchUrl)
+  expect(begin).toHaveBeenCalledTimes(2)
 })

@@ -102,7 +102,7 @@ export type PackageProgress = {
 export type BrowserPackageTransfer = {
   id: string
   filename: string
-  state: 'waiting' | 'receiving' | 'cancelling' | 'cancelled'
+  state: 'preparing' | 'waiting' | 'receiving' | 'cancelling' | 'cancelled' | 'failed'
   cleanupPending?: boolean
   completedBytes: number
   totalBytes: number
@@ -315,7 +315,14 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
           .object({
             id: identity,
             filename: z.string(),
-            state: z.enum(['waiting', 'receiving', 'cancelling', 'cancelled']),
+            state: z.enum([
+              'preparing',
+              'waiting',
+              'receiving',
+              'cancelling',
+              'cancelled',
+              'failed'
+            ]),
             cleanupPending: z.boolean().optional(),
             completedBytes: z.number().int().nonnegative(),
             totalBytes: z.number().int().positive()
