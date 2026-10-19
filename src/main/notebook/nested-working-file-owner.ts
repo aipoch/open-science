@@ -1,19 +1,7 @@
-import type { NotebookRunRecord, NotebookWorkingFile } from '../../shared/notebook'
+import type { NotebookRunRecord } from '../../shared/notebook'
+import type { FrozenNestedWorkingFile, NestedWorkingFileReader } from './execution-model-contract'
 
-/** Main-only evidence from the observer that froze this exact file generation. */
-export type FrozenNestedWorkingFile = Readonly<{
-  activityId: string
-  evidenceChecksum: string
-  file: Readonly<NotebookWorkingFile>
-  physicalPath: string
-  dev: number
-  ino: number
-  ctimeMs: number
-}>
-
-export type NestedWorkingFileReader = Readonly<{
-  read(): readonly FrozenNestedWorkingFile[]
-}>
+export type { FrozenNestedWorkingFile, NestedWorkingFileReader } from './execution-model-contract'
 
 type Scope = Readonly<{
   projectId: string

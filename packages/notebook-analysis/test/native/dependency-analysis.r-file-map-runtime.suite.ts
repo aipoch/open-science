@@ -4,17 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '../../src/source-file-access-analysis'
 
-it
-  .skipIf(process.env.RUN_KERNEL !== '1')
-  .each([
-    'purrr::walk(c("a.csv","b.csv"),base::writeLines,text="ok")',
-    'purrr::walk2(list(data.frame(n=1),data.frame(n=2)),c("a.csv","b.csv"),utils::write.csv)',
-    'list(data.frame(n=1)) |> purrr::walk2(c("a.csv","b.csv"),utils::write.csv)',
-    'purrr::walk2(list(),"unused.csv",utils::write.csv)',
-    'purrr::walk2(list(data.frame(n=1),data.frame(n=2)),"a.csv",utils::write.csv)'
-  ])('matches native purrr writer paths: %s', async (source) => {
+it.each([
+  'purrr::walk(c("a.csv","b.csv"),base::writeLines,text="ok")',
+  'purrr::walk2(list(data.frame(n=1),data.frame(n=2)),c("a.csv","b.csv"),utils::write.csv)',
+  'list(data.frame(n=1)) |> purrr::walk2(c("a.csv","b.csv"),utils::write.csv)',
+  'purrr::walk2(list(),"unused.csv",utils::write.csv)',
+  'purrr::walk2(list(data.frame(n=1),data.frame(n=2)),"a.csv",utils::write.csv)'
+])('matches native purrr writer paths: %s', async (source) => {
   const root = await mkdtemp(join(tmpdir(), 'r-file-walk-'))
   try {
     await promisify(execFile)(
@@ -31,14 +29,12 @@ it
   }
 })
 
-it
-  .skipIf(process.env.RUN_KERNEL !== '1')
-  .each([
-    'paths <- c("a.csv","b.csv"); out <- base::lapply(paths, utils::read.csv)',
-    'out <- c("a.csv","b.csv") |> base::lapply(utils::read.csv)',
-    'out <- c("a.csv","b.csv") |> purrr::map(utils::read.csv)',
-    'out <- c("a.csv","b.csv") |> purrr::map(.f=utils::read.csv,.x=_)'
-  ])('matches native R reader paths on tiny CSV files: %s', async (source) => {
+it.each([
+  'paths <- c("a.csv","b.csv"); out <- base::lapply(paths, utils::read.csv)',
+  'out <- c("a.csv","b.csv") |> base::lapply(utils::read.csv)',
+  'out <- c("a.csv","b.csv") |> purrr::map(utils::read.csv)',
+  'out <- c("a.csv","b.csv") |> purrr::map(.f=utils::read.csv,.x=_)'
+])('matches native R reader paths on tiny CSV files: %s', async (source) => {
   const root = await mkdtemp(join(tmpdir(), 'r-file-map-'))
   try {
     await Promise.all(['a.csv', 'b.csv'].map((path) => writeFile(join(root, path), 'n\n2\n')))

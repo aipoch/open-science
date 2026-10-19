@@ -1144,14 +1144,7 @@ describe('Notebook package module boundaries', () => {
     const units = [
       'input-path-analysis.test.ts',
       'input-resource-analysis.test.ts',
-      'dependency-projection.r-packages.test.ts',
-      'dependency-analysis.chord.native.test.ts',
-      'dependency-analysis.circlize.native.test.ts',
-      'dependency-analysis.filesystem-diagnostics.native.test.ts',
-      'dependency-analysis.iteration-snapshots.native.test.ts',
-      'dependency-analysis.structured-results.native.test.ts',
-      'dependency-analysis.r-directory.native.test.ts',
-      'dependency-analysis.r-pipelines.native.test.ts'
+      'dependency-projection.r-packages.test.ts'
     ].map((name) => `packages/notebook-analysis/src/${name}`)
     expect(manifest.modules.notebook_analysis_engine.testFiles.owner).toEqual(
       expect.arrayContaining(units)

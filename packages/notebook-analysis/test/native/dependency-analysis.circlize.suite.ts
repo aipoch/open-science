@@ -6,28 +6,31 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import type { NotebookRunRecord } from './analysis-test-support'
-import { NotebookDependencyAnalyzer } from './analysis-test-support'
-import type { NotebookDependencyProjection } from './contracts'
-import { analyzeNotebookSourceFileAccess } from './index'
+import type { NotebookRunRecord } from '../../src/analysis-test-support'
+import { NotebookDependencyAnalyzer } from '../../src/analysis-test-support'
+import type { NotebookDependencyProjection } from '../../src/contracts'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
-const cells = readFileSync(join(__dirname, 'reported-r-circlize.fixture.R'), 'utf8')
+const cells = readFileSync(join(__dirname, '../../src', 'reported-r-circlize.fixture.R'), 'utf8')
   .trim()
   .split('\n\n# %%\n\n')
 
 const explorationCells = readFileSync(
-  join(__dirname, 'reported-r-exploration-chord.fixture.R'),
+  join(__dirname, '../../src', 'reported-r-exploration-chord.fixture.R'),
   'utf8'
 )
   .trim()
   .split('\n\n# %%\n\n')
 
-const deviceCopyCells = readFileSync(join(__dirname, 'reported-r-device-copy.fixture.R'), 'utf8')
+const deviceCopyCells = readFileSync(
+  join(__dirname, '../../src', 'reported-r-device-copy.fixture.R'),
+  'utf8'
+)
   .trim()
   .split('\n\n# %%\n\n')
 
 const packageReplayCells = readFileSync(
-  join(__dirname, 'reported-r-package-replay.fixture.R'),
+  join(__dirname, '../../src', 'reported-r-package-replay.fixture.R'),
   'utf8'
 )
   .trim()
@@ -66,44 +69,38 @@ const project = async (
   }
 }
 
-it
-  .skipIf(
-    process.env.RUN_KERNEL !== '1' ||
-      !process.env.OPEN_SCIENCE_TEST_R_ENV ||
-      !process.env.OPEN_SCIENCE_TEST_PYTHON
-  )
-  .each([
-    { name: 'package-replay', script: packageReplayCells[6]!, filenames: ['chord_diagram.png'] },
-    ...[3, 4].map((index) => ({
-      name: `wrapper-${index}`,
-      script: cells[index]!,
-      filenames: [
-        'chord_diagram.pdf',
-        'chord_diagram.png',
-        ...(index === 4 ? ['chord_diagram_legend.png'] : [])
-      ]
-    })),
-    ...[4, 7].map((index) => ({
-      name: `device-copy-${index}`,
-      script: deviceCopyCells[index]!,
-      filenames: ['chord_diagram.png']
-    })),
-    ...[3, 5, 8, 9].map((index) => ({
-      name: `exploration-${index}`,
-      script: [
-        'set.seed(42)',
-        explorationCells[0],
-        explorationCells[2],
-        explorationCells[index]
-      ].join('\n'),
-      filenames:
-        index === 8
-          ? ['chord_test.png']
-          : index === 9
-            ? ['test_a.png', 'test_b.png', 'test_c.png']
-            : ['chord_diagram.png']
-    }))
-  ])(
+it.each([
+  { name: 'package-replay', script: packageReplayCells[6]!, filenames: ['chord_diagram.png'] },
+  ...[3, 4].map((index) => ({
+    name: `wrapper-${index}`,
+    script: cells[index]!,
+    filenames: [
+      'chord_diagram.pdf',
+      'chord_diagram.png',
+      ...(index === 4 ? ['chord_diagram_legend.png'] : [])
+    ]
+  })),
+  ...[4, 7].map((index) => ({
+    name: `device-copy-${index}`,
+    script: deviceCopyCells[index]!,
+    filenames: ['chord_diagram.png']
+  })),
+  ...[3, 5, 8, 9].map((index) => ({
+    name: `exploration-${index}`,
+    script: [
+      'set.seed(42)',
+      explorationCells[0],
+      explorationCells[2],
+      explorationCells[index]
+    ].join('\n'),
+    filenames:
+      index === 8
+        ? ['chord_test.png']
+        : index === 9
+          ? ['test_a.png', 'test_b.png', 'test_c.png']
+          : ['chord_diagram.png']
+  }))
+])(
   'matches native outputs for reported circlize $name in fresh R processes',
   async ({ script: caseScript, filenames, name: caseName }) => {
     const root = await mkdtemp(join(tmpdir(), 'native-circlize-'))

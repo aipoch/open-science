@@ -16,6 +16,7 @@
     "lint": "eslint --cache .",
     "pretest": "node scripts/check-prisma-client.mjs && npm run build:packages",
     "test": "vitest run",
+    "test:notebook-analysis-native": "npm run test:native --prefix packages/notebook-analysis",
     "test:module": "npm run build:packages && node scripts/ci/module-test-impact.mjs module",
     "test:affected": "npm run build:packages && node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",

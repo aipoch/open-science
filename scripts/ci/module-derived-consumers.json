@@ -51,7 +51,10 @@
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
-    "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_runtime_ports": [
+      "src/main/cli-install/launcher.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
@@ -168,9 +171,27 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_app_icons": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "renderer_assets": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts"
+    ],
     "renderer_compute": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "renderer_compute_recovery": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "renderer_compute_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_desktop_recovery": [
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
@@ -198,8 +219,23 @@
     "renderer_model_selection": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "renderer_network_indicator": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_network_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_notebook_provisioning": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "renderer_notification_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_notification_surfaces": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_package_import_surfaces": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_package_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -217,6 +253,10 @@
     "renderer_preview_persistence": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "renderer_preview_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
+      "src/renderer/src/stores/research-run-store.test.ts"
+    ],
     "renderer_runtime_errors": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -230,6 +270,9 @@
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_session_package_state": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_session_persistence": [
@@ -249,6 +292,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "renderer_skill_catalog_state": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -261,6 +307,12 @@
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_update_capsule": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_update_state": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_upload_transfer": [
@@ -353,6 +405,7 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts"
     ],
+    "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
     "shared_promise_identity": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -392,6 +445,9 @@
     ],
     "workspace_artifacts": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "workspace_background_status": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_bookmarks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -496,6 +552,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_runtime": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "workspace_session_controls": [
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "workspace_session_dialogs": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -503,6 +562,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_shell": [
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],

@@ -1,4 +1,1 @@
-export type NotebookKernelEpochOwnership = Readonly<{
-  id: string
-  processKey: string
-}>
+export type { NotebookKernelEpochOwnership } from './execution-model-contract'
