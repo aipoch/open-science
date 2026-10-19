@@ -1983,14 +1983,22 @@ describe('ConnectorSettingsModule', () => {
     await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
 
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'oauth-access',
+        token_type: 'Bearer',
+        issuer: 'https://example.com/oauth'
+      },
+      clientInformation: { client_id: 'registered', issuer: 'https://example.com/oauth' }
     })
     const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
     expect(storedJson).not.toContain('oauth-access')
     expect(storedJson).toContain('oauthRef')
 
     const resolved = (await service.getConnectors())?.customMcpServers?.[0]
-    expect(resolved?.oauthState?.tokens?.access_token).toBe('oauth-access')
+    expect(resolved?.oauthState).toMatchObject({
+      tokens: { access_token: 'oauth-access', issuer: 'https://example.com/oauth' },
+      clientInformation: { client_id: 'registered', issuer: 'https://example.com/oauth' }
+    })
     const connected = (await service.listConnectors()).customServers[0]
     expect(connected.oauth?.hasTokens).toBe(true)
     expect(connected.availability).toBeUndefined()

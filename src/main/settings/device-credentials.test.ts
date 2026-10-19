@@ -195,17 +195,22 @@ describe('DeviceCredentialStore', () => {
       oauth: { scopes: ['read', 'read'] }
     })
     await store.saveOAuthState(created.id, {
-      tokens: { access_token: 'access', token_type: 'bearer' }
+      tokens: { access_token: 'access', token_type: 'bearer', issuer: 'https://auth.example.test' },
+      clientInformation: { client_id: 'registered', issuer: 'https://auth.example.test' }
     })
 
     const raw = await readFile(join(root, 'credentials.json'), 'utf8')
     expect(raw).not.toContain('access')
-    await expect(store.resolveOAuth(created.id)).resolves.toMatchObject({
+    expect(raw).not.toContain('https://auth.example.test')
+    await expect(new DeviceCredentialStore(root).resolveOAuth(created.id)).resolves.toMatchObject({
       resourceUri: 'https://mcp.example.test/resource',
       transport: 'streamable_http',
       oauth: { scopes: ['read'] },
       hasClientSecret: false,
-      state: { tokens: { access_token: 'access' } }
+      state: {
+        tokens: { access_token: 'access', issuer: 'https://auth.example.test' },
+        clientInformation: { client_id: 'registered', issuer: 'https://auth.example.test' }
+      }
     })
     expect(store.view((await store.list())[0]!)).toMatchObject({ status: 'connected' })
   })

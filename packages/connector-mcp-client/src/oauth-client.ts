@@ -224,11 +224,13 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    await this.clearUnboundCredentials()
     // If pre-registered client credentials are configured, use them directly.
     // This bypasses both URL-based client IDs (SEP-991) and dynamic client registration (RFC 7591).
     if (this.options.config.clientId) {
       return {
         client_id: this.options.config.clientId,
+        issuer: this.options.config.authorizationServerUrl!,
         ...(this.options.clientSecret ? { client_secret: this.options.clientSecret } : {})
       }
     }
@@ -254,7 +256,8 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     await this.persist()
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
+    await this.clearUnboundCredentials()
     return this.oauthState.tokens
   }
 
@@ -325,6 +328,17 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     if (scope === 'all' || scope === 'tokens') delete this.oauthState.tokens
     if (scope === 'all' || scope === 'discovery') delete this.oauthState.discoveryState
     if (scope === 'all' || scope === 'verifier') this.codeVerifierValue = undefined
+    await this.persist()
+  }
+
+  private async clearUnboundCredentials(): Promise<void> {
+    const unbound = [this.oauthState.tokens, this.oauthState.clientInformation].some(
+      (value) => value && (typeof value.issuer !== 'string' || !value.issuer.trim())
+    )
+    if (!unbound) return
+    // Discovery is controlled by the MCP server; it cannot establish a legacy credential's issuer.
+    delete this.oauthState.tokens
+    delete this.oauthState.clientInformation
     await this.persist()
   }
 
