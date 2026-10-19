@@ -924,9 +924,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
+      // A supervised installer can exit the application before this hook returns.
+      this.installProgress?.handoff()
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy') {
-        this.installProgress?.handoff()
         this.updater.openScienceUpdateOperation = this.installProgress?.operationId
         this.updater.quitAndInstall(
           this.platform !== 'win32' || options.relaunch === false,

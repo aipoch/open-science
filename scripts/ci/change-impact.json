@@ -180,6 +180,7 @@
       "fallbackOwner": true,
       "paths": [
         "src/main/**",
+        "build/macos-update-progress/**",
         "packages/notebook-syntax/**",
         "packages/notebook-code-risk/**",
         "packages/notebook-analysis/**",

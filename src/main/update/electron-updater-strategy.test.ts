@@ -1624,6 +1624,61 @@ describe.each(['win32', 'darwin'] as const)('%s update window handoff', (platfor
     expect(strategy.getStatus()).toMatchObject({ state: 'error' })
   })
 
+  it.each(['custom', 'legacy', 'failure'] as const)(
+    'hands off the window before the custom installer can exit the application: %s',
+    async (outcome) => {
+      const updater = new FakeUpdater()
+      const handoff = vi.fn()
+      const cancel = vi.fn()
+      const executeInstall = vi.fn(async () => {
+        expect(handoff).toHaveBeenCalledOnce()
+        if (outcome === 'failure') throw new Error('Installer acknowledgement unavailable')
+        return outcome === 'legacy' ? ('legacy' as const) : undefined
+      })
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        broadcast: vi.fn(),
+        executeInstall,
+        startInstallProgress: async () => ({ operationId: 'test-operation', handoff, cancel })
+      })
+      await markUpdateReady(strategy, updater)
+      await strategy.apply()
+      expect(executeInstall).toHaveBeenCalledOnce()
+      expect(handoff).toHaveBeenCalledOnce()
+      expect(updater.quitAndInstall).toHaveBeenCalledTimes(outcome === 'legacy' ? 1 : 0)
+      expect(cancel).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0)
+      if (outcome === 'failure')
+        expect(strategy.getStatus()).toMatchObject({
+          reason: 'install-failed',
+          error: 'Installer acknowledgement unavailable'
+        })
+    }
+  )
+
+  it('cancels the prepared window without handing it off when final preparation fails', async () => {
+    const updater = new FakeUpdater()
+    const handoff = vi.fn()
+    const cancel = vi.fn()
+    const executeInstall = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform,
+      broadcast: vi.fn(),
+      executeInstall,
+      beforeInstallHandoff: async () => {
+        throw new Error('Preparation failed')
+      },
+      startInstallProgress: async () => ({ operationId: 'test-operation', handoff, cancel })
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(handoff).not.toHaveBeenCalled()
+    expect(executeInstall).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('does not show an interactive window for non-relaunching updates', async () => {
     const updater = new FakeUpdater()
     const startInstallProgress = vi.fn()
