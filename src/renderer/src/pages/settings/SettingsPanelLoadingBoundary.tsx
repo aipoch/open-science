@@ -9,7 +9,6 @@ type ErrorBoundaryProps = {
   fallback: ReactNode
   resetKey?: string
   retryKey?: number
-  onError?: () => void
 }
 
 type ErrorBoundaryState = { failed: boolean }
@@ -23,7 +22,6 @@ class SettingsPanelErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoun
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Settings panel failed to load', error, info)
-    this.props.onError?.()
   }
 
   componentDidUpdate(previousProps: ErrorBoundaryProps, previousState: ErrorBoundaryState): void {
@@ -82,59 +80,34 @@ type SettingsPanelLoadingBoundaryProps = {
   panelKey: string
   resetKey?: string
   children: ReactNode
-  onReload?: () => void
 }
 
 const SettingsPanelLoadingBoundary = ({
   panelKey,
   resetKey,
-  children,
-  onReload = () => window.location.reload()
+  children
 }: SettingsPanelLoadingBoundaryProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [retryKey, setRetryKey] = useState(0)
-  const [failureCount, setFailureCount] = useState(0)
-  const [previousResetToken, setPreviousResetToken] = useState<string | undefined>()
-
-  const resetToken = `${panelKey} ${resetKey ?? ''}`
-  if (previousResetToken !== resetToken) {
-    setPreviousResetToken(resetToken)
-    setFailureCount(0)
-    // retryKey deliberately survives navigation: panels cache their lazy instance per retry count,
-    // so resetting it would re-select a previously failed instance on revisit.
-  }
-
-  // Escalate once two in-place retries have also failed (third consecutive failure surface).
-  const escalated = failureCount >= 3
-
-  const retry = (): void => setRetryKey((key) => key + 1)
 
   return (
     <SettingsPanelErrorBoundary
       key={panelKey}
       resetKey={resetKey}
       retryKey={retryKey}
-      onError={() => setFailureCount((count) => count + 1)}
       fallback={
         <div className="flex min-h-[360px] items-center justify-center px-5">
           <ErrorNotice
             role="alert"
             tone="amber"
-            title={
-              escalated ? t("Retrying didn't fix it") : t("Settings panel couldn't be loaded.")
-            }
-            description={
-              escalated
-                ? t('Reload Open-Science to try loading this panel again.')
-                : t(
-                    'This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.'
-                  )
-            }
-            primaryButton={
-              escalated
-                ? { label: t('Reload', { context: 'window', ns: 'common' }), onClick: onReload }
-                : { label: t('Retry'), onClick: retry }
-            }
+            title={t("Settings panel couldn't be loaded.")}
+            description={t(
+              'This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.'
+            )}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () => setRetryKey((key) => key + 1)
+            }}
           />
         </div>
       }

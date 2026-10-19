@@ -137,9 +137,8 @@ describe('SettingsPanelLoadingBoundary', () => {
     }
   })
 
-  it('re-invokes the panel import on each retry and escalates to a single Reload action', async () => {
+  it('keeps the same single-Retry surface across any number of failed retries', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const onReload = vi.fn()
     const loader = vi
       .fn<() => Promise<{ default: () => React.JSX.Element }>>()
       .mockRejectedValue(new Error('chunk unavailable'))
@@ -148,47 +147,31 @@ describe('SettingsPanelLoadingBoundary', () => {
     try {
       await act(async () => {
         root.render(
-          <SettingsPanelLoadingBoundary panelKey="skills" onReload={onReload}>
+          <SettingsPanelLoadingBoundary panelKey="skills">
             <Panel />
           </SettingsPanelLoadingBoundary>
         )
         await Promise.resolve()
       })
       expect(loader).toHaveBeenCalledTimes(1)
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Settings panel couldn't be loaded."
-      )
-      expect(findButton('Reload')).toBeUndefined()
 
-      // Each retry creates a fresh lazy instance, so the import really runs again.
-      await act(async () => {
-        findButton('Retry')?.click()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-      expect(loader).toHaveBeenCalledTimes(2)
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Settings panel couldn't be loaded."
-      )
-      expect(findButton('Reload')).toBeUndefined()
-
-      await act(async () => {
-        findButton('Retry')?.click()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-      expect(loader).toHaveBeenCalledTimes(3)
-      const alert = container.querySelector('[role="alert"]')
-      expect(alert?.textContent).toContain("Retrying didn't fix it")
-      expect(alert?.textContent).toContain('Reload Open-Science to try loading this panel again.')
-      // Escalated: Reload is the only action; no Retry, no Close.
-      expect(surfaceButtons()).toHaveLength(1)
-      expect(findButton('Reload')).toBeDefined()
-      expect(findButton('Retry')).toBeUndefined()
-      expect(findButton('Close')).toBeUndefined()
-
-      act(() => findButton('Reload')?.click())
-      expect(onReload).toHaveBeenCalledOnce()
+      // Each retry re-invokes the import, and repeated failures never escalate: the surface
+      // stays the compact notice with Retry as the only action.
+      for (let attempt = 2; attempt <= 4; attempt += 1) {
+        await act(async () => {
+          findButton('Retry')?.click()
+          await Promise.resolve()
+          await Promise.resolve()
+        })
+        expect(loader).toHaveBeenCalledTimes(attempt)
+        expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+          "Settings panel couldn't be loaded."
+        )
+        expect(surfaceButtons()).toHaveLength(1)
+        expect(findButton('Retry')).toBeDefined()
+        expect(findButton('Reload')).toBeUndefined()
+        expect(findButton('Close')).toBeUndefined()
+      }
     } finally {
       errorSpy.mockRestore()
     }

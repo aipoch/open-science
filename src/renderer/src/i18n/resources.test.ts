@@ -2916,10 +2916,6 @@ describe('Russian catalog quality', () => {
     ['Last scanned {{time}}', 'Последнее сканирование: {{time}}'],
     ['Refresh', 'Обновить'],
     ["Settings panel couldn't be loaded.", 'Не удалось загрузить раздел настроек.'],
-    [
-      'Reload Open-Science to try loading this panel again.',
-      'Перезапустите Open-Science, чтобы снова попробовать загрузить этот раздел.'
-    ],
     ['{{count}} more messages_one', 'Ещё {{count}} сообщение'],
     ['{{count}} more messages_few', 'Ещё {{count}} сообщения'],
     ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
