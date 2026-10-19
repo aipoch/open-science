@@ -6,9 +6,9 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
-  existsSync,
-  rmSync
+  existsSync
 } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -32,7 +32,11 @@ beforeAll(async () => {
 })
 
 const directories: string[] = []
-afterEach(() => directories.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true })))
+afterEach(async () => {
+  // Windows can briefly retain a file lock after the executor has exited.
+  for (const p of directories.splice(0))
+    await rm(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+})
 it.each([
   undefined,
   'before-rename',
