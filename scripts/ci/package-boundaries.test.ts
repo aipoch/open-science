@@ -692,6 +692,8 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     ).toEqual([])
   }
   for (const [path, test] of [
+    ['src/shared/pdf-text.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
+    ['src/shared/fuzzy-match.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
     ['src/main/settings/responses-bridge.ts', 'src/main/settings/responses-bridge.test.ts'],
     [
       'src/main/settings/classification-settings.ts',

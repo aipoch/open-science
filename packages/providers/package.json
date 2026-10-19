@@ -36,15 +36,17 @@
     "test-ownership.md"
   ],
   "scripts": {
-    "build": "node tsc.cjs -p tsconfig.json",
+    "build": "node build.mjs",
     "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
     "test": "vitest run --config vitest.config.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "build:assets": "node build.mjs --assets-only"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "esbuild": "0.25.12"
   },
   "dependencies": {
     "@aipoch/diagnostics": "0.1.0",

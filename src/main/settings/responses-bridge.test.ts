@@ -33,6 +33,77 @@ describe('Responses-compatible bridge conversion', () => {
     }
   )
 
+  it('preserves valid replay after rejecting a Go session header', async () => {
+    const upstreamRequests: Array<Record<string, unknown>> = []
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go', model: 'm' },
+      async (_url, init) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)))
+        return Response.json({
+          id: 'go-call',
+          model: 'm',
+          choices: [
+            {
+              message:
+                upstreamRequests.length === 1
+                  ? {
+                      role: 'assistant',
+                      reasoning_content: 'retained reasoning',
+                      tool_calls: [
+                        {
+                          id: 'call-1',
+                          type: 'function',
+                          function: { name: 'lookup', arguments: '{}' }
+                        }
+                      ]
+                    }
+                  : { role: 'assistant', content: 'done' }
+            }
+          ]
+        })
+      }
+    )
+    const connection = await bridge.start()
+    const post = (input: unknown, session = 'valid-session'): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          'x-opencode-session': session
+        },
+        body: JSON.stringify({ input, prompt_cache_key: 'valid-session', stream: false })
+      })
+    try {
+      const first = await post('start')
+      expect(first.status).toBe(200)
+      await first.json()
+      const rejected = await post('must not prune history', 'ambiguous,session')
+      expect(rejected.status).toBe(400)
+      await rejected.json()
+      expect(upstreamRequests).toHaveLength(1)
+      const retry = await post([
+        { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call-1', output: 'found' }
+      ])
+      expect(retry.status).toBe(200)
+      await retry.json()
+      expect(upstreamRequests).toHaveLength(2)
+      expect(upstreamRequests[1].messages).toEqual([
+        {
+          role: 'assistant',
+          reasoning_content: 'retained reasoning',
+          tool_calls: [
+            { id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{}' } }
+          ]
+        },
+        { role: 'tool', tool_call_id: 'call-1', content: 'found' }
+      ])
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('isolates Go errors by conversation and removes Go headers after a Zen target switch', async () => {
     const captured: Headers[] = []
     const bridge = new ResponsesBridge(

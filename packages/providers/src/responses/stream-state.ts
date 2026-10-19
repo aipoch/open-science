@@ -28,7 +28,8 @@ export function createResponseStreamState(
 } {
   let events: JsonObject[] = []
   const emit = (type: string, sequence: number, fields: JsonObject = {}): void => {
-    events.push({ type, sequence_number: sequence, ...fields })
+    // Events preserve their value at emission even while output items keep accumulating deltas.
+    events.push({ type, sequence_number: sequence, ...structuredClone(fields) })
   }
   const responseId = `resp_${randomBytes(8).toString('hex')}`
   const output: JsonObject[] = []
@@ -150,7 +151,12 @@ export function createResponseStreamState(
     ): { reasoning: string; callIds: string[]; messageId?: string } {
       if (finished) throw new Error('Response is already terminal')
       finished = true
-      const terminal = chatTerminalDetails(terminalFinishReason)
+      let terminal = chatTerminalDetails(undefined)
+      try {
+        terminal = chatTerminalDetails(terminalFinishReason)
+      } catch (error) {
+        streamError ??= error
+      }
       for (const index of toolItems.keys()) ensureToolItem(index)
 
       for (const item of output) {

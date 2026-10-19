@@ -67,7 +67,9 @@
     "packages/providers/src/protocols/anthropic/chat.ts",
     "packages/providers/src/protocols/anthropic/chat.test.ts",
     "packages/providers/src/protocols/openai/chat/stream.ts",
-    "packages/providers/src/protocols/openai/chat/stream.test.ts"
+    "packages/providers/src/protocols/openai/chat/stream.test.ts",
+    "packages/providers/build.mjs",
+    "packages/providers/THIRD-PARTY-NOTICES"
   ],
   "interfacePaths": [
     "packages/providers/src/providers.ts",

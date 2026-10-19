@@ -40,7 +40,9 @@ try {
       'tsc.cjs',
       'README.md',
       'LICENSE',
-      ...(name === 'providers' ? ['test', 'test-ownership.md'] : [])
+      ...(name === 'providers'
+        ? ['build.mjs', 'THIRD-PARTY-NOTICES', 'test', 'test-ownership.md']
+        : [])
     ])
       cpSync(join(root, 'packages', name, file), join(source, file), { recursive: true })
     // npm install saves the archive spec locally; restore the publishable version declaration before pack.
@@ -123,6 +125,7 @@ import * as client from '@aipoch/providers/client'
 import * as errors from '@aipoch/providers/errors'
 import * as transport from '@aipoch/providers/transport'
 const require = createRequire(import.meta.url)
+assert.throws(() => require.resolve('js-tiktoken/lite'), {code:'MODULE_NOT_FOUND'})
 for (const [entry, esm] of Object.entries({ '': providers, '/protocol': protocol, '/client': client, '/errors':errors, '/transport':transport })) {
   assert.ok(realpathSync(require.resolve('@aipoch/providers' + entry)).startsWith(realpathSync('.') + sep))
   const cjs = require('@aipoch/providers' + entry)
@@ -240,6 +243,9 @@ void model; void input; void config; void usage
     consumer
   )
   npm(['prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], consumer)
+  // The source dependency is declared for source builds, but the shipped protocol embeds it.
+  // Prove runtime closure even if a host drops the separate tokenizer installation.
+  rmSync(join(consumer, 'node_modules/js-tiktoken'), { recursive: true, force: true })
   run(['consumer.mjs'], consumer)
   run(['consumer.cjs'], consumer)
   run(['browser-bundle.js'], consumer)

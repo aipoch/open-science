@@ -368,19 +368,6 @@ export class ResponsesBridge {
           )
         : scopedBody.tools
     }
-    const turn = this.adapter.prepare({
-      body: hostFilteredBody,
-      scope: promptCacheKey,
-      model: target.model,
-      tools: namespacedTools,
-      reasoning: {
-        reasoningEffortOverride: target.reasoningEffort,
-        vendorId: target.vendorId,
-        reasoningEffortTransport: target.reasoningEffortTransport
-      }
-    })
-    const chatRequest = turn.request
-    const chatRequestBody = JSON.stringify(chatRequest)
     // Go requires conversation affinity. The Responses-to-Chat translation removes
     // prompt_cache_key, so carry the existing Codex identity across the HTTP boundary.
     // Never replace a missing conversation identity with a shared or per-request UUID.
@@ -399,6 +386,20 @@ export class ResponsesBridge {
       })
       return
     }
+    // Host admission must succeed before preparation reconciles the replay history.
+    const turn = this.adapter.prepare({
+      body: hostFilteredBody,
+      scope: promptCacheKey,
+      model: target.model,
+      tools: namespacedTools,
+      reasoning: {
+        reasoningEffortOverride: target.reasoningEffort,
+        vendorId: target.vendorId,
+        reasoningEffortTransport: target.reasoningEffortTransport
+      }
+    })
+    const chatRequest = turn.request
+    const chatRequestBody = JSON.stringify(chatRequest)
     const replayKey = providerRequestFingerprint(
       target.baseUrl,
       chatRequestBody,

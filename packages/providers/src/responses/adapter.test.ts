@@ -176,3 +176,94 @@ it('commits replay before a terminal event consumer disconnects', async () => {
   ).toBe('remember')
   adapter.dispose()
 })
+
+it('publishes immutable added events before text and tool argument deltas', async () => {
+  const adapter = createResponsesAdapter()
+  try {
+    const chunks = [
+      {
+        choices: [
+          {
+            delta: {
+              content: 'Hel',
+              tool_calls: [
+                { index: 0, id: 'call', function: { name: 'lookup', arguments: '{"q":' } }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        choices: [
+          { delta: { content: 'lo', tool_calls: [{ index: 0, function: { arguments: '1}' } }] } }
+        ]
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    ]
+    const upstream = new Response(
+      chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n'
+    )
+    const response = await adapter
+      .prepare({ body: { input: 'hello', stream: true } })
+      .convert(upstream)
+    const events = (await response.text())
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)))
+    const added = events.filter((event) => event.type === 'response.output_item.added')
+    const text = added.find((event) => event.item.type === 'message')
+    const tool = added.find((event) => event.item.type === 'function_call')
+    expect(text.item.content).toEqual([])
+    expect(tool.item.arguments).toBe('')
+    const argumentsText =
+      tool.item.arguments +
+      events
+        .filter((event) => event.type === 'response.function_call_arguments.delta')
+        .map((event) => event.delta)
+        .join('')
+    expect(JSON.parse(argumentsText)).toEqual({ q: 1 })
+    expect(
+      events
+        .filter((event) => event.type === 'response.output_text.delta')
+        .map((event) => event.delta)
+        .join('')
+    ).toBe('Hello')
+    const completed = events.find((event) => event.type === 'response.completed')
+    expect(
+      completed.response.output.find((item: { type: string }) => item.type === 'function_call')
+        .arguments
+    ).toBe(argumentsText)
+  } finally {
+    adapter.dispose()
+  }
+})
+
+it('emits exactly one protocol failure for an unknown upstream finish reason', async () => {
+  const adapter = createResponsesAdapter()
+  try {
+    const upstream = new Response(
+      'data: ' +
+        JSON.stringify({
+          choices: [{ delta: { content: 'partial' }, finish_reason: 'unexpected' }]
+        }) +
+        '\n\ndata: [DONE]\n\n'
+    )
+    const response = await adapter
+      .prepare({ body: { input: 'hello', stream: true } })
+      .convert(upstream)
+    const events = (await response.text())
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)))
+    const terminal = events.filter((event) =>
+      ['response.completed', 'response.incomplete', 'response.failed'].includes(event.type)
+    )
+    expect(terminal).toHaveLength(1)
+    expect(terminal[0]).toMatchObject({
+      type: 'response.failed',
+      response: { status: 'failed', error: { type: 'unsupported_upstream_output' } }
+    })
+  } finally {
+    adapter.dispose()
+  }
+})

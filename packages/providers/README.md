@@ -238,3 +238,14 @@ completed-response projections. The cached JS token estimator owns one read-only
 native handle or mutable account state. `prepareNativeResponsesRequest(body)` returns the flattened
 request, `resolveTool(name)`, `toolCount` and a bound `restore(payload)` decoder. The alias map is private
 to that request. Callers authorize tools before conversion and retain application-specific MCP policy.
+
+### Tokenizer delivery
+
+The package build embeds the tokenizer implementation and its `o200k_base` vocabulary in the
+private protocol implementation. `js-tiktoken` remains a declared direct source dependency; esbuild is a development dependency.
+The emitted token-count module does not load a separate tokenizer at runtime. Consumers install the tarball and its declared runtime dependencies;
+no manual tokenizer installation, resource path, download or host bundler exception is required. Third-party
+Repository builds invoke the package-owned `build:assets` step after TypeScript compilation;
+standalone `npm run build` performs both steps. MIT notices are shipped in `dist/tokenizer-LICENSE.txt`. Public exports and token-count behavior are
+unchanged. The clean tarball check executes token counting after removing build sources and development
+dependencies, then deletes the separately installed tokenizer and asserts it cannot be resolved.

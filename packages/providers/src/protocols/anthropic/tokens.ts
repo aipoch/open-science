@@ -1,15 +1,14 @@
-import { createRequire } from 'node:module'
-const loadTokenizer = createRequire(__filename)
+/* eslint-disable @typescript-eslint/no-require-imports */
 import type { Tiktoken as Tokenizer } from 'js-tiktoken/lite' with { 'resolution-mode': 'import' }
 const {
   Tiktoken
 }: typeof import('js-tiktoken/lite', {
   with: { 'resolution-mode': 'import' }
-}) = loadTokenizer('js-tiktoken/lite')
+}) = require('js-tiktoken/lite')
 // js-tiktoken provides CJS exports but labels its declarations ESM-only.
 const o200kBase: typeof import('js-tiktoken/ranks/o200k_base', {
   with: { 'resolution-mode': 'import' }
-}).default = loadTokenizer('js-tiktoken/ranks/o200k_base')
+}).default = require('js-tiktoken/ranks/o200k_base')
 
 type Json = Record<string, unknown>
 let tokenizer: Tokenizer | undefined

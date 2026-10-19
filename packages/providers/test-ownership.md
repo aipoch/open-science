@@ -109,3 +109,24 @@ All text codec cases remain in `src/models/text-generation.test.ts`. Conversion 
 matrix remains in `src/protocols/compatibility.test.ts`. Public function names and host integration
 contracts are unchanged. Local metadata assertions now explicitly require an empty list and no
 registered local provider, and the packed consumer checks `/local` is not exported.
+
+## Rebased host helper evidence
+
+The new `pdf_text` and `shared_fuzzy_match` owners inherited pre-extraction consumer paths.
+Their host consumer lists now follow the existing responsibility split; neither helper owns or
+triggers provider package unit tests. These conservative host registrations retain the upstream
+consumer modules and every surviving test reference.
+
+| Retired host test                                 | Package assertions                                                                        | Remaining host evidence                                                                                                |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `settings/provider-text-generation.test.ts`       | Protocol and diagnostics matrix in `src/models/text-generation.test.ts`                   | `literature/pdf-translation/text-generation.test.ts`: credential admission, endpoint policy, persisted target identity |
+| `settings/responses-request-adapter.test.ts`      | Request conversion in `src/responses/request.test.ts`                                     | Existing `settings/responses-bridge.test.ts`: authenticated HTTP and replay integration                                |
+| `settings/responses-response-adapter.test.ts`     | Response/conversion matrices in `src/responses/response.test.ts` and `conversion.test.ts` | Existing `settings/provider-protocol-regressions.test.ts`: host stream integration                                     |
+| `settings/xai-protocol.test.ts`                   | xAI wire cases in `src/protocols/compatibility.test.ts`                                   | Existing `settings/xai-oauth-provider-bridge.test.ts`: OAuth transport contract                                        |
+| `shared/provider-registry.test.ts`                | Provider/model metadata in `src/providers/lookup.test.ts`                                 | `shared/provider-model-policy.test.ts`: initial selection, discovery and legacy fallback policy                        |
+| `shared/provider-text-generation-failure.test.ts` | Failure classification/redaction in `src/errors.test.ts` and the text-generation matrix   | `shared/provider-presentation-policy.test.ts`: Electron envelope normalization                                         |
+
+Host paths in this table are relative to `src/main/` unless prefixed with `shared/`. No test
+assertions or fixtures are removed by this registration reconciliation. The package-boundary
+selection test explicitly verifies both helper edits select host text-generation evidence without
+selecting provider unit tests; provider edits still select their own tests and downstream contracts.
