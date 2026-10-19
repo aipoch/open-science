@@ -46,6 +46,7 @@ usePackageOperationStore.getState().receive({
   progress: { phase: 'selecting' },
   summary: {
     metadataBytes: 7987,
+    pdfNotesAvailable: new URLSearchParams(location.search).has('pdf-notes'),
     retainedFiles: new URLSearchParams(location.search).has('retained')
       ? [
           {
@@ -106,7 +107,17 @@ if (mode) {
       isExample: false,
       createdAt: 1,
       updatedAt: 1
-    }
+    },
+    ...(new URLSearchParams(location.search).has('many-projects')
+      ? Array.from({ length: 30 }, (_, index) => ({
+          id: `project-${index}`,
+          name: `Research project ${index + 1} — longitudinal analysis and supporting evidence`,
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }))
+      : [])
   ]
   const preview = {
     title: 'Nanomaterials and tumour immunity',
@@ -264,6 +275,37 @@ if (exportMode) {
   })
 }
 const menuMode = new URLSearchParams(location.search).has('menu')
+if (new URLSearchParams(location.search).has('transfers')) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    browserTransfers: Array.from({ length: 4 }, (_, index) => ({
+      id: `transfer-${index}`,
+      filename: `research-package-${index}.science`,
+      state: 'receiving',
+      completedBytes: 18 * 1024 ** 2,
+      totalBytes: 42 * 1024 ** 2
+    }))
+  })
+}
+if (new URLSearchParams(location.search).has('evidence')) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    state: 'failed',
+    error: 'Review flagged content before exporting.',
+    sensitiveContent: Array.from({ length: 20 }, (_, index) => ({
+      location: `research-file-${index}.txt`,
+      offset: 0,
+      rule: 'field',
+      matchLength: 8,
+      leftBoundary: 'start',
+      rightBoundary: 'end',
+      context: 'Redacted fixture evidence',
+      valueHash: 'fixture'
+    }))
+  })
+}
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
 const background = new URLSearchParams(location.search)
 const backgroundMode = background.has('background')

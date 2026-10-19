@@ -18,6 +18,7 @@ export const ProjectPicker = ({
   loaded = true,
   disabled = false,
   alwaysShowSearch = false,
+  scrollable = true,
   emptyContent
 }: {
   projects: readonly { id: string; name: string }[]
@@ -31,6 +32,7 @@ export const ProjectPicker = ({
   loaded?: boolean
   disabled?: boolean
   alwaysShowSearch?: boolean
+  scrollable?: boolean
   emptyContent?: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -82,7 +84,8 @@ export const ProjectPicker = ({
           role={selecting ? 'radiogroup' : 'group'}
           aria-label={label ?? t('Projects')}
           className={cn(
-            'max-h-56 space-y-1 overflow-y-auto',
+            'space-y-1',
+            scrollable && 'max-h-56 overflow-y-auto',
             selecting && 'rounded-2xl bg-bg-000 p-1.5 shadow-card'
           )}
         >
