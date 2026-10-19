@@ -34,7 +34,7 @@ const request = {
   maxOutputTokens: 8192,
   outputLimitBytes: 262144
 }
-const completion = { choices: [{ finish_reason: 'stop', message: { content: '细胞' } }] }
+const completion = { choices: [{ finish_reason: 'stop', message: { content: 'cell' } }] }
 
 describe('provider text generation service', () => {
   it.each(['chat-completions', 'messages'] as const)(
@@ -48,7 +48,7 @@ describe('provider text generation service', () => {
                 stop_reason: 'end_turn',
                 content: [
                   { type: 'thinking', thinking: 'private reasoning' },
-                  { type: 'text', text: '细胞' }
+                  { type: 'text', text: 'cell' }
                 ]
               }
         )
@@ -58,7 +58,7 @@ describe('provider text generation service', () => {
         ...request,
         target: { ...target, protocol: apiType, url: protocolUrls[apiType] }
       })
-      expect(result).toEqual({ text: '细胞', stopReason: 'end_turn' })
+      expect(result).toEqual({ text: 'cell', stopReason: 'end_turn' })
       const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
       expect(url).toBe(
         `https://provider.example/v1/${apiType === 'chat-completions' ? 'chat/completions' : 'messages'}`
@@ -95,8 +95,8 @@ describe('provider text generation service', () => {
                 reasoning_content: 'private reasoning',
                 reasoning_details: [{ type: 'reasoning.text', text: 'private reasoning' }],
                 content: [
-                  { type: 'text', text: '细' },
-                  { type: 'text', text: '胞' }
+                  { type: 'text', text: 'ce' },
+                  { type: 'text', text: 'll' }
                 ]
               }
             }
@@ -104,7 +104,7 @@ describe('provider text generation service', () => {
         })
       )
     )
-    await expect(runner.run(request)).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
+    await expect(runner.run(request)).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
   })
 
   it.each(['chat-completions', 'messages'] as const)(
@@ -224,7 +224,7 @@ const responsesMessage = {
   type: 'message',
   role: 'assistant',
   status: 'completed',
-  content: [{ type: 'output_text', text: '细胞' }]
+  content: [{ type: 'output_text', text: 'cell' }]
 }
 const responsesCompletion = {
   status: 'completed',
@@ -259,7 +259,7 @@ it('uses stateless Responses final text and includes thinking in billed output e
   const runner = textRunner(fetchImpl)
   await expect(
     runner.run({ ...request, target: { ...responsesTarget, reasoningEffort: 'low' }, onUsage })
-  ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
+  ).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
   const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
   expect(url).toBe('https://provider.example/v1/responses')
   expect(new Headers(init.headers).get('authorization')).toBe('Bearer private-key')
@@ -479,7 +479,7 @@ it.each([
       stop_reason: 'end_turn',
       content: [
         { type: 'thinking', thinking: '', signature: 'opaque' },
-        { type: 'text', text: '细胞' }
+        { type: 'text', text: 'cell' }
       ]
     })
   )
@@ -495,7 +495,7 @@ it.each([
         url: protocolUrls['messages']
       }
     })
-  ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
+  ).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
   const body = JSON.parse(
     String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body)
   )
@@ -540,7 +540,7 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
                   stop_reason: 'end_turn',
                   content: [
                     { type: 'redacted_thinking', data: 'opaque' },
-                    { type: 'text', text: '细胞' }
+                    { type: 'text', text: 'cell' }
                   ]
                 }
         )
@@ -563,7 +563,7 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
             url: `http://127.0.0.1:${port}/gateway/v1/${protocol === 'chat-completions' ? 'chat/completions' : protocol === 'messages' ? 'messages' : 'responses'}`
           }
         })
-      ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
+      ).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
       expect(received).toHaveLength(1)
       expect(received[0].url).toBe(
         `/gateway/v1/${protocol === 'chat-completions' ? 'chat/completions' : protocol === 'messages' ? 'messages' : 'responses'}`
@@ -592,7 +592,7 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
           ? responsesCompletion
           : {
               stop_reason: 'end_turn',
-              content: [{ type: 'text', text: '细胞' }],
+              content: [{ type: 'text', text: 'cell' }],
               usage: { input_tokens: 100, output_tokens: 12 }
             }
     const runner = textRunner(

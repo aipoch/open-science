@@ -15,7 +15,7 @@ const classificationInput = { state: 'Cell', questions: { q: { type: 'noul' } } 
 const fetchResult = (url: string | URL | Request): Response =>
   Response.json(
     String(url).includes('completions')
-      ? { choices: [{ finish_reason: 'stop', message: { content: '细胞' } }] }
+      ? { choices: [{ finish_reason: 'stop', message: { content: 'cell' } }] }
       : {
           model: 'jev',
           usage: { input_tokens: 1, output_tokens: 2 },
@@ -129,7 +129,7 @@ it('binds both model capabilities to an immutable account connection without sha
   const other = createProvider(configuration)
   const text = provider.textGenerationModel('chat-model')
   const classifier = provider.classificationModel('decision-model')
-  await expect(text.generate(textInput)).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
+  await expect(text.generate(textInput)).resolves.toEqual({ text: 'cell', stopReason: 'end_turn' })
   await classifier.classify(classificationInput)
   await other.textGenerationModel('other-model').generate(textInput)
   await other.classificationModel('other-decision').classify(classificationInput)
@@ -305,7 +305,7 @@ it('keeps empty image maps on the original text protocol and endpoint', async ()
 
 it('bounds image requests in UTF-8 bytes before sending and permits the exact boundary', async () => {
   const fetch = vi.fn<typeof globalThis.fetch>(async () => fetchResult('classification'))
-  const input = { state: '细胞', questions: {}, images }
+  const input = { state: '🙂', questions: {}, images }
   const body = JSON.stringify({
     model: 'm',
     state: { text: input.state, images: ['figure'] },

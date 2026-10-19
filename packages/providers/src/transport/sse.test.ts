@@ -3,7 +3,7 @@ import { readSseRecords } from './sse'
 import { DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES } from './body'
 
 it('frames fragmented UTF-8, CRLF, comments and a final unterminated record without parsing payloads', async () => {
-  const bytes = new TextEncoder().encode(': comment\r\ndata: 细胞\r\n\r\ndata: [DONE]')
+  const bytes = new TextEncoder().encode(': comment\r\ndata: 🙂\r\n\r\ndata: [DONE]')
   const upstream = new Response(
     new ReadableStream({
       start(controller) {
@@ -14,7 +14,7 @@ it('frames fragmented UTF-8, CRLF, comments and a final unterminated record with
   )
   const actual = []
   for await (const record of readSseRecords(upstream, 1000)) actual.push(record)
-  expect(actual).toEqual([': comment\r\ndata: 细胞', 'data: [DONE]'])
+  expect(actual).toEqual([': comment\r\ndata: 🙂', 'data: [DONE]'])
   expect(upstream.body?.locked).toBe(false)
 })
 it('bounds bytes observed in chunks and releases a reader after overflow', async () => {
