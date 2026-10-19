@@ -98,7 +98,7 @@ describe('production application command wiring', () => {
   it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
     const source = domainCompact('session-packages')
     expect(source).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current, onSensitiveContentFailure: rememberSensitiveContentFailure })'
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current, cancelBrowserTransfer: (id) => browserPackageImport.cancel(id), onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
     expect(source).toContain(

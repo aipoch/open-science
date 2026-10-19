@@ -317,7 +317,8 @@ export function Fixture(): React.JSX.Element {
             libraryScope: 'project',
             documentNames: [],
             documentCount: 0,
-            savedCount: 4
+            savedCount: candidates.length,
+            candidateIds: candidates.map(({ id }) => id)
           }}
         />
         <WorkspaceLiteratureToolCard

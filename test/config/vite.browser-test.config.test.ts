@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url)
 
 it.each([
   'diagnostics',
+  'providers',
   'skills',
   'environment',
   'compute',

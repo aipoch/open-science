@@ -2,6 +2,7 @@ import type { SmartCollectionView } from '@aipoch/literature-screening/contracts
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { openAllReferences } from './fixtures/library'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 test('retries a disconnected batch and resumes it after restart without repeating saved papers', async ({
   app
@@ -246,8 +247,7 @@ test('selects the first classification model for both features after saving a pr
     const port = (service.address() as { port: number }).port
     const page = await app.completeOnboarding()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-    await page.getByRole('button', { name: 'Settings' }).click()
-    const settings = page.getByRole('dialog', { name: 'Settings' })
+    const settings = await openSettingsPage(page, 'Model')
     await settings.getByRole('tab', { name: 'Classification models' }).click()
     await settings.getByText('Add service').click()
     await settings.getByRole('combobox', { name: 'Provider' }).press('Enter')
