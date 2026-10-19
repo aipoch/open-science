@@ -14,8 +14,8 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
-  <a href="https://huggingface.co/datasets/phylobio/BiomniBench-DA">
-    <img alt="BiomniBench-DA Public 50 1위" src="https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-f59f00?style=flat">
+  <a href="#벤치마크-성능">
+    <img alt="AIPOCH Open-Science — 보고된 벤치마크 비교에서 최고 점수" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="지원 플랫폼 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
@@ -93,6 +93,14 @@ macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
 brew install --cask open-science
 ```
 
+macOS 또는 Linux용 독립 CLI는 별도의 [AIPOCH tap](https://github.com/aipoch/homebrew-tap)을 사용합니다.
+
+```bash
+brew install aipoch/tap/open-science
+```
+
+이 Formula는 Node를 포함하고 데스크톱 앱 없이 실행됩니다. 버전은 데스크톱 Cask와 다를 수 있습니다. 전제 조건과 업그레이드는 [독립 실행 환경 가이드](../standalone-runtime.md)를 참고하세요.
+
 Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화하려면 확인 후 로컬 데이터를 영구 삭제하는 [데이터 초기화 도구](../../scripts/windows-reset/README.md)를 참고하세요.
 
 ### 2. 최초 설정 완료
@@ -166,11 +174,17 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 
 1. 완료된 세션을 내보내고 포함할 내용을 선택합니다.
 2. `.science` 파일을 협업자나 다른 컴퓨터로 전송합니다.
-3. 프로젝트로 가져온 뒤 읽기 전용 기록, 포함된 파일, Notebook 기록 및 검증 증거를 확인합니다.
+3. 프로젝트로 가져옵니다. 오른쪽 **Research replay**에서 기록된 과정을 확인하고 왼쪽 대화에서 질문하며 고정 단계를 참조할 수 있습니다.
 
-가져온 패키지는 읽기 전용입니다. 코드를 실행하거나 자격 증명을 복원하지 않습니다. 후속 작업은 새 세션에서 진행하세요. 결과를 다시 실행하려면 완전한 레시피, 필요한 입력 및 사용 가능한 런타임이 필요합니다.
+가져온 기록은 읽기 전용입니다. 재생은 코드 실행, 모델 호출 또는 자격 증명 복원을 수행하지 않습니다. 첫 질문은 연결된 쓰기 가능한 대화를 만듭니다. **Create a copy to continue research**로 작업 사본을 만들어 연구를 계속할 수 있습니다. 재실행에는 완전한 레시피, 필요한 입력과 사용 가능한 실행 환경이 필요합니다.
+
+Side Chat 대화, 비공개 읽기 북마크와 자격 증명은 제외되며, 포함 파일은 내보내기 선택에 따라 달라집니다. 받은 검증 기록은 발신자의 검사 결과이며 이 컴퓨터에서 다시 실행했음을 증명하지 않습니다. [`.science` 패키지 가이드](https://aipoch.com/docs/guides/research-packages/)를 참고하세요.
 
 ## 벤치마크 성능
+
+아래는 2026년 8~10월에 보고된 과거 결과이며, v1.0.0을 새로 평가한 결과가 아닙니다.
+
+출처 보고서: [9월 29일](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10월 12일](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (접근 권한이 필요할 수 있습니다).
 
 ### 🏆 AstaBench LitQA2-FullText-Search — 대상 논문 10/10 검색 성공
 
@@ -217,9 +231,13 @@ AIPOCH Open-Science는 프로젝트 관리, 다중 모델 에이전트 실행, P
 | **과학 파일 및 미리보기**         | 파일당 최대 **10 GiB**를 업로드하고 프로젝트 파일과 과학 데이터, PDF, Office 문서, 이미지, 코드, 분자 구조 미리보기를 관리하세요. 업로드 한도는 모델이 전체 내용을 읽을 수 있다는 뜻이 아니며 컨텍스트, 첨부 분석, 미리보기에는 별도 제한이 있습니다. 큰 파일은 보통 코드로 나누어 읽거나 분석해야 합니다.                                                                        |
 | **아티팩트 및 출처**              | 변경 불가능한 산출물 버전과 사용 가능한 생성 코드, 입력, 실행 기록, 환경 정보 및 검토 증거를 보관합니다. 데스크톱에서 완전한 실행 레시피, 필수 입력, 사용 가능한 런타임을 갖춘 버전을 재실행하고 출력을 비교해 검증 기록을 내보낼 수 있습니다. 증거 부족으로 검증이 불가능할 수 있으며 재실행 검사는 과학적 타당성을 증명하지 않습니다.                                           |
 
+영구 PDF 주석과 문서 노트를 지원합니다. 심사 모델을 설정하면 스마트 컬렉션이 포함·제외 기준에 따라 문헌을 평가합니다. AI 판단과 수동 판단을 별도로 기록하여 사람의 검토를 지원합니다.
+
+데스크톱 앱에서는 산출물 출처를 RO-Crate 1.1로 내보낼 수 있습니다. 버전에 연결된 환경 번들은 캡처가 완전하고 대상 플랫폼과 호환될 때만 관리 환경을 만들 수 있으며, 전체 컴퓨터 백업은 아닙니다.
+
 ## 모델 제공업체
 
-AIPOCH Open-Science는 제품 수준에서 특정 모델에 종속되지 않습니다. 주요 클라우드 LLM 제공업체 또는 사용자 지정 게이트웨이에 연결하거나 기존 Claude 또는 Codex 구독을 재사용할 수 있습니다. 현재 제공업체 사용 가능 여부는 선택한 에이전트 백엔드와 지원 API 프로토콜에 따라 달라집니다. 모델에 연결하는 방법은 네 가지입니다.
+AIPOCH Open-Science는 제품 수준에서 특정 모델에 종속되지 않습니다. 주요 클라우드 LLM 제공업체 또는 사용자 지정 게이트웨이에 연결하거나 기존 Claude 또는 Codex 구독을 재사용할 수 있습니다. 현재 제공업체 사용 가능 여부는 선택한 에이전트 백엔드와 지원 API 프로토콜에 따라 달라집니다. 다음 연결 옵션을 사용할 수 있습니다.
 
 | 제공업체 모드              | 작동 방식                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -227,6 +245,7 @@ AIPOCH Open-Science는 제품 수준에서 특정 모델에 종속되지 않습�
 | **사용자 지정 게이트웨이** | Base URL과 정확한 모델 ID를 입력하고 선택한 에이전트 백엔드가 지원하는 API 프로토콜(Messages, Chat Completions 또는 Responses)을 지정한 뒤 연결을 테스트하세요. 원격 게이트웨이는 HTTPS와 API Key가 필요합니다. `localhost`, `127.0.0.1`, `[::1]` 같은 루프백 엔드포인트는 HTTP를 사용하고 키를 생략할 수 있습니다. Ollama, LM Studio, llama.cpp, vLLM 프리셋을 제공합니다. 기본 API 형식만으로 서버나 모델 호환성이 보장되지는 않습니다. |
 | **Codex 구독**             | Codex 에이전트 프레임워크를 선택한 다음 제공업체 유형에서 Codex 구독을 선택합니다.                                                                                                                                                                                                                                                                                                                                                        |
 | **Claude 구독**            | 두 가지 모드로 로그인합니다. **공유** 모드는 브라우저 로그인 자격 증명을 기본 `~/.claude` 프로필에 저장합니다. **격리** 모드는 앱 소유 `CLAUDE_CONFIG_DIR`에서 `claude setup-token`을 실행하여 `~/.claude/`와 완전히 분리하고 브라우저 흐름과 토큰 붙여넣기 폴백을 제공합니다.                                                                                                                                                            |
+| **xAI (Grok) OAuth**       | 내장 xAI (Grok) OAuth 기기 로그인을 사용합니다. 이용 가능 여부는 xAI 계정과 선택한 백엔드의 프로토콜 지원에 따라 달라지므로 앱에서 연결을 검증하세요.                                                                                                                                                                                                                                                                                     |
 
 사전 설정된 25개의 프로바이더 옵션이 있으며, OpenAI, Anthropic, DeepSeek, NVIDIA Build 등이 있습니다. 모델과 지역별 엔드포인트는 설치 버전 및 선택한 백엔드에 따라 달라지므로 앱의 제공업체 선택기와 연결 테스트로 확인하세요.
 
@@ -256,7 +275,7 @@ AIPOCH Open-Science는 프로젝트 데이터, 설정, 아티팩트 버전, 출�
 
 ## 개발 및 패키징
 
-웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다.
+AIPOCH Open-Science는 일반 Node 백엔드와 Electron 데스크톱 클라이언트로 구성되며 React, TypeScript, Prisma/SQLite 및 ACP 기반 에이전트 런타임을 사용합니다.
 
 소스 개발 요구 사항:
 
@@ -294,19 +313,14 @@ npm run pack:backend
 
 Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhost 웹 UI에 연결할 수 있습니다. 6자리 AIPOCH Open-Science 코드로 브라우저를 페어링하고 데스크톱에서 한 번 승인하면 루프백 서버를 직접 공개하지 않고 워크스페이스에 연결할 수 있습니다. 브라우저 신뢰는 취소할 수 있으며 모드 변경이나 서비스 종료는 활성 원격 세션을 즉시 무효화합니다.
 
+호스트를 켜고 온라인 상태로 유지하며 AIPOCH Open-Science와 Remote.It 에이전트를 실행하고, 로그인된 Remote.It 계정에 호스트를 추가해야 합니다. 브라우저 승인은 만료되며 취소할 수 있습니다. [원격 제어 가이드](../REMOTE_CONTROL.md)를 참고하세요.
+
 ### 헤드리스 CLI 및 SDK
 
 헤드리스 CLI와 종속성이 없는 Node.js SDK는 데스크톱 및 웹 인터페이스와 같은 로컬 데몬, 프로젝트, 세션, 자격 증명, 권한을 사용합니다. 자세한 사용법은 게시 가능 패키지와 함께 관리하므로 하나의 명령 참조만 유지합니다.
 
 - [CLI 가이드](../../packages/open-science/CLI.md) — 설치, 서비스 수명 주기, 작업 자동화, 아티팩트, 출력 형식, 종료 코드
 - [SDK 패키지 개요](../../packages/open-science/README.md) — Node.js 빠른 시작 및 패키지 진입점
-
-```bash
-brew install --cask open-science
-brew install aipoch/tap/open-science
-```
-
-[Homebrew / Release](../standalone-runtime.md)
 
 ## 자주 묻는 질문
 
