@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
 it.each(['python', 'r'] as const)(
   'matches %s snapshot analysis with native file reads and writes',

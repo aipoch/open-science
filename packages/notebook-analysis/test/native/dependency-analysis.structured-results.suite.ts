@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
 const rCommand = process.env.OPEN_SCIENCE_TEST_R_COMMAND
 

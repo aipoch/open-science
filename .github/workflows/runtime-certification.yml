@@ -186,5 +186,5 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: notebook-analysis-native
-          path: test-results/notebook-analysis-native.json
+          path: packages/notebook-analysis/test-results/notebook-analysis-native.json
           if-no-files-found: error

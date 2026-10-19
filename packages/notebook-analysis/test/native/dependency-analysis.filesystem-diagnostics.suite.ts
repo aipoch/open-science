@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
 const reportedSine = `import numpy as np
 import matplotlib.pyplot as plt

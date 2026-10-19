@@ -15,16 +15,23 @@ it('retains explicit native behavioral evidence outside ordinary module test sel
   const manifest = loadModuleImpactManifest()
   expect(suite.coveredModules).toEqual(['notebook_analysis_engine'])
   expect(suite.testFiles).toEqual(
-    readdirSync(resolve(root, 'scripts/ci/notebook-analysis-native'))
+    readdirSync(resolve(root, 'packages/notebook-analysis/test/native'))
       .filter((name) => name.endsWith('.suite.ts'))
-      .map((name) => `scripts/ci/notebook-analysis-native/${name}`)
+      .map((name) => `packages/notebook-analysis/test/native/${name}`)
       .sort()
   )
   expect(suite.testFiles).toHaveLength(8)
   for (const path of suite.testFiles) {
     expect(read(path)).not.toMatch(/\.(?:skip|skipIf|runIf|todo)\b/)
   }
-  for (const path of [suite.entrypoint, suite.workflow, ...suite.testFiles]) {
+  for (const path of [
+    suite.entrypoint,
+    'packages/notebook-analysis/test/native/setup.ts',
+    ...suite.testFiles
+  ]) {
+    expect(manifest.modules.notebook_analysis_engine.ownerPaths, path).toContain(path)
+  }
+  for (const path of [suite.workflow, 'scripts/ci/notebook-analysis-native/suite.json']) {
     expect(modulesForPath(manifest, path), path).toEqual([])
   }
   const ordinary = [
@@ -32,10 +39,13 @@ it('retains explicit native behavioral evidence outside ordinary module test sel
     ...Object.values(loadDerivedConsumers().modules).flat(),
     ...createModuleTestPlan('notebook_analysis_engine').testFiles
   ]
-  expect(ordinary.filter((path) => path.includes('/notebook-analysis-native/'))).toEqual([])
+  expect(ordinary.filter((path) => suite.testFiles.includes(path))).toEqual([])
   expect(ordinary).toContain('packages/notebook-analysis/src/dependency-analysis.chord.test.ts')
   expect(JSON.parse(read('package.json')).scripts['test:notebook-analysis-native']).toBe(
-    `vitest run --config ${suite.entrypoint}`
+    'npm run test:native --prefix packages/notebook-analysis'
+  )
+  expect(JSON.parse(read('packages/notebook-analysis/package.json')).scripts['test:native']).toBe(
+    'vitest run --config test/native/vitest.config.ts'
   )
 })
 
@@ -45,7 +55,7 @@ it('ordinary discovery does not collect the native entrypoint', () => {
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024
   })
-  expect(files).not.toContain('/notebook-analysis-native/')
+  expect(files).not.toContain('/notebook-analysis/test/native/')
   expect(files).toContain('dependency-analysis.chord.test.ts')
 }, 30000)
 
@@ -73,7 +83,14 @@ it.each(['RUN_KERNEL', ...suite.requiredEnvironment])(
     delete env[missing]
     const run = spawnSync(
       process.execPath,
-      [vitest, 'run', '--config', suite.entrypoint, suite.testFiles[0], '--reporter=default'],
+      [
+        vitest,
+        'run',
+        '--config',
+        suite.entrypoint,
+        resolve(root, suite.testFiles[0]),
+        '--reporter=default'
+      ],
       { cwd: root, env, encoding: 'utf8', timeout: 30000 }
     )
     expect(run.error).toBeUndefined()

@@ -6,38 +6,31 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import type { NotebookRunRecord } from '../../../packages/notebook-analysis/src/analysis-test-support'
-import { NotebookDependencyAnalyzer } from '../../../packages/notebook-analysis/src/analysis-test-support'
-import type { NotebookDependencyProjection } from '../../../packages/notebook-analysis/src/contracts'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import type { NotebookRunRecord } from '../../src/analysis-test-support'
+import { NotebookDependencyAnalyzer } from '../../src/analysis-test-support'
+import type { NotebookDependencyProjection } from '../../src/contracts'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
-const cells = readFileSync(
-  join(__dirname, '../../../packages/notebook-analysis/src', 'reported-r-circlize.fixture.R'),
-  'utf8'
-)
+const cells = readFileSync(join(__dirname, '../../src', 'reported-r-circlize.fixture.R'), 'utf8')
   .trim()
   .split('\n\n# %%\n\n')
 
 const explorationCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-r-exploration-chord.fixture.R'
-  ),
+  join(__dirname, '../../src', 'reported-r-exploration-chord.fixture.R'),
   'utf8'
 )
   .trim()
   .split('\n\n# %%\n\n')
 
 const deviceCopyCells = readFileSync(
-  join(__dirname, '../../../packages/notebook-analysis/src', 'reported-r-device-copy.fixture.R'),
+  join(__dirname, '../../src', 'reported-r-device-copy.fixture.R'),
   'utf8'
 )
   .trim()
   .split('\n\n# %%\n\n')
 
 const packageReplayCells = readFileSync(
-  join(__dirname, '../../../packages/notebook-analysis/src', 'reported-r-package-replay.fixture.R'),
+  join(__dirname, '../../src', 'reported-r-package-replay.fixture.R'),
   'utf8'
 )
   .trim()

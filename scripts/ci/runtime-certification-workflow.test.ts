@@ -143,7 +143,7 @@ describe('runtime certification workflow', () => {
     expect(step(source, 'Upload native analysis evidence')).toMatchObject({
       if: 'always()',
       with: {
-        path: 'test-results/notebook-analysis-native.json',
+        path: 'packages/notebook-analysis/test-results/notebook-analysis-native.json',
         'if-no-files-found': 'error'
       }
     })

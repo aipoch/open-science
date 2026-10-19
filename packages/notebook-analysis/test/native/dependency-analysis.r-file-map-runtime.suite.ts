@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '../../src/source-file-access-analysis'
 
 it.each([
   'purrr::walk(c("a.csv","b.csv"),base::writeLines,text="ok")',

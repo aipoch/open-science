@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
 // Font discovery is process-independent runtime setup, not notebook input state.
 // Share only this disposable cache; every script still runs in a fresh data directory.
@@ -27,79 +27,47 @@ afterAll(async () => {
 })
 
 const cells = readFileSync(
-  join(__dirname, '../../../packages/notebook-analysis/src', 'reported-python-chord.fixture.py'),
+  join(__dirname, '../../src', 'reported-python-chord.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 
 const recordCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-chord-records.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-chord-records.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 
 const polarChord = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-polar-chord.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-polar-chord.fixture.py'),
   'utf8'
 )
 
 const arcRibbon = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-arc-ribbon.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-arc-ribbon.fixture.py'),
   'utf8'
 )
 
 const cartesianChord = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-cartesian-chord.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-cartesian-chord.fixture.py'),
   'utf8'
 )
 
 const workbookCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-workbook-chord.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-workbook-chord.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 
 const coloredChordCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-colored-chord.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-colored-chord.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 
 const redrawCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-chord-redraw.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-chord-redraw.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 
 const matrixChord = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-matrix-chord.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-matrix-chord.fixture.py'),
   'utf8'
 )
 
@@ -108,21 +76,13 @@ const matrixInput =
 
 const neighborChords = [0, 1].map((variant) =>
   readFileSync(
-    join(
-      __dirname,
-      '../../../packages/notebook-analysis/src',
-      `reported-python-neighbor-chord-${variant}.fixture.py`
-    ),
+    join(__dirname, '../../src', `reported-python-neighbor-chord-${variant}.fixture.py`),
     'utf8'
   )
 )
 
 const subarcCells = readFileSync(
-  join(
-    __dirname,
-    '../../../packages/notebook-analysis/src',
-    'reported-python-chord-subarcs.fixture.py'
-  ),
+  join(__dirname, '../../src', 'reported-python-chord-subarcs.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
 

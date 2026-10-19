@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
-import { rThemePlots } from '../../../packages/notebook-analysis/src/reported-r-theme-plots.fixture'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
+import { rThemePlots } from '../../src/reported-r-theme-plots.fixture'
 const dataMaskPipelineSource = `
 library(dplyr)
 library(ggplot2)

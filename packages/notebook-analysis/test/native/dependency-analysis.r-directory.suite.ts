@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '../../../packages/notebook-analysis/src/index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 const reportedBaseSine = String.raw`x <- seq(0, 2*pi, length.out = 200)
 y <- sin(x)
 png("sin_plot.png", width = 960, height = 540, res = 120)

@@ -2,12 +2,12 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "../.."
+    "rootDir": "."
   },
   "exclude": [],
   "include": [
     "src/**/*.ts",
-    "../../scripts/ci/notebook-analysis-native/*.suite.ts",
-    "../../scripts/ci/notebook-analysis-native/setup.ts"
+    "test/native/*.suite.ts",
+    "test/native/setup.ts"
   ]
 }
