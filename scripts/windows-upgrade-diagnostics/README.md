@@ -61,6 +61,17 @@ native installer presentation, ready receipts, and final process cleanup themsel
 Current upgrades allow brief windowless process handoffs. A single
 sample's `successorPid` is not an acceptance result.
 
+Native NSIS can launch the successor through Explorer (`ExecShellAsUser`), outside
+the installer process tree. The observer also accepts that path only after finding
+the matching operation under the explicit handoff directory: original PID and
+retained lifetime, application and installer paths, operation directory/ID, exact
+installed/ready receipts, and the live successor PID/image must agree. The successor
+creation time must fall between installation and the ready receipt, so a reused PID
+cannot adopt an old receipt. Its handle and descendants are then retained for the
+same normal-exit checks. Operation probes exercise actual sibling processes and
+reject mismatched receipts, paths, operation IDs and stale lifetimes. This reads the
+existing schema; it adds no product state or persistent format.
+
 The fault replay exercises native handles, process lifetimes and complete tree
 samples, injecting the captured error only at the image query. It demonstrates
 recovery and fail-closed behavior, not the original Windows error's root cause.

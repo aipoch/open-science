@@ -80,7 +80,7 @@ public class HandoffObserver : IDisposable {
   readonly int root;
   readonly string app, installer, helperDigest, operationRoot;
   readonly DateTime boundary;
-  int installerPid;
+  int installerPid, shellSuccessorPid;
   public HandoffObserver(int pid, string started, string application, string installerPath, string helper, string parentExecutable, string handoffAppData) {
     // .NET Framework treats drive-relative C:dir and root-relative \dir as rooted.
     if(String.IsNullOrWhiteSpace(handoffAppData) || Path.GetPathRoot(handoffAppData).Length < 3) throw new ArgumentException("An absolute handoff app-data directory is required", "handoffAppData");
@@ -162,6 +162,75 @@ public class HandoffObserver : IDisposable {
     while (known.ContainsKey(pid) && visited.Add(pid)) { if(pid==ancestor) return true; pid=known[pid].parent; }
     return false;
   }
+  public static bool MatchesSuccessorOperation(string json, string directory, string handoffRoot,
+      int parentPid, string application, string installerPath, DateTime parentStarted, DateTime parentExited,
+      int successorPid, DateTime successorStarted, DateTime installedAt, DateTime readyAt,
+      string installedReceipt, string readyReceipt) {
+    var request = new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(json);
+    object operation, parent, successor, requestedApp, requestedInstaller, schema, created;
+    Guid id; long createdMilliseconds;
+    if(!request.TryGetValue("schema",out schema) || Convert.ToInt32(schema)!=1 ||
+       !request.TryGetValue("operationId",out operation) || !Guid.TryParseExact(operation as string,"D",out id) ||
+       !Same(Path.GetFullPath(directory),Path.Combine(handoffRoot,operation as string)) ||
+       !request.TryGetValue("parentPid",out parent) || Convert.ToInt32(parent)!=parentPid ||
+       !request.TryGetValue("successorPid",out successor) || Convert.ToInt32(successor)!=successorPid || successorPid<=0 ||
+       !request.TryGetValue("applicationPath",out requestedApp) || !Same(requestedApp as string,application) ||
+       !request.TryGetValue("installerPath",out requestedInstaller) || !Same(requestedInstaller as string,installerPath) ||
+       !request.TryGetValue("createdAt",out created) || !Int64.TryParse(Convert.ToString(created,System.Globalization.CultureInfo.InvariantCulture),out createdMilliseconds)) return false;
+    var createdAt = new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddMilliseconds(createdMilliseconds);
+    // Bind a reused parent PID to its retained lifetime and a reused successor PID
+    // to the existing receipt interval. A newer process cannot inherit an old ready receipt.
+    return createdAt>=parentStarted && createdAt<=parentExited && installedAt>=parentExited &&
+      successorStarted>=installedAt && successorStarted<=readyAt &&
+      installedReceipt==(operation+"\r\ninstalled\r\n") && readyReceipt==(operation+"\r\nready\r\n");
+  }
+  void DiscoverShellSuccessor(List<Entry> entries) {
+    var parentExit = ReadExitTime(known[root].process);
+    if(!parentExit.HasValue || installerPid==0 || !Directory.Exists(operationRoot)) return;
+    foreach(var directory in Directory.GetDirectories(operationRoot)) {
+      try {
+      Guid operation;
+      if(!Guid.TryParseExact(Path.GetFileName(directory),"D",out operation)) continue;
+      var requestPath=Path.Combine(directory,"request.json");
+      var installedPath=Path.Combine(directory,"installed.receipt");
+      var readyPath=Path.Combine(directory,"ready.receipt");
+      if(!File.Exists(requestPath) || !File.Exists(installedPath) || !File.Exists(readyPath)) continue;
+      var json=File.ReadAllText(requestPath);
+      Dictionary<string,object> request;
+      try { request=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(json); }
+      catch(ArgumentException) { continue; } // An unrelated incomplete request is not an identity claim.
+      catch(InvalidOperationException) { continue; } // Valid JSON with a non-object shape is not a request.
+      if(request==null) continue;
+      object parent, successor, requestedApp, requestedInstaller;
+      int parentPid, pid;
+      // Ignore other operations before opening any process handle.
+      if(!request.TryGetValue("parentPid",out parent) || !Int32.TryParse(Convert.ToString(parent),out parentPid) || parentPid!=root ||
+         !request.TryGetValue("applicationPath",out requestedApp) || !Same(requestedApp as string,app) ||
+         !request.TryGetValue("installerPath",out requestedInstaller) || !Same(requestedInstaller as string,installer) ||
+         !request.TryGetValue("successorPid",out successor) || !Int32.TryParse(Convert.ToString(successor),out pid)) continue;
+      if(pid<=0 || known.ContainsKey(pid)) continue;
+      var row=entries.Find(entry=>(int)entry.pid==pid);
+      if(row.pid==0) continue;
+      HandoffIdentity candidate;
+      try { candidate=CaptureDescendant(pid,(int)row.parent); } catch(ArgumentException) { continue; }
+      if(candidate==null) continue;
+      bool retained=false;
+      try {
+        if((candidate.path!=null && !Same(candidate.path,app)) || candidate.process.HasExited ||
+           !MatchesSuccessorOperation(json,directory,operationRoot,root,app,installer,boundary,parentExit.Value,
+             pid,candidate.process.StartTime,File.GetLastWriteTimeUtc(installedPath),File.GetLastWriteTimeUtc(readyPath),
+             File.ReadAllText(installedPath),File.ReadAllText(readyPath))) continue;
+        if(shellSuccessorPid!=0) throw new Exception("Ambiguous operation successor identity");
+        foreach(var prior in known.Values) if(prior.role=="successor" && !prior.process.HasExited)
+          throw new Exception("Ambiguous operation successor identity");
+        // Retain unresolved image queries just like descendants. No path or window
+        // claim is made until this same native handle resolves successfully.
+        shellSuccessorPid=pid; known.Add(pid,candidate); retained=true;
+      } finally { if(!retained) candidate.process.Dispose(); }
+      } catch(FileNotFoundException) { continue; }
+        catch(DirectoryNotFoundException) { continue; }
+    }
+  }
   public HandoffSample Sample() {
     var sample = new HandoffSample();
     var snapshot = CreateToolhelp32Snapshot(2,0);
@@ -173,6 +242,9 @@ public class HandoffObserver : IDisposable {
       do { entries.Add(entry); } while(Process32NextW(snapshot,ref entry));
       if(Marshal.GetLastWin32Error()!=18) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
     } finally { CloseHandle(snapshot); }
+    // NSIS ExecShellAsUser launches through Explorer, outside the installer's tree.
+    // Existing product receipts identify that successor; a matching name/window alone never does.
+    DiscoverShellSuccessor(entries);
     bool added;
     do {
       added=false;
@@ -194,6 +266,10 @@ public class HandoffObserver : IDisposable {
     sample.oldExited=known[root].process.HasExited;
     foreach(var identity in known.Values) {
       RefreshImage(identity);
+      if(identity.pid==shellSuccessorPid && identity.path!=null) {
+        if(!Same(identity.path,app)) throw new Exception("Operation successor executable mismatch");
+        identity.role="successor";
+      }
       if(identity.imageError!=0 && !identity.process.HasExited) sample.unresolvedImages++;
       if(Same(identity.path,installer)) {
         if(installerPid!=0 && installerPid!=identity.pid) throw new Exception("Ambiguous installer identity");

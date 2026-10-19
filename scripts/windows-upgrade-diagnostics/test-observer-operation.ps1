@@ -1,6 +1,14 @@
 param([Parameter(Mandatory)][string]$Output)
 $ErrorActionPreference = 'Stop'
 $nativeSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'HandoffObserver.cs'))
+# Fault injection affects only the native image query; identity handles and exits remain real.
+$query = 'if (!QueryFullProcessImageNameW(process.Handle, 0, buffer, ref size))'
+if (-not $nativeSource.Contains($query)) { throw 'Image query seam changed' }
+$nativeSource = $nativeSource.Replace('public class HandoffObserver : IDisposable {','public class HandoffObserver : IDisposable { public static bool DenyImage; public static int DenyPid; public static string RemoveRequestPath;')
+$nativeSource = $nativeSource.Replace($query,'if (DenyImage && identity.pid==DenyPid) throw new System.ComponentModel.Win32Exception(5); ' + $query)
+$readRequest = 'var json=File.ReadAllText(requestPath);'
+if (-not $nativeSource.Contains($readRequest)) { throw 'Request read seam changed' }
+$nativeSource = $nativeSource.Replace($readRequest,'if (requestPath==RemoveRequestPath) { File.Delete(requestPath); RemoveRequestPath=null; } ' + $readRequest)
 Add-Type -TypeDefinition $nativeSource -ReferencedAssemblies 'System.Web.Extensions'
 $operation = 'd4b596b1-9356-498c-a1a0-b4c906117c82'
 $root = 'C:\synthetic\UpdateHandoffs'
@@ -46,10 +54,28 @@ public static class OperationFixture {
     Console.Out.Flush();
     // Process.StandardInput can emit a preamble from the parent's console encoding.
     using (var input = new System.IO.StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8, true)) {
-      string command = input.ReadLine();
-      if (command == "exit") return 0;
-      Console.Error.WriteLine("Unexpected fixture input: " + (command == null ? "EOF" : BitConverter.ToString(System.Text.Encoding.UTF8.GetBytes(command))));
-      return 42;
+      System.Diagnostics.Process installer = null;
+      try {
+        string command;
+        while ((command = input.ReadLine()) != null) {
+          if (command == "exit") return 0;
+          if (command.StartsWith("spawn:") && installer == null) {
+            installer = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(command.Substring(6)) {
+              UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true
+            });
+            var ready = installer.StandardOutput.ReadLineAsync();
+            if (!ready.Wait(10000) || ready.Result != "operation-fixture-ready") return 43;
+            Console.WriteLine("installer:" + installer.Id); Console.Out.Flush();
+          } else return 42;
+        }
+        return 42;
+      } finally {
+        if (installer != null) {
+          installer.StandardInput.WriteLine("exit");
+          if (!installer.WaitForExit(10000) || installer.ExitCode != 0) throw new Exception("Fixture installer did not exit normally");
+          installer.Dispose();
+        }
+      }
     }
   }
 }
@@ -60,6 +86,7 @@ $parentPath = $self.MainModule.FileName
 $self.Dispose()
 $parent = [ObservedProcess]::GetProcessById($PID)
 $child = $null
+$successor = $null
 $failure = $null
 $live = @()
 $cleanup = @{forced=$false;exited=$false;directoryRemoved=$false}
@@ -126,9 +153,103 @@ try {
       }
     } finally { $observer.Dispose() }
   }
+
+  # ExecShellAsUser returns through Explorer: a genuine sibling process, not
+  # a descendant of the old application or installer, must be receipt-bound.
+  Copy-Item -LiteralPath $resourceHelper -Destination $liveInstaller
+  $shellOperation = [guid]::NewGuid().ToString()
+  $shellDirectory = Join-Path $fixture "Open-Science\UpdateHandoffs\$shellOperation"
+  [IO.Directory]::CreateDirectory($shellDirectory) | Out-Null
+  $created = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $observer = [HandoffObserver]::new($child.Id,$child.StartTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$resourceHelper,$liveInstaller,$null,$liveHelper,$fixture)
+  try {
+    $child.StandardInput.WriteLine('spawn:' + $liveInstaller)
+    $ack = $child.StandardOutput.ReadLineAsync()
+    if (-not $ack.Wait(10000) -or $ack.Result -notmatch '^installer:(\d+)$') { throw 'Installer fixture not ready' }
+    $installerPid = [int]$Matches[1]
+    $sample = $observer.Sample()
+    if (@($sample.identities | Where-Object { $_.pid -eq $installerPid -and $_.role -eq 'installer' }).Count -ne 1) { throw 'Installer identity missing' }
+    $child.StandardInput.WriteLine('exit')
+    if (-not $child.WaitForExit(10000) -or $child.ExitCode -ne 0) { throw 'Original fixture did not exit normally' }
+    $installedPath = Join-Path $shellDirectory 'installed.receipt'
+    $readyPath = Join-Path $shellDirectory 'ready.receipt'
+    [IO.File]::WriteAllText($installedPath,"$shellOperation`r`ninstalled`r`n")
+    $start.FileName = $resourceHelper
+    $successor = [Diagnostics.Process]::Start($start)
+    $ack = $successor.StandardOutput.ReadLineAsync()
+    if (-not $ack.Wait(10000) -or $ack.Result -ne 'operation-fixture-ready') { throw 'Sibling fixture not ready' }
+    $requestPath = Join-Path $shellDirectory 'request.json'
+    $shellRequest = @{schema=1;operationId=$shellOperation;createdAt=$created;parentPid=$child.Id;successorPid=$successor.Id;applicationPath=$resourceHelper;installerPath=$liveInstaller}
+    $shellRequest | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding UTF8
+    [IO.File]::WriteAllText($readyPath,"$operation`r`nready`r`n")
+    $sample = $observer.Sample()
+    if (@($sample.identities | Where-Object { $_.pid -eq $successor.Id }).Count) { throw 'Wrong operation receipt accepted' }
+    $live += @{scenario='reject-wrong-successor-receipt';rejected=$true}
+    [IO.File]::WriteAllText($readyPath,"$shellOperation`r`nready`r`n")
+    $validReadyAt = [IO.File]::GetLastWriteTimeUtc($readyPath)
+    [IO.File]::SetLastWriteTimeUtc($readyPath,$successor.StartTime.ToUniversalTime().AddSeconds(-1))
+    $sample = $observer.Sample()
+    if (@($sample.identities | Where-Object { $_.pid -eq $successor.Id }).Count) { throw 'Reused PID with old ready receipt accepted' }
+    $live += @{scenario='reject-successor-newer-than-receipt';rejected=$true}
+    [IO.File]::SetLastWriteTimeUtc($readyPath,$validReadyAt)
+    foreach ($entry in @(@('createdAt',0),@('parentPid',$PID),@('successorPid',$child.Id),@('applicationPath',$liveHelper),@('installerPath',$resourceHelper),@('operationId',[guid]::NewGuid().ToString()))) {
+      $wrong = $shellRequest.Clone(); $wrong[$entry[0]]=$entry[1]
+      $wrong | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding UTF8
+      $sample = $observer.Sample()
+      if (@($sample.identities | Where-Object { $_.pid -eq $successor.Id }).Count) { throw "Wrong successor $($entry[0]) accepted" }
+      $live += @{scenario=('reject-successor-' + $entry[0]);rejected=$true}
+    }
+    $unrelated = Join-Path $fixture ('Open-Science\UpdateHandoffs\' + [guid]::NewGuid().ToString())
+    [IO.Directory]::CreateDirectory($unrelated) | Out-Null
+    foreach ($name in @('installed.receipt','ready.receipt')) { [IO.File]::WriteAllText((Join-Path $unrelated $name),'unrelated') }
+    # Missing and corrupt requests from other operations cannot identify a process.
+    $observer.Sample() | Out-Null
+    [IO.File]::WriteAllText((Join-Path $unrelated 'request.json'),'{}')
+    [HandoffObserver]::RemoveRequestPath=Join-Path $unrelated 'request.json'
+    $observer.Sample() | Out-Null
+    if ([HandoffObserver]::RemoveRequestPath -or (Test-Path -LiteralPath (Join-Path $unrelated 'request.json'))) { throw 'Request deletion race was not exercised' }
+    $live += @{scenario='unrelated-request-deleted-during-read';rejected=$true}
+    foreach ($invalidJson in @('[]','[1]','"bad"','null')) {
+      [IO.File]::WriteAllText((Join-Path $unrelated 'request.json'),$invalidJson)
+      $observer.Sample() | Out-Null
+      $live += @{scenario='reject-unrelated-request-shape';json=$invalidJson;rejected=$true}
+    }
+    [IO.File]::WriteAllText((Join-Path $unrelated 'request.json'),'{')
+    $shellRequest | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding UTF8
+    [HandoffObserver]::DenyPid=$successor.Id
+    [HandoffObserver]::DenyImage=$true
+    $sample = $observer.Sample()
+    $pending = @($sample.identities | Where-Object { $_.pid -eq $successor.Id })
+    if ($pending.Count -ne 1 -or $pending[0].path -or $pending[0].role -eq 'successor' -or $sample.unresolvedImages -ne 1) { throw 'Shell successor denial must retain unresolved identity' }
+    $rejected=$false
+    try { $observer.RequireResolvedImages() } catch { $rejected=$true }
+    if (-not $rejected) { throw 'Unresolved sibling allowed completion' }
+    $known=[HandoffObserver].GetField('known',[Reflection.BindingFlags]'Instance,NonPublic').GetValue($observer)
+    $retainedHandle=$known[$successor.Id].process.Handle
+    $live += @{scenario='shell-successor-persistent-denial';rejected=$true;identity=$pending[0]}
+    [HandoffObserver]::DenyImage=$false
+    $sample=$observer.Sample()
+    $identity = @($sample.identities | Where-Object { $_.pid -eq $successor.Id })
+    if ($identity.Count -ne 1 -or $identity[0].role -ne 'successor' -or $identity[0].parent -ne $PID -or -not $sample.oldExited) { throw 'Receipt-bound sibling successor was not classified' }
+    if ($known[$successor.Id].process.Handle -ne $retainedHandle -or $identity[0].imageQueryFailures -lt 1 -or $identity[0].lastImageError -ne 5) { throw 'Sibling recovery replaced its handle or erased error evidence' }
+    $observer.RequireResolvedImages()
+    $live += @{scenario='shell-launched-successor';identity=$identity[0];originalPid=$child.Id;installerPid=$installerPid}
+    $successor.StandardInput.WriteLine('exit')
+    if (-not $successor.WaitForExit(10000) -or $successor.ExitCode -ne 0) { throw 'Sibling successor did not exit normally' }
+    $sample = $observer.Sample()
+    if (@($sample.identities | Where-Object { -not $_.exited }).Count) { throw 'Owned fixture processes remain' }
+    $live += @{scenario='shell-successor-normal-exit';identities=$sample.identities;forced=$false}
+  } finally { $observer.Dispose() }
 } catch { $failure = $_ }
 finally {
   $parent.Dispose()
+  if ($successor) {
+    try {
+      if (-not $successor.HasExited) { $successor.StandardInput.WriteLine('exit') }
+      if (-not $successor.WaitForExit(10000) -or $successor.ExitCode -ne 0) { throw 'Sibling successor remains or failed; retaining fixture' }
+    } catch { $cleanup.successorError=$_.Exception.ToString(); if (-not $failure) { $failure=$_ } }
+    finally { $successor.Dispose() }
+  }
   if ($child) {
     try {
       if (-not $child.HasExited) { $child.StandardInput.WriteLine('exit') }
