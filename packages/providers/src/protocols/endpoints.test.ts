@@ -157,3 +157,42 @@ describe('complete tool-less API URLs', () => {
     )
   })
 })
+
+describe('slash-heavy endpoint inputs', () => {
+  const slashes = '/'.repeat(100_000)
+
+  it('preserves non-trailing runs while normalizing appended endpoint paths', () => {
+    const root = `https://host/proxy${slashes}tail`
+    expect(normalizeMessagesRootUrl(root)).toBe(root)
+    expect(resolveChatCompletionsBaseUrl({ chatCompletionsBaseUrl: root })).toBe(root)
+    expect(resolveChatCompletionsUrl({ baseUrl: root })).toBe(
+      'https://host/proxy/tail/v1/chat/completions'
+    )
+    expect(resolveResponsesUrl({ baseUrl: root })).toBe('https://host/proxy/tail/v1/responses')
+  })
+
+  it('removes long trailing runs and keeps query/hash content intact', () => {
+    expect(normalizeMessagesRootUrl(`  https://host/proxy/V1/messages${slashes}  `)).toBe(
+      'https://host/proxy'
+    )
+    expect(
+      resolveChatCompletionsBaseUrl({ chatCompletionsBaseUrl: `https://host/v1${slashes}` })
+    ).toBe('https://host/v1')
+    const query = `?tenant=${slashes}tail#route`
+    expect(resolveMessagesUrl(`https://host/proxy/v1/messages${slashes}${query}`)).toBe(
+      `https://host/proxy/v1/messages${query}`
+    )
+    expect(resolveChatCompletionsUrl({ baseUrl: `https://host/proxy/v1${slashes}${query}` })).toBe(
+      `https://host/proxy/v1/chat/completions${query}`
+    )
+    expect(
+      resolveResponsesUrl({ baseUrl: `https://host/proxy/v1/responses${slashes}${query}` })
+    ).toBe(`https://host/proxy/v1/responses${query}`)
+  })
+
+  it('retains the plain-string fallback for malformed bases', () => {
+    const root = `not a URL${slashes}tail`
+    expect(resolveChatCompletionsUrl({ baseUrl: root })).toBe(`${root}/v1/chat/completions`)
+    expect(resolveMessagesBaseUrl(`not a URL/v1${slashes}`)).toBe('not a URL/v1')
+  })
+})

@@ -4,18 +4,25 @@
 // endpoint) would resolve to `.../v1/v1/messages` → 404. Stripping it here keeps whatever the user
 // pastes — the bare root, the `.../v1` base, or the full endpoint — resolving to the same correct URL.
 
-// Matches a trailing `/v1` or `/v1/messages` segment (case-insensitive), with optional trailing slash.
-const REDUNDANT_SUFFIX = /\/v1(\/messages)?\/*$/i
+// Scan once: an unanchored trailing-slash regex retries each slash in a long non-matching run.
+const stripTrailingSlashes = (value: string): string => {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
+  return value.slice(0, end)
+}
+
+const trimTrailingSlash = (value: string): string => stripTrailingSlashes(value.trim())
+
+// Trailing slashes are removed before matching this bounded version/endpoint suffix.
+const REDUNDANT_SUFFIX = /\/v1(\/messages)?$/i
 
 const normalizeMessagesRootUrl = (baseUrl: string): string => {
-  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+  const trimmed = trimTrailingSlash(baseUrl)
 
   return trimmed.replace(REDUNDANT_SUFFIX, '')
 }
 
 type ChatCompletionsEndpointOptions = { chatCompletionsBaseUrl?: string; baseUrl?: string }
-
-const trimTrailingSlash = (value: string): string => value.trim().replace(/\/+$/, '')
 
 // Appends a leading-slash path segment to a URL's path, preserving query/hash and collapsing double
 // slashes. Falls back to plain concatenation only for a non-parseable base.
@@ -23,7 +30,7 @@ const appendPath = (base: string, suffix: string): string => {
   const trimmed = base.trim()
   try {
     const url = new URL(trimmed)
-    url.pathname = `${url.pathname.replace(/\/+$/, '')}${suffix}`.replace(/\/{2,}/g, '/')
+    url.pathname = `${stripTrailingSlashes(url.pathname)}${suffix}`.replace(/\/{2,}/g, '/')
     return url.toString()
   } catch {
     return `${trimTrailingSlash(trimmed)}${suffix}`
@@ -45,7 +52,7 @@ const stripRedundantChatCompletionsSuffix = (base: string): string => {
   const trimmed = base.trim()
   try {
     const url = new URL(trimmed)
-    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/v1(\/chat\/completions)?$/i, '')
+    url.pathname = stripTrailingSlashes(url.pathname).replace(/\/v1(\/chat\/completions)?$/i, '')
     return trimTrailingSlash(url.toString())
   } catch {
     return trimTrailingSlash(trimmed).replace(/\/v1(\/chat\/completions)?$/i, '')
@@ -86,7 +93,7 @@ const resolveResponsesUrl = (provider: ChatCompletionsEndpointOptions): string |
   if (!raw?.trim()) return undefined
   try {
     const url = new URL(raw.trim())
-    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/responses$/i, '')
+    url.pathname = stripTrailingSlashes(url.pathname).replace(/\/responses$/i, '')
     // Official bases carry their exact version; custom roots follow the same /v1 contract as Chat.
     const base = resolveChatCompletionsBaseUrl(
       provider.chatCompletionsBaseUrl
