@@ -1133,3 +1133,56 @@ it.each(['external-action', 'chained-action', 'unresolved', 'cycle', 'null-fit']
     ])
   }
 )
+
+it.each([false, true])(
+  'rejects populated signature fields before rewriting (reflow=%s)',
+  async (reflow) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    const page = pdf.addPage([400, 500])
+    page.drawText('Original.', { font, size: 12, x: 40, y: 440 })
+    // This is a populated signature dictionary, not a cryptographically validated signature.
+    // Both paths must enforce the existing native signature-count policy before rewriting.
+    const signature = pdf.context.register(
+      pdf.context.obj({
+        Type: 'Sig',
+        Filter: 'Adobe.PPKLite',
+        SubFilter: 'adbe.pkcs7.detached',
+        ByteRange: [0, 1, 2, 3],
+        Contents: PDFHexString.of('00')
+      })
+    )
+    const field = pdf.context.register(
+      pdf.context.obj({
+        Type: 'Annot',
+        Subtype: 'Widget',
+        FT: 'Sig',
+        T: PDFString.of('Signature1'),
+        V: signature,
+        Rect: [0, 0, 0, 0],
+        P: page.ref
+      })
+    )
+    page.node.addAnnot(field)
+    pdf.catalog.set(PDFName.of('AcroForm'), pdf.context.obj({ Fields: [field], SigFlags: 3 }))
+    const caller = new TestCallerRegistry().acquire({ leaseId: 'signed-pdf', surface: 'electron' })
+    try {
+      await expect(
+        new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generateDetailed(
+          {
+            id: 'signed-pdf',
+            ...(reflow ? { layout: 'reflow' as const } : {}),
+            data: await pdf.save(),
+            pages: [{ width: 400, height: 500 }],
+            units: [
+              { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+            ]
+          },
+          caller.lease
+        )
+      ).rejects.toMatchObject({ failure: { code: 'unsupported-layout' } })
+    } finally {
+      caller.release()
+    }
+  }
+)

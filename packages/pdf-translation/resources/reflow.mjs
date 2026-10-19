@@ -266,6 +266,11 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     placements.set(unitIndex, fragments)
   }
   try {
+    // Match fixed-layout generation: rewriting a signed document invalidates its signature.
+    if (p.FPDF_GetSignatureCount(source.doc) !== 0)
+      throw Object.assign(new Error('PDF generation rejected'), {
+        failure: { code: 'unsupported-layout' }
+      })
     if (p.FPDF_GetPageCount(source.doc) !== input.pages.length) throw Error('Source pages changed')
     originalDocument = await PDFDocument.load(input.data, { updateMetadata: false })
     const sourceLinks = readReflowLinks(native, source, input, originalDocument)
