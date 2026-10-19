@@ -7297,6 +7297,11 @@
     "Imported: {{total}}": "가져옴: {{total}}",
     "Dismissed: {{total}}": "제외됨: {{total}}",
     "Current status unavailable: {{total}}": "현재 상태 확인 불가: {{total}}",
-    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다."
+    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다.",
+    "You can cancel the download at any time.": "다운로드는 언제든지 취소할 수 있습니다.",
+    "Review what’s new, then download the update.": "변경 사항을 확인한 다음 업데이트를 다운로드하세요.",
+    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science가 업데이트 설치를 위해 종료된 후 자동으로 다시 열립니다. 직접 다시 열지 마세요.",
+    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "업데이트가 다운로드되었습니다. 준비되면 다시 시작하세요. 실행 중인 작업을 먼저 확인합니다.",
+    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "설치는 취소할 수 없습니다. 완료되면 Open-Science가 자동으로 다시 열립니다."
   }
 }

@@ -33,7 +33,7 @@ test('recovers historical records only after confirmation in the update dialog',
   await expect(
     page
       .getByRole('dialog', { name: 'Update', exact: true })
-      .getByText('Open-Science is stopping background tasks', { exact: false })
+      .getByText('Open-Science will close to install the update', { exact: false })
   ).toBeVisible()
   await expect(recover).toBeHidden()
 })
@@ -195,3 +195,44 @@ test('keeps the shared restart action visible with long notes in a small window'
   await dialog.getByText('Release note 35:', { exact: false }).scrollIntoViewIfNeeded()
   await expect(restart).toBeInViewport()
 })
+
+for (const width of [320, 375, 414, 768]) {
+  test(`keeps update status and actions visible while notes scroll at ${width}px`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width, height: 620 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/update-dialog.html?continuous&stage=downloading')
+    const dialog = page.getByRole('dialog')
+    const status = page.getByTestId('update-status')
+    const progress = dialog.getByRole('progressbar')
+    const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
+    const before = await status.boundingBox()
+    await dialog.getByText('Release note 35:', { exact: false }).scrollIntoViewIfNeeded()
+    await expect(progress).toBeInViewport()
+    await expect(cancel).toBeInViewport()
+    expect(await status.boundingBox()).toEqual(before)
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+  })
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`shows installation feedback without a cancellable action (${theme})`, async ({
+    page
+  }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`/update-dialog.html?continuous&short&stage=installing&${theme}`)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByRole('status')).toContainText('Installation cannot be cancelled')
+    await expect(
+      dialog.getByRole('button', { name: 'Installing update…', exact: true })
+    ).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('region', { name: "What's new" })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath(`update-installing-${theme}.png`) })
+  })
+}

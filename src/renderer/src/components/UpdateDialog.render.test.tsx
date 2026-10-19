@@ -241,8 +241,11 @@ describe('UpdateDialog', () => {
     act(() => root.render(<UpdateDialog />))
 
     expect(document.body.textContent).toContain('Preparing update…')
-    expect(document.body.textContent).toContain('update may take a moment')
-    expect(document.body.textContent).toContain("please don't reopen the app")
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
+      'Open-Science will close to install the update, then reopen automatically.'
+    )
+    expect(document.body.textContent).toContain('Please do not reopen it yourself.')
+    expect(document.body.querySelectorAll('button')).toHaveLength(1)
     expect(
       Array.from(document.body.querySelectorAll('button')).every((button) => button.disabled)
     ).toBe(true)

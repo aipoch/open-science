@@ -6,6 +6,7 @@ import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateStatus } from '../../../src/shared/update'
 
 const params = new URLSearchParams(location.search)
+if (params.has('dark')) document.documentElement.classList.add('dark')
 const locale = params.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
 const notes = Array.from(
   { length: params.has('short') ? 1 : 35 },
@@ -59,6 +60,31 @@ if (params.has('continuous')) {
     },
     cancel: async () => {
       useUpdateStore.setState({ status })
+    }
+  })
+}
+// Pin actual updater states for visual and keyboard acceptance without timing races.
+if (params.has('continuous') && params.has('stage')) {
+  const stage = params.get('stage')
+  const status = useUpdateStore.getState().status
+  useUpdateStore.setState({
+    status: {
+      ...status,
+      state:
+        stage === 'installing' ? 'applying' : stage === 'downloading' ? 'downloading' : 'ready',
+      progress: stage === 'downloading' ? 50 : undefined,
+      downloadedBytes: stage === 'downloading' ? (status.totalBytes ?? 0) / 2 : undefined,
+      recovery:
+        stage === 'installing'
+          ? {
+              phase: 'handoff',
+              runtime: 'stopped-clean',
+              installation: 'pending',
+              canCancel: false,
+              canRetryInstall: false,
+              canRecover: false
+            }
+          : undefined
     }
   })
 }

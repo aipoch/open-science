@@ -7460,6 +7460,11 @@
     "Imported: {{total}}": "Importiert: {{total}}",
     "Dismissed: {{total}}": "Verworfen: {{total}}",
     "Current status unavailable: {{total}}": "Aktueller Status nicht verfügbar: {{total}}",
-    "Historical result; current library status is unavailable.": "Früheres Ergebnis; der aktuelle Bibliotheksstatus ist nicht verfügbar."
+    "Historical result; current library status is unavailable.": "Früheres Ergebnis; der aktuelle Bibliotheksstatus ist nicht verfügbar.",
+    "You can cancel the download at any time.": "Sie können den Download jederzeit abbrechen.",
+    "Review what’s new, then download the update.": "Lesen Sie die Neuerungen und laden Sie dann das Update herunter.",
+    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science wird zur Installation geschlossen und danach automatisch wieder geöffnet. Bitte öffnen Sie die App nicht selbst.",
+    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "Das Update wurde heruntergeladen. Starten Sie die App neu, sobald Sie bereit sind. Laufende Aufgaben werden zuvor geprüft.",
+    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "Die Installation kann nicht abgebrochen werden. Danach wird Open-Science automatisch wieder geöffnet."
   }
 }

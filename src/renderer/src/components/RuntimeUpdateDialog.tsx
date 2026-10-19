@@ -3,7 +3,7 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, LoaderCircle } from 'lucide-react'
+import { AlertTriangle, Check, Download, LoaderCircle } from 'lucide-react'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
@@ -73,6 +73,30 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
+  const standardFlow = !confirming && !blocked && !recovery && !legacyRecords && !status.error
+  const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
+  const statusTitle = needsDownload
+    ? downloading
+      ? t('Downloading…')
+      : t('Update available')
+    : copy.title
+  const statusDescription = needsDownload
+    ? downloading
+      ? t('You can cancel the download at any time.')
+      : t('Review what’s new, then download the update.')
+    : id === 'S23'
+      ? t(
+          'Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.'
+        )
+      : status.state === 'applying'
+        ? t(
+            'Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.'
+          )
+        : id === 'S01'
+          ? t(
+              'The update is downloaded. Restart when you’re ready; running tasks will be checked first.'
+            )
+          : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
     pendingRef.current = true
@@ -151,7 +175,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           data-testid="runtime-update-dialog"
           data-runtime-update-state={id}
           className={dialogPanelClassName(
-            'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(570px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
+            'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(600px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
@@ -163,7 +187,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
             if (!recovery) cancelUpdate()
           }}
         >
-          <div className={dialogHeaderClassName}>
+          <div className={`${dialogHeaderClassName} flex-wrap gap-y-1`}>
             <Dialog.Title className={dialogTitleClassName}>
               {confirming ? t('Update Open-Science now?') : t('Update')}
             </Dialog.Title>
@@ -174,7 +198,44 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               })}
             </Dialog.Description>
           </div>
-          <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
+          {standardFlow ? (
+            <section
+              data-testid="update-status"
+              className="shrink-0 border-b border-border px-5 py-5"
+            >
+              <div className="flex items-start gap-3" role="status" aria-atomic="true">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <StatusIcon
+                    aria-hidden="true"
+                    className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
+                  />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {statusDescription}
+                  </p>
+                </div>
+              </div>
+              {downloading ? (
+                <div className="mt-3">
+                  <DownloadProgressLine
+                    progress={
+                      status.downloadProgress ?? {
+                        phase: 'downloading',
+                        transferred: status.downloadedBytes ?? 0,
+                        total: status.totalBytes,
+                        percent: status.progress ?? 0,
+                        bytesPerSecond: 0,
+                        attempt: 0
+                      }
+                    }
+                  />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+          <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain`}>
             {confirming ? (
               <section
                 data-runtime-update-state={
@@ -225,18 +286,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </section>
             ) : (
               <>
-                {!needsDownload && !blocked && !recovery && !legacyRecords ? (
-                  <div role="status" className="mb-4 space-y-1 text-sm">
-                    <p className="font-medium">{copy.title}</p>
-                    <p className="text-muted-foreground">
-                      {status.state === 'applying' && !status.recovery
-                        ? t(
-                            "Open-Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
-                          )
-                        : copy.description}
-                    </p>
-                  </div>
-                ) : !needsDownload ? (
+                {!standardFlow && !needsDownload ? (
                   <ErrorNotice
                     role={blocked || recovery ? 'alert' : 'status'}
                     level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
@@ -323,7 +373,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </>
             )}
           </div>
-          {downloading ? (
+          {downloading && !standardFlow ? (
             <div className="shrink-0 px-5 pb-5">
               <DownloadProgressLine
                 progress={
@@ -370,7 +420,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               </Button>
             </div>
           ) : !busy || canCancel ? (
-            <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
+            <div className={`${dialogFooterClassName} shrink-0 flex-wrap [&_button]:min-h-10`}>
               {recovery && !busy ? (
                 <>
                   {status.recovery?.canRecover ? (
@@ -431,6 +481,10 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                   ) : null}
                 </>
               )}
+            </div>
+          ) : standardFlow ? (
+            <div className={`${dialogFooterClassName} shrink-0 [&_button]:min-h-10`}>
+              <Button disabled>{copy.title}</Button>
             </div>
           ) : null}
         </Dialog.Content>

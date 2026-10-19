@@ -16,20 +16,20 @@ export const UpdateReleaseNotes = ({ status }: { status: UpdateStatus }): React.
   return (
     <>
       {releaseNotes ? (
-        <div>
-          <p className="mb-1 text-xs font-medium text-muted-foreground">{t("What's new")}</p>
+        <section aria-label={t("What's new")}>
+          <h3 className="mb-3 text-sm font-semibold">{t("What's new")}</h3>
           {isEnglishFallback ? (
             <p className="mb-2 text-xs text-muted-foreground">
               {t('Localized release notes are unavailable; showing English.')}
             </p>
           ) : null}
-          <div className="rounded-lg bg-muted px-3 py-2">
+          <div className="text-sm leading-relaxed">
             <AgentMarkdown content={releaseNotes} />
           </div>
-          <ExternalTextLink href={releaseUrl} className="mt-2 text-xs">
+          <ExternalTextLink href={releaseUrl} className="mt-4 text-xs">
             {t('View full release notes on GitHub')}
           </ExternalTextLink>
-        </div>
+        </section>
       ) : (
         <div className="rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
           {t("Release notes aren't available in-app for this version.")}{' '}

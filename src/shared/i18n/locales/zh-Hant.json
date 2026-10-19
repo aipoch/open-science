@@ -7299,6 +7299,11 @@
     "Imported: {{total}}": "已匯入：{{total}}",
     "Dismissed: {{total}}": "已忽略：{{total}}",
     "Current status unavailable: {{total}}": "無法確認目前狀態：{{total}}",
-    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。"
+    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。",
+    "You can cancel the download at any time.": "你可以隨時取消下載。",
+    "Review what’s new, then download the update.": "查看更新內容，然後下載更新。",
+    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science 將關閉以安裝更新，完成後會自動重新開啟。請勿自行重新開啟應用程式。",
+    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "更新已下載，可在準備好後重新啟動。重新啟動前會先檢查正在執行的工作。",
+    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "安裝無法取消。完成後 Open-Science 會自動重新開啟。"
   }
 }
