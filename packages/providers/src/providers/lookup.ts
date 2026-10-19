@@ -1,6 +1,6 @@
 import { OFFICIAL_VENDORS } from './data'
 import type { OfficialVendorId, OfficialVendor } from './types'
-import type { ChatApiEndpoint } from '../protocols/types'
+import type { ModelProtocol } from '../protocols/types'
 import type { ReasoningCapability } from '../protocols/types'
 
 const VENDORS_BY_ID = new Map<OfficialVendorId, OfficialVendor>(
@@ -46,19 +46,19 @@ export const resolveVendorBaseUrl = (
 
 // Resolves a vendor's OpenAI /v1/chat/completions base, when it publishes one distinct from the
 // Anthropic route (only 'both' vendors do). Undefined otherwise, so callers fall back to `baseUrl`.
-export const resolveVendorOpenAiBaseUrl = (
+export const resolveVendorChatCompletionsBaseUrl = (
   id: OfficialVendorId,
   regionId?: string
 ): string | undefined => {
   const vendor = VENDORS_BY_ID.get(id)
 
   if (!vendor) return undefined
-  if (vendor.openaiBaseUrl) return vendor.openaiBaseUrl
+  if (vendor.chatCompletionsBaseUrl) return vendor.chatCompletionsBaseUrl
 
   const regions = vendor.regions ?? []
   const region = regions.find((candidate) => candidate.id === regionId) ?? regions[0]
 
-  return region?.openaiBaseUrl
+  return region?.chatCompletionsBaseUrl
 }
 
 // Resolves a vendor's explicitly published native Responses API base, when it differs from the
@@ -122,13 +122,13 @@ export const resolveVendorModelsUrl = (
 }
 
 // The chat APIs a vendor speaks, defaulting to Anthropic /v1/messages when unset.
-export const resolveVendorApiEndpoints = (id: OfficialVendorId): ChatApiEndpoint[] => {
+export const resolveVendorApiEndpoints = (id: OfficialVendorId): ModelProtocol[] => {
   const endpoints = VENDORS_BY_ID.get(id)?.apiEndpoints
-  return endpoints && endpoints.length > 0 ? [...endpoints] : ['anthropic']
+  return endpoints && endpoints.length > 0 ? [...endpoints] : ['messages']
 }
 
-export const usesVendorAnthropicApiKeyHeader = (id: OfficialVendorId): boolean =>
-  VENDORS_BY_ID.get(id)?.anthropicApiKeyHeader === true
+export const usesVendorMessagesApiKeyHeader = (id: OfficialVendorId): boolean =>
+  VENDORS_BY_ID.get(id)?.messagesApiKeyHeader === true
 
 // Whether a vendor needs a region choice (more than one endpoint).
 export const vendorHasRegions = (id: OfficialVendorId): boolean =>
@@ -180,7 +180,7 @@ export const isVendorModelResponsesSupported = (
 export const resolveVendorModelApiEndpoints = (
   vendorId: OfficialVendorId,
   modelId: string | undefined
-): ChatApiEndpoint[] => {
+): ModelProtocol[] => {
   const modelEndpoint = VENDORS_BY_ID.get(vendorId)?.models.find(
     ({ id }) => id === modelId
   )?.apiEndpoint

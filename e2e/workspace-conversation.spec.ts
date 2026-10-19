@@ -35,7 +35,7 @@ test('preserves an unavailable saved model until an explicit replacement is sele
     const snapshot = await window.api.settings.upsertProvider({
       type: 'custom',
       name: 'Replacement provider',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       baseUrl: 'http://127.0.0.1:9/v1',
       model: 'replacement-model',
       key: 'e2e-key',

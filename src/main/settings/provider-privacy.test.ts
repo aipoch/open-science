@@ -22,7 +22,7 @@ describe('provider transport privacy', () => {
       baseUrl,
       key: 'PRIVACY_KEY_CANARY',
       model: 'test-model',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const validation = await validateProvider(target, { fetchImpl })
     const catalog = await createProvider({
@@ -50,7 +50,7 @@ describe('provider transport privacy', () => {
       baseUrl,
       key: 'LOCAL_CANARY',
       model: 'test-model',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     expect(getCustomProviderBaseUrlError(baseUrl)).toBeUndefined()
     await validateProvider(target, { fetchImpl })

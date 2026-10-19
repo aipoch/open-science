@@ -1,7 +1,7 @@
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { CustomReasoningEffortTransport, ModelReasoningEffort } from '../protocols/types'
 import { resolveChatReasoningTransport } from '../protocols/reasoning'
-import type { ResponsesBridgeNamespacedTool, ResponsesReplyReasoning } from './types'
+import type { ResponsesNamespacedTool, ResponsesReplyReasoning } from './types'
 
 // Responses and Chat Completions payloads are open-ended at this protocol seam. The adapter validates
 // the supported subset before producing an upstream request.
@@ -140,14 +140,10 @@ const textFromContent = (content: unknown): string | JsonObject[] => {
   })
 }
 
-const namespacedToolAlias = (
-  tool: Pick<ResponsesBridgeNamespacedTool, 'namespace' | 'name'>
-): string => `${tool.namespace}__${tool.name}`
+const namespacedToolAlias = (tool: Pick<ResponsesNamespacedTool, 'namespace' | 'name'>): string =>
+  `${tool.namespace}__${tool.name}`
 
-const chatToolName = (
-  item: JsonObject,
-  tools: readonly ResponsesBridgeNamespacedTool[]
-): string => {
+const chatToolName = (item: JsonObject, tools: readonly ResponsesNamespacedTool[]): string => {
   if (typeof item.namespace !== 'string' || item.namespace.length === 0) {
     return String(item.name ?? '')
   }
@@ -161,7 +157,7 @@ const chatToolName = (
 export const inputToMessages = (
   body: JsonObject,
   reasoningByItemId?: ReadonlyMap<string, ResponsesReplyReasoning>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesNamespacedTool[] = []
 ): JsonObject[] => {
   const messages: JsonObject[] = []
   if (typeof body.instructions === 'string' && body.instructions.length > 0) {
@@ -294,7 +290,7 @@ export const inputToMessages = (
 
 export const toolsToChat = (
   tools: unknown,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesNamespacedTool[] = []
 ): JsonObject[] | undefined => {
   if (tools === undefined) return undefined
   if (!Array.isArray(tools)) throw new Error('Responses tools must be an array')
@@ -358,11 +354,11 @@ const toolChoiceToChat = (toolChoice: unknown): unknown => {
   throw new Error('Only function tool_choice values are supported by the Chat Completions bridge')
 }
 
-export const responsesToChatRequest = (
+export const responsesToChatCompletionsRequest = (
   body: JsonObject,
   upstreamModel?: string,
   reasoningByItemId?: ReadonlyMap<string, ResponsesReplyReasoning>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
+  namespacedTools: readonly ResponsesNamespacedTool[] = [],
   options?: ResponsesRequestAdapterOptions
 ): JsonObject => {
   for (const field of UNSUPPORTED_FIELDS) {

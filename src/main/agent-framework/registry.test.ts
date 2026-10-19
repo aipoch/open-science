@@ -19,7 +19,7 @@ describe('agent framework registry', () => {
     })
     expect(getAgentFramework('codebuddy')).toMatchObject({
       displayName: 'CodeBuddy',
-      supportedApiTypes: ['openai'],
+      supportedApiTypes: ['chat-completions'],
       supportsSkills: false,
       acceptsStdioMcp: true,
       supportsDelegatedWork: true

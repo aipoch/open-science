@@ -4,7 +4,7 @@ import type { OfficialVendorId, CustomReasoningEffortTransport } from '@aipoch/p
 
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
 import {
-  normalizeOpenAiChatModelStepUsage,
+  normalizeChatCompletionsUsage,
   resolveChatReasoningTransport
 } from '@aipoch/providers/protocol'
 import {
@@ -158,7 +158,7 @@ export async function selectChatSkills(input: {
           'Chat Skill selector response'
         )
       ) as JsonObject
-      const usage = normalizeOpenAiChatModelStepUsage(completion.usage)
+      const usage = normalizeChatCompletionsUsage(completion.usage)
       if (usage) {
         observeUsage?.({
           usage,

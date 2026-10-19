@@ -5,7 +5,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
-  ChatApiEndpoint,
+  ModelProtocol,
   OfficialVendorId,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
@@ -80,9 +80,9 @@ export type StoredProvider = {
   codexAutoUseHttps?: boolean
   name: string
   // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
-  // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar
+  // means ['messages'] (all pre-existing providers). Legacy records may carry the removed scalar
   // `apiType` on disk; the repository migrates it to this field on read.
-  apiEndpoints?: ChatApiEndpoint[]
+  apiEndpoints?: ModelProtocol[]
   baseUrl?: string
   model?: string
   // Optional custom-model token limits. Context is the shared request/response budget; input/output

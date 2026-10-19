@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import type { TextCodec } from '../../text-types'
-import { resolveChatReasoningTransport } from '../../reasoning'
-import { normalizeOpenAiChatModelStepUsage } from '../../usage'
+import type { TextCodec } from '../text-types'
+import { resolveChatReasoningTransport } from '../reasoning'
+import { normalizeChatCompletionsUsage } from '../usage'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const chatResponse = z.object({
@@ -20,7 +20,7 @@ const chatResponse = z.object({
     .length(1)
 })
 
-export const openaiTextCodec: TextCodec = {
+export const chatCompletionsTextCodec: TextCodec = {
   encode(input) {
     const provider = input.target
     const effort = input.target.reasoningEffort
@@ -59,7 +59,7 @@ export const openaiTextCodec: TextCodec = {
     }
   },
   usage(value) {
-    return normalizeOpenAiChatModelStepUsage(value)
+    return normalizeChatCompletionsUsage(value)
   },
   text(value) {
     const content = chatResponse.parse(value).choices[0].message.content

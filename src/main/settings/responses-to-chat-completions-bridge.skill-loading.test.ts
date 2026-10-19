@@ -1,11 +1,11 @@
 import { expect, it } from 'vitest'
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 
 it.each(['primary', 'reviewer', 'tool-less', 'host-message', 'unknown-host-message'])(
   'preserves only the current Skill loader schema for a %s bridge session',
   async (role) => {
     const requests: Record<string, unknown>[] = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://fixture.invalid/v1' },
       async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)))

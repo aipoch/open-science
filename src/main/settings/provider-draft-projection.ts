@@ -3,7 +3,7 @@ import {
   isOfficialVendorId,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
-  resolveVendorOpenAiBaseUrl,
+  resolveVendorChatCompletionsBaseUrl,
   resolveVendorResponsesBaseUrl
 } from '@aipoch/providers'
 import {
@@ -20,7 +20,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
       type: 'custom',
       vendorId: draft.vendorId,
       baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
-      openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
+      chatCompletionsBaseUrl: resolveVendorChatCompletionsBaseUrl(draft.vendorId, draft.region),
       responsesBaseUrl: resolveVendorResponsesBaseUrl(draft.vendorId, draft.region),
       model: draftModel,
       key: draft.key,
@@ -45,7 +45,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
         }
       : {}),
     key: draft.key,
-    apiEndpoints: draft.apiEndpoints ?? ['anthropic'],
+    apiEndpoints: draft.apiEndpoints ?? ['messages'],
     ...(draft.type === 'custom' ? { reasoningEffortTransport: draft.reasoningEffortTransport } : {})
   }
 }

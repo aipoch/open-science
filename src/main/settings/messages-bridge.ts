@@ -6,6 +6,9 @@ import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
+import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
+import { normalizeMessagesRootUrl } from '@aipoch/providers/protocol'
+import { fetchProviderRequest } from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
@@ -20,12 +23,8 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from '@aipoch/providers/transport'
 
-const WIRE_PATH = {
-  'chat-completions': '/v1/chat/completions',
-  responses: '/v1/responses'
-} as const
+const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'content-encoding',
@@ -45,22 +44,36 @@ type ProviderErrorSnapshot = Readonly<{
   status: number
 }>
 
-export type OpenAiProviderBridgeTarget = Readonly<{
+const defaultDiagnostics = createLogger('provider-loopback')
+
+const upstreamOrigin = (baseUrl: string): string | undefined => {
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return undefined
+  }
+}
+
+export type MessagesBridgeTarget = Readonly<{
   id: string
   onProviderFailure?: ProviderFailureObserver
-  wire: keyof typeof WIRE_PATH
-  endpoint: string
+  baseUrl: string
   key?: string
   model: string
-  adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+  backgroundModel?: string
+  useApiKeyHeader?: boolean
 }>
 
-export type OpenAiProviderBridgeConnection = Readonly<{
+export type MessagesBridgeConnection = Readonly<{
   baseUrl: string
   token: string
 }>
 
-const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Headers => {
+const requestHeaders = (
+  request: ProviderLoopbackHttpRequest,
+  key?: string,
+  useApiKeyHeader = false
+): Headers => {
   const headers = new Headers()
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
@@ -81,7 +94,10 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
       headers.set(name, value)
     }
   }
-  if (key) headers.set('authorization', `Bearer ${key}`)
+  if (key) {
+    if (useApiKeyHeader) headers.set('x-api-key', key)
+    else headers.set('authorization', `Bearer ${key}`)
+  }
   headers.set('content-type', 'application/json')
   return headers
 }
@@ -94,28 +110,29 @@ const responseHeaders = (source: Headers): Record<string, string> => {
   return headers
 }
 
-export class OpenAiProviderBridge {
-  private readonly targets: ReadonlyMap<string, OpenAiProviderBridgeTarget>
-  private readonly wire: OpenAiProviderBridgeTarget['wire']
-  private readonly host: ProviderLoopbackHttpHost<OpenAiProviderBridgeConnection>
-  private target: OpenAiProviderBridgeTarget
+export class MessagesBridge {
+  private readonly targets: ReadonlyMap<string, MessagesBridgeTarget>
+  private readonly host: ProviderLoopbackHttpHost<MessagesBridgeConnection>
+  private target: MessagesBridgeTarget
   private readonly fetchImpl: typeof fetch
+  private readonly diagnostics: Pick<Logger, 'error'>
   private readonly deterministicErrors =
     new DeterministicProviderErrorReplay<ProviderErrorSnapshot>()
 
   constructor(
-    targets: readonly OpenAiProviderBridgeTarget[],
+    targets: readonly MessagesBridgeTarget[],
     initialTargetId: string,
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = fetch,
+    diagnostics: Pick<Logger, 'error'> = defaultDiagnostics
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
     this.fetchImpl = fetchImpl
-    if (!initial) throw new Error('The initial OpenAI bridge target is not registered.')
+    this.diagnostics = diagnostics
+    if (!initial) throw new Error('The initial Messages bridge target is not registered.')
     this.target = initial
-    this.wire = initial.wire
     this.host = new ProviderLoopbackHttpHost({
-      diagnosticName: 'openai',
+      diagnosticName: 'messages',
       credentialMode: 'bearer-or-api-key',
       createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
       onUnauthorized: (response) =>
@@ -131,7 +148,7 @@ export class OpenAiProviderBridge {
         json(response, requestError ? 400 : 502, {
           error: {
             type: requestError ? 'invalid_request_error' : 'api_error',
-            message: error instanceof Error ? error.message : 'OpenAI provider request failed.'
+            message: error instanceof Error ? error.message : 'Messages provider request failed.'
           }
         })
       },
@@ -141,7 +158,7 @@ export class OpenAiProviderBridge {
 
   setTarget(targetId: string): boolean {
     const target = this.targets.get(targetId)
-    if (!target || target.wire !== this.wire) return false
+    if (!target) return false
     if (this.target.id !== target.id) this.deterministicErrors.clear()
     this.target = target
     return true
@@ -151,7 +168,7 @@ export class OpenAiProviderBridge {
     this.deterministicErrors.clear()
   }
 
-  async start(): Promise<OpenAiProviderBridgeConnection> {
+  async start(): Promise<MessagesBridgeConnection> {
     return this.host.start()
   }
 
@@ -172,23 +189,23 @@ export class OpenAiProviderBridge {
     }
 
     const requestUrl = request.url
-    if (requestUrl.pathname !== WIRE_PATH[this.wire]) {
+    if (!ALLOWED_PATHS.has(requestUrl.pathname)) {
       json(response, 404, { error: { type: 'not_found_error', message: 'Not found' } })
       return
     }
 
     const target = this.target
     const parsed = await request.readJsonObject()
-    const adapted = target.adaptRequest?.(parsed) ?? parsed
-    const endpoint = new URL(target.endpoint)
-    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
-      throw new Error('The OpenAI provider target has no valid endpoint URL.')
-    }
-    const body = JSON.stringify({ ...adapted, model: target.model })
-    const headersToForward = requestHeaders(request, target.key)
+    const requestedModel = typeof parsed.model === 'string' ? parsed.model : undefined
+    const model =
+      target.backgroundModel !== undefined && requestedModel === target.backgroundModel
+        ? requestedModel
+        : target.model
+    const body = JSON.stringify({ ...parsed, model })
+    const headersToForward = requestHeaders(request, target.key, target.useApiKeyHeader)
     const replayKey = providerRequestFingerprint(
       target.id,
-      requestUrl.pathname,
+      `${requestUrl.pathname}${requestUrl.search}`,
       providerRequestHeadersFingerprint(headersToForward),
       body
     )
@@ -198,14 +215,31 @@ export class OpenAiProviderBridge {
       response.end(replay.body)
       return
     }
-
+    const baseUrl = normalizeMessagesRootUrl(target.baseUrl)
+    if (!baseUrl) throw new Error('The Messages provider target has no valid base URL.')
     const startedAt = Date.now()
-    const upstream = await fetchProviderRequest(this.fetchImpl, endpoint, {
-      method: 'POST',
-      headers: headersToForward,
-      body,
-      signal: request.signal
-    })
+    let upstream: Response
+    try {
+      upstream = await fetchProviderRequest(
+        this.fetchImpl,
+        `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
+        {
+          method: 'POST',
+          headers: headersToForward,
+          body,
+          signal: request.signal
+        }
+      )
+    } catch (error) {
+      const origin = upstreamOrigin(baseUrl)
+      this.diagnostics.error('anthropic provider request failed', {
+        targetId: target.id,
+        path: requestUrl.pathname,
+        ...(origin ? { upstreamOrigin: origin } : {}),
+        ...errorLogFields(error)
+      })
+      throw error
+    }
     const headers = responseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
@@ -213,11 +247,7 @@ export class OpenAiProviderBridge {
       })
       await observeProviderFailure(
         target.onProviderFailure,
-        {
-          model: target.model,
-          endpoint: target.wire === 'responses' ? 'responses' : 'openai',
-          startedAt
-        },
+        { model, endpoint: 'messages', startedAt },
         upstream.status,
         upstreamBody.complete ? upstreamBody.body.toString('utf8') : undefined
       )

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { inputToMessages, responsesToChatRequest, toolsToChat } from './request'
+import { inputToMessages, responsesToChatCompletionsRequest, toolsToChat } from './request'
 
 describe('Responses conversion matrix', () => {
   it('maps instructions, messages, function calls, and tool results to Chat Completions', () => {
-    const request = responsesToChatRequest({
+    const request = responsesToChatCompletionsRequest({
       model: 'model-a',
       instructions: 'Be concise.',
       input: [
@@ -63,7 +63,7 @@ describe('Responses conversion matrix', () => {
   it('validates and preserves Responses image URLs when converting image content', () => {
     const dataUrl = 'data:image/png;base64,aGVsbG8='
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         model: 'vision-model',
         input: [
           {
@@ -99,7 +99,7 @@ describe('Responses conversion matrix', () => {
 
   it('rejects malformed or unsupported Responses image content before calling upstream', () => {
     const convertImage = (part: Record<string, unknown>): unknown =>
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: [{ type: 'message', role: 'user', content: [part] }]
       })
 
@@ -118,7 +118,7 @@ describe('Responses conversion matrix', () => {
     ).toThrow(/image detail/)
     expect(() => convertImage({ type: 'input_image', file_id: 'file-1' })).toThrow(/file_id/)
     expect(() =>
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: [{ type: 'message', role: 'user', content: ['not-an-object'] }]
       })
     ).toThrow(/content parts must be objects/)
@@ -231,7 +231,7 @@ describe('Responses conversion matrix', () => {
 
   it('rejects stateful features and filters non-translatable Codex tools', () => {
     expect(() =>
-      responsesToChatRequest({ input: 'hello', previous_response_id: 'resp-1' })
+      responsesToChatCompletionsRequest({ input: 'hello', previous_response_id: 'resp-1' })
     ).toThrow(/previous_response_id/)
     // Known built-in types (namespace, web_search, custom, tool_search) are dropped; only function
     // tools cross the bridge.
@@ -267,13 +267,13 @@ describe('Responses conversion matrix', () => {
       })
     ).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: 'hello',
         reasoning: { effort: 'low', summary: 'auto' }
       })
     ).not.toHaveProperty('reasoning')
 
-    const noConvertibleTools = responsesToChatRequest({
+    const noConvertibleTools = responsesToChatCompletionsRequest({
       input: 'hello',
       tools: [{ type: 'namespace', name: 'mcp' }, { type: 'web_search' }],
       tool_choice: 'auto',
@@ -295,40 +295,43 @@ describe('Responses conversion matrix', () => {
 
   it('allows only the known Codex include and reasoning preferences', () => {
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: 'hello',
         include: ['reasoning.encrypted_content']
       })
     ).not.toHaveProperty('include')
-    expect(() => responsesToChatRequest({ input: 'hello', include: 'invalid' })).toThrow(
+    expect(() => responsesToChatCompletionsRequest({ input: 'hello', include: 'invalid' })).toThrow(
       /include must be an array/
     )
     expect(() =>
-      responsesToChatRequest({ input: 'hello', include: ['message.output_text.logprobs'] })
+      responsesToChatCompletionsRequest({
+        input: 'hello',
+        include: ['message.output_text.logprobs']
+      })
     ).toThrow(/include value is not supported/)
-    expect(() => responsesToChatRequest({ input: 'hello', reasoning: 'low' })).toThrow(
+    expect(() => responsesToChatCompletionsRequest({ input: 'hello', reasoning: 'low' })).toThrow(
       /reasoning must be an object/
     )
     expect(() =>
-      responsesToChatRequest({ input: 'hello', reasoning: { effort: 'turbo' } })
+      responsesToChatCompletionsRequest({ input: 'hello', reasoning: { effort: 'turbo' } })
     ).toThrow(/reasoning effort/)
     expect(() =>
-      responsesToChatRequest({ input: 'hello', reasoning: { effort: 'max' } })
+      responsesToChatCompletionsRequest({ input: 'hello', reasoning: { effort: 'max' } })
     ).not.toThrow()
     expect(() =>
-      responsesToChatRequest({ input: 'hello', reasoning: { effort: 'ultra' } })
+      responsesToChatCompletionsRequest({ input: 'hello', reasoning: { effort: 'ultra' } })
     ).not.toThrow()
     expect(() =>
-      responsesToChatRequest({ input: 'hello', reasoning: { summary: 'verbose' } })
+      responsesToChatCompletionsRequest({ input: 'hello', reasoning: { summary: 'verbose' } })
     ).toThrow(/reasoning summary/)
     expect(() =>
-      responsesToChatRequest({ input: 'hello', reasoning: { encrypted_content: true } })
+      responsesToChatCompletionsRequest({ input: 'hello', reasoning: { encrypted_content: true } })
     ).toThrow(/reasoning field is not supported/)
   })
 
   it('translates Responses tool choice and output limits', () => {
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: 'hello',
         tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }],
         tool_choice: { type: 'function', name: 'lookup' },
@@ -340,25 +343,28 @@ describe('Responses conversion matrix', () => {
       max_tokens: 128
     })
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: 'hello',
         prompt_cache_key: 'codex-cache-key'
       })
     ).not.toHaveProperty('prompt_cache_key')
     expect(() =>
-      responsesToChatRequest({ input: 'hello', tool_choice: { type: 'web_search' } })
+      responsesToChatCompletionsRequest({ input: 'hello', tool_choice: { type: 'web_search' } })
     ).toThrow(/tool_choice/)
   })
 
   it('keeps the Codex metadata model separate from the upstream model', () => {
     expect(
-      responsesToChatRequest({ model: 'gpt-5-codex', input: 'hello' }, 'deepseek-v4-flash')
+      responsesToChatCompletionsRequest(
+        { model: 'gpt-5-codex', input: 'hello' },
+        'deepseek-v4-flash'
+      )
     ).toMatchObject({ model: 'deepseek-v4-flash' })
   })
 
   it('uses the model-resolved effort override instead of Codex\u2019s request value', () => {
     expect(
-      responsesToChatRequest(
+      responsesToChatCompletionsRequest(
         { model: 'model-a', input: 'hi', reasoning: { effort: 'high' } },
         undefined,
         undefined,
@@ -372,7 +378,7 @@ describe('Responses conversion matrix', () => {
     'transports the model-resolved %s effort without protocol-level clamping',
     (effort) => {
       expect(
-        responsesToChatRequest(
+        responsesToChatCompletionsRequest(
           { model: 'model-a', input: 'hi', reasoning: { effort: 'high' } },
           undefined,
           undefined,
@@ -385,26 +391,44 @@ describe('Responses conversion matrix', () => {
 
   it('uses provider-native Chat controls when none is not a reasoning_effort literal', () => {
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'deepseek-v4-pro', undefined, [], {
-        reasoningEffortOverride: 'none',
-        vendorId: 'deepseek'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'deepseek-v4-pro',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'none',
+          vendorId: 'deepseek'
+        }
+      )
     ).toMatchObject({ thinking: { type: 'disabled' } })
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'deepseek-v4-pro', undefined, [], {
-        reasoningEffortOverride: 'none',
-        vendorId: 'deepseek'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'deepseek-v4-pro',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'none',
+          vendorId: 'deepseek'
+        }
+      )
     ).not.toHaveProperty('reasoning_effort')
 
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'mimo-v2.5-pro', undefined, [], {
-        reasoningEffortOverride: 'high',
-        vendorId: 'xiaomimimo'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'mimo-v2.5-pro',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'high',
+          vendorId: 'xiaomimimo'
+        }
+      )
     ).toMatchObject({ thinking: { type: 'enabled' } })
 
-    const apodexRequest = responsesToChatRequest(
+    const apodexRequest = responsesToChatCompletionsRequest(
       { model: 'catalog', input: 'hi' },
       'apodex-1.1',
       undefined,
@@ -418,15 +442,21 @@ describe('Responses conversion matrix', () => {
     expect(apodexRequest).not.toHaveProperty('reasoning_effort')
 
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
-        reasoningEffortOverride: 'none',
-        vendorId: 'openrouter'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'qwen/qwen3.7-max',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'none',
+          vendorId: 'openrouter'
+        }
+      )
     ).toMatchObject({ reasoning: { enabled: false } })
   })
 
   it('uses the selected native transport for a custom gateway', () => {
-    const request = responsesToChatRequest(
+    const request = responsesToChatCompletionsRequest(
       { model: 'catalog', input: 'hi' },
       'private-model',
       undefined,
@@ -444,7 +474,7 @@ describe('Responses conversion matrix', () => {
   it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
     'preserves MiniMax M3.1 %s effort through the Chat bridge',
     (effort) => {
-      const request = responsesToChatRequest(
+      const request = responsesToChatCompletionsRequest(
         { model: 'catalog', input: 'hi' },
         'MiniMax-M3.1-Flash-Preview',
         undefined,
@@ -460,7 +490,7 @@ describe('Responses conversion matrix', () => {
   )
 
   it('leaves MiniMax M3.1 default effort to the provider', () => {
-    const request = responsesToChatRequest(
+    const request = responsesToChatCompletionsRequest(
       { model: 'catalog', input: 'hi' },
       'MiniMax-M3.1-Flash-Preview',
       undefined,
@@ -472,7 +502,7 @@ describe('Responses conversion matrix', () => {
   })
 
   it('keeps the explicit custom MiniMax transport independent of model names', () => {
-    const request = responsesToChatRequest(
+    const request = responsesToChatCompletionsRequest(
       { model: 'catalog', input: 'hi' },
       'MiniMax-M3.1-Flash-Preview',
       undefined,
@@ -485,26 +515,44 @@ describe('Responses conversion matrix', () => {
 
   it('does not infer the built-in OpenRouter Qwen toggle for a custom gateway', () => {
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
-        reasoningEffortOverride: 'high',
-        reasoningEffortTransport: 'openrouter'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'qwen/qwen3.7-max',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'high',
+          reasoningEffortTransport: 'openrouter'
+        }
+      )
     ).toMatchObject({ reasoning: { effort: 'high' } })
   })
 
   it('uses OpenRouter reasoning objects and keeps GLM none as a literal effort', () => {
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'openai/gpt-5.5', undefined, [], {
-        reasoningEffortOverride: 'xhigh',
-        vendorId: 'openrouter'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'openai/gpt-5.5',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'xhigh',
+          vendorId: 'openrouter'
+        }
+      )
     ).toMatchObject({ reasoning: { effort: 'xhigh' } })
 
     expect(
-      responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'glm-5.2', undefined, [], {
-        reasoningEffortOverride: 'none',
-        vendorId: 'zhipu'
-      })
+      responsesToChatCompletionsRequest(
+        { model: 'catalog', input: 'hi' },
+        'glm-5.2',
+        undefined,
+        [],
+        {
+          reasoningEffortOverride: 'none',
+          vendorId: 'zhipu'
+        }
+      )
     ).toMatchObject({ reasoning_effort: 'none' })
   })
 
@@ -512,13 +560,17 @@ describe('Responses conversion matrix', () => {
     // Codex emits its own default effort even when the app never configured one; forwarding that
     // would change what existing bridged users send to gateways that may reject unknown params.
     expect(
-      responsesToChatRequest({ model: 'model-a', input: 'hi', reasoning: { effort: 'high' } })
+      responsesToChatCompletionsRequest({
+        model: 'model-a',
+        input: 'hi',
+        reasoning: { effort: 'high' }
+      })
     ).not.toHaveProperty('reasoning_effort')
   })
 
   it('requests streaming usage without forwarding Responses-only stream options', () => {
     expect(
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         model: 'model-a',
         input: 'hi',
         stream: true,
@@ -552,7 +604,7 @@ it('R01 keeps parallel Codex results together and associates images without muta
     ]
   }
   const original = structuredClone(body)
-  const result = responsesToChatRequest(body, 'test')
+  const result = responsesToChatCompletionsRequest(body, 'test')
   expect(result.messages.slice(0, 3)).toMatchObject([
     {
       role: 'assistant',
@@ -573,5 +625,5 @@ it('R01 keeps parallel Codex results together and associates images without muta
   expect(JSON.stringify(media)).toContain('call_parallel_alpha')
   expect(JSON.stringify(media)).toContain('call_parallel_beta')
   expect(body).toEqual(original)
-  expect(responsesToChatRequest(body, 'test')).toEqual(result)
+  expect(responsesToChatCompletionsRequest(body, 'test')).toEqual(result)
 })

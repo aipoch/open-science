@@ -111,7 +111,7 @@ const configuredSettings: SettingsSnapshot = {
       id: 'provider-1',
       type: 'custom',
       name: 'Test provider',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       model: 'model-1',
       models: ['model-1', 'model-2'],
       supportsImageInput: false,

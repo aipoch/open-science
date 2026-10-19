@@ -61,7 +61,8 @@ vi.mock('electron', () => ({
 
 const { initDataRoot } = await import('../storage-root')
 const { SettingsService } = await import('./service')
-const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
+const { ResponsesToChatCompletionsBridge: ResponsesToChatCompletionsBridgeClass } =
+  await import('./responses-to-chat-completions-bridge')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { getClaudeSkillRuntimeRoot } = await import('./claude-runtime-provisioner')
@@ -2144,7 +2145,7 @@ describe('SettingsService: validation', () => {
         baseUrl: 'https://g',
         model: 'm',
         key: 'k',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     ).providers[0]
 
@@ -2171,7 +2172,7 @@ describe('SettingsService: validation', () => {
         baseUrl: 'https://g',
         model: 'm',
         key: 'k',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       })
     ).providers[0]
 
@@ -2288,7 +2289,7 @@ describe('SettingsService: validation', () => {
         name: 'G',
         baseUrl: 'https://g/v1',
         model: 'm',
-        apiEndpoints: ['anthropic'],
+        apiEndpoints: ['messages'],
         key: 'k'
       })
     ).providers[0]
@@ -2413,7 +2414,7 @@ describe('SettingsService: validation', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Chat Gateway',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://g/v1',
         model: 'm',
         key: 'k'
@@ -3588,7 +3589,7 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Chat Gateway',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://api.deepseek.com/v1',
         model: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
@@ -3689,7 +3690,7 @@ describe('SettingsService: preflight & spawn config', () => {
     )
     expect(pubmedSkill).toContain('host.mcp')
 
-    await backend.responsesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
     await repository.setConversationSkillImportEnabled(false)
     upstreamRequest = undefined
     const disabledBackend = await resolveActiveBackend(service)
@@ -3712,7 +3713,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).map((tool) => tool.function?.name)
     expect(disabledToolNames).toContain('mcp__open_science_notebook__notebook_execute')
     expect(disabledToolNames).not.toContain('mcp__open_science_skills__request_skill_import')
-    await disabledBackend.responsesBridgeLease?.release()
+    await disabledBackend.responsesTransportLease?.release()
   })
 
   it('keeps bridged Codex backends pinned to the provider target they were created for', async () => {
@@ -3768,7 +3769,7 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Provider One',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://one.example/v1',
         model: 'model-one',
         key: 'key-one'
@@ -3778,7 +3779,7 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Provider Two',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://two.example/v1',
         model: 'model-two',
         key: 'key-two'
@@ -3798,8 +3799,8 @@ describe('SettingsService: preflight & spawn config', () => {
       secondBackend.providerConfiguration?.baseUrl
     )
 
-    firstBackend.responsesBridgeLease?.registerReviewerSession('reviewer-one')
-    secondBackend.responsesBridgeLease?.registerReviewerSession('reviewer-two')
+    firstBackend.responsesTransportLease?.registerReviewerSession('reviewer-one')
+    secondBackend.responsesTransportLease?.registerReviewerSession('reviewer-two')
 
     const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
       const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
@@ -3838,14 +3839,18 @@ describe('SettingsService: preflight & spawn config', () => {
       expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
     ])
 
-    await firstBackend.responsesBridgeLease?.release()
-    await secondBackend.responsesBridgeLease?.release()
+    await firstBackend.responsesTransportLease?.release()
+    await secondBackend.responsesTransportLease?.release()
   })
 
   it('closes and evicts a responses bridge whose start fails', async () => {
     const startError = new Error('bridge start failed')
-    const startSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'start').mockRejectedValue(startError)
-    const closeSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'close').mockResolvedValue(undefined)
+    const startSpy = vi
+      .spyOn(ResponsesToChatCompletionsBridgeClass.prototype, 'start')
+      .mockRejectedValue(startError)
+    const closeSpy = vi
+      .spyOn(ResponsesToChatCompletionsBridgeClass.prototype, 'close')
+      .mockResolvedValue(undefined)
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
@@ -3865,7 +3870,7 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Broken bridge provider',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://broken.example/v1',
         model: 'model-one',
         key: 'key-one'
@@ -3957,7 +3962,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.authentication).toBeUndefined()
     expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
 
-    await backend.responsesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {
@@ -6359,7 +6364,7 @@ describe('SettingsService: reasoning effort', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'DeepSeek',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://api.deepseek.com',
         model: 'deepseek-v4-flash',
         key: 'test-key'
@@ -6388,18 +6393,18 @@ describe('SettingsService: reasoning effort', () => {
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
 
     // The active runtime owns this lease, so it updates only the bridge for its own provider/model.
-    backend.responsesBridgeLease?.setReasoningEffort?.('high')
+    backend.responsesTransportLease?.setReasoningEffort?.('high')
     await post()
     expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
 
     // The bridge receives the concrete mapped value, not a forwarding boolean: it replaces Codex's
     // own request effort instead of letting an incompatible value leak to the selected model.
-    backend.responsesBridgeLease?.setReasoningEffort?.('max')
+    backend.responsesTransportLease?.setReasoningEffort?.('max')
     await post()
     expect(upstreamRequest).toMatchObject({ reasoning_effort: 'max' })
 
     // Back to 'default': stripping is restored so Codex's own effort can't leak upstream.
-    backend.responsesBridgeLease?.setReasoningEffort?.(undefined)
+    backend.responsesTransportLease?.setReasoningEffort?.(undefined)
     await post()
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
   })
@@ -6411,7 +6416,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Session provider',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://session.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6441,7 +6446,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Subagent gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6468,7 +6473,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Ephemeral admitted gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6509,7 +6514,7 @@ describe('SettingsService: Subagent model', () => {
     const draft = {
       type: 'custom' as const,
       name: 'Restorable Subagent gateway',
-      apiEndpoints: ['anthropic' as const],
+      apiEndpoints: ['messages' as const],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6557,7 +6562,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Failing Subagent gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6582,7 +6587,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'No-effort gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'no-effort-model',
       key: 'secret',
@@ -6608,7 +6613,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Routing gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://routing.example/v1',
       model: 'routing-model',
       key: 'secret'
@@ -6648,7 +6653,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6675,7 +6680,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Admitted Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6710,7 +6715,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Overridden Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6741,7 +6746,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Failing Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6768,7 +6773,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Restorable Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6798,7 +6803,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Active Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://active.example/v1',
       model: 'active-model',
       key: 'secret'
@@ -6840,7 +6845,7 @@ describe('SettingsService: Vision model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Vision gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://vision.example/v1',
       model: 'vision-model',
       key: 'secret',
@@ -6869,7 +6874,7 @@ describe('SettingsService: Vision model', () => {
     const visual = await service.upsertProvider({
       type: 'custom',
       name: 'Visual gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://vision.example/v1',
       model: 'vision-model',
       key: 'secret',
@@ -6884,7 +6889,7 @@ describe('SettingsService: Vision model', () => {
     const textOnly = await service.upsertProvider({
       type: 'custom',
       name: 'Text gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://text.example/v1',
       model: 'text-model',
       key: 'secret',

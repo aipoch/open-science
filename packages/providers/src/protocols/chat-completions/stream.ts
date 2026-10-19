@@ -2,7 +2,7 @@ type Json = Record<string, unknown>
 const object = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-export const encodeChatCompletionStream = (completion: Json): string => {
+export const encodeChatCompletionsStream = (completion: Json): string => {
   const frames: string[] = []
   const choice =
     Array.isArray(completion.choices) && object(completion.choices[0]) ? completion.choices[0] : {}

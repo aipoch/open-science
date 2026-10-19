@@ -10,7 +10,7 @@ const text = (content: unknown): string => {
     .join('')
 }
 
-const anthropicContent = (content: unknown): unknown => {
+const messagesContent = (content: unknown): unknown => {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return content
   const converted: unknown[] = []
@@ -33,7 +33,7 @@ const anthropicContent = (content: unknown): unknown => {
   return converted
 }
 
-export const chatToAnthropic = (body: Json, model: string): Json => {
+export const chatCompletionsToMessages = (body: Json, model: string): Json => {
   const system: string[] = []
   const messages: Json[] = []
   for (const value of Array.isArray(body.messages) ? body.messages : []) {
@@ -57,7 +57,7 @@ export const chatToAnthropic = (body: Json, model: string): Json => {
       continue
     }
     const content: unknown[] = []
-    const converted = anthropicContent(value.content)
+    const converted = messagesContent(value.content)
     if (typeof converted === 'string' && converted) content.push({ type: 'text', text: converted })
     else if (Array.isArray(converted)) content.push(...converted)
     if (Array.isArray(value.tool_calls)) {
@@ -93,7 +93,7 @@ export const chatToAnthropic = (body: Json, model: string): Json => {
         )
       : undefined
   const toolChoice = body.tool_choice
-  const anthropicToolChoice =
+  const messagesToolChoice =
     toolChoice === 'required'
       ? { type: 'any' }
       : toolChoice === 'auto'
@@ -115,13 +115,13 @@ export const chatToAnthropic = (body: Json, model: string): Json => {
     ...(system.length > 0 ? { system: system.join('\n\n') } : {}),
     messages,
     ...(tools && tools.length > 0 ? { tools } : {}),
-    ...(anthropicToolChoice ? { tool_choice: anthropicToolChoice } : {}),
+    ...(messagesToolChoice ? { tool_choice: messagesToolChoice } : {}),
     ...(typeof body.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(typeof body.top_p === 'number' ? { top_p: body.top_p } : {})
   }
 }
 
-export const anthropicToChat = (message: Json, model: string): Json => {
+export const messagesToChatCompletions = (message: Json, model: string): Json => {
   if (
     message.stop_reason != null &&
     !['end_turn', 'stop_sequence', 'tool_use', 'max_tokens', 'refusal'].includes(

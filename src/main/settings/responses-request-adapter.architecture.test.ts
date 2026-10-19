@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { readProductionSource } from '../../../test/architecture-source-index'
 
 const projectRoot = resolve(__dirname, '../../..')
-const bridgePath = resolve(__dirname, 'responses-bridge.ts')
+const bridgePath = resolve(__dirname, 'responses-to-chat-completions-bridge.ts')
 const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
 
 describe('Responses request host contract', () => {
@@ -12,7 +12,7 @@ describe('Responses request host contract', () => {
     const host = readProductionSource(hostPath, projectRoot)
     expect(bridge).toContain("from '@aipoch/providers/protocol'")
     expect(bridge).not.toMatch(
-      /export .*?(?:responsesToChatRequest|completionToResponse|upstreamErrorMessage|toolsToChat)/
+      /export .*?(?:responsesToChatCompletionsRequest|completionToResponse|upstreamErrorMessage|toolsToChat)/
     )
     expect(bridge).not.toContain('createServer(')
     expect(bridge).toContain('new ProviderLoopbackHttpHost')

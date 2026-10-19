@@ -1,18 +1,18 @@
 import type { ProviderTextGenerationTarget } from '../protocols/text-types'
 import {
-  anthropicMessagesUrl,
-  openAiChatCompletionsUrl,
-  openAiResponsesUrl
+  resolveMessagesUrl,
+  resolveChatCompletionsUrl,
+  resolveResponsesUrl
 } from '../protocols/endpoints'
 import { getProviderDefinition } from './definitions'
 import {
   resolveVendorBaseUrl,
-  resolveVendorOpenAiBaseUrl,
+  resolveVendorChatCompletionsBaseUrl,
   resolveVendorResponsesBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorModelsUrl
 } from './lookup'
-import type { ChatApiEndpoint } from '../protocols/types'
+import type { ModelProtocol } from '../protocols/types'
 
 export function resolveModelDiscoveryUrl(id: string, region?: string): string | undefined {
   // xAI's full inventory includes non-chat models. Host pickers decide whether to expose it.
@@ -23,12 +23,12 @@ export function resolveModelDiscoveryUrl(id: string, region?: string): string | 
 
 export type TextGenerationConfiguration = Readonly<{
   /** Explicit wire override for custom services. Otherwise the provider resolves its own protocol. */
-  protocol?: ChatApiEndpoint
+  protocol?: ModelProtocol
   url?: string
   baseUrl?: string
-  openaiBaseUrl?: string
+  chatCompletionsBaseUrl?: string
   responsesBaseUrl?: string
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  apiEndpoints?: readonly ModelProtocol[]
   reasoningEffort?: ProviderTextGenerationTarget['reasoningEffort']
   reasoningEffortTransport?: ProviderTextGenerationTarget['reasoningEffortTransport']
   maxOutputTokens?: number
@@ -42,13 +42,13 @@ export function resolveTextConnection(
 ): ProviderTextGenerationTarget {
   const vendor = getProviderDefinition(id)?.textGeneration
   const explicitBase =
-    configuration?.baseUrl !== undefined || configuration?.openaiBaseUrl !== undefined
+    configuration?.baseUrl !== undefined || configuration?.chatCompletionsBaseUrl !== undefined
   const baseUrl =
     configuration?.baseUrl ??
     (!explicitBase && vendor ? resolveVendorBaseUrl(vendor.id, region) : undefined)
-  const openaiBaseUrl =
-    configuration?.openaiBaseUrl ??
-    (!explicitBase && vendor ? resolveVendorOpenAiBaseUrl(vendor.id, region) : undefined)
+  const chatCompletionsBaseUrl =
+    configuration?.chatCompletionsBaseUrl ??
+    (!explicitBase && vendor ? resolveVendorChatCompletionsBaseUrl(vendor.id, region) : undefined)
   const responsesBaseUrl =
     configuration?.responsesBaseUrl ??
     (!explicitBase && vendor ? resolveVendorResponsesBaseUrl(vendor.id, region) : undefined)
@@ -56,21 +56,25 @@ export function resolveTextConnection(
     configuration?.apiEndpoints ?? (vendor ? resolveVendorModelApiEndpoints(vendor.id, model) : [])
   const protocol =
     configuration?.protocol ??
-    (endpoints.includes('openai') && openAiChatCompletionsUrl({ baseUrl, openaiBaseUrl })
-      ? 'openai'
-      : endpoints.includes('anthropic') && baseUrl
-        ? 'anthropic'
+    (endpoints.includes('chat-completions') &&
+    resolveChatCompletionsUrl({ baseUrl, chatCompletionsBaseUrl })
+      ? 'chat-completions'
+      : endpoints.includes('messages') && baseUrl
+        ? 'messages'
         : endpoints.includes('responses')
           ? 'responses'
           : undefined)
   const url =
     configuration?.url ??
-    (protocol === 'openai'
-      ? openAiChatCompletionsUrl({ baseUrl, openaiBaseUrl })
-      : protocol === 'anthropic' && baseUrl
-        ? anthropicMessagesUrl(baseUrl)
+    (protocol === 'chat-completions'
+      ? resolveChatCompletionsUrl({ baseUrl, chatCompletionsBaseUrl })
+      : protocol === 'messages' && baseUrl
+        ? resolveMessagesUrl(baseUrl)
         : protocol === 'responses'
-          ? openAiResponsesUrl({ baseUrl, openaiBaseUrl: responsesBaseUrl ?? openaiBaseUrl })
+          ? resolveResponsesUrl({
+              baseUrl,
+              chatCompletionsBaseUrl: responsesBaseUrl ?? chatCompletionsBaseUrl
+            })
           : undefined)
   if (!protocol || !url)
     throw new TypeError(`Provider ${id} requires an explicit remote text endpoint.`)
@@ -82,8 +86,8 @@ export function resolveTextConnection(
     reasoningEffort: configuration?.reasoningEffort,
     reasoningEffortTransport: configuration?.reasoningEffortTransport,
     maxOutputTokens: configuration?.maxOutputTokens,
-    anthropicApiKeyHeader: vendor
-      ? vendor.id === 'anthropic' || vendor.anthropicApiKeyHeader === true
+    messagesApiKeyHeader: vendor
+      ? vendor.id === 'anthropic' || vendor.messagesApiKeyHeader === true
       : true
   }
 }

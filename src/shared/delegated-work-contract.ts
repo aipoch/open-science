@@ -20,6 +20,7 @@ export type ResolvedSubagentModelSnapshot = Readonly<{
   frameworkId: AgentFrameworkId
   providerId: string
   backendId: string
+  // Stable persisted route identity used to resume accepted work; not a ModelProtocol value.
   modelRoute:
     | 'claude-anthropic'
     | 'opencode-anthropic'

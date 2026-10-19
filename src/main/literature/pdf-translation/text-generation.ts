@@ -1,7 +1,8 @@
+import { encodeStoredModelProtocol } from '../../../shared/model-protocol-storage'
 import { createHash } from 'node:crypto'
 import { createProvider, ProviderTextGenerationError } from '@aipoch/providers/client'
 import type {
-  ChatApiEndpoint,
+  ModelProtocol,
   OfficialVendorId,
   ResolvedReasoningEffort,
   CustomReasoningEffortTransport
@@ -13,8 +14,8 @@ export type ProviderTextGenerationConfiguration = Readonly<{
   type: 'custom' | 'official'
   key?: string
   baseUrl?: string
-  openaiBaseUrl?: string
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  chatCompletionsBaseUrl?: string
+  apiEndpoints?: readonly ModelProtocol[]
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
   maxOutputTokens?: number
@@ -44,9 +45,9 @@ export function providerTextGenerationTargetKey(target: ProviderTextGenerationTa
     'api',
     target.providerId,
     target.model,
-    target.provider.apiEndpoints,
+    target.provider.apiEndpoints?.map(encodeStoredModelProtocol),
     target.provider.baseUrl,
-    target.provider.openaiBaseUrl,
+    target.provider.chatCompletionsBaseUrl,
     ...(target.reasoningEffort && target.reasoningEffort !== 'default'
       ? [target.reasoningEffort, target.provider.vendorId, target.provider.reasoningEffortTransport]
       : [])

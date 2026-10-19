@@ -106,7 +106,7 @@ test('reuses a managed Workspace PDF translation in Literature without repeating
         type: 'custom',
         name: 'Shared PDF test provider',
         model: 'shared-pdf-test',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: `http://127.0.0.1:${port}`
       })
       return snapshot.providers.find((provider) => provider.name === 'Shared PDF test provider')!.id
@@ -361,7 +361,7 @@ for (const scenario of [
         type: 'custom',
         name: 'Recovery test provider',
         model: 'recovery-test',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: `http://127.0.0.1:${port}`
       })
       return snapshot.providers.find((provider) => provider.name === 'Recovery test provider')!.id

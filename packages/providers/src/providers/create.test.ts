@@ -116,7 +116,10 @@ it('binds both model capabilities to an immutable account connection without sha
     id: 'openrouter',
     key: 'first',
     fetch,
-    textGeneration: { protocol: 'openai' as const, url: 'https://first.test/completions' },
+    textGeneration: {
+      protocol: 'chat-completions' as const,
+      url: 'https://first.test/completions'
+    },
     classification: { url: 'https://first.test/decisions', maxResponseBytes: 2048 }
   }
   const provider = createProvider(configuration)
@@ -215,7 +218,7 @@ it.each([
         id,
         fetch,
         textGeneration: {
-          protocol: 'openai',
+          protocol: 'chat-completions',
           url: 'https://custom.test/completions',
           reasoningEffort: 'none',
           reasoningEffortTransport: transport
@@ -391,7 +394,7 @@ it('resolves model-specific protocols and preserves explicit endpoints without m
   const fetch = vi.fn<typeof globalThis.fetch>(async () =>
     Response.json({ choices: [{ finish_reason: 'stop', message: { content: 'answer' } }] })
   )
-  const endpoints = ['openai'] as const
+  const endpoints = ['chat-completions'] as const
   const provider = createProvider({
     id: 'openai',
     fetch,

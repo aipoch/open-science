@@ -22,7 +22,7 @@ const firstTokenCount = (...values: unknown[]): number | undefined => {
   return undefined
 }
 
-const normalizeOpenAiChatModelStepUsage = (value: unknown): ProviderTokenUsage | undefined => {
+const normalizeChatCompletionsUsage = (value: unknown): ProviderTokenUsage | undefined => {
   const usage = record(value)
   if (!usage) return undefined
 
@@ -63,4 +63,4 @@ const normalizeOpenAiChatModelStepUsage = (value: unknown): ProviderTokenUsage |
   return { inputTokens, cacheTokens, cachedReadTokens, cachedWriteTokens, outputTokens }
 }
 
-export { normalizeOpenAiChatModelStepUsage }
+export { normalizeChatCompletionsUsage }

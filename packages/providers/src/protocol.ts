@@ -1,11 +1,11 @@
 export {
-  anthropicMessagesBase,
-  normalizeAnthropicBaseUrl,
-  appendChatCompletions,
-  openAiCompletionsBase,
-  openAiChatCompletionsUrl
+  resolveMessagesBaseUrl,
+  normalizeMessagesRootUrl,
+  appendChatCompletionsPath,
+  resolveChatCompletionsBaseUrl,
+  resolveChatCompletionsUrl
 } from './protocols/endpoints'
-export { normalizeOpenAiChatModelStepUsage } from './protocols/usage'
+export { normalizeChatCompletionsUsage } from './protocols/usage'
 export type { ProviderTokenUsage } from './protocols/usage'
 export { resolveChatReasoningTransport } from './protocols/reasoning'
 export type { ChatReasoningTransport } from './protocols/reasoning'
@@ -17,19 +17,22 @@ export type {
   ResponsesAdapter
 } from './responses/adapter'
 export { ResponsesProtocolError, upstreamErrorMessage } from './responses/response'
-export type { ResponsesBridgeNamespacedTool } from './responses/types'
+export type { ResponsesNamespacedTool } from './responses/types'
 
 export {
-  anthropicToResponses,
-  chatToResponses,
-  responsesToAnthropic,
-  responsesToChat
-} from './protocols/openai/responses/conversion'
-export { countAnthropicInputTokens } from './protocols/anthropic/tokens'
+  messagesToResponses,
+  chatCompletionsToResponses,
+  responsesToMessages,
+  responsesToChatCompletions
+} from './protocols/responses/conversion'
+export { countMessagesInputTokens } from './protocols/messages/tokens'
 export { sanitizeXaiResponsesRequest } from './protocols/xai/responses'
 export { prepareNativeResponsesRequest, NativeResponsesRequestError } from './responses/native'
 export type { NativeResponsesProjection } from './responses/native'
 
-export { chatToAnthropic, anthropicToChat } from './protocols/anthropic/chat'
+export {
+  chatCompletionsToMessages,
+  messagesToChatCompletions
+} from './protocols/messages/conversion'
 
-export { encodeChatCompletionStream } from './protocols/openai/chat/stream'
+export { encodeChatCompletionsStream } from './protocols/chat-completions/stream'

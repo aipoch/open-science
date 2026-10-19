@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
-import { type ChatApiEndpoint, isOfficialVendorId } from '@aipoch/providers'
+import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
@@ -325,14 +325,14 @@ class ProviderAccountsModule {
         existing !== undefined &&
         (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
     } else if (request.type === 'xai-subscription') {
-      provider.apiEndpoints = ['anthropic', 'openai', 'responses']
+      provider.apiEndpoints = ['messages', 'chat-completions', 'responses']
       provider.model = request.model?.trim() || existing?.model || defaultVendorModel('xai')
       if (existing?.fetchedModels) provider.fetchedModels = existing.fetchedModels
       if (existing?.keyRef) provider.keyRef = existing.keyRef
       if (existing?.accountEmail) provider.accountEmail = existing.accountEmail
       credentialsChanged = provider.model !== existing?.model
     } else if (request.type === 'claude-isolated') {
-      provider.apiEndpoints = ['anthropic']
+      provider.apiEndpoints = ['messages']
       if (existing?.keyRef) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
@@ -343,7 +343,7 @@ class ProviderAccountsModule {
       credentialsChanged = model !== existing?.model
       if (model) provider.model = model
     } else if (request.type === 'claude-shared') {
-      provider.apiEndpoints = ['anthropic']
+      provider.apiEndpoints = ['messages']
       const model =
         request.model === undefined ? existing?.model : request.model.trim() || undefined
       credentialsChanged = model !== existing?.model
@@ -384,7 +384,7 @@ class ProviderAccountsModule {
         request.reasoningEffortPreset ?? existing?.reasoningEffortPreset ?? 'standard-5'
       provider.reasoningEffortTransport =
         request.reasoningEffortTransport ?? existing?.reasoningEffortTransport ?? 'reasoning-effort'
-      provider.apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['anthropic']
+      provider.apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['messages']
       credentialsChanged =
         Boolean(request.key) ||
         provider.baseUrl !== existing?.baseUrl ||
@@ -638,10 +638,10 @@ class ProviderAccountsModule {
       testedTarget: {
         model: provider.model,
         endpoint: preferredEndpoint(
-          provider.apiEndpoints ?? ['anthropic'],
+          provider.apiEndpoints ?? ['messages'],
           this.validationFrameworkEndpoints(provider, settings) ?? [
-            'anthropic',
-            'openai',
+            'messages',
+            'chat-completions',
             'responses'
           ]
         )
@@ -652,7 +652,7 @@ class ProviderAccountsModule {
   private validationFrameworkEndpoints(
     provider: ResolvedProvider,
     settings: StoredSettings
-  ): readonly ChatApiEndpoint[] | undefined {
+  ): readonly ModelProtocol[] | undefined {
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const incompatibility = this.frameworkIncompatibilityMessage(provider, framework)
     return isXaiSubscriptionProvider(provider.type)
@@ -777,8 +777,8 @@ class ProviderAccountsModule {
         : targetForValidationResult(result, {
             model: resolved.provider.model,
             endpoint: preferredEndpoint(
-              resolved.provider.apiEndpoints ?? ['anthropic'],
-              validationFrameworkEndpoints ?? ['anthropic', 'openai', 'responses']
+              resolved.provider.apiEndpoints ?? ['messages'],
+              validationFrameworkEndpoints ?? ['messages', 'chat-completions', 'responses']
             )
           })
     const validationPatch = buildProviderValidationPatch(stored, result, validationTarget)
@@ -841,7 +841,7 @@ class ProviderAccountsModule {
     return this.modelCatalog.refresh(request)
   }
 
-  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
+  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ModelProtocol[] {
     return this.runtimeProjection.resolveProviderApiEndpoints(provider, activeModel)
   }
 
@@ -863,14 +863,14 @@ class ProviderAccountsModule {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
     return this.runtimeProjection.resolveRuntimeTarget(storedProvider, selection, framework)
   }
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget[] {
     return this.runtimeProjection.resolveRuntimeModelCatalog(storedProvider, framework)
   }
@@ -942,7 +942,7 @@ class ProviderAccountsModule {
       left.codexAuthMode === right.codexAuthMode &&
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
-      left.openaiBaseUrl === right.openaiBaseUrl &&
+      left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')

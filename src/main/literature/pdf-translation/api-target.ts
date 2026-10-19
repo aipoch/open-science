@@ -49,7 +49,7 @@ export async function capturePdfTranslationApiTarget(
       type: direct.type,
       key: direct.key,
       baseUrl: direct.baseUrl,
-      openaiBaseUrl: direct.openaiBaseUrl,
+      chatCompletionsBaseUrl: direct.chatCompletionsBaseUrl,
       apiEndpoints: direct.apiEndpoints,
       vendorId: direct.vendorId,
       reasoningEffortTransport: direct.reasoningEffortTransport,

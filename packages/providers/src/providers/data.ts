@@ -96,9 +96,9 @@ const definitions: readonly OfficialVendor[] = [
     // xAI serves OpenAI-compatible Chat Completions and native Responses from the same versioned
     // `/v1` base. Keep the bare API root in baseUrl for the official-vendor invariant and publish the
     // exact versioned base separately so OpenCode, validation, and Codex do not append another `/v1`.
-    apiEndpoints: ['openai', 'responses'],
+    apiEndpoints: ['chat-completions', 'responses'],
     baseUrl: 'https://api.x.ai',
-    openaiBaseUrl: 'https://api.x.ai/v1',
+    chatCompletionsBaseUrl: 'https://api.x.ai/v1',
     apiKeyUrl: 'https://console.x.ai/team/default/api-keys',
     // Curated from xAI's language-model catalog. The live /v1/models response also includes image,
     // audio, and video generation models, so exposing refresh would pollute the chat-model picker.
@@ -123,10 +123,10 @@ const definitions: readonly OfficialVendor[] = [
     label: 'Apodex',
     // Apodex exposes only a thinking on/off switch, not the product's effort ladder.
     reasoningEffort: { supported: false },
-    apiEndpoints: ['anthropic', 'openai'],
-    anthropicApiKeyHeader: true,
+    apiEndpoints: ['messages', 'chat-completions'],
+    messagesApiKeyHeader: true,
     baseUrl: 'https://api.apodex.ai',
-    openaiBaseUrl: 'https://api.apodex.ai/v1',
+    chatCompletionsBaseUrl: 'https://api.apodex.ai/v1',
     apiKeyUrl: 'https://platform.apodex.ai/console',
     // Keep this curated: the account catalog can also contain Deep Research SKUs with different
     // request semantics, while this provider entry is for the two core text models.
@@ -142,11 +142,11 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: true, values: ['none', 'high', 'max'] },
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
     // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
-    // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
+    // framework supports it (e.g. OpenCode). chatCompletionsBaseUrl is the exact version-carrying base clients
     // append `/chat/completions` to. Native Responses uses the documented origin base instead.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://api.deepseek.com/anthropic',
-    openaiBaseUrl: 'https://api.deepseek.com/v1',
+    chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
     responsesBaseUrl: 'https://api.deepseek.com',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
@@ -181,20 +181,20 @@ const definitions: readonly OfficialVendor[] = [
     // available only for the Qwen models listed below.
     // The Anthropic URL is kept in its documented full-endpoint form; the shared URL normalizer strips
     // `/v1/messages` before Claude Code/OpenCode append their own protocol suffix.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     regions: [
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages',
-        openaiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        chatCompletionsBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key'
       },
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages',
-        openaiBaseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+        chatCompletionsBaseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
         apiKeyUrl: 'https://modelstudio.console.alibabacloud.com/us-east-1?tab=model#/api-key'
       }
     ],
@@ -250,9 +250,9 @@ const definitions: readonly OfficialVendor[] = [
     label: 'Bailian for Plan',
     // The qwen3.8, GLM, and DeepSeek entries below override this conservative default.
     reasoningEffort: { supported: false },
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
-    openaiBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    chatCompletionsBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
     apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview',
     models: [
       {
@@ -295,20 +295,20 @@ const definitions: readonly OfficialVendor[] = [
     // GLM serves overseas from Z.AI and mainland China from BigModel (智谱) — different hosts and
     // separate consoles, so they are distinct endpoints rather than one base URL. Each region also
     // publishes an OpenAI-compatible route under `/api/paas/v4` (not `/v1`), so Codex can bridge it.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     regions: [
       {
         id: 'global',
         label: 'Global (Z.AI)',
         baseUrl: 'https://api.z.ai/api/anthropic',
-        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
+        chatCompletionsBaseUrl: 'https://api.z.ai/api/paas/v4',
         apiKeyUrl: 'https://z.ai'
       },
       {
         id: 'china',
         label: 'China (BigModel)',
         baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-        openaiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        chatCompletionsBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         apiKeyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
       }
     ],
@@ -349,20 +349,20 @@ const definitions: readonly OfficialVendor[] = [
     // plan that reuses GLM's regions but routes the OpenAI path through `/api/coding/paas/v4` instead
     // of `/api/paas/v4`. The Anthropic route (`/api/anthropic`) is unchanged from the pay-as-you-go
     // GLM endpoint. Quota-based catalogs ship a fixed model list and expose no live model list.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     regions: [
       {
         id: 'global',
         label: 'Global (Z.AI)',
         baseUrl: 'https://api.z.ai/api/anthropic',
-        openaiBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        chatCompletionsBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
         apiKeyUrl: 'https://z.ai/subscribe'
       },
       {
         id: 'china',
         label: 'China (BigModel)',
         baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-        openaiBaseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        chatCompletionsBaseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
         apiKeyUrl: 'https://bigmodel.cn/glm-coding'
       }
     ],
@@ -396,9 +396,9 @@ const definitions: readonly OfficialVendor[] = [
     // Moonshot serves both routes on one host: Anthropic /v1/messages under `/anthropic` and the
     // OpenAI-compatible /v1/chat/completions under `/v1` (see the live model list below). `both` lets
     // Codex drive it through the Responses->Chat bridge.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://api.moonshot.cn/anthropic',
-    openaiBaseUrl: 'https://api.moonshot.cn/v1',
+    chatCompletionsBaseUrl: 'https://api.moonshot.cn/v1',
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
@@ -418,9 +418,9 @@ const definitions: readonly OfficialVendor[] = [
     // quota rather than per token), so it ships a fixed catalog and exposes no live model list. It
     // serves both the Anthropic route and the OpenAI-compatible /v1/chat/completions under `/coding/v1`
     // (Kimi documents this plan for Codex and OpenCode), so `both` lets Codex bridge it.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://api.kimi.com/coding',
-    openaiBaseUrl: 'https://api.kimi.com/coding/v1',
+    chatCompletionsBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
       {
@@ -440,22 +440,22 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: false },
     // MiniMax serves the Anthropic /v1/messages route under `/anthropic`, plus the OpenAI-compatible
     // /v1/chat/completions and OpenAI Responses /v1/responses under `/v1`, from a Global host (.io) and
-    // a mainland-China one (.com). `baseUrl` is the Anthropic route; `openaiBaseUrl` is the `/v1` base
+    // a mainland-China one (.com). `baseUrl` is the Anthropic route; `chatCompletionsBaseUrl` is the `/v1` base
     // clients append `/chat/completions` to, and the Responses probe derives `/v1/responses` from it.
-    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
     regions: [
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://api.minimax.io/anthropic',
-        openaiBaseUrl: 'https://api.minimax.io/v1',
+        chatCompletionsBaseUrl: 'https://api.minimax.io/v1',
         apiKeyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key'
       },
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://api.minimaxi.com/anthropic',
-        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        chatCompletionsBaseUrl: 'https://api.minimaxi.com/v1',
         apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
       }
     ],
@@ -490,15 +490,15 @@ const definitions: readonly OfficialVendor[] = [
     // StepFun serves all three routes on one host per region — Anthropic /v1/messages, the
     // OpenAI-compatible /v1/chat/completions, and OpenAI Responses /v1/responses — from an overseas
     // console (.ai) and a mainland-China one (.com). `baseUrl` is the bare root (the Anthropic client
-    // appends /v1/messages); `openaiBaseUrl` is the /v1 base clients append /chat/completions to, and
+    // appends /v1/messages); `chatCompletionsBaseUrl` is the /v1 base clients append /chat/completions to, and
     // the Responses probe derives /v1/responses from it.
-    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
     regions: [
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://api.stepfun.ai',
-        openaiBaseUrl: 'https://api.stepfun.ai/v1',
+        chatCompletionsBaseUrl: 'https://api.stepfun.ai/v1',
         apiKeyUrl: 'https://platform.stepfun.ai/interface-key',
         modelsListUrl: 'https://api.stepfun.ai/v1/models'
       },
@@ -506,7 +506,7 @@ const definitions: readonly OfficialVendor[] = [
         id: 'china',
         label: 'China',
         baseUrl: 'https://api.stepfun.com',
-        openaiBaseUrl: 'https://api.stepfun.com/v1',
+        chatCompletionsBaseUrl: 'https://api.stepfun.com/v1',
         apiKeyUrl: 'https://platform.stepfun.com/interface-key',
         modelsListUrl: 'https://api.stepfun.com/v1/models'
       }
@@ -528,20 +528,20 @@ const definitions: readonly OfficialVendor[] = [
     // /v1/chat/completions. Keep China first so historical providers without a region continue to
     // resolve to the former `.com` endpoint. Quota plans ship a fixed catalog and expose no live model
     // list.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     regions: [
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://api.stepfun.com/step_plan',
-        openaiBaseUrl: 'https://api.stepfun.com/step_plan/v1',
+        chatCompletionsBaseUrl: 'https://api.stepfun.com/step_plan/v1',
         apiKeyUrl: 'https://platform.stepfun.com/plan-subscribe'
       },
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://api.stepfun.ai/step_plan',
-        openaiBaseUrl: 'https://api.stepfun.ai/step_plan/v1',
+        chatCompletionsBaseUrl: 'https://api.stepfun.ai/step_plan/v1',
         apiKeyUrl: 'https://platform.stepfun.ai/plan-subscribe'
       }
     ],
@@ -567,9 +567,9 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: true, values: ['none', 'high'] },
     // Xiaomi MiMo exposes both routes: Anthropic /v1/messages under `/anthropic` and the OpenAI-compatible
     // /v1/chat/completions under `/v1`. The same model ids work on both.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
-    openaiBaseUrl: 'https://api.xiaomimimo.com/v1',
+    chatCompletionsBaseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: [
@@ -595,21 +595,21 @@ const definitions: readonly OfficialVendor[] = [
     // do not infer Messages support (including Kimi vision) from their original vendors.
     // Keep the catalog curated: /v1/models also includes image-only U1 models and refresh does
     // not filter output modalities.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     regions: [
       // Keep China first: pre-region provider records must retain their original endpoint.
       {
         id: 'china',
         label: 'China',
         baseUrl: 'https://token.sensenova.cn',
-        openaiBaseUrl: 'https://token.sensenova.cn/v1',
+        chatCompletionsBaseUrl: 'https://token.sensenova.cn/v1',
         apiKeyUrl: 'https://platform.sensenova.cn/console/keys'
       },
       {
         id: 'global',
         label: 'Global',
         baseUrl: 'https://token.sensenova.ai',
-        openaiBaseUrl: 'https://token.sensenova.ai/v1',
+        chatCompletionsBaseUrl: 'https://token.sensenova.ai/v1',
         apiKeyUrl: 'https://platform.sensenova.ai/console/keys',
         // https://platform.sensenova.ai/docs lists only Flash Lite as a chat model.
         modelIds: ['sensenova-6.8-flash-lite']
@@ -617,10 +617,10 @@ const definitions: readonly OfficialVendor[] = [
     ],
     models: [
       { id: 'sensenova-6.8-flash-lite', contextWindow: 262_144 },
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
-      { id: 'glm-5.2', contextWindow: 1_000_000, apiEndpoint: 'openai' },
-      { id: 'kimi-k3', contextWindow: 1_000_000, apiEndpoint: 'openai' },
+      { id: 'glm-5.2', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
+      { id: 'kimi-k3', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
       // Preserve pinned selections without silently migrating them to a different model.
       { id: 'sensenova-6.7-flash-lite', contextWindow: 256_000 }
     ],
@@ -634,13 +634,13 @@ const definitions: readonly OfficialVendor[] = [
     reasoningEffort: { supported: true, values: ['minimal', 'low', 'medium', 'high'] },
     // ByteDance's Volcengine Ark serves all three routes on one host: the Anthropic-compatible
     // /v1/messages under /api/compatible, the OpenAI-compatible /v1/chat/completions under /api/v3,
-    // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
+    // and OpenAI Responses at /api/v3/responses (the probe derives it from `chatCompletionsBaseUrl`). The same
     // model ids work on all three. No modelsListUrl: Ark's catalog also serves embedding, image
     // (Seedream), and video (Seedance) models alongside the chat ids, and the refresh has no
     // modality filter — so the chat catalog stays curated.
-    apiEndpoints: ['anthropic', 'openai', 'responses'],
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
     baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
-    openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    chatCompletionsBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
     // Official model cards and effort mappings (verified 2026-09-16):
     // https://console.volcengine.com/ark/region:cn-beijing/model
@@ -687,21 +687,21 @@ const definitions: readonly OfficialVendor[] = [
     // hosts. China and International are separate account sites with distinct consoles, API keys,
     // and domains, so keep the site explicit rather than retrying credentials across editions. The
     // broader TokenHub catalog also contains non-language models, so this provider stays curated.
-    apiEndpoints: ['anthropic', 'openai', 'responses'],
-    anthropicApiKeyHeader: true,
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
+    messagesApiKeyHeader: true,
     regions: [
       {
         id: 'international',
         label: 'International (Singapore)',
         baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
-        openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+        chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
         apiKeyUrl: 'https://console.tencentcloud.com/tokenhub/apikey'
       },
       {
         id: 'china',
         label: 'China (Guangzhou)',
         baseUrl: 'https://tokenhub.tencentmaas.com',
-        openaiBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
+        chatCompletionsBaseUrl: 'https://tokenhub.tencentmaas.com/v1',
         apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/apikey'
       }
     ],
@@ -725,9 +725,9 @@ const definitions: readonly OfficialVendor[] = [
     // Completions routes. Tencent documents ANTHROPIC_AUTH_TOKEN for the former, so it keeps the
     // default Authorization: Bearer transport. Accepted aliases are intentionally omitted so the
     // picker shows each model once; the first documented id is the canonical selection.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://api.lkeap.cloud.tencent.com/coding/anthropic',
-    openaiBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
+    chatCompletionsBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
     apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/codingplan',
     models: [
       { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
@@ -746,9 +746,9 @@ const definitions: readonly OfficialVendor[] = [
     // The international subscription is a distinct product with its own key, endpoints, and model
     // catalog. Its Claude Code guide also uses ANTHROPIC_AUTH_TOKEN (Authorization: Bearer). Keep it
     // separate from both mainland Coding Plan and pay-as-you-go Tencent TokenHub.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic',
-    openaiBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',
+    chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',
     apiKeyUrl: 'https://console.intl.cloud.tencent.com/tokenhub/tokenplan',
     models: [
       { id: 'glm-5.2', contextWindow: 1_000_000 },
@@ -763,7 +763,7 @@ const definitions: readonly OfficialVendor[] = [
     id: 'nvidia',
     label: 'NVIDIA',
     reasoningEffort: { supported: false },
-    apiEndpoints: ['openai'],
+    apiEndpoints: ['chat-completions'],
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     apiKeyUrl: 'https://build.nvidia.com/settings/api-keys',
     // The live catalog mixes chat, embedding, image, OCR, safety, and other model types, so keep the
@@ -784,7 +784,7 @@ const definitions: readonly OfficialVendor[] = [
     id: 'opencode-go',
     label: 'OpenCode Go',
     reasoningEffort: { supported: false },
-    apiEndpoints: ['openai'],
+    apiEndpoints: ['chat-completions'],
     baseUrl: 'https://opencode.ai/zen/go/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
     // OpenCode documents one protocol per model. Keep the catalog bundled so deprecated and temporary
@@ -859,7 +859,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'minimax-m3',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
@@ -877,25 +877,25 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.8-max',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.8-flash',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
         id: 'qwen3.7-max',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.7-plus',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
@@ -936,7 +936,7 @@ const definitions: readonly OfficialVendor[] = [
     id: 'opencode',
     label: 'OpenCode Zen',
     reasoningEffort: { supported: false },
-    apiEndpoints: ['openai'],
+    apiEndpoints: ['chat-completions'],
     baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
     // Zen also mixes protocols. Exclude Google-native, deprecated, and explicitly
@@ -992,37 +992,37 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'claude-fable-5-1',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-fable-5',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-5-5',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-5',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-sonnet-5-5',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-sonnet-5',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
@@ -1112,35 +1112,35 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'claude-opus-4-8',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-4-7',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-4-6',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
       {
         id: 'claude-opus-4-5',
         contextWindow: 200_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] }
       },
       {
         id: 'claude-sonnet-4-6',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
-      { id: 'claude-sonnet-4-5', contextWindow: 1_000_000, apiEndpoint: 'anthropic' },
-      { id: 'claude-haiku-4-5', contextWindow: 200_000, apiEndpoint: 'anthropic' },
+      { id: 'claude-sonnet-4-5', contextWindow: 1_000_000, apiEndpoint: 'messages' },
+      { id: 'claude-haiku-4-5', contextWindow: 200_000, apiEndpoint: 'messages' },
       {
         id: 'grok-4.5',
         contextWindow: 500_000,
@@ -1163,31 +1163,31 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.8-max',
         contextWindow: 262_144,
-        apiEndpoint: 'openai',
+        apiEndpoint: 'chat-completions',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.8-flash',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
         id: 'qwen3.7-max',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.7-plus',
         contextWindow: 1_000_000,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.5-plus',
         contextWindow: 262_144,
-        apiEndpoint: 'anthropic',
+        apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       { id: 'kimi-k3', contextWindow: 1_048_576 },
@@ -1204,7 +1204,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'deepseek-v4-flash-vision-exp',
         contextWindow: 1_000_000,
-        apiEndpoint: 'openai',
+        apiEndpoint: 'chat-completions',
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
@@ -1232,8 +1232,8 @@ const definitions: readonly OfficialVendor[] = [
       },
       // Free Chat Completions models documented at https://opencode.ai/docs/zen/.
       // Context and vision metadata: https://models.dev/api.json (opencode), checked 2026-09-13.
-      { id: 'big-pickle', contextWindow: 200_000, apiEndpoint: 'openai' },
-      { id: 'mimo-v2.5-free', contextWindow: 200_000, apiEndpoint: 'openai' }
+      { id: 'big-pickle', contextWindow: 200_000, apiEndpoint: 'chat-completions' },
+      { id: 'mimo-v2.5-free', contextWindow: 200_000, apiEndpoint: 'chat-completions' }
     ],
     multimodal: {
       multimodalModels: [
@@ -1299,9 +1299,9 @@ const definitions: readonly OfficialVendor[] = [
     // /v1/chat/completions under `/api/v1`. Its live catalog is 300+ ids, so this ships a curated set of
     // the top models across vendors (no modelsListUrl) rather than a "refresh from vendor" that would
     // flood the model picker. Model slugs use OpenRouter's `vendor/model` form.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://openrouter.ai/api',
-    openaiBaseUrl: 'https://openrouter.ai/api/v1',
+    chatCompletionsBaseUrl: 'https://openrouter.ai/api/v1',
     apiKeyUrl: 'https://openrouter.ai/workspaces/default/keys',
     models: [
       // Anthropic
@@ -1570,9 +1570,9 @@ const definitions: readonly OfficialVendor[] = [
     // Anthropic /v1/messages at the router root and the OpenAI-compatible /v1/chat/completions under
     // `/v1`. The live catalog has hundreds of `vendor/model` ids, so ship a short curated set (no
     // modelsListUrl) instead of a refresh that would flood the picker.
-    apiEndpoints: ['anthropic', 'openai'],
+    apiEndpoints: ['messages', 'chat-completions'],
     baseUrl: 'https://router.requesty.ai',
-    openaiBaseUrl: 'https://router.requesty.ai/v1',
+    chatCompletionsBaseUrl: 'https://router.requesty.ai/v1',
     apiKeyUrl: 'https://app.requesty.ai/api-keys',
     // Ids, context windows, and vision from https://router.requesty.ai/v1/models (2026-10-04).
     models: [

@@ -90,7 +90,7 @@ for (const variant of [
           model: 'e2e-model',
           key: 'e2e-key',
           baseUrl: 'http://127.0.0.1:9/v1',
-          apiEndpoints: ['openai']
+          apiEndpoints: ['chat-completions']
         })
         return snapshot.providers.find((entry) => entry.name === 'Translation Agent test')!.id
       })
@@ -174,7 +174,7 @@ for (const variant of [
           type: 'custom',
           name: 'Local direct translation test',
           model: 'translation-test',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: `http://127.0.0.1:${port}`
         })
         const provider = snapshot.providers.find(
@@ -418,7 +418,7 @@ for (const variant of [
               ...provider,
               type: 'custom',
               name: 'Local direct translation test',
-              apiEndpoints: ['openai'],
+              apiEndpoints: ['chat-completions'],
               model
             }),
           { provider: directProvider!, model }

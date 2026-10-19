@@ -9,7 +9,7 @@ const api: ProviderView = {
   name: 'API',
   type: 'custom',
   baseUrl: 'https://example.test',
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   models: ['one', 'two'],
   hasKey: true,
   needsKey: false,
@@ -87,7 +87,7 @@ it('executes an official API model admitted by the translation picker', async ()
       vendorId: 'openai',
       model: 'two',
       baseUrl: 'https://example.invalid',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       key: 'test-key'
     },
     reasoningEffortProfile: { supported: false }
@@ -129,7 +129,7 @@ it('projects only direct API configuration and rejects a stale subscription reso
       model: 'two',
       key: 'secret',
       baseUrl: 'https://example.test',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       agentProviderId: 'runtime-only',
       contextWindow: 32000
     },
@@ -144,8 +144,8 @@ it('projects only direct API configuration and rejects a stale subscription reso
     type: 'custom',
     key: 'secret',
     baseUrl: 'https://example.test',
-    openaiBaseUrl: undefined,
-    apiEndpoints: ['openai'],
+    chatCompletionsBaseUrl: undefined,
+    apiEndpoints: ['chat-completions'],
     vendorId: undefined,
     reasoningEffortTransport: undefined,
     maxOutputTokens: undefined

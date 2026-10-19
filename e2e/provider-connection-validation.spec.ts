@@ -264,7 +264,7 @@ for (const upstreamStatus of [401, 403]) {
             baseUrl,
             key,
             model: 'runtime-health-model',
-            apiEndpoints: ['openai']
+            apiEndpoints: ['chat-completions']
           })
           if (!result.providerId)
             throw new Error('The synthetic runtime provider failed validation.')
@@ -397,7 +397,7 @@ for (const action of ['Test connection', 'Save']) {
             name: 'Saved connection 403 E2E',
             baseUrl,
             key,
-            apiEndpoints: ['anthropic'],
+            apiEndpoints: ['messages'],
             model: 'saved-model'
           })
           if (!result.providerId) throw new Error('Synthetic saved provider did not validate.')

@@ -493,7 +493,7 @@ export class AgentRuntimeManager {
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
                 : framework.id === 'codex'
-                  ? (['anthropic', 'openai', 'responses'] as const)
+                  ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
                     ? (activeEndpoints ?? [])
                     : framework.supportedApiTypes

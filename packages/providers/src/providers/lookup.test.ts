@@ -14,9 +14,9 @@ import {
   resolveVendorModelApiEndpoints,
   resolveVendorModelsUrl,
   getVendorModelReasoningCapability,
-  resolveVendorOpenAiBaseUrl,
+  resolveVendorChatCompletionsBaseUrl,
   resolveVendorResponsesBaseUrl,
-  usesVendorAnthropicApiKeyHeader,
+  usesVendorMessagesApiKeyHeader,
   vendorHasRegions
 } from './lookup'
 import { type OfficialVendorId } from './types'
@@ -58,7 +58,7 @@ describe('provider registry', () => {
 
       expect(getVendorModelContextWindow('anthropic', model)).toBe(1_000_000)
       expect(isVendorModelMultimodal('anthropic', model)).toBe(true)
-      expect(resolveVendorModelApiEndpoints('anthropic', model)).toEqual(['anthropic'])
+      expect(resolveVendorModelApiEndpoints('anthropic', model)).toEqual(['messages'])
       expect(getVendorModelReasoningCapability('anthropic', model)).toEqual({
         supported: true,
         values: ['low', 'medium', 'high', 'xhigh', 'max']
@@ -116,8 +116,8 @@ describe('provider registry', () => {
     ).toEqual(['opencode-go', 'opencode', 'openrouter'])
     expect(resolveVendorBaseUrl('opencode-go')).toBe('https://opencode.ai/zen/go/v1')
     expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
-    expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['openai'])
-    expect(resolveVendorApiEndpoints('opencode')).toEqual(['openai'])
+    expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['chat-completions'])
+    expect(resolveVendorApiEndpoints('opencode')).toEqual(['chat-completions'])
     expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
     expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
 
@@ -229,12 +229,14 @@ describe('provider registry', () => {
       expect(goModels).not.toContain(excluded)
       expect(zenModels).not.toContain(excluded)
     }
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'kimi-k2.7-code')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'kimi-k2.7-code')).toEqual([
+      'chat-completions'
+    ])
     expect(resolveVendorModelApiEndpoints('opencode-go', 'grok-4.6')).toEqual(['responses'])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'minimax-m3')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'minimax-m3')).toEqual(['messages'])
     expect(resolveVendorModelApiEndpoints('opencode', 'gpt-5.6-sol')).toEqual(['responses'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'claude-opus-5')).toEqual(['anthropic'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'claude-opus-5')).toEqual(['messages'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['chat-completions'])
     expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
   })
@@ -243,10 +245,15 @@ describe('provider registry', () => {
     ['gpt-6.1-sol', 'responses', 1_050_000, ['low', 'medium', 'high', 'xhigh', 'max']],
     ['gpt-6-sol', 'responses', 1_050_000, ['none', 'low', 'medium', 'high', 'max']],
     ['gpt-6-luna', 'responses', 1_050_000, ['none', 'low', 'medium', 'high', 'max']],
-    ['claude-opus-5-5', 'anthropic', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
-    ['claude-sonnet-5-5', 'anthropic', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
-    ['qwen3.8-max', 'openai', 262_144, ['none', 'high', 'high', 'high', 'high']],
-    ['deepseek-v4-flash-vision-exp', 'openai', 1_000_000, ['low', 'high', 'max', 'max', 'max']]
+    ['claude-opus-5-5', 'messages', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['claude-sonnet-5-5', 'messages', 1_000_000, ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['qwen3.8-max', 'chat-completions', 262_144, ['none', 'high', 'high', 'high', 'high']],
+    [
+      'deepseek-v4-flash-vision-exp',
+      'chat-completions',
+      1_000_000,
+      ['low', 'high', 'max', 'max', 'max']
+    ]
   ] as const)('exposes the verified Zen capabilities for %s', (model, endpoint, context, slots) => {
     // Protocol: opencode.ai/docs/zen; availability: opencode.ai/zen/v1/models;
     // context, vision, effort, and Sonnet 5.5 SDK: models.dev/api.json (opencode), 2026-10-03.
@@ -265,13 +272,17 @@ describe('provider registry', () => {
     // Protocol per https://opencode.ai/docs/zen; context/vision/effort per
     // https://models.dev/api.json (opencode), checked 2026-09-22.
     expect(resolveVendorModelApiEndpoints('opencode', 'gpt-6-astra')).toEqual(['responses'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'claude-fable-5-1')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'claude-fable-5-1')).toEqual(['messages'])
     expect(resolveVendorModelApiEndpoints('opencode', 'grok-4.7')).toEqual(['responses'])
     expect(resolveVendorModelApiEndpoints('opencode', 'muse-spark-1.3')).toEqual(['responses'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'qwen3.8-flash')).toEqual(['anthropic'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'deepseek-v4.1-flash')).toEqual(['openai'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3')).toEqual(['openai'])
-    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3-flash')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'qwen3.8-flash')).toEqual(['messages'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'deepseek-v4.1-flash')).toEqual([
+      'chat-completions'
+    ])
+    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3')).toEqual(['chat-completions'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3-flash')).toEqual([
+      'chat-completions'
+    ])
     expect(getVendorModelContextWindow('opencode', 'gpt-6-astra')).toBe(1_050_000)
     expect(getVendorModelContextWindow('opencode', 'claude-fable-5-1')).toBe(1_000_000)
     expect(getVendorModelContextWindow('opencode', 'grok-4.7')).toBe(500_000)
@@ -327,14 +338,22 @@ describe('provider registry', () => {
     // Protocol per https://opencode.ai/docs/go; context/vision/effort per
     // https://models.dev/api.json (opencode-go), checked 2026-09-22.
     expect(resolveVendorModelApiEndpoints('opencode-go', 'grok-4.7')).toEqual(['responses'])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'deepseek-v4.1-flash')).toEqual(['openai'])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-flash')).toEqual(['openai'])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-pro')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'deepseek-v4.1-flash')).toEqual([
+      'chat-completions'
+    ])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-flash')).toEqual([
+      'chat-completions'
+    ])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-pro')).toEqual([
+      'chat-completions'
+    ])
     expect(resolveVendorModelApiEndpoints('opencode-go', 'muse-spark-1.3-contributor')).toEqual([
       'responses'
     ])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'qwen3.8-flash')).toEqual(['anthropic'])
-    expect(resolveVendorModelApiEndpoints('opencode-go', 'hy4-preview')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'qwen3.8-flash')).toEqual(['messages'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'hy4-preview')).toEqual([
+      'chat-completions'
+    ])
     expect(getVendorModelContextWindow('opencode-go', 'grok-4.7')).toBe(500_000)
     expect(getVendorModelContextWindow('opencode-go', 'deepseek-v4.1-flash')).toBe(1_000_000)
     expect(getVendorModelContextWindow('opencode-go', 'mimo-v2.6-flash')).toBe(1_048_576)
@@ -390,7 +409,7 @@ describe('provider registry', () => {
   ] as const)('offers $vendorId/$model with its documented capabilities', (entry) => {
     expect(getVendorModelIds(entry.vendorId)).toContain(entry.model)
     expect(resolveVendorModelApiEndpoints(entry.vendorId, entry.model)).toEqual(
-      entry.vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai']
+      entry.vendorId === 'openrouter' ? ['messages', 'chat-completions'] : ['chat-completions']
     )
     expect(isVendorModelResponsesSupported(entry.vendorId, entry.model)).toBe(false)
     expect(getVendorModelContextWindow(entry.vendorId, entry.model)).toBe(entry.contextWindow)
@@ -401,7 +420,7 @@ describe('provider registry', () => {
   })
 
   it('routes NVIDIA through Chat Completions with a curated agent catalog', () => {
-    expect(resolveVendorApiEndpoints('nvidia')).toEqual(['openai'])
+    expect(resolveVendorApiEndpoints('nvidia')).toEqual(['chat-completions'])
     expect(resolveVendorBaseUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1')
     expect(resolveVendorApiKeyUrl('nvidia')).toBe('https://build.nvidia.com/settings/api-keys')
     expect(resolveVendorModelsUrl('nvidia')).toBeUndefined()
@@ -429,8 +448,8 @@ describe('provider registry', () => {
 
   it('resolves V4.1 Flash protocol, context and reasoning capabilities', () => {
     expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-flash')).toEqual([
-      'anthropic',
-      'openai',
+      'messages',
+      'chat-completions',
       'responses'
     ])
     expect(isVendorModelResponsesSupported('deepseek', 'deepseek-flash')).toBe(true)
@@ -451,9 +470,9 @@ describe('provider registry', () => {
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ])
 
-    expect(resolveVendorOpenAiBaseUrl('deepseek')).toBe('https://api.deepseek.com/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('deepseek')).toBe('https://api.deepseek.com/v1')
     expect(resolveVendorResponsesBaseUrl('deepseek')).toBe('https://api.deepseek.com')
-    expect(resolveVendorApiEndpoints('deepseek')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('deepseek')).toEqual(['messages', 'chat-completions'])
   })
 
   it('resolves a multi-region vendor by region, defaulting to the first', () => {
@@ -466,12 +485,20 @@ describe('provider registry', () => {
 
   it('serves MiniMax over Anthropic, OpenAI, and Responses per region', () => {
     // MiniMax exposes the Anthropic route plus the OpenAI /v1/chat/completions and /v1/responses.
-    expect(resolveVendorApiEndpoints('minimax')).toEqual(['anthropic', 'openai', 'responses'])
-    expect(resolveVendorOpenAiBaseUrl('minimax', 'global')).toBe('https://api.minimax.io/v1')
-    expect(resolveVendorOpenAiBaseUrl('minimax', 'china')).toBe('https://api.minimaxi.com/v1')
+    expect(resolveVendorApiEndpoints('minimax')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(resolveVendorChatCompletionsBaseUrl('minimax', 'global')).toBe(
+      'https://api.minimax.io/v1'
+    )
+    expect(resolveVendorChatCompletionsBaseUrl('minimax', 'china')).toBe(
+      'https://api.minimaxi.com/v1'
+    )
     // Unknown / missing region falls back to the first region's OpenAI base.
-    expect(resolveVendorOpenAiBaseUrl('minimax')).toBe('https://api.minimax.io/v1')
-    expect(resolveVendorOpenAiBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('minimax')).toBe('https://api.minimax.io/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('minimax', 'nope')).toBe('https://api.minimax.io/v1')
   })
 
   it('offers the MiniMax M3.1 Token Plan preview without replacing the pay-as-you-go default', () => {
@@ -482,8 +509,8 @@ describe('provider registry', () => {
     expect(getVendorModelContextWindow('minimax', model)).toBe(1_000_000)
     expect(isVendorModelMultimodal('minimax', model)).toBe(true)
     expect(resolveVendorModelApiEndpoints('minimax', model)).toEqual([
-      'anthropic',
-      'openai',
+      'messages',
+      'chat-completions',
       'responses'
     ])
     expect(getVendorModelReasoningCapability('minimax', model)).toEqual({
@@ -497,9 +524,11 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/anthropic')
     expect(resolveVendorBaseUrl('zhipu', 'china')).toBe('https://open.bigmodel.cn/api/anthropic')
     // GLM also serves an OpenAI route under /api/paas/v4 (not /v1), so Codex can bridge it.
-    expect(resolveVendorApiEndpoints('zhipu')).toEqual(['anthropic', 'openai'])
-    expect(resolveVendorOpenAiBaseUrl('zhipu', 'global')).toBe('https://api.z.ai/api/paas/v4')
-    expect(resolveVendorOpenAiBaseUrl('zhipu', 'china')).toBe(
+    expect(resolveVendorApiEndpoints('zhipu')).toEqual(['messages', 'chat-completions'])
+    expect(resolveVendorChatCompletionsBaseUrl('zhipu', 'global')).toBe(
+      'https://api.z.ai/api/paas/v4'
+    )
+    expect(resolveVendorChatCompletionsBaseUrl('zhipu', 'china')).toBe(
       'https://open.bigmodel.cn/api/paas/v4'
     )
   })
@@ -532,17 +561,17 @@ describe('provider registry', () => {
 
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
-    expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['messages', 'chat-completions'])
     // The Anthropic route is unchanged from pay-as-you-go GLM.
     expect(resolveVendorBaseUrl('glmcodingplan', 'global')).toBe('https://api.z.ai/api/anthropic')
     expect(resolveVendorBaseUrl('glmcodingplan', 'china')).toBe(
       'https://open.bigmodel.cn/api/anthropic'
     )
     // The OpenAI route swaps /api/paas/v4 for the coding-plan /api/coding/paas/v4.
-    expect(resolveVendorOpenAiBaseUrl('glmcodingplan', 'global')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('glmcodingplan', 'global')).toBe(
       'https://api.z.ai/api/coding/paas/v4'
     )
-    expect(resolveVendorOpenAiBaseUrl('glmcodingplan', 'china')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('glmcodingplan', 'china')).toBe(
       'https://open.bigmodel.cn/api/coding/paas/v4'
     )
     // Quota-based plan: fixed catalog, no live model-list refresh.
@@ -700,9 +729,9 @@ describe('provider registry', () => {
   })
 
   it('routes OpenRouter through both APIs with a curated catalog and no live refresh', () => {
-    expect(resolveVendorApiEndpoints('openrouter')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('openrouter')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('openrouter')).toBe('https://openrouter.ai/api')
-    expect(resolveVendorOpenAiBaseUrl('openrouter')).toBe('https://openrouter.ai/api/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('openrouter')).toBe('https://openrouter.ai/api/v1')
     expect(resolveVendorApiKeyUrl('openrouter')).toBe(
       'https://openrouter.ai/workspaces/default/keys'
     )
@@ -714,12 +743,12 @@ describe('provider registry', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
 
     expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
-    expect(resolveVendorApiEndpoints('requesty')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('requesty')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
-    expect(resolveVendorOpenAiBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
     expect(resolveVendorApiKeyUrl('requesty')).toBe('https://app.requesty.ai/api-keys')
     expect(resolveVendorModelsUrl('requesty')).toBeUndefined()
-    expect(usesVendorAnthropicApiKeyHeader('requesty')).toBe(false)
+    expect(usesVendorMessagesApiKeyHeader('requesty')).toBe(false)
 
     expect(getVendorModelContextWindow('requesty', 'openai/gpt-5.4-mini')).toBe(400_000)
     expect(isVendorModelMultimodal('requesty', 'google/gemini-3.5-flash')).toBe(true)
@@ -769,7 +798,10 @@ describe('provider registry', () => {
       expect(getVendorModelIds(vendor)).toContain(model)
       expect(getVendorModelContextWindow(vendor, model)).toBe(context)
       expect(isVendorModelMultimodal(vendor, model)).toBe(vision)
-      expect(resolveVendorModelApiEndpoints(vendor, model)).toEqual(['anthropic', 'openai'])
+      expect(resolveVendorModelApiEndpoints(vendor, model)).toEqual([
+        'messages',
+        'chat-completions'
+      ])
     }
   )
 
@@ -808,9 +840,9 @@ describe('provider registry', () => {
   })
 
   it('routes Xiaomi MIMO through both APIs with a live model list', () => {
-    expect(resolveVendorApiEndpoints('xiaomimimo')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('xiaomimimo')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/anthropic')
-    expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
 
     expect(getVendorModelIds('xiaomimimo')).toEqual([
@@ -826,7 +858,10 @@ describe('provider registry', () => {
     'resolves Xiaomi MIMO %s capabilities',
     (model) => {
       expect(getVendorModelContextWindow('xiaomimimo', model)).toBe(1_000_000)
-      expect(resolveVendorModelApiEndpoints('xiaomimimo', model)).toEqual(['anthropic', 'openai'])
+      expect(resolveVendorModelApiEndpoints('xiaomimimo', model)).toEqual([
+        'messages',
+        'chat-completions'
+      ])
       expect(isVendorModelMultimodal('xiaomimimo', model)).toBe(true)
       expect(getVendorModelReasoningCapability('xiaomimimo', model)).toEqual({
         supported: true,
@@ -839,14 +874,18 @@ describe('provider registry', () => {
     'preserves the China endpoint for SenseNova region %s',
     (region) => {
       expect(resolveVendorBaseUrl('sensenova', region)).toBe('https://token.sensenova.cn')
-      expect(resolveVendorOpenAiBaseUrl('sensenova', region)).toBe('https://token.sensenova.cn/v1')
+      expect(resolveVendorChatCompletionsBaseUrl('sensenova', region)).toBe(
+        'https://token.sensenova.cn/v1'
+      )
       expect(getVendorModelIds('sensenova', region)).toContain('sensenova-6.7-flash-lite')
     }
   )
 
   it('keeps the Global SenseNova catalog independent of China and stale discovery', () => {
     expect(resolveVendorBaseUrl('sensenova', 'global')).toBe('https://token.sensenova.ai')
-    expect(resolveVendorOpenAiBaseUrl('sensenova', 'global')).toBe('https://token.sensenova.ai/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('sensenova', 'global')).toBe(
+      'https://token.sensenova.ai/v1'
+    )
     expect(resolveVendorApiKeyUrl('sensenova', 'global')).toBe(
       'https://platform.sensenova.ai/console/keys'
     )
@@ -856,9 +895,9 @@ describe('provider registry', () => {
   })
 
   it('routes SenseNova through both APIs with a curated chat catalog', () => {
-    expect(resolveVendorApiEndpoints('sensenova')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('sensenova')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('sensenova')).toBe('https://token.sensenova.cn')
-    expect(resolveVendorOpenAiBaseUrl('sensenova')).toBe('https://token.sensenova.cn/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('sensenova')).toBe('https://token.sensenova.cn/v1')
     expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/console/keys')
     // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
     // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
@@ -874,7 +913,7 @@ describe('provider registry', () => {
     ])
     expect(getVendorModelContextWindow('sensenova', 'sensenova-6.8-flash-lite')).toBe(262_144)
     for (const model of ['deepseek-v4-pro', 'glm-5.2', 'kimi-k3']) {
-      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual(['openai'])
+      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual(['chat-completions'])
       expect(getVendorModelContextWindow('sensenova', model)).toBe(1_000_000)
     }
     for (const model of [
@@ -882,16 +921,23 @@ describe('provider registry', () => {
       'deepseek-v4-flash',
       'sensenova-6.7-flash-lite'
     ]) {
-      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual(['anthropic', 'openai'])
+      expect(resolveVendorModelApiEndpoints('sensenova', model)).toEqual([
+        'messages',
+        'chat-completions'
+      ])
     }
   })
 
   it('routes Volcengine Ark through all three APIs with a curated chat catalog', () => {
-    expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorApiEndpoints('volcengine')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
     expect(resolveVendorBaseUrl('volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/compatible'
     )
-    expect(resolveVendorOpenAiBaseUrl('volcengine')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/v3'
     )
     expect(resolveVendorApiKeyUrl('volcengine')).toBe(
@@ -911,8 +957,8 @@ describe('provider registry', () => {
     expect(getVendorModelContextWindow('volcengine', model)).toBe(1_024_000)
     expect(isVendorModelMultimodal('volcengine', model)).toBe(true)
     expect(resolveVendorModelApiEndpoints('volcengine', model)).toEqual([
-      'anthropic',
-      'openai',
+      'messages',
+      'chat-completions',
       'responses'
     ])
     expect(getVendorModelReasoningCapability('volcengine', model)).toEqual({
@@ -936,19 +982,23 @@ describe('provider registry', () => {
   })
 
   it('routes Tencent TokenHub through all three APIs with regional keys and curated models', () => {
-    expect(resolveVendorApiEndpoints('tencent')).toEqual(['anthropic', 'openai', 'responses'])
-    expect(usesVendorAnthropicApiKeyHeader('tencent')).toBe(true)
-    expect(usesVendorAnthropicApiKeyHeader('deepseek')).toBe(false)
+    expect(resolveVendorApiEndpoints('tencent')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(usesVendorMessagesApiKeyHeader('tencent')).toBe(true)
+    expect(usesVendorMessagesApiKeyHeader('deepseek')).toBe(false)
     expect(vendorHasRegions('tencent')).toBe(true)
     expect(resolveVendorBaseUrl('tencent')).toBe('https://tokenhub-intl.tencentcloudmaas.com')
-    expect(resolveVendorOpenAiBaseUrl('tencent')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('tencent')).toBe(
       'https://tokenhub-intl.tencentcloudmaas.com/v1'
     )
     expect(resolveVendorApiKeyUrl('tencent')).toBe(
       'https://console.tencentcloud.com/tokenhub/apikey'
     )
     expect(resolveVendorBaseUrl('tencent', 'china')).toBe('https://tokenhub.tencentmaas.com')
-    expect(resolveVendorOpenAiBaseUrl('tencent', 'china')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('tencent', 'china')).toBe(
       'https://tokenhub.tencentmaas.com/v1'
     )
     expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
@@ -979,12 +1029,12 @@ describe('provider registry', () => {
   })
 
   it('routes Tencent Coding Plan through its mainland subscription endpoints', () => {
-    expect(resolveVendorApiEndpoints('tencentcodingplan')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('tencentcodingplan')).toEqual(['messages', 'chat-completions'])
     expect(vendorHasRegions('tencentcodingplan')).toBe(false)
     expect(resolveVendorBaseUrl('tencentcodingplan')).toBe(
       'https://api.lkeap.cloud.tencent.com/coding/anthropic'
     )
-    expect(resolveVendorOpenAiBaseUrl('tencentcodingplan')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('tencentcodingplan')).toBe(
       'https://api.lkeap.cloud.tencent.com/coding/v3'
     )
     expect(resolveVendorApiKeyUrl('tencentcodingplan')).toBe(
@@ -1005,12 +1055,12 @@ describe('provider registry', () => {
   })
 
   it('routes Tencent Token Plan through its international subscription endpoints', () => {
-    expect(resolveVendorApiEndpoints('tencenttokenplan')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('tencenttokenplan')).toEqual(['messages', 'chat-completions'])
     expect(vendorHasRegions('tencenttokenplan')).toBe(false)
     expect(resolveVendorBaseUrl('tencenttokenplan')).toBe(
       'https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic'
     )
-    expect(resolveVendorOpenAiBaseUrl('tencenttokenplan')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('tencenttokenplan')).toBe(
       'https://tokenhub-intl.tencentcloudmaas.com/plan/v3'
     )
     expect(resolveVendorApiKeyUrl('tencenttokenplan')).toBe(
@@ -1030,9 +1080,9 @@ describe('provider registry', () => {
   })
 
   it('routes Grok through xAI Chat Completions and Responses with a curated model catalog', () => {
-    expect(resolveVendorApiEndpoints('xai')).toEqual(['openai', 'responses'])
+    expect(resolveVendorApiEndpoints('xai')).toEqual(['chat-completions', 'responses'])
     expect(resolveVendorBaseUrl('xai')).toBe('https://api.x.ai')
-    expect(resolveVendorOpenAiBaseUrl('xai')).toBe('https://api.x.ai/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('xai')).toBe('https://api.x.ai/v1')
     expect(resolveVendorApiKeyUrl('xai')).toBe('https://console.x.ai/team/default/api-keys')
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
@@ -1049,7 +1099,10 @@ describe('provider registry', () => {
     ])
     expect(getVendorModelContextWindow('xai', 'grok-4.7')).toBe(500_000)
     expect(isVendorModelMultimodal('xai', 'grok-4.7')).toBe(true)
-    expect(resolveVendorModelApiEndpoints('xai', 'grok-4.7')).toEqual(['openai', 'responses'])
+    expect(resolveVendorModelApiEndpoints('xai', 'grok-4.7')).toEqual([
+      'chat-completions',
+      'responses'
+    ])
     expect(getVendorModelReasoningCapability('xai', 'grok-4.7')).toEqual({
       supported: true,
       values: ['low', 'medium', 'high', 'xhigh']
@@ -1057,12 +1110,12 @@ describe('provider registry', () => {
   })
 
   it('routes Apodex core models through Messages and Chat Completions', () => {
-    expect(resolveVendorApiEndpoints('apodex')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('apodex')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('apodex')).toBe('https://api.apodex.ai')
-    expect(resolveVendorOpenAiBaseUrl('apodex')).toBe('https://api.apodex.ai/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('apodex')).toBe('https://api.apodex.ai/v1')
     expect(resolveVendorApiKeyUrl('apodex')).toBe('https://platform.apodex.ai/console')
     expect(resolveVendorModelsUrl('apodex')).toBeUndefined()
-    expect(usesVendorAnthropicApiKeyHeader('apodex')).toBe(true)
+    expect(usesVendorMessagesApiKeyHeader('apodex')).toBe(true)
     expect(getOfficialVendor('apodex')?.models).toEqual([
       { id: 'apodex-1.1', contextWindow: 262_144 },
       { id: 'apodex-1.1-mini', contextWindow: 262_144 }
@@ -1073,23 +1126,29 @@ describe('provider registry', () => {
   })
 
   it('routes Kimi through both APIs so Codex can bridge it', () => {
-    expect(resolveVendorApiEndpoints('kimi')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('kimi')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('kimi')).toBe('https://api.moonshot.cn/anthropic')
-    expect(resolveVendorOpenAiBaseUrl('kimi')).toBe('https://api.moonshot.cn/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('kimi')).toBe('https://api.moonshot.cn/v1')
     expect(resolveVendorModelsUrl('kimi')).toBe('https://api.moonshot.cn/v1/models')
   })
 
   it('routes StepFun through all three APIs, per region, with a live model list', () => {
-    expect(resolveVendorApiEndpoints('stepfun')).toEqual(['anthropic', 'openai', 'responses'])
+    expect(resolveVendorApiEndpoints('stepfun')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
     expect(vendorHasRegions('stepfun')).toBe(true)
     // Global (.ai) is the first region and the fallback for an unknown region.
     expect(resolveVendorBaseUrl('stepfun')).toBe('https://api.stepfun.ai')
-    expect(resolveVendorOpenAiBaseUrl('stepfun')).toBe('https://api.stepfun.ai/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('stepfun')).toBe('https://api.stepfun.ai/v1')
     expect(resolveVendorModelsUrl('stepfun')).toBe('https://api.stepfun.ai/v1/models')
     expect(resolveVendorApiKeyUrl('stepfun')).toBe('https://platform.stepfun.ai/interface-key')
     // China (.com) console.
     expect(resolveVendorBaseUrl('stepfun', 'china')).toBe('https://api.stepfun.com')
-    expect(resolveVendorOpenAiBaseUrl('stepfun', 'china')).toBe('https://api.stepfun.com/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('stepfun', 'china')).toBe(
+      'https://api.stepfun.com/v1'
+    )
     expect(resolveVendorModelsUrl('stepfun', 'china')).toBe('https://api.stepfun.com/v1/models')
     expect(resolveVendorApiKeyUrl('stepfun', 'china')).toBe(
       'https://platform.stepfun.com/interface-key'
@@ -1103,7 +1162,7 @@ describe('provider registry', () => {
     const bailianId = 'bailian' as OfficialVendorId
 
     expect(isOfficialVendorId('bailian')).toBe(true)
-    expect(resolveVendorApiEndpoints(bailianId)).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints(bailianId)).toEqual(['messages', 'chat-completions'])
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.8-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.7-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.6-flash')).toBe(true)
@@ -1115,13 +1174,13 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl(bailianId)).toBe(
       'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages'
     )
-    expect(resolveVendorOpenAiBaseUrl(bailianId)).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl(bailianId)).toBe(
       'https://dashscope.aliyuncs.com/compatible-mode/v1'
     )
     expect(resolveVendorBaseUrl(bailianId, 'global')).toBe(
       'https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages'
     )
-    expect(resolveVendorOpenAiBaseUrl(bailianId, 'global')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl(bailianId, 'global')).toBe(
       'https://dashscope-us.aliyuncs.com/compatible-mode/v1'
     )
     expect(resolveVendorApiKeyUrl(bailianId)).toBe(
@@ -1152,12 +1211,12 @@ describe('provider registry', () => {
     const planId = 'bailianplan' as OfficialVendorId
 
     expect(isOfficialVendorId('bailianplan')).toBe(true)
-    expect(resolveVendorApiEndpoints(planId)).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints(planId)).toEqual(['messages', 'chat-completions'])
     expect(vendorHasRegions(planId)).toBe(false)
     expect(resolveVendorBaseUrl(planId)).toBe(
       'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic'
     )
-    expect(resolveVendorOpenAiBaseUrl(planId)).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl(planId)).toBe(
       'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
     )
     expect(resolveVendorApiKeyUrl(planId)).toBe(
@@ -1234,12 +1293,14 @@ describe('provider registry', () => {
   })
 
   it('routes Step Plan over Anthropic and OpenAI in China and globally, no live model list', () => {
-    expect(resolveVendorApiEndpoints('stepplan')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorApiEndpoints('stepplan')).toEqual(['messages', 'chat-completions'])
     expect(vendorHasRegions('stepplan')).toBe(true)
     expect(resolveVendorBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan')
-    expect(resolveVendorOpenAiBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan/v1')
+    expect(resolveVendorChatCompletionsBaseUrl('stepplan')).toBe(
+      'https://api.stepfun.com/step_plan/v1'
+    )
     expect(resolveVendorBaseUrl('stepplan', 'global')).toBe('https://api.stepfun.ai/step_plan')
-    expect(resolveVendorOpenAiBaseUrl('stepplan', 'global')).toBe(
+    expect(resolveVendorChatCompletionsBaseUrl('stepplan', 'global')).toBe(
       'https://api.stepfun.ai/step_plan/v1'
     )
     // Quota-based plan: fixed catalog, no "refresh from vendor" endpoint.
@@ -1440,8 +1501,8 @@ describe('provider registry', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
       expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-pro')).toEqual([
-        'anthropic',
-        'openai',
+        'messages',
+        'chat-completions',
         'responses'
       ])
     })

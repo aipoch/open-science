@@ -199,7 +199,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ],
@@ -208,7 +208,7 @@ describe('ComposerModelPicker', () => {
           id: 'mixed',
           type: 'official',
           vendorId: 'opencode',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['kimi-k2.7-code', 'gpt-5.6-sol']
         })
       ],
@@ -236,7 +236,12 @@ describe('ComposerModelPicker', () => {
     useSettingsStore.setState({
       ...codexFramework,
       providers: [
-        provider({ id: 'gateway', name: 'Gateway', apiEndpoints: ['openai'], models: ['model-a'] })
+        provider({
+          id: 'gateway',
+          name: 'Gateway',
+          apiEndpoints: ['chat-completions'],
+          models: ['model-a']
+        })
       ]
     })
     render()
@@ -283,14 +288,14 @@ describe('ComposerModelPicker', () => {
           type: 'claude-shared',
           name: 'Claude subscription',
           models: ['shared-model'],
-          apiEndpoints: ['anthropic']
+          apiEndpoints: ['messages']
         }),
         provider({
           id: CLAUDE_ISOLATED_PROVIDER_ID,
           type: 'claude-isolated',
           name: 'Claude isolated',
           models: ['isolated-model'],
-          apiEndpoints: ['anthropic']
+          apiEndpoints: ['messages']
         })
       ],
       activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
@@ -350,7 +355,7 @@ describe('ComposerModelPicker', () => {
     // Claude Code (anthropic-only) + a lone OpenAI-only provider: the picker must not silently vanish.
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
-      providers: [provider({ id: 'p1', apiEndpoints: ['openai'], models: ['gpt-x'] })]
+      providers: [provider({ id: 'p1', apiEndpoints: ['chat-completions'], models: ['gpt-x'] })]
     })
     render()
 
@@ -375,7 +380,12 @@ describe('ComposerModelPicker', () => {
         }
       ],
       providers: [
-        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['ds', 'ds2'] })
+        provider({
+          id: 'p1',
+          name: 'DeepSeek',
+          apiEndpoints: ['chat-completions'],
+          models: ['ds', 'ds2']
+        })
       ]
     })
     render()
@@ -400,7 +410,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ],
@@ -410,7 +420,7 @@ describe('ComposerModelPicker', () => {
           type: 'official',
           vendorId: 'opencode',
           name: 'Mixed catalog',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['kimi-k2.7-code', 'gpt-5.6-sol']
         })
       ],
@@ -457,20 +467,25 @@ describe('ComposerModelPicker', () => {
         {
           id: 'claude-code',
           displayName: 'Claude Code',
-          supportedApiTypes: ['anthropic'],
+          supportedApiTypes: ['messages'],
           supportsSkills: true
         }
       ],
       providers: [
-        provider({ id: 'p1', apiEndpoints: ['openai'], name: 'OpenAI Gateway', models: ['gpt-x'] })
+        provider({
+          id: 'p1',
+          apiEndpoints: ['chat-completions'],
+          name: 'OpenAI Gateway',
+          models: ['gpt-x']
+        })
       ]
     })
     render()
 
     const expectedReason = incompatibilityReason(
-      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic'],
+      ['messages'],
       i18next.getFixedT('en')
     )
     expect(expectedReason).toContain('/v1/messages')
@@ -577,9 +592,9 @@ describe('ComposerModelPicker', () => {
 
   it('explains an endpoint mismatch by route, not by vendor name', () => {
     const reason = incompatibilityReason(
-      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic'],
+      ['messages'],
       i18next.getFixedT('en')
     )
 
@@ -917,7 +932,7 @@ describe('ComposerModelPicker', () => {
           name: 'OpenAI',
           models: ['gpt-5.2', 'gpt-5.5']
         }),
-        provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['openai'], models: ['gm'] })
+        provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['chat-completions'], models: ['gm'] })
       ],
       activeProviderId: 'off',
       activeModel: 'gpt-5.2'

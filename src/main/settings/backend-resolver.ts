@@ -339,7 +339,7 @@ export class AgentBackendResolver {
     const forceNativeResponsesCompatibility =
       context.forceCodexNativeResponsesCompatibility === true &&
       framework.id === 'codex' &&
-      !target.needsChatResponsesBridge &&
+      !target.needsChatResponsesToChatCompletionsBridge &&
       !target.needsNativeResponsesCompatibility
     if (forceNativeResponsesCompatibility && isCodexSubscriptionProvider(target.provider.type)) {
       throw new Error(
@@ -426,8 +426,8 @@ export class AgentBackendResolver {
         systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
           (append): append is string => Boolean(append)
         ),
-        ...(transport.anthropicBridgeLease
-          ? { anthropicBridgeLease: transport.anthropicBridgeLease }
+        ...(transport.messagesBridgeLease
+          ? { messagesBridgeLease: transport.messagesBridgeLease }
           : {})
       }
     }
@@ -467,7 +467,7 @@ export class AgentBackendResolver {
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
     const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
-    const responsesBridge = transport.responsesBridge
+    const responsesConnection = transport.responsesConnection
     const persistentSystemPromptAppends = [
       ...(context.systemPromptAppends ?? []),
       ...(userSkillDirectoryGuidance ? [userSkillDirectoryGuidance] : []),
@@ -482,7 +482,7 @@ export class AgentBackendResolver {
           ? { grantedLocalRoots: context.grantedLocalRoots }
           : {}),
         ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
-        responsesBridge,
+        responsesConnection,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
         providerModelCatalog,
@@ -508,8 +508,8 @@ export class AgentBackendResolver {
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
-        ...(modelRoute === 'codex-bridge' && responsesBridge?.continuityToken
-          ? { providerContinuityToken: responsesBridge.continuityToken }
+        ...(modelRoute === 'codex-bridge' && responsesConnection?.continuityToken
+          ? { providerContinuityToken: responsesConnection.continuityToken }
           : {}),
         executablePath,
         ...(framework.id === 'opencode'
@@ -573,7 +573,7 @@ export class AgentBackendResolver {
                 authorization: `Basic ${Buffer.from(`opencode:${opencodeUsagePassword}`).toString('base64')}`
               }
             }),
-        responsesBridgeLease: responsesBridge?.lease,
+        responsesTransportLease: responsesConnection?.lease,
         providerTransportLease: transport.providerTransportLease
       }
     } catch (error) {

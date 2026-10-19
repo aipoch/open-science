@@ -176,7 +176,7 @@ describe('electron-builder local evidence exclusion', () => {
           '-e',
           `
         const protocol = require('@aipoch/providers/protocol')
-        if (!(protocol.countAnthropicInputTokens({messages:[{role:'user',content:'hello'}]}) > 0))
+        if (!(protocol.countMessagesInputTokens({messages:[{role:'user',content:'hello'}]}) > 0))
           throw new Error('Installed provider token count failed')
         console.log('ok')
       `

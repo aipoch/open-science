@@ -28,13 +28,13 @@ describe('defaultProviderKindKey', () => {
 
 describe('defaultCustomApiEndpoint', () => {
   it('uses each framework capability set to choose its preferred custom API format', () => {
-    expect(defaultCustomApiEndpoint(['anthropic'])).toBe('anthropic')
-    expect(defaultCustomApiEndpoint(['anthropic', 'openai'])).toBe('openai')
+    expect(defaultCustomApiEndpoint(['messages'])).toBe('messages')
+    expect(defaultCustomApiEndpoint(['messages', 'chat-completions'])).toBe('chat-completions')
     expect(defaultCustomApiEndpoint(['responses'])).toBe('responses')
   })
 
   it('falls back to the legacy Messages API while framework capabilities are unavailable', () => {
-    expect(defaultCustomApiEndpoint([])).toBe('anthropic')
+    expect(defaultCustomApiEndpoint([])).toBe('messages')
   })
 })
 
@@ -51,17 +51,17 @@ describe('localModelPresetPatch', () => {
           name: 'My own name',
           model: 'my-own-model'
         }),
-        'anthropic'
+        'messages'
       )
-    ).toEqual({ baseUrl: 'http://localhost:11434', apiEndpoint: 'openai' })
+    ).toEqual({ baseUrl: 'http://localhost:11434', apiEndpoint: 'chat-completions' })
   })
 
   it('seeds the preset name too when the name field is still empty', () => {
     expect(
-      localModelPresetPatch(ollama, createEmptyProviderFormValue({ type: 'custom' }), 'anthropic')
+      localModelPresetPatch(ollama, createEmptyProviderFormValue({ type: 'custom' }), 'messages')
     ).toEqual({
       baseUrl: 'http://localhost:11434',
-      apiEndpoint: 'openai',
+      apiEndpoint: 'chat-completions',
       name: 'Ollama'
     })
   })
@@ -76,11 +76,11 @@ describe('localModelPresetPatch', () => {
           baseUrl: 'http://localhost:11434',
           name: 'Ollama',
           model: 'my-own-model',
-          apiEndpoint: 'openai'
+          apiEndpoint: 'chat-completions'
         }),
-        'anthropic'
+        'messages'
       )
-    ).toEqual({ baseUrl: '', apiEndpoint: 'anthropic', name: '' })
+    ).toEqual({ baseUrl: '', apiEndpoint: 'messages', name: '' })
   })
 })
 
@@ -278,10 +278,10 @@ describe('provider-kind helpers', () => {
         createEmptyProviderFormValue({
           type: 'official',
           vendorId: 'kimiforcode',
-          apiEndpoint: 'anthropic'
+          apiEndpoint: 'messages'
         })
       )
-    ).toEqual(['anthropic', 'openai'])
+    ).toEqual(['messages', 'chat-completions'])
     expect(
       providerFormApiEndpoints(
         createEmptyProviderFormValue({ type: 'custom', apiEndpoint: 'responses' })
@@ -289,12 +289,12 @@ describe('provider-kind helpers', () => {
     ).toEqual(['responses'])
     expect(
       providerFormApiEndpoints(createEmptyProviderFormValue({ type: 'xai-subscription' }))
-    ).toEqual(['anthropic', 'openai', 'responses'])
+    ).toEqual(['messages', 'chat-completions', 'responses'])
     expect(
       providerFormApiEndpoints(
         createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
       )
-    ).toEqual(['openai'])
+    ).toEqual(['chat-completions'])
     expect(
       providerFormApiEndpoints(
         createEmptyProviderFormValue({
@@ -303,26 +303,28 @@ describe('provider-kind helpers', () => {
           model: 'claude-opus-5'
         })
       )
-    ).toEqual(['anthropic'])
+    ).toEqual(['messages'])
   })
 
   it('chooses a directly compatible official model before onboarding validation', () => {
     const zen = createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
 
-    const anthropicModel = providerFormModelForFramework(zen, ['anthropic'])!
-    expect(getOfficialVendorModelIds('opencode')).toContain(anthropicModel)
-    expect(resolveVendorModelApiEndpoints('opencode', anthropicModel)).toContain('anthropic')
+    const messagesModel = providerFormModelForFramework(zen, ['messages'])!
+    expect(getOfficialVendorModelIds('opencode')).toContain(messagesModel)
+    expect(resolveVendorModelApiEndpoints('opencode', messagesModel)).toContain('messages')
     const responsesModel = providerFormModelForFramework(zen, ['responses'])!
     expect(getOfficialVendorModelIds('opencode')).toContain(responsesModel)
     expect(resolveVendorModelApiEndpoints('opencode', responsesModel)).toContain('responses')
-    expect(providerFormModelForFramework(zen, ['anthropic', 'openai'])).toBe('kimi-k2.7-code')
+    expect(providerFormModelForFramework(zen, ['messages', 'chat-completions'])).toBe(
+      'kimi-k2.7-code'
+    )
 
     const minimax = createEmptyProviderFormValue({
       type: 'official',
       vendorId: 'minimax',
       region: 'global'
     })
-    expect(providerFormModelForFramework(minimax, ['openai'])).toBe('MiniMax-M3')
+    expect(providerFormModelForFramework(minimax, ['chat-completions'])).toBe('MiniMax-M3')
   })
 
   it('defaults SenseNova to China and selects the Global model for every API path', () => {
@@ -332,8 +334,8 @@ describe('provider-kind helpers', () => {
       vendorId: 'sensenova',
       region: 'global'
     })
-    expect(providerFormApiEndpoints(value)).toEqual(['anthropic', 'openai'])
-    for (const endpoint of ['anthropic', 'openai', 'responses'] as const) {
+    expect(providerFormApiEndpoints(value)).toEqual(['messages', 'chat-completions'])
+    for (const endpoint of ['messages', 'chat-completions', 'responses'] as const) {
       expect(providerFormModelForFramework(value, [endpoint])).toBe('sensenova-6.8-flash-lite')
     }
   })
@@ -444,7 +446,7 @@ describe('provider-kind helpers', () => {
   it('clears vendor-only fields when picking custom', () => {
     expect(providerKindPatch('custom')).toEqual({
       type: 'custom',
-      apiEndpoint: 'anthropic',
+      apiEndpoint: 'messages',
       vendorId: undefined,
       region: undefined,
       model: '',
@@ -455,9 +457,9 @@ describe('provider-kind helpers', () => {
   })
 
   it('seeds a custom provider with the active framework API format', () => {
-    expect(providerKindPatch('custom', 'openai')).toMatchObject({
+    expect(providerKindPatch('custom', 'chat-completions')).toMatchObject({
       type: 'custom',
-      apiEndpoint: 'openai'
+      apiEndpoint: 'chat-completions'
     })
   })
 

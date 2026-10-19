@@ -5,19 +5,19 @@ import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { observeProviderFailure } from './provider-failure-observation'
 import type {
-  ResponsesBridgeConnection,
-  ResponsesBridgeModelTarget,
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput,
-  ResponsesBridgeTarget
-} from './responses-bridge-contract'
+  ResponsesConnection,
+  ResponsesModelTarget,
+  ResponsesSkillCandidate,
+  ResponsesSkillInput,
+  ResponsesToChatCompletionsBridgeTarget
+} from './responses-transport-contract'
 export type {
-  ResponsesBridgeConnection,
-  ResponsesBridgeModelTarget,
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput,
-  ResponsesBridgeTarget
-} from './responses-bridge-contract'
+  ResponsesConnection,
+  ResponsesModelTarget,
+  ResponsesSkillCandidate,
+  ResponsesSkillInput,
+  ResponsesToChatCompletionsBridgeTarget
+} from './responses-transport-contract'
 
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ModelReasoningEffort } from '@aipoch/providers'
@@ -25,8 +25,8 @@ import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
 import {
   createResponsesAdapter,
-  appendChatCompletions,
-  type ResponsesBridgeNamespacedTool,
+  appendChatCompletionsPath,
+  type ResponsesNamespacedTool,
   ResponsesProtocolError,
   upstreamErrorMessage
 } from '@aipoch/providers/protocol'
@@ -58,7 +58,7 @@ type JsonObject = Record<string, any>
 // Diagnostics log only model IDs and tool shapes/counts, never keys, prompts, or arguments.
 const log = createLogger('acp-bridge')
 
-export type ResponsesBridgeOptions = {
+export type ResponsesToChatCompletionsBridgeOptions = {
   maxResponseBytes?: number
   skillSelectorTimeoutMs?: number
   skillSelectorFailureMode?: 'empty' | 'throw'
@@ -79,20 +79,20 @@ const REQUEST_LOCAL_PLAN_TOOL_NAMES = new Set(['generate_plan', 'update_step_sta
 // The upstream Chat Completions endpoint. `target.baseUrl` is already the resolved OpenAI base (an
 // official vendor's exact versioned base, or a custom root normalized to `<root>/v1`), so this only
 // appends `/chat/completions` — preserving any query/hash on the base.
-const chatUrl = (value: string): string => appendChatCompletions(value)
+const chatUrl = (value: string): string => appendChatCompletionsPath(value)
 
-export class ResponsesBridge {
-  private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
-  private target: ResponsesBridgeTarget
+export class ResponsesToChatCompletionsBridge {
+  private readonly host: ProviderLoopbackHttpHost<ResponsesConnection>
+  private target: ResponsesToChatCompletionsBridgeTarget
   private readonly adapter: ReturnType<typeof createResponsesAdapter>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
   private readonly scopedToolLessSessionKeys = new Set<string>()
-  private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly hostMessageSessionScopes = new Map<string, ResponsesNamespacedTool[]>()
   private readonly scopedHostMessageSessionKeys = new Set<string>()
   private readonly strictHostMessageSessionKeys = new Set<string>()
-  private readonly sessionMcpTools = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly sessionMcpTools = new Map<string, ResponsesNamespacedTool[]>()
   private readonly sessionMcpNamespaces = new Map<string, readonly string[]>()
   private readonly deterministicErrors = new DeterministicProviderErrorReplay<{
     message: string
@@ -100,9 +100,9 @@ export class ResponsesBridge {
   }>()
 
   constructor(
-    target: ResponsesBridgeTarget,
+    target: ResponsesToChatCompletionsBridgeTarget,
     private readonly fetchImpl: BridgeFetch = fetch,
-    private readonly options: ResponsesBridgeOptions = {}
+    private readonly options: ResponsesToChatCompletionsBridgeOptions = {}
   ) {
     this.target = target
     this.adapter = createResponsesAdapter({
@@ -140,10 +140,10 @@ export class ResponsesBridge {
 
   async selectSkills(
     text: string,
-    catalog: ResponsesBridgeSkillCandidate[],
+    catalog: ResponsesSkillCandidate[],
     signal?: AbortSignal,
     observeUsage?: (observation: SkillSelectorUsageObservation) => void
-  ): Promise<ResponsesBridgeSkillInput[]> {
+  ): Promise<ResponsesSkillInput[]> {
     try {
       return await selectChatSkills({
         text,
@@ -169,7 +169,7 @@ export class ResponsesBridge {
     }
   }
 
-  setTarget(target: ResponsesBridgeTarget): void {
+  setTarget(target: ResponsesToChatCompletionsBridgeTarget): void {
     // Clear the reasoning cache only when the upstream target actually changes. setTarget is also
     // called on same-provider reconnects (skill reload, session resume); clearing then would drop the
     // reasoning_content a resumed thinking-mode session still needs to replay. On a real provider
@@ -187,7 +187,7 @@ export class ResponsesBridge {
     }
   }
 
-  setModelTarget(target: ResponsesBridgeModelTarget): void {
+  setModelTarget(target: ResponsesModelTarget): void {
     this.setTarget({ ...this.target, ...target })
   }
 
@@ -219,7 +219,7 @@ export class ResponsesBridge {
 
   registerHostMessageSession(
     promptCacheKey: string,
-    namespacedTools: ResponsesBridgeNamespacedTool[],
+    namespacedTools: ResponsesNamespacedTool[],
     options?: Readonly<{ failClosedUnknownKeys?: boolean }>
   ): void {
     this.hostMessageSessionScopes.set(promptCacheKey, namespacedTools)
@@ -236,7 +236,7 @@ export class ResponsesBridge {
 
   registerMcpSession(
     promptCacheKey: string,
-    namespacedTools: ResponsesBridgeNamespacedTool[],
+    namespacedTools: ResponsesNamespacedTool[],
     namespaces: readonly string[] = [...new Set(namespacedTools.map(({ namespace }) => namespace))]
   ): void {
     this.sessionMcpTools.set(promptCacheKey, namespacedTools)
@@ -248,7 +248,7 @@ export class ResponsesBridge {
     return this.sessionMcpTools.delete(promptCacheKey)
   }
 
-  async start(): Promise<ResponsesBridgeConnection> {
+  async start(): Promise<ResponsesConnection> {
     return this.host.start()
   }
 
@@ -305,7 +305,7 @@ export class ResponsesBridge {
           (tool: JsonObject) => tool?.type === 'function' && tool.name === 'load_skill'
         )
       : undefined
-    const skillTools: ResponsesBridgeNamespacedTool[] = skillLoader
+    const skillTools: ResponsesNamespacedTool[] = skillLoader
       ? [{ ...skillLoader, namespace: 'mcp__skills' }]
       : []
     // The Plan MCP server is provisioned per Session, so its namespace is authoritative only for
@@ -316,7 +316,7 @@ export class ResponsesBridge {
           (tool) => tool?.type === 'namespace' && tool.name === REQUEST_LOCAL_PLAN_NAMESPACE
         )
       : undefined
-    const planTools: ResponsesBridgeNamespacedTool[] = Array.isArray(planNamespace?.tools)
+    const planTools: ResponsesNamespacedTool[] = Array.isArray(planNamespace?.tools)
       ? planNamespace.tools
           .filter(
             (tool: JsonObject) =>
@@ -479,7 +479,7 @@ export class ResponsesBridge {
       const errorBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       await observeProviderFailure(
         target.onProviderFailure,
-        { model: chatRequest.model, endpoint: 'openai', startedAt },
+        { model: chatRequest.model, endpoint: 'chat-completions', startedAt },
         upstream.status,
         errorBody.complete ? errorBody.body.toString('utf8') : undefined
       )

@@ -337,7 +337,7 @@ it('admits direct API independently of ACP and refuses cross-mode resume', async
       model: 'model',
       key: 'secret',
       baseUrl: 'https://api.example',
-      apiEndpoints: ['openai' as const]
+      apiEndpoints: ['chat-completions' as const]
     }
   }
   const captureApiTarget = vi.fn(async () => apiTarget)
@@ -415,7 +415,7 @@ it('keeps legacy default identities but fences explicit thinking and transport c
     provider: {
       type: 'custom',
       baseUrl: 'https://api.example',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       key: 'secret'
     }
   }
@@ -458,14 +458,14 @@ it('keeps legacy default identities but fences explicit thinking and transport c
   expect(h.runner.run).not.toHaveBeenCalled()
 })
 
-it.each(['openai', 'anthropic', 'responses'] as const)(
+it.each(['chat-completions', 'messages', 'responses'] as const)(
   'cleans %s inline thinking before acceptance and keeps billing on reasoning-only failure',
   async (protocol) => {
     const h = setup()
     let answer = '<think>private reasoning</think>ATP 增加。'
     const fetchImpl = vi.fn(async () =>
       Response.json(
-        protocol === 'openai'
+        protocol === 'chat-completions'
           ? {
               choices: [{ finish_reason: 'stop', message: { content: answer } }],
               usage: {
@@ -474,7 +474,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
                 completion_tokens_details: { reasoning_tokens: 15 }
               }
             }
-          : protocol === 'anthropic'
+          : protocol === 'messages'
             ? {
                 stop_reason: 'end_turn',
                 content: [{ type: 'text', text: answer }],
@@ -550,7 +550,7 @@ it('uses corrective feedback and a capped larger budget on API truncation withou
       type: 'custom' as const,
       key: 'secret',
       baseUrl: 'https://api.example',
-      apiEndpoints: ['openai' as const]
+      apiEndpoints: ['chat-completions' as const]
     }
   }
   const captureApiTarget = vi.fn(async () => target)
@@ -602,7 +602,7 @@ it.each(['none', 'low', 'default'] as const)(
         type: 'custom' as const,
         key: 'secret',
         baseUrl: 'https://api.example',
-        apiEndpoints: ['openai' as const]
+        apiEndpoints: ['chat-completions' as const]
       }
     })
     const captureApiTarget = vi.fn(async () => target)

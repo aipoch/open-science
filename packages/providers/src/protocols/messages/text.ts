@@ -3,13 +3,13 @@ import type { TextCodec } from '../text-types'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const tokenCount = z.number().int().nonnegative().safe()
-const anthropicUsage = z.object({
+const messagesUsage = z.object({
   input_tokens: tokenCount,
   output_tokens: tokenCount,
   cache_read_input_tokens: tokenCount.default(0),
   cache_creation_input_tokens: tokenCount.default(0)
 })
-const anthropicResponse = z.object({
+const messagesResponse = z.object({
   stop_reason: z.literal('end_turn'),
   content: z.array(
     z.union([
@@ -20,7 +20,7 @@ const anthropicResponse = z.object({
   )
 })
 
-export const anthropicTextCodec: TextCodec = {
+export const messagesTextCodec: TextCodec = {
   encode(input) {
     const provider = input.target
     const effort = input.target.reasoningEffort
@@ -52,7 +52,7 @@ export const anthropicTextCodec: TextCodec = {
     }
   },
   usage(value) {
-    const parsed = anthropicUsage.safeParse(value)
+    const parsed = messagesUsage.safeParse(value)
     if (!parsed.success) return undefined
     const data = parsed.data
     const cacheTokens = data.cache_read_input_tokens + data.cache_creation_input_tokens
@@ -66,7 +66,7 @@ export const anthropicTextCodec: TextCodec = {
     }
   },
   text(value) {
-    return anthropicResponse
+    return messagesResponse
       .parse(value)
       .content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
       .join('')

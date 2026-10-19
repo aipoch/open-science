@@ -6,7 +6,7 @@ type JsonObject = Record<string, any>
 // which message/tool output items can be assembled back into the same assistant message.
 export type ResponsesReplyReasoning = Readonly<{ text: string }>
 
-export type ResponsesBridgeNamespacedTool = {
+export type ResponsesNamespacedTool = {
   namespace: string
   name: string
   description?: string

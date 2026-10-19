@@ -48,7 +48,7 @@ const provider = (
   id,
   type: 'custom',
   name: id,
-  apiEndpoints: ['anthropic', 'openai', 'responses'],
+  apiEndpoints: ['messages', 'chat-completions', 'responses'],
   baseUrl: 'https://example.test/v1',
   model: models[0],
   models,

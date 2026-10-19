@@ -6,13 +6,10 @@ import { fetch as nodeFetch } from 'undici'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  AnthropicProviderBridge,
-  type AnthropicProviderBridgeTarget
-} from './anthropic-provider-bridge'
+import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
 import {
   CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE,
-  OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE
+  OPENCODE_MESSAGES_TOOL_IMAGE_REQUEST_FIXTURE
 } from './provider-tool-image-wire.test-fixtures'
 
 type CapturedRequest = {
@@ -63,9 +60,9 @@ const createUpstream = (): {
   return { requests, server }
 }
 
-describe('AnthropicProviderBridge', () => {
+describe('MessagesBridge', () => {
   const servers: Server[] = []
-  const bridges: AnthropicProviderBridge[] = []
+  const bridges: MessagesBridge[] = []
 
   afterEach(async () => {
     await Promise.all(bridges.splice(0).map((bridge) => bridge.close()))
@@ -96,16 +93,12 @@ describe('AnthropicProviderBridge', () => {
         })
       })
       servers.push(upstream)
-      const target: AnthropicProviderBridgeTarget = {
+      const target: MessagesBridgeTarget = {
         id: 'compressed-provider',
         baseUrl: await listen(upstream),
         model: 'model-a'
       }
-      const bridge = new AnthropicProviderBridge(
-        [target],
-        target.id,
-        nodeFetch as unknown as typeof fetch
-      )
+      const bridge = new MessagesBridge([target], target.id, nodeFetch as unknown as typeof fetch)
       const requestPath = '/v1/messages'
       bridges.push(bridge)
       const connection = await bridge.start()
@@ -131,7 +124,7 @@ describe('AnthropicProviderBridge', () => {
     servers.push(first.server, second.server)
     const firstBaseUrl = await listen(first.server)
     const secondBaseUrl = await listen(second.server)
-    const targets: AnthropicProviderBridgeTarget[] = [
+    const targets: MessagesBridgeTarget[] = [
       {
         id: 'deepseek/model-a',
         baseUrl: firstBaseUrl,
@@ -141,7 +134,7 @@ describe('AnthropicProviderBridge', () => {
       },
       { id: 'kimi/model-b', baseUrl: secondBaseUrl, key: 'key-b', model: 'model-b' }
     ]
-    const bridge = new AnthropicProviderBridge(targets, targets[0].id)
+    const bridge = new MessagesBridge(targets, targets[0].id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -219,7 +212,7 @@ describe('AnthropicProviderBridge', () => {
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id)
+    const bridge = new MessagesBridge([target], target.id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -237,14 +230,14 @@ describe('AnthropicProviderBridge', () => {
   it('uses x-api-key for an upstream target that requires Anthropic API-key authentication', async () => {
     const upstream = createUpstream()
     servers.push(upstream.server)
-    const target: AnthropicProviderBridgeTarget = {
+    const target: MessagesBridgeTarget = {
       id: 'tencent/hy4-preview',
       baseUrl: await listen(upstream.server),
       key: 'tokenhub-key',
       model: 'hy4-preview',
       useApiKeyHeader: true
     }
-    const bridge = new AnthropicProviderBridge([target], target.id)
+    const bridge = new MessagesBridge([target], target.id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -281,7 +274,7 @@ describe('AnthropicProviderBridge', () => {
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    const bridge = new MessagesBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -319,7 +312,7 @@ describe('AnthropicProviderBridge', () => {
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl, diagnostics)
+    const bridge = new MessagesBridge([target], target.id, fetchImpl, diagnostics)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -365,7 +358,7 @@ describe('AnthropicProviderBridge', () => {
       onProviderFailure,
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    const bridge = new MessagesBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (): Promise<Response> =>
@@ -393,7 +386,7 @@ describe('AnthropicProviderBridge', () => {
       category: 'auth',
       status: 401,
       model: 'model-a',
-      endpoint: 'anthropic'
+      endpoint: 'messages'
     })
   })
 
@@ -415,7 +408,7 @@ describe('AnthropicProviderBridge', () => {
       key: 'wrong-key',
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    const bridge = new MessagesBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (): Promise<Response> =>
@@ -451,7 +444,7 @@ describe('AnthropicProviderBridge', () => {
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    const bridge = new MessagesBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (beta?: string): Promise<Response> =>
@@ -472,7 +465,7 @@ describe('AnthropicProviderBridge', () => {
 
   it.each([
     ['Claude Code', CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE],
-    ['OpenCode', OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE]
+    ['OpenCode', OPENCODE_MESSAGES_TOOL_IMAGE_REQUEST_FIXTURE]
   ] as const)(
     'preserves the captured %s MCP image fixture at the final Anthropic boundary',
     async (_framework, fixture) => {
@@ -484,7 +477,7 @@ describe('AnthropicProviderBridge', () => {
         key: 'key-a',
         model: 'model-a'
       }
-      const bridge = new AnthropicProviderBridge([target], target.id)
+      const bridge = new MessagesBridge([target], target.id)
       bridges.push(bridge)
       const connection = await bridge.start()
       await fetch(`${connection.baseUrl}/v1/messages`, {

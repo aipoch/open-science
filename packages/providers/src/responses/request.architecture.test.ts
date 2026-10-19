@@ -66,7 +66,7 @@ describe('Responses request adapter ownership', () => {
     expect(exportInventoryFrom(adapterPath)).toEqual([
       'type:ResponsesRequestAdapterOptions',
       'value:inputToMessages',
-      'value:responsesToChatRequest',
+      'value:responsesToChatCompletionsRequest',
       'value:toolsToChat'
     ])
   })

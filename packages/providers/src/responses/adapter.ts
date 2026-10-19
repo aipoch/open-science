@@ -1,9 +1,9 @@
-import { responsesToChatRequest, type ResponsesRequestAdapterOptions } from './request'
+import { responsesToChatCompletionsRequest, type ResponsesRequestAdapterOptions } from './request'
 import { completionToResponse } from './response'
 import { convertChatStream, type ReplayReply } from './stream'
 import { ReasoningReplay } from './replay'
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from '../transport/body'
-import type { ResponsesBridgeNamespacedTool } from './types'
+import type { ResponsesNamespacedTool } from './types'
 // Extensible wire records are validated by the conversion boundary before execution.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JsonObject = Record<string, any>
@@ -17,7 +17,7 @@ export type ResponsesTurnInput = Readonly<{
   body: JsonObject
   scope?: string
   model?: string
-  tools?: readonly ResponsesBridgeNamespacedTool[]
+  tools?: readonly ResponsesNamespacedTool[]
   reasoning?: ResponsesRequestAdapterOptions
 }>
 export type ResponsesTurn = Readonly<{
@@ -64,7 +64,7 @@ export function createResponsesAdapter(options: ResponsesAdapterOptions = {}): R
       // Snapshot caller-owned data so later edits cannot change an in-flight conversion's scope/tools.
       const tools = structuredClone(input.tools ?? [])
       const body = structuredClone(input.body)
-      const request = responsesToChatRequest(
+      const request = responsesToChatCompletionsRequest(
         body,
         input.model,
         replay.forRequest(scope),
@@ -167,5 +167,11 @@ export function createResponsesAdapter(options: ResponsesAdapterOptions = {}): R
 
 /** Stateless request conversion for probes that do not need replay or response adaptation. */
 export function convertResponsesRequest(input: Omit<ResponsesTurnInput, 'scope'>): JsonObject {
-  return responsesToChatRequest(input.body, input.model, undefined, input.tools, input.reasoning)
+  return responsesToChatCompletionsRequest(
+    input.body,
+    input.model,
+    undefined,
+    input.tools,
+    input.reasoning
+  )
 }

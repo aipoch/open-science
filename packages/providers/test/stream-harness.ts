@@ -1,6 +1,6 @@
 import { convertChatStream, type ReplayReply } from '../src/responses/stream'
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES } from '../src/transport/body'
-import type { ResponsesBridgeNamespacedTool } from '../src/responses/types'
+import type { ResponsesNamespacedTool } from '../src/responses/types'
 export type ResponsesStreamWriter = {
   writeHead(status: number, headers: Record<string, string>): void
   write(chunk: string): void
@@ -11,7 +11,7 @@ export async function streamChatToResponses(
   upstream: Response,
   writer: ResponsesStreamWriter,
   model: string,
-  tools: readonly ResponsesBridgeNamespacedTool[] = [],
+  tools: readonly ResponsesNamespacedTool[] = [],
   maxBytes = DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
 ): Promise<ReplayReply> {
   writer.writeHead(200, {

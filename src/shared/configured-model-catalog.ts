@@ -1,5 +1,5 @@
 import {
-  type ChatApiEndpoint,
+  type ModelProtocol,
   type OfficialVendorId,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
@@ -60,7 +60,7 @@ export const parseConfiguredModelKey = (
 export const configuredModelApiEndpoints = (
   provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
   model: string
-): readonly ChatApiEndpoint[] =>
+): readonly ModelProtocol[] =>
   provider.type === 'official' && provider.vendorId
     ? resolveVendorModelApiEndpoints(provider.vendorId, model)
     : providerEndpoints(provider)
@@ -121,7 +121,7 @@ export const buildConfiguredModelCatalog = (
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
     includeAllClaudeSubscriptions?: boolean
     frameworkId: AgentFrameworkId
-    frameworkEndpoints: readonly ChatApiEndpoint[]
+    frameworkEndpoints: readonly ModelProtocol[]
   }>
 ): readonly ConfiguredModelCatalogEntry[] => {
   return buildConfiguredModelInventory(input).flatMap((entry) => {
@@ -144,12 +144,12 @@ export const buildConfiguredModelCatalog = (
       provider.type === 'xai-subscription'
         ? (['responses'] as const)
         : input.frameworkId === 'codex'
-          ? (['anthropic', 'openai', 'responses'] as const)
+          ? (['messages', 'chat-completions', 'responses'] as const)
           : usesCompatibilityTransport
             ? apiEndpoints
             : frameworkCompatible
               ? input.frameworkEndpoints
-              : (['anthropic', 'openai', 'responses'] as const)
+              : (['messages', 'chat-completions', 'responses'] as const)
     )
     if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)

@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
-import { chatToAnthropic, anthropicToChat } from './chat'
+import { chatCompletionsToMessages, messagesToChatCompletions } from './conversion'
 it('encodes images, system content, tools and tool results in the Messages wire format', () => {
-  const request = chatToAnthropic(
+  const request = chatCompletionsToMessages(
     {
       messages: [
         { role: 'system', content: 'system' },
@@ -53,7 +53,7 @@ it.each([
   ['max_tokens', 'length'],
   ['refusal', 'content_filter']
 ])('preserves termination %s and cache accounting', (stop_reason, finish_reason) => {
-  const response = anthropicToChat(
+  const response = messagesToChatCompletions(
     {
       stop_reason,
       content: [{ type: 'text', text: 'answer' }],
@@ -79,7 +79,7 @@ it.each([
 })
 it('preserves tool calls and rejects unknown completion states', () => {
   expect(
-    anthropicToChat(
+    messagesToChatCompletions(
       {
         stop_reason: 'tool_use',
         content: [{ type: 'tool_use', id: 'call', name: 'lookup', input: { q: 1 } }]
@@ -96,5 +96,5 @@ it('preserves tool calls and rejects unknown completion states', () => {
       }
     ]
   })
-  expect(() => anthropicToChat({ stop_reason: 'unknown' }, 'm')).toThrow('Unsupported')
+  expect(() => messagesToChatCompletions({ stop_reason: 'unknown' }, 'm')).toThrow('Unsupported')
 })

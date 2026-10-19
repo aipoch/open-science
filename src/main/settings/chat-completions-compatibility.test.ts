@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ChatProviderCompatibilityBridge } from './chat-provider-compatibility'
+import { ChatCompletionsCompatibilityBridge } from './chat-completions-compatibility'
 
-const bridges: ChatProviderCompatibilityBridge[] = []
+const bridges: ChatCompletionsCompatibilityBridge[] = []
 
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map((bridge) => bridge.close()))
 })
 
-describe('ChatProviderCompatibilityBridge', () => {
+describe('ChatCompletionsCompatibilityBridge', () => {
   it('observes upstream authentication failure without exposing upstream diagnostics', async () => {
     const onProviderFailure = vi.fn()
-    const bridge = new ChatProviderCompatibilityBridge(
+    const bridge = new ChatCompletionsCompatibilityBridge(
       {
         wire: 'responses',
         endpoint: 'https://provider.example/v1/responses',
@@ -48,7 +48,7 @@ describe('ChatProviderCompatibilityBridge', () => {
     'observes a definitive %s even when the upstream response is not JSON',
     async (status) => {
       const onProviderFailure = vi.fn()
-      const bridge = new ChatProviderCompatibilityBridge(
+      const bridge = new ChatCompletionsCompatibilityBridge(
         {
           wire: 'responses',
           endpoint: 'https://provider.example/v1/responses',
@@ -87,7 +87,7 @@ describe('ChatProviderCompatibilityBridge', () => {
       cancelBody = vi.spyOn(response.body!, 'cancel')
       return response
     })
-    const bridge = new ChatProviderCompatibilityBridge(
+    const bridge = new ChatCompletionsCompatibilityBridge(
       {
         wire: 'responses',
         endpoint: 'https://provider.example/v1/responses',
@@ -123,7 +123,7 @@ describe('ChatProviderCompatibilityBridge', () => {
         usage: { input_tokens: 7, output_tokens: 3 }
       })
     )
-    const bridge = new ChatProviderCompatibilityBridge(
+    const bridge = new ChatCompletionsCompatibilityBridge(
       {
         wire: 'responses',
         endpoint: 'https://provider.example/v1/responses',
@@ -186,9 +186,9 @@ describe('ChatProviderCompatibilityBridge', () => {
         usage: { input_tokens: 11, output_tokens: 4, cache_read_input_tokens: 5 }
       })
     )
-    const bridge = new ChatProviderCompatibilityBridge(
+    const bridge = new ChatCompletionsCompatibilityBridge(
       {
-        wire: 'anthropic',
+        wire: 'messages',
         endpoint: 'https://provider.example/v1/messages',
         model: 'upstream-model'
       },

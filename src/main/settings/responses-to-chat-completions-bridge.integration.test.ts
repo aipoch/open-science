@@ -14,7 +14,7 @@ import { toAcpRuntimeEvent } from '../acp/runtime-events'
 import { terminateProcessTree } from '../process-tree'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { ReviewerMcpServer, type SubmitFindingsHandler } from '../reviewer/mcp-server'
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 
 const adapterPath = process.env.CODEX_ACP_PATH
@@ -164,7 +164,7 @@ it.runIf(runLiveContract).each(['complete-item', 'arguments-done', 'arguments-de
       {
         storageRoot: tempRoot,
         executablePath: adapterPath!,
-        responsesBridge: connection
+        responsesConnection: connection
       }
     )
     for (const file of modelConfig.configFiles ?? []) {
@@ -277,7 +277,7 @@ it.runIf(runLiveContract)(
       {
         storageRoot: tempRoot,
         executablePath: adapterPath!,
-        responsesBridge: connection
+        responsesConnection: connection
       }
     )
     for (const file of modelConfig.configFiles ?? []) {
@@ -443,7 +443,7 @@ it.runIf(runLiveContract)(
       ])
     }
 
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.invalid/v1',
         model: 'probe-model',
@@ -755,7 +755,7 @@ it.runIf(runLiveContract)(
       ])
     }
 
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.invalid/v1',
         model: 'probe-model',
@@ -909,7 +909,7 @@ it.runIf(runLiveContract)(
         storageRoot: root,
         executablePath: adapterPath!,
         nativeVersion: CODEX_VERSION,
-        responsesBridge: connection
+        responsesConnection: connection
       }
     )
     expect(JSON.parse(config.env!.CODEX_CONFIG)).not.toHaveProperty('model_catalog_json')

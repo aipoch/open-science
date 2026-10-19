@@ -13,7 +13,7 @@ import {
   configuredModelKey
 } from '../../../shared/configured-model-catalog'
 import type { PackageMirror } from '../../../shared/mirror'
-import type { ChatApiEndpoint, OfficialVendorId } from '@aipoch/providers'
+import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
 import type { ReasoningEffort } from '../../../shared/model-preference-contract'
 import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
@@ -292,11 +292,11 @@ const mergeSnapshot = (
 
 // Stable fallback reference so the selector returns the same array identity across renders
 // (a fresh literal would make useSettingsStore re-render every tick and loop).
-const DEFAULT_FRAMEWORK_API_ENDPOINTS: ChatApiEndpoint[] = ['anthropic']
+const DEFAULT_FRAMEWORK_API_ENDPOINTS: ModelProtocol[] = ['messages']
 
 // The chat endpoints the currently-selected agent framework can drive; a provider is only usable when
 // it shares one. Defaults to Anthropic /v1/messages before the framework list has loaded.
-export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEndpoint[] =>
+export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ModelProtocol[] =>
   state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 

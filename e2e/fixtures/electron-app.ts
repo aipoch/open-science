@@ -1075,7 +1075,7 @@ class ElectronAppHarness implements ElectronApp {
               setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
               setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
               upsertProvider: (request: {
-                apiEndpoints: ['openai']
+                apiEndpoints: ['chat-completions']
                 baseUrl: string
                 key: string
                 model: string
@@ -1089,7 +1089,7 @@ class ElectronAppHarness implements ElectronApp {
         const snapshot = await bridge.api.settings.upsertProvider({
           type: 'custom',
           name: providerName,
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: providerBaseUrl ?? 'http://127.0.0.1:9/v1',
           model: 'e2e-model',
           key: 'e2e-key',

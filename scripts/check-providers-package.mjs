@@ -136,13 +136,14 @@ for (const entry of ['/local', '/classification', '/providers', '/catalog', '/pa
   await assert.rejects(import('@aipoch/providers' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
 }
 for (const name of ['getVendorModelIds','getVendorModelContextWindow','resolveVendorApiEndpoints','vendorHasRegions','isVendorModelResponsesSupported','TYPESAFE_MODEL_ID']) assert.equal(Object.hasOwn(providers,name),false)
-for (const name of ['anthropicMessagesUrl','openAiResponsesUrl']) assert.equal(Object.hasOwn(protocol,name),false)
+for (const name of ['resolveMessagesUrl','resolveResponsesUrl']) assert.equal(Object.hasOwn(protocol,name),false)
+assert.deepEqual(Object.keys(protocol).filter(name=>/anthropic|openai/i.test(name)), [])
 assert.equal(providers.getOfficialVendor('openai')?.id, 'openai')
 assert.equal(transport.isSecureProviderUrl(new URL('http://example.test')), false)
-assert.equal(protocol.openAiChatCompletionsUrl({ baseUrl: 'https://example.test/proxy' }), 'https://example.test/proxy/v1/chat/completions')
+assert.equal(protocol.resolveChatCompletionsUrl({ baseUrl: 'https://example.test/proxy' }), 'https://example.test/proxy/v1/chat/completions')
 assert.equal(protocol.convertResponsesRequest({body:{input:'Hello'}, model:'model'}).model, 'model')
-assert.deepEqual(protocol.normalizeOpenAiChatModelStepUsage({prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: {cached_tokens: 3}}), {inputTokens:7,cacheTokens:3,cachedReadTokens:3,cachedWriteTokens:0,outputTokens:2})
-const config: client.ProviderConfiguration = {id:'custom',textGeneration:{protocol:'openai',url:'http://127.0.0.1:9090/v1/chat/completions'}}
+assert.deepEqual(protocol.normalizeChatCompletionsUsage({prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: {cached_tokens: 3}}), {inputTokens:7,cacheTokens:3,cachedReadTokens:3,cachedWriteTokens:0,outputTokens:2})
+const config: client.ProviderConfiguration = {id:'custom',textGeneration:{protocol:'chat-completions',url:'http://127.0.0.1:9090/v1/chat/completions'}}
 const service: client.TextGenerationModel = client.createProvider({...config,fetch:async (url, init) => {
   assert.equal(url, 'http://127.0.0.1:9090/v1/chat/completions'); assert.equal(init?.redirect,'manual')
   return Response.json({choices:[{finish_reason:'stop',message:{content:'Installed consumer'}}]})
@@ -186,7 +187,7 @@ assert.deepEqual(providers.getProviderModels('local','text-generation'),[])
 assert.equal(providers.getProviderDefinition('local'),undefined)
 assert.equal(providers.getProviderDefinition('openrouter')?.classification?.models[0].id,'typesafe/jev-1.13')
 assert.deepEqual(protocol.sanitizeXaiResponsesRequest({input:'hello',safety_identifier:'secret'}),{input:'hello'})
-assert.ok(protocol.countAnthropicInputTokens({messages:[{role:'user',content:'hello'}]})>0)
+assert.ok(protocol.countMessagesInputTokens({messages:[{role:'user',content:'hello'}]})>0)
 const namespace = protocol.prepareNativeResponsesRequest({tools:[{type:'namespace',name:'tools',tools:[{type:'function',name:'run'}]}]})
 assert.deepEqual(namespace.restore({type:'function_call',name:'tools__run'}),{type:'function_call',namespace:'tools',name:'run'})
 const models=await client.createProvider({id:'deepseek',key:'discovery-token',fetch:async(url,init)=>{assert.equal(url,'https://api.deepseek.com/v1/models');assert.equal(new Headers(init?.headers).get('authorization'),'Bearer discovery-token');return Response.json({data:[{id:'m'}]})}}).listModels()
@@ -207,7 +208,7 @@ const classify: client.ClassificationInput = {state:'s',questions:{},images:{ass
 const classifier: client.ClassificationModel = client.createProvider({id:'typesafe'}).classificationModel('jev-latest')
 void classifier
 void classify
-const endpoint: providers.ChatApiEndpoint = 'openai'
+const endpoint: providers.ModelProtocol = 'chat-completions'
 const config: client.ProviderConfiguration = {id:'custom',textGeneration:{protocol:endpoint,url:'https://example.test/v1/chat/completions'}}
 const usage: protocol.ProviderTokenUsage = {inputTokens:1,cacheTokens:0,outputTokens:2}
 const model: client.TextGenerationModel = client.createProvider(config).textGenerationModel('m')

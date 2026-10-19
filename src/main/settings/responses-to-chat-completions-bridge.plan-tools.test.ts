@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 
 const planNamespace = {
   type: 'namespace',
@@ -64,7 +64,7 @@ const request = async (
 describe('Responses bridge request-local Plan tools', () => {
   it('forwards the live Plan catalog and maps an upstream call back to its namespace', async () => {
     const upstreamRequests: Record<string, unknown>[] = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://fixture.invalid/v1', model: 'deepseek-flash' },
       vi.fn(async (_url, init) => {
         upstreamRequests.push(JSON.parse(String(init?.body)))
@@ -197,7 +197,7 @@ describe('Responses bridge request-local Plan tools', () => {
 
   it('does not expose Plan tools without the current request capability or inside narrow scopes', async () => {
     const upstreamRequests: Record<string, unknown>[] = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://fixture.invalid/v1', model: 'deepseek-flash' },
       vi.fn(async (_url, init) => {
         upstreamRequests.push(JSON.parse(String(init?.body)))

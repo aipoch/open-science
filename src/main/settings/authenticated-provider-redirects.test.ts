@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createProvider } from '@aipoch/providers/client'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { validateProvider } from './validate'
 
 type CapturedRequest = Readonly<{
@@ -119,7 +119,7 @@ describe('authenticated provider redirect policy', () => {
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }))
     })
     const upstreamUrl = await listen(upstream)
-    const bridge = new ResponsesBridge({
+    const bridge = new ResponsesToChatCompletionsBridge({
       baseUrl: `${upstreamUrl}/v1`,
       key: 'responses-bridge-secret',
       model: 'model-a'

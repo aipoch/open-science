@@ -1,4 +1,4 @@
-export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
+export type ModelProtocol = 'messages' | 'chat-completions' | 'responses'
 
 export type ModelReasoningEffort =
   'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'

@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest'
-import { anthropicToChat } from '../../anthropic/chat'
-import { encodeChatCompletionStream } from './stream'
+import { messagesToChatCompletions } from '../messages/conversion'
+import { encodeChatCompletionsStream } from './stream'
 it('encodes a completed chat stream with tool indexes, usage and a terminal marker', () => {
-  const completion = anthropicToChat(
+  const completion = messagesToChatCompletions(
     {
       stop_reason: 'tool_use',
       content: [{ type: 'tool_use', id: 'c', name: 'lookup', input: { q: 1 } }],
@@ -10,7 +10,7 @@ it('encodes a completed chat stream with tool indexes, usage and a terminal mark
     },
     'm'
   )
-  const frames = encodeChatCompletionStream(completion).trim().split('\n\n')
+  const frames = encodeChatCompletionsStream(completion).trim().split('\n\n')
   expect(frames.at(-1)).toBe('data: [DONE]')
   expect(JSON.parse(frames[0].slice(6))).toMatchObject({
     choices: [{ delta: { tool_calls: [{ index: 0, id: 'c' }] }, finish_reason: null }]

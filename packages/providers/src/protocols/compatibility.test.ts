@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  anthropicToResponses,
-  chatToResponses,
-  responsesToAnthropic,
-  responsesToChat
-} from './openai/responses/conversion'
-import { countAnthropicInputTokens } from './anthropic/tokens'
+  messagesToResponses,
+  chatCompletionsToResponses,
+  responsesToMessages,
+  responsesToChatCompletions
+} from './responses/conversion'
+import { countMessagesInputTokens } from './messages/tokens'
 import { sanitizeXaiResponsesRequest } from './xai/responses'
 
 describe('xAI protocol projection', () => {
   it('maps Anthropic messages and tools to Responses', () => {
-    const request = anthropicToResponses(
+    const request = messagesToResponses(
       {
         system: 'Be concise.',
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
@@ -29,7 +29,7 @@ describe('xAI protocol projection', () => {
   })
 
   it('keeps primitive Anthropic message content as text instead of a string array', () => {
-    const request = anthropicToResponses(
+    const request = messagesToResponses(
       { messages: [{ role: 'user', content: 'hello' }] },
       'grok-4.6'
     )
@@ -37,7 +37,7 @@ describe('xAI protocol projection', () => {
   })
 
   it('maps Chat Completions and tool history to Responses', () => {
-    const request = chatToResponses(
+    const request = chatCompletionsToResponses(
       {
         messages: [
           { role: 'system', content: 'Use evidence.' },
@@ -57,7 +57,7 @@ describe('xAI protocol projection', () => {
   })
 
   it('omits empty assistant Chat messages when projecting tool-call history', () => {
-    const request = chatToResponses(
+    const request = chatCompletionsToResponses(
       {
         messages: [
           {
@@ -101,14 +101,14 @@ describe('xAI protocol projection', () => {
         output_tokens_details: { reasoning_tokens: 2 }
       }
     }
-    expect(responsesToAnthropic(response, 'grok-4.6')).toMatchObject({
+    expect(responsesToMessages(response, 'grok-4.6')).toMatchObject({
       type: 'message',
       content: [
         { type: 'text', text: 'Answer' },
         { type: 'tool_use', name: 'lookup' }
       ]
     })
-    expect(responsesToChat(response, 'grok-4.6')).toMatchObject({
+    expect(responsesToChatCompletions(response, 'grok-4.6')).toMatchObject({
       object: 'chat.completion',
       choices: [{ finish_reason: 'tool_calls' }],
       usage: {
@@ -130,7 +130,7 @@ describe('xAI protocol projection', () => {
       })
     ).toEqual({ input: [{ role: 'user', content: 'hello' }] })
     expect(
-      countAnthropicInputTokens({ messages: [{ role: 'user', content: 'hello world' }] })
+      countMessagesInputTokens({ messages: [{ role: 'user', content: 'hello world' }] })
     ).toBeGreaterThan(0)
   })
 })

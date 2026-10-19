@@ -102,7 +102,7 @@ describe('settings repository', () => {
     await repository.upsertProvider(
       provider({
         lastValidatedAt: 1,
-        lastValidatedTarget: { model: 'a', endpoint: 'openai' }
+        lastValidatedTarget: { model: 'a', endpoint: 'chat-completions' }
       })
     )
     vi.spyOn(store, 'mutate').mockImplementationOnce(async (update) => {
@@ -114,7 +114,7 @@ describe('settings repository', () => {
         'p1',
         () => true,
         { ok: true, category: 'ok' },
-        { model: 'b', endpoint: 'openai' }
+        { model: 'b', endpoint: 'chat-completions' }
       )
     ).rejects.toThrow('Synthetic write failure')
     expect(
@@ -122,14 +122,14 @@ describe('settings repository', () => {
         'p1',
         () => true,
         { ok: false, category: 'model-not-found', status: 404 },
-        { model: 'b', endpoint: 'openai' },
+        { model: 'b', endpoint: 'chat-completions' },
         2
       )
     ).toBe(true)
     expect(
       providerValidationFailed((await repository.getSettings()).providers[0], {
         model: 'b',
-        endpoint: 'openai'
+        endpoint: 'chat-completions'
       })
     ).toBe(true)
   })
@@ -1126,7 +1126,7 @@ describe('settings repository', () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
     await repository.upsertProvider(provider())
-    const first = { model: 'model-a', endpoint: 'openai' as const }
+    const first = { model: 'model-a', endpoint: 'chat-completions' as const }
     const second = { model: 'model-b', endpoint: 'responses' as const }
     const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
     await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, first)
@@ -1135,7 +1135,9 @@ describe('settings repository', () => {
     const saved = (await new SettingsRepository(root).getSettings()).providers[0]
     expect(providerValidationFailed(saved, first)).toBe(true)
     expect(providerValidationFailed(saved, second)).toBe(true)
-    expect(providerValidationFailed(saved, { model: 'model-c', endpoint: 'openai' })).toBe(false)
+    expect(
+      providerValidationFailed(saved, { model: 'model-c', endpoint: 'chat-completions' })
+    ).toBe(false)
     expect(saved.lastValidationFailure?.targets).toHaveLength(2)
   })
 
@@ -1145,8 +1147,8 @@ describe('settings repository', () => {
       const root = await createStorageRoot()
       const repository = new SettingsRepository(root)
       await repository.upsertProvider(provider())
-      const first = { model: 'model-a', endpoint: 'openai' as const }
-      const second = { model: 'model-b', endpoint: 'openai' as const }
+      const first = { model: 'model-a', endpoint: 'chat-completions' as const }
+      const second = { model: 'model-b', endpoint: 'chat-completions' as const }
       const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
       try {
         const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
@@ -1193,13 +1195,13 @@ describe('settings repository', () => {
     await repository.upsertProvider(
       provider({
         lastValidatedAt: 1716999999999,
-        lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' },
+        lastValidatedTarget: { model: 'model-a', endpoint: 'messages' },
         lastValidationFailure: {
           at: 1717000000000,
           category: 'model-not-found',
           status: 404,
           message: 'nope',
-          target: { model: 'model-b', endpoint: 'anthropic' }
+          target: { model: 'model-b', endpoint: 'messages' }
         }
       })
     )
@@ -1207,14 +1209,14 @@ describe('settings repository', () => {
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.providers[0].lastValidatedTarget).toEqual({
       model: 'model-a',
-      endpoint: 'anthropic'
+      endpoint: 'messages'
     })
     expect(reloaded.providers[0].lastValidationFailure).toEqual({
       at: 1717000000000,
       category: 'model-not-found',
       status: 404,
       message: 'nope',
-      target: { model: 'model-b', endpoint: 'anthropic' }
+      target: { model: 'model-b', endpoint: 'messages' }
     })
   })
 

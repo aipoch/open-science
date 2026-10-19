@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { responsesToChatRequest } from './request'
+import { responsesToChatCompletionsRequest } from './request'
 
 describe('Responses request protocol adapter', () => {
   it.each([undefined, 'auto', 'low', 'high', 'original'])(
@@ -28,7 +28,7 @@ describe('Responses request protocol adapter', () => {
           ...(expectedDetail === undefined ? {} : { detail: expectedDetail })
         }
       }
-      expect(responsesToChatRequest({ input }).messages).toEqual([
+      expect(responsesToChatCompletionsRequest({ input }).messages).toEqual([
         { role: 'user', content: [converted, converted] },
         { role: 'assistant', content: 'An image.' },
         { role: 'user', content: 'Describe it again.' }
@@ -39,7 +39,7 @@ describe('Responses request protocol adapter', () => {
 
   it('rejects conflicting image details before normalization', () => {
     expect(() =>
-      responsesToChatRequest({
+      responsesToChatCompletionsRequest({
         input: [
           {
             type: 'message',
@@ -58,7 +58,7 @@ describe('Responses request protocol adapter', () => {
   })
 
   it('converts replayed namespaced tool calls, images, and configured reasoning without session state', () => {
-    const request = responsesToChatRequest(
+    const request = responsesToChatCompletionsRequest(
       {
         model: 'catalog-model',
         instructions: 'Use the notebook.',
@@ -150,7 +150,7 @@ describe('Responses request protocol adapter', () => {
       { type: 'input_text', text: '{"status":"completed"}' },
       { type: 'input_image', image_url: 'data:image/png;base64,aW1hZ2U=' }
     ]
-    const request = responsesToChatRequest(
+    const request = responsesToChatCompletionsRequest(
       {
         model: 'catalog-model',
         input: [

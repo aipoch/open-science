@@ -1,4 +1,4 @@
-import type { ChatApiEndpoint } from '../protocols/types'
+import type { ModelProtocol } from '../protocols/types'
 import type { ReasoningCapability } from '../protocols/types'
 
 export type OfficialVendorId =
@@ -37,9 +37,9 @@ export type VendorRegion = {
   readonly baseUrl: string
   // The region's OpenAI /v1/chat/completions base, when it differs from the Anthropic `baseUrl` and the
   // vendor supports both endpoints. Falls back to the region's `baseUrl` when absent.
-  readonly openaiBaseUrl?: string
+  readonly chatCompletionsBaseUrl?: string
   // The region's native Responses API base, when it differs from the OpenAI chat base. Falls back to
-  // `openaiBaseUrl` and then `baseUrl` when absent.
+  // `chatCompletionsBaseUrl` and then `baseUrl` when absent.
   readonly responsesBaseUrl?: string
   // Where the user creates/copies a key for this endpoint; falls back to the vendor-level one.
   readonly apiKeyUrl?: string
@@ -55,7 +55,7 @@ export type OfficialModel = {
   readonly contextWindow: number
   // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
   // the vendor-level endpoint set.
-  readonly apiEndpoint?: ChatApiEndpoint
+  readonly apiEndpoint?: ModelProtocol
   // Optional override for a model whose effort levels differ from the vendor default.
   readonly reasoningEffort?: ReasoningCapability
 }
@@ -64,13 +64,13 @@ export type OfficialVendor = {
   readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
-  // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['anthropic']
+  // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['messages']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
-  // ['anthropic', 'openai'].
-  readonly apiEndpoints?: readonly ChatApiEndpoint[]
+  // ['messages', 'chat-completions'].
+  readonly apiEndpoints?: readonly ModelProtocol[]
   // Whether Anthropic Messages authenticates with `x-api-key` instead of `Authorization: Bearer`.
   // Absent keeps the existing bearer behavior used by the other compatible vendors.
-  readonly anthropicApiKeyHeader?: boolean
+  readonly messagesApiKeyHeader?: boolean
   // Model ids offered in the composer once a key is stored. First entry is the default selection when
   // the vendor is first added.
   readonly models: readonly OfficialModel[]
@@ -96,12 +96,12 @@ export type OfficialVendor = {
     readonly multimodalModels?: readonly string[]
   }
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
-  // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
+  // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `chatCompletionsBaseUrl` is the
   // separate OpenAI /v1/chat/completions root. `responsesBaseUrl` may differ when the vendor's native
   // Responses API uses a different base path. Set these only when the vendor exposes the
   // corresponding endpoint.
   readonly baseUrl?: string
-  readonly openaiBaseUrl?: string
+  readonly chatCompletionsBaseUrl?: string
   readonly responsesBaseUrl?: string
   readonly regions?: readonly VendorRegion[]
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.

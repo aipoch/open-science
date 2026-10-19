@@ -3,7 +3,7 @@ import { createConnection } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
@@ -11,7 +11,7 @@ describe('Responses-compatible bridge conversion', () => {
     'rejects missing or ambiguous Go identity %s before forwarding',
     async (session) => {
       const upstream = vi.fn<typeof fetch>()
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go' },
         upstream
       )
@@ -35,7 +35,7 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('preserves valid replay after rejecting a Go session header', async () => {
     const upstreamRequests: Array<Record<string, unknown>> = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go', model: 'm' },
       async (_url, init) => {
         upstreamRequests.push(JSON.parse(String(init?.body)))
@@ -106,7 +106,7 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('isolates Go errors by conversation and removes Go headers after a Zen target switch', async () => {
     const captured: Headers[] = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go' },
       async (_url, init) => {
         const headers = new Headers(init?.headers)
@@ -169,7 +169,7 @@ describe('Responses-compatible bridge conversion', () => {
           choices: [{ message: { role: 'assistant', content: 'ok' } }]
         })
       })
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         {
           baseUrl: 'https://opencode.ai/zen/go/v1',
           vendorId: 'opencode-go',
@@ -209,7 +209,7 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('identifies Go auxiliary skill selection requests', async () => {
     const sessions: Array<string | null> = []
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go', model: 'probe-model' },
       async (_url, init) => {
         const headers = new Headers(init?.headers)
@@ -262,7 +262,7 @@ describe('Responses-compatible bridge conversion', () => {
     const accepted = new Promise<void>((resolve) => {
       accept = resolve
     })
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://original.example/v1',
         model: 'original-model',
@@ -297,7 +297,7 @@ describe('Responses-compatible bridge conversion', () => {
         category: 'auth',
         status: 401,
         model: 'original-model',
-        endpoint: 'openai',
+        endpoint: 'chat-completions',
         startedAt: expect.any(Number)
       })
       expect(nextObserver).not.toHaveBeenCalled()
@@ -334,7 +334,7 @@ describe('Responses-compatible bridge conversion', () => {
           choices: [{ message: { role: 'assistant', content: 'ok' } }]
         })
       )
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         { baseUrl: 'https://vendor.example/v1', model: 'glm-5.3-flash' },
         upstreamFetch
       )
@@ -382,7 +382,7 @@ describe('Responses-compatible bridge conversion', () => {
           { headers: { 'content-type': 'application/json' } }
         )
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -422,8 +422,9 @@ describe('Responses-compatible bridge conversion', () => {
       cancelBody = vi.spyOn(upstream.body!, 'cancel')
       return upstream
     })
-    const { ResponsesBridge } = await import('./responses-bridge')
-    const bridge = new ResponsesBridge(
+    const { ResponsesToChatCompletionsBridge } =
+      await import('./responses-to-chat-completions-bridge')
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -470,7 +471,7 @@ describe('Responses-compatible bridge conversion', () => {
           { headers: { 'content-type': 'text/event-stream' } }
         )
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch,
       { maxResponseBytes: terminalFrame.byteLength }
@@ -532,8 +533,9 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const { ResponsesBridge } = await import('./responses-bridge')
-    const bridge = new ResponsesBridge(
+    const { ResponsesToChatCompletionsBridge } =
+      await import('./responses-to-chat-completions-bridge')
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
       upstreamFetch
     )
@@ -603,7 +605,7 @@ describe('Responses-compatible bridge conversion', () => {
         { status: 401 }
       )
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.example/v1',
         key: 'wrong-key',
@@ -642,7 +644,7 @@ describe('Responses-compatible bridge conversion', () => {
         category: 'auth',
         status: 401,
         model: 'model-a',
-        endpoint: 'openai'
+        endpoint: 'chat-completions'
       })
     } finally {
       await bridge.close()
@@ -670,7 +672,7 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'upstream-key', reasoningEffort: 'max' },
       upstreamFetch
     )
@@ -722,7 +724,7 @@ describe('Responses-compatible bridge conversion', () => {
     )
     // No resolved override: Codex's own default effort must not change what existing bridged users
     // send upstream.
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
       upstreamFetch
     )
@@ -772,7 +774,7 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'upstream-key' },
       upstreamFetch
     )
@@ -897,7 +899,7 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.example/v1',
         key: 'upstream-key',
@@ -987,7 +989,7 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.example/v1',
         namespacedTools: [
@@ -1088,7 +1090,7 @@ describe('Responses-compatible bridge conversion', () => {
         )
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://api.deepseek.com/v1',
         namespacedTools: [
@@ -1191,7 +1193,7 @@ describe('Responses-compatible bridge conversion', () => {
         })
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       {
         baseUrl: 'https://vendor.example/v1',
         model: 'model-a',
@@ -1240,7 +1242,7 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('replaces Codex declarations with the registered host-message-only scope', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async (_url, init) => {
         upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -1313,7 +1315,7 @@ describe('Responses-compatible bridge conversion', () => {
 
   it('removes every tool when a strict host-message boundary sees an unexpected Session key', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async (_url, init) => {
         upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -1391,8 +1393,9 @@ describe('Responses-compatible bridge conversion', () => {
         { headers: { 'content-type': 'text/event-stream' } }
       )
     })
-    const { ResponsesBridge } = await import('./responses-bridge')
-    const bridge = new ResponsesBridge(
+    const { ResponsesToChatCompletionsBridge } =
+      await import('./responses-to-chat-completions-bridge')
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1476,7 +1479,7 @@ describe('Responses-compatible bridge conversion', () => {
         return Response.json(upstreamResponses[upstreamRequests.length - 1])
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1570,7 +1573,7 @@ describe('Responses-compatible bridge conversion', () => {
         { headers: { 'content-type': 'text/event-stream' } }
       )
     })
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1612,7 +1615,7 @@ describe('Responses-compatible bridge conversion', () => {
         ]
       })
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1667,7 +1670,7 @@ describe('Responses-compatible bridge conversion', () => {
         })
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1705,7 +1708,10 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('closes promptly when a client keeps an incomplete request connection open', async () => {
-    const bridge = new ResponsesBridge({ baseUrl: 'https://vendor.example/v1', key: 'k' })
+    const bridge = new ResponsesToChatCompletionsBridge({
+      baseUrl: 'https://vendor.example/v1',
+      key: 'k'
+    })
     const connection = await bridge.start()
     const endpoint = new URL(`${connection.baseUrl}/responses`)
     const socket = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) })
@@ -1756,8 +1762,9 @@ describe('Responses-compatible bridge conversion', () => {
         { headers: { 'content-type': 'text/event-stream' } }
       )
     })
-    const { ResponsesBridge } = await import('./responses-bridge')
-    const bridge = new ResponsesBridge(
+    const { ResponsesToChatCompletionsBridge } =
+      await import('./responses-to-chat-completions-bridge')
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1807,8 +1814,9 @@ describe('Responses-compatible bridge conversion', () => {
         { headers: { 'content-type': 'text/event-stream' } }
       )
     })
-    const { ResponsesBridge } = await import('./responses-bridge')
-    const bridge = new ResponsesBridge(
+    const { ResponsesToChatCompletionsBridge } =
+      await import('./responses-to-chat-completions-bridge')
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'k' },
       upstreamFetch
     )
@@ -1848,7 +1856,7 @@ describe('Responses-compatible bridge conversion', () => {
         choices: [{ message: { role: 'assistant', content: 'ok' } }]
       })
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://api.z.ai/api/paas/v4', key: 'k', model: 'glm-5.2' },
       upstreamFetch
     )
@@ -1882,7 +1890,7 @@ describe('Responses-compatible bridge conversion', () => {
         choices: [{ message: { role: 'assistant', content: 'ok' } }]
       })
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://host/proxy/v1', key: 'k', model: 'm' },
       upstreamFetch
     )
@@ -1908,7 +1916,11 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('clears the reasoning cache only when the upstream target actually changes', () => {
-    const bridge = new ResponsesBridge({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
+    const bridge = new ResponsesToChatCompletionsBridge({
+      baseUrl: 'https://a.example/v1',
+      model: 'm1',
+      key: 'k1'
+    })
     const clear = vi.spyOn((bridge as unknown as { adapter: { clear(): void } }).adapter, 'clear')
     // Same target (e.g. a skill-reload reconnect): cache is preserved so a resumed thinking session works.
     bridge.setTarget({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
@@ -1919,7 +1931,7 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('retargets only model-owned fields and preserves the live endpoint credentials', () => {
-    const bridge = new ResponsesBridge({
+    const bridge = new ResponsesToChatCompletionsBridge({
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'secret',
@@ -1963,7 +1975,7 @@ describe('Responses bridge Skill selector', () => {
 
   it('fails open and cancels an oversized successful selector response', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async () => {
         const response = Response.json(
@@ -2037,7 +2049,7 @@ describe('Responses bridge Skill selector', () => {
         { headers: { 'content-type': 'application/json' } }
       )
     })
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', key: 'secret-key', model: 'deepseek-v4-flash' },
       upstreamFetch
     )
@@ -2096,7 +2108,7 @@ describe('Responses bridge Skill selector', () => {
 
   it('selects an explicitly named connector Skill locally without an upstream request', async () => {
     const upstreamFetch = vi.fn<typeof fetch>()
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'deepseek-v4-flash' },
       upstreamFetch
     )
@@ -2129,7 +2141,7 @@ describe('Responses bridge Skill selector', () => {
           })
         )
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -2158,7 +2170,7 @@ describe('Responses bridge Skill selector', () => {
 
   it('finds an explicitly named connector before bounding the inference catalog', async () => {
     const upstreamFetch = vi.fn<typeof fetch>()
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -2191,7 +2203,7 @@ describe('Responses bridge Skill selector', () => {
           })
         )
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -2230,7 +2242,7 @@ describe('Responses bridge Skill selector', () => {
           })
         )
       })
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         {
           baseUrl: 'https://vendor.example/v1',
           model,
@@ -2276,7 +2288,7 @@ describe('Responses bridge Skill selector', () => {
           ]
         })
       })
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         {
           baseUrl: 'https://api.apodex.ai/v1',
           model: 'apodex-1.1',
@@ -2315,7 +2327,7 @@ describe('Responses bridge Skill selector', () => {
         })
       )
     })
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -2377,7 +2389,7 @@ describe('Responses bridge Skill selector', () => {
       )
     ]
   ])('keeps Codex Skill selection fail-open for %s', async (_label, response) => {
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async () => response.clone())
     )
@@ -2416,7 +2428,7 @@ describe('Responses bridge Skill selector', () => {
         path: `/skills/${index}/SKILL.md`
       }))
     ]
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )
@@ -2449,7 +2461,7 @@ describe('Responses bridge Skill selector', () => {
           init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
         })
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch,
       { skillSelectorTimeoutMs: 5 }
@@ -2459,7 +2471,7 @@ describe('Responses bridge Skill selector', () => {
   })
 
   it('lets CodeBuddy opt into a fail-closed selector', async () => {
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       vi.fn(async () => new Response('provider unavailable', { status: 503 })),
       { skillSelectorFailureMode: 'throw' }
@@ -2483,7 +2495,7 @@ describe('Responses bridge Skill selector', () => {
         })
       }
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
       upstreamFetch
     )

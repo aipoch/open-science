@@ -7,7 +7,10 @@ import { fetch as nodeFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
-import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import {
+  ProtocolForwardingBridge,
+  type ProtocolForwardingBridgeTarget
+} from './protocol-forwarding-bridge'
 import { OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
 type CapturedRequest = {
@@ -51,9 +54,9 @@ const createUpstream = (): { requests: CapturedRequest[]; server: Server } => {
   return { requests, server }
 }
 
-describe('OpenAiProviderBridge', () => {
+describe('ProtocolForwardingBridge', () => {
   const servers: Server[] = []
-  const bridges: OpenAiProviderBridge[] = []
+  const bridges: ProtocolForwardingBridge[] = []
 
   afterEach(async () => {
     await Promise.all(bridges.splice(0).map((bridge) => bridge.close()))
@@ -84,13 +87,13 @@ describe('OpenAiProviderBridge', () => {
         })
       })
       servers.push(upstream)
-      const target: OpenAiProviderBridgeTarget = {
+      const target: ProtocolForwardingBridgeTarget = {
         id: 'compressed-provider',
         wire: 'chat-completions',
         endpoint: `${await listen(upstream)}/v1/chat/completions`,
         model: 'model-a'
       }
-      const bridge = new OpenAiProviderBridge(
+      const bridge = new ProtocolForwardingBridge(
         [target],
         target.id,
         nodeFetch as unknown as typeof fetch
@@ -118,7 +121,7 @@ describe('OpenAiProviderBridge', () => {
     const first = createUpstream()
     const second = createUpstream()
     servers.push(first.server, second.server)
-    const targets: OpenAiProviderBridgeTarget[] = [
+    const targets: ProtocolForwardingBridgeTarget[] = [
       {
         id: 'provider-a/model-a',
         wire: 'chat-completions',
@@ -134,7 +137,7 @@ describe('OpenAiProviderBridge', () => {
         model: 'model-b'
       }
     ]
-    const bridge = new OpenAiProviderBridge(targets, targets[0].id)
+    const bridge = new ProtocolForwardingBridge(targets, targets[0].id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -171,14 +174,14 @@ describe('OpenAiProviderBridge', () => {
   it('forwards the Responses wire and fails closed for other paths and unknown targets', async () => {
     const upstream = createUpstream()
     servers.push(upstream.server)
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: `${await listen(upstream.server)}/v1/responses`,
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id)
+    const bridge = new ProtocolForwardingBridge([target], target.id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -223,14 +226,14 @@ describe('OpenAiProviderBridge', () => {
     'reports only definitive failure for upstream %s %j',
     async (status, body, category) => {
       const onProviderFailure = vi.fn()
-      const target: OpenAiProviderBridgeTarget = {
+      const target: ProtocolForwardingBridgeTarget = {
         id: 'provider/model-a',
         wire: 'responses',
         endpoint: 'https://provider.example.test/v1/responses',
         model: 'model-a',
         onProviderFailure
       }
-      const bridge = new OpenAiProviderBridge([target], target.id, async () =>
+      const bridge = new ProtocolForwardingBridge([target], target.id, async () =>
         Response.json(body, { status })
       )
       bridges.push(bridge)
@@ -264,14 +267,14 @@ describe('OpenAiProviderBridge', () => {
     const accepted = new Promise<void>((resolve) => {
       started = resolve
     })
-    const targets: OpenAiProviderBridgeTarget[] = ['first', 'next'].map((name, index) => ({
+    const targets: ProtocolForwardingBridgeTarget[] = ['first', 'next'].map((name, index) => ({
       id: name,
       wire: 'responses',
       endpoint: `https://${name}.example.test/v1/responses`,
       model: `${name}-model`,
       onProviderFailure: index ? nextObserver : firstObserver
     }))
-    const bridge = new OpenAiProviderBridge(targets, 'first', async () => {
+    const bridge = new ProtocolForwardingBridge(targets, 'first', async () => {
       started()
       return new Promise((resolve) => {
         finish = resolve
@@ -299,7 +302,7 @@ describe('OpenAiProviderBridge', () => {
   })
 
   it('preserves the original failure response if health persistence fails', async () => {
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
@@ -308,7 +311,7 @@ describe('OpenAiProviderBridge', () => {
         throw new Error('synthetic-secret-in-persistence-error')
       }
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, async () =>
+    const bridge = new ProtocolForwardingBridge([target], target.id, async () =>
       Response.json({ error: { type: 'authentication_error' } }, { status: 401 })
     )
     bridges.push(bridge)
@@ -330,14 +333,14 @@ describe('OpenAiProviderBridge', () => {
         headers: { 'content-type': 'application/json' }
       })
     }
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
 
@@ -369,7 +372,7 @@ describe('OpenAiProviderBridge', () => {
         { status: 401 }
       )
     )
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
@@ -377,7 +380,7 @@ describe('OpenAiProviderBridge', () => {
       onProviderFailure,
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (): Promise<Response> =>
@@ -421,14 +424,14 @@ describe('OpenAiProviderBridge', () => {
           }
         })
     )
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
       key: 'wrong-key',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (): Promise<Response> =>
@@ -458,14 +461,14 @@ describe('OpenAiProviderBridge', () => {
         ? Response.json({ error: { message: 'Invalid feature' } }, { status: 400 })
         : Response.json({ output: [], model: 'model-a' })
     })
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (feature?: string): Promise<Response> =>
@@ -488,14 +491,14 @@ describe('OpenAiProviderBridge', () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({ error: { message: 'Rate limited' } }, { status: 429 })
     )
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
     bridges.push(bridge)
     const connection = await bridge.start()
     const send = (): Promise<Response> =>
@@ -516,14 +519,14 @@ describe('OpenAiProviderBridge', () => {
   it('preserves the captured OpenCode MCP image fixture at the final Chat boundary', async () => {
     const upstream = createUpstream()
     servers.push(upstream.server)
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'provider/model-a',
       wire: 'chat-completions',
       endpoint: `${await listen(upstream.server)}/v1/chat/completions`,
       key: 'key-a',
       model: 'model-a'
     }
-    const bridge = new OpenAiProviderBridge([target], target.id)
+    const bridge = new ProtocolForwardingBridge([target], target.id)
     bridges.push(bridge)
     const connection = await bridge.start()
     await fetch(`${connection.baseUrl}/v1/chat/completions`, {
@@ -544,7 +547,7 @@ describe('OpenAiProviderBridge', () => {
   it('applies a target-scoped CodeBuddy request adapter before forwarding', async () => {
     const upstream = createUpstream()
     servers.push(upstream.server)
-    const target: OpenAiProviderBridgeTarget = {
+    const target: ProtocolForwardingBridgeTarget = {
       id: 'codebuddy/provider/model-a',
       wire: 'chat-completions',
       endpoint: `${await listen(upstream.server)}/v1/chat/completions`,
@@ -552,7 +555,7 @@ describe('OpenAiProviderBridge', () => {
       model: 'model-a',
       adaptRequest: adaptCodeBuddyChatCompletionsRequest
     }
-    const bridge = new OpenAiProviderBridge([target], target.id)
+    const bridge = new ProtocolForwardingBridge([target], target.id)
     bridges.push(bridge)
     const connection = await bridge.start()
     await fetch(`${connection.baseUrl}/v1/chat/completions`, {
@@ -595,7 +598,7 @@ describe('OpenAiProviderBridge', () => {
 
 it('refuses a persisted remote HTTP target before forwarding a prompt or credential', async () => {
   const upstream = vi.fn<typeof fetch>(async () => new Response('{}'))
-  const bridge = new OpenAiProviderBridge(
+  const bridge = new ProtocolForwardingBridge(
     [
       {
         id: 'legacy',

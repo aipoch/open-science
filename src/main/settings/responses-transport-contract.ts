@@ -5,10 +5,10 @@ import type {
 } from '@aipoch/providers'
 
 import type { ProviderFailureObserver } from './provider-failure-observation'
-import type { ResponsesBridgeNamespacedTool } from '@aipoch/providers/protocol'
+import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 
-export type ResponsesBridgeTarget = {
+export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
@@ -17,21 +17,21 @@ export type ResponsesBridgeTarget = {
   // Codex uses a catalog model for its local metadata; bridge providers may need a different
   // upstream model id (for example, DeepSeek's model name).
   model?: string
-  namespacedTools?: ResponsesBridgeNamespacedTool[]
+  namespacedTools?: ResponsesNamespacedTool[]
   // The active model's resolved API value. This explicitly overrides Codex's transport-model effort,
   // which may use a smaller vocabulary or emit its own default. Undefined strips the field.
   reasoningEffort?: ModelReasoningEffort
   reviewerScope?: {
-    namespacedTools: ResponsesBridgeNamespacedTool[]
+    namespacedTools: ResponsesNamespacedTool[]
   }
 }
 
-export type ResponsesBridgeModelTarget = Pick<
-  ResponsesBridgeTarget,
+export type ResponsesModelTarget = Pick<
+  ResponsesToChatCompletionsBridgeTarget,
   'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort' | 'onProviderFailure'
 >
 
-export type ResponsesBridgeConnection = {
+export type ResponsesConnection = {
   baseUrl: string
   token: string
   // Opaque, non-secret identity for this in-memory bridge instance. Session recovery compares it to
@@ -42,6 +42,6 @@ export type ResponsesBridgeConnection = {
   kind?: 'responses-compatibility'
 }
 
-export type ResponsesBridgeSkillCandidate = ChatSkillSelectorCandidate
+export type ResponsesSkillCandidate = ChatSkillSelectorCandidate
 
-export type ResponsesBridgeSkillInput = ChatSkillSelectorInput
+export type ResponsesSkillInput = ChatSkillSelectorInput

@@ -10,14 +10,14 @@ import {
   upstreamTextFromContent,
   ResponsesProtocolError
 } from './response'
-import type { ResponsesBridgeNamespacedTool } from './types'
+import type { ResponsesNamespacedTool } from './types'
 // Provider protocol objects are validated while each supported field is consumed.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JsonObject = Record<string, any>
 const log = createLogger('providers.responses')
 export function createResponseStreamState(
   model: string,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[]
+  namespacedTools: readonly ResponsesNamespacedTool[]
 ): {
   drain(): JsonObject[]
   consume(chunk: JsonObject): void

@@ -3,12 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AnthropicProviderBridge } from './anthropic-provider-bridge'
-import { ResponsesBridge } from './responses-bridge'
+import { MessagesBridge } from './messages-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { ChatProviderCompatibilityBridge } from './chat-provider-compatibility'
+import { ChatCompletionsCompatibilityBridge } from './chat-completions-compatibility'
 import { BackendRoutePlanner } from './backend-route-planner'
-import { OpenAiProviderBridge } from './openai-provider-bridge'
+import { ProtocolForwardingBridge } from './protocol-forwarding-bridge'
 import { ProviderTransportOwner } from './provider-transport-owner'
 import { SettingsRepository } from './repository'
 import { providerValidationFailed } from '../../shared/settings'
@@ -34,10 +34,10 @@ const original: StoredProvider = {
   name: 'Gateway',
   baseUrl: 'http://localhost:9999/v1',
   model: 'model-a',
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   configRevision: 1,
   lastValidatedAt: 1,
-  lastValidatedTarget: { model: 'model-a', endpoint: 'openai' }
+  lastValidatedTarget: { model: 'model-a', endpoint: 'chat-completions' }
 }
 const target = (
   provider = original
@@ -63,7 +63,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidationFailure).toMatchObject({ category: 'auth', status: 401 })
@@ -82,7 +82,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect(await repository.getSettings()).toEqual(before)
     expect(published).not.toHaveBeenCalled()
@@ -93,7 +93,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       original.id,
       () => true,
       { ok: true, category: 'ok' },
-      { model: 'model-a', endpoint: 'openai' }
+      { model: 'model-a', endpoint: 'chat-completions' }
     )
     const before = await repository.getSettings()
     await new ProviderRuntimeHealthOwner(repository).observe(oldTarget, {
@@ -101,7 +101,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect(await repository.getSettings()).toEqual(before)
   })
@@ -122,8 +122,8 @@ describe('ProviderRuntimeHealthOwner', () => {
       const health = new ProviderRuntimeHealthOwner(repository, published)
       const transports = new ProviderTransportOwner({
         onProviderFailure: (source, failure) => health.observe(source, failure),
-        createOpenAiProviderBridge: (targets, initial) =>
-          new OpenAiProviderBridge(targets, initial, async () =>
+        createProtocolForwardingBridge: (targets, initial) =>
+          new ProtocolForwardingBridge(targets, initial, async () =>
             Response.json({ error: { message: 'Invalid API key' } }, { status })
           )
       })
@@ -138,7 +138,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       })
       try {
         const resolved = generation.provider!
-        const response = await fetch(`${resolved.openaiBaseUrl}/chat/completions`, {
+        const response = await fetch(`${resolved.chatCompletionsBaseUrl}/chat/completions`, {
           method: 'POST',
           headers: { authorization: `Bearer ${resolved.key}`, 'content-type': 'application/json' },
           body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] })
@@ -164,7 +164,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect(await repository.getSettings()).toEqual(before)
   })
@@ -172,7 +172,7 @@ describe('ProviderRuntimeHealthOwner', () => {
   it.each([401, 403])(
     'retains provider identity through Claude route planning for upstream %s',
     async (status) => {
-      const provider: StoredProvider = { ...original, apiEndpoints: ['anthropic'] }
+      const provider: StoredProvider = { ...original, apiEndpoints: ['messages'] }
       await repository.upsertProvider(provider)
       const framework = getAgentFramework('claude-code')
       const active = projection.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
@@ -187,8 +187,8 @@ describe('ProviderRuntimeHealthOwner', () => {
       const health = new ProviderRuntimeHealthOwner(repository, published)
       const transports = new ProviderTransportOwner({
         onProviderFailure: (source, failure) => health.observe(source, failure),
-        createAnthropicProviderBridge: (targets, initial) =>
-          new AnthropicProviderBridge(targets, initial, async () =>
+        createMessagesBridge: (targets, initial) =>
+          new MessagesBridge(targets, initial, async () =>
             Response.json({ error: { message: 'invalid key' } }, { status })
           )
       })
@@ -214,18 +214,18 @@ describe('ProviderRuntimeHealthOwner', () => {
   )
 
   it.each([
-    ['codex', 'openai', 401],
-    ['codex', 'openai', 403],
+    ['codex', 'chat-completions', 401],
+    ['codex', 'chat-completions', 403],
     ['codex', 'responses', 401],
     ['codex', 'responses', 403],
-    ['codebuddy', 'openai', 401],
-    ['codebuddy', 'openai', 403],
+    ['codebuddy', 'chat-completions', 401],
+    ['codebuddy', 'chat-completions', 403],
     ['codebuddy', 'responses', 401],
     ['codebuddy', 'responses', 403],
-    ['codebuddy', 'anthropic', 401],
-    ['codebuddy', 'anthropic', 403],
-    ['opencode', 'anthropic', 401],
-    ['opencode', 'anthropic', 403]
+    ['codebuddy', 'messages', 401],
+    ['codebuddy', 'messages', 403],
+    ['opencode', 'messages', 401],
+    ['opencode', 'messages', 403]
   ] as const)(
     'publishes confirmed failures through %s / %s for upstream %s',
     async (frameworkId, endpoint, status) => {
@@ -246,25 +246,25 @@ describe('ProviderRuntimeHealthOwner', () => {
         Response.json({ error: { message: 'invalid key' } }, { status })
       const transports = new ProviderTransportOwner({
         onProviderFailure: (source, failure) => health.observe(source, failure),
-        createOpenAiProviderBridge: (targets, initial) =>
-          new OpenAiProviderBridge(targets, initial, upstream),
-        createAnthropicProviderBridge: (targets, initial) =>
-          new AnthropicProviderBridge(targets, initial, upstream),
-        createResponsesBridge: (source, options) => new ResponsesBridge(source, upstream, options),
+        createProtocolForwardingBridge: (targets, initial) =>
+          new ProtocolForwardingBridge(targets, initial, upstream),
+        createMessagesBridge: (targets, initial) => new MessagesBridge(targets, initial, upstream),
+        createResponsesToChatCompletionsBridge: (source, options) =>
+          new ResponsesToChatCompletionsBridge(source, upstream, options),
         createNativeResponsesProxy: (source) =>
           new NativeResponsesCompatibilityProxy(source, upstream),
-        createChatProviderCompatibilityBridge: (source) =>
-          new ChatProviderCompatibilityBridge(source, upstream)
+        createChatCompletionsCompatibilityBridge: (source) =>
+          new ChatCompletionsCompatibilityBridge(source, upstream)
       })
       const generation = await transports.acquire({ activeTarget: active, plan })
       try {
-        const bridge = generation.responsesBridge
+        const bridge = generation.responsesConnection
         const local = generation.provider
         const url = bridge
           ? `${bridge.baseUrl}/responses`
-          : endpoint === 'anthropic' && frameworkId === 'opencode'
+          : endpoint === 'messages' && frameworkId === 'opencode'
             ? `${local!.baseUrl}/v1/messages`
-            : `${local!.openaiBaseUrl}/chat/completions`
+            : `${local!.chatCompletionsBaseUrl}/chat/completions`
         const key = bridge?.token ?? local?.key
         const response = await fetch(url, {
           method: 'POST',
@@ -295,15 +295,17 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 404,
       startedAt: 2,
       model: 'background-mini',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     const stored = (await repository.getSettings()).providers[0]
-    expect(providerValidationFailed(stored, { model: 'background-mini', endpoint: 'openai' })).toBe(
-      true
-    )
-    expect(providerValidationFailed(stored, { model: 'model-a', endpoint: 'openai' })).toBe(false)
     expect(
-      providerValidationFailed(stored, { model: 'background-mini', endpoint: 'anthropic' })
+      providerValidationFailed(stored, { model: 'background-mini', endpoint: 'chat-completions' })
+    ).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-a', endpoint: 'chat-completions' })
+    ).toBe(false)
+    expect(
+      providerValidationFailed(stored, { model: 'background-mini', endpoint: 'messages' })
     ).toBe(false)
   })
 
@@ -315,7 +317,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect((await repository.getSettings()).providers).toHaveLength(0)
     expect(published).not.toHaveBeenCalled()
@@ -327,7 +329,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 401,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     const before = await repository.getSettings()
     await health.observe(target(), {
@@ -335,13 +337,13 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 404,
       startedAt: Date.now() + 1,
       model: 'other',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect(await repository.getSettings()).toEqual(before)
     expect(
       providerValidationFailed((await repository.getSettings()).providers[0], {
         model: 'model-a',
-        endpoint: 'openai'
+        endpoint: 'chat-completions'
       })
     ).toBe(true)
   })
@@ -351,27 +353,39 @@ describe('ProviderRuntimeHealthOwner', () => {
       category: 'model-not-found' as const,
       status: 404,
       startedAt: 2,
-      endpoint: 'openai' as const
+      endpoint: 'chat-completions' as const
     }
     await health.observe(target(), { ...failure, model: 'model-a' })
     await health.observe(target(), { ...failure, model: 'model-b' })
     let stored = (await repository.getSettings()).providers[0]
-    expect(providerValidationFailed(stored, { model: 'model-a', endpoint: 'openai' })).toBe(true)
-    expect(providerValidationFailed(stored, { model: 'model-b', endpoint: 'openai' })).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-a', endpoint: 'chat-completions' })
+    ).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-b', endpoint: 'chat-completions' })
+    ).toBe(true)
     await repository.updateProviderValidationIfTargetMatches(
       original.id,
       () => true,
       { ok: true, category: 'ok' },
-      { model: 'model-a', endpoint: 'openai' }
+      { model: 'model-a', endpoint: 'chat-completions' }
     )
     await health.observe(target(), { ...failure, model: 'model-c' })
     stored = (await repository.getSettings()).providers[0]
-    expect(providerValidationFailed(stored, { model: 'model-a', endpoint: 'openai' })).toBe(false)
-    expect(providerValidationFailed(stored, { model: 'model-b', endpoint: 'openai' })).toBe(true)
-    expect(providerValidationFailed(stored, { model: 'model-c', endpoint: 'openai' })).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-a', endpoint: 'chat-completions' })
+    ).toBe(false)
+    expect(
+      providerValidationFailed(stored, { model: 'model-b', endpoint: 'chat-completions' })
+    ).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-c', endpoint: 'chat-completions' })
+    ).toBe(true)
     await health.observe(target(), { ...failure, model: 'model-c', startedAt: Date.now() + 1 })
     stored = (await repository.getSettings()).providers[0]
-    expect(providerValidationFailed(stored, { model: 'model-c', endpoint: 'openai' })).toBe(true)
+    expect(
+      providerValidationFailed(stored, { model: 'model-c', endpoint: 'chat-completions' })
+    ).toBe(true)
   })
   it('does not undo an earlier model recovery after a different model was also validated', async () => {
     const health = new ProviderRuntimeHealthOwner(repository)
@@ -380,7 +394,7 @@ describe('ProviderRuntimeHealthOwner', () => {
         original.id,
         () => true,
         { ok: true, category: 'ok' },
-        { model, endpoint: 'openai' }
+        { model, endpoint: 'chat-completions' }
       )
     }
     const before = await repository.getSettings()
@@ -389,7 +403,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       status: 404,
       startedAt: 2,
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
     expect(await repository.getSettings()).toEqual(before)
   })

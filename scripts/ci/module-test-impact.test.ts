@@ -570,7 +570,7 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'src/main/settings/responses-bridge.ts',
+      'src/main/settings/responses-to-chat-completions-bridge.ts',
       [
         'artifact_provenance',
         'project_lifecycle',
@@ -734,7 +734,7 @@ describe('module test impact commands', () => {
         ? 'settings_repository'
         : path === 'src/main/settings/provider-accounts.ts'
           ? 'settings_provider_accounts'
-          : path === 'src/main/settings/responses-bridge.ts'
+          : path === 'src/main/settings/responses-to-chat-completions-bridge.ts'
             ? 'settings_backend_resolution'
             : 'settings_service_facade'
     expect(plan.reasonChains).toEqual(

@@ -1,12 +1,12 @@
 import { readSseRecords } from '../transport/sse'
 import { createResponseStreamState } from './stream-state'
-import type { ResponsesBridgeNamespacedTool } from './types'
+import type { ResponsesNamespacedTool } from './types'
 export type ReplayReply = { reasoning: string; callIds: string[]; messageId?: string }
 
 export async function* convertChatStream(
   upstream: Response,
   model: string,
-  tools: readonly ResponsesBridgeNamespacedTool[],
+  tools: readonly ResponsesNamespacedTool[],
   maxBytes: number,
   onCompleted: (reply: ReplayReply) => void,
   signal?: AbortSignal

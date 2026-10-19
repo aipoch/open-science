@@ -7,7 +7,7 @@ const target = {
     type: 'custom' as const,
     baseUrl: 'https://provider.example',
     model: 'science-model',
-    apiEndpoints: ['openai' as const],
+    apiEndpoints: ['chat-completions' as const],
     key: 'private-key'
   }
 }
@@ -81,7 +81,7 @@ it('uses the OpenAI completion limit, respects model caps and preserves existing
       provider: {
         ...target.provider,
         vendorId: 'openai',
-        apiEndpoints: ['responses', 'anthropic', 'openai'],
+        apiEndpoints: ['responses', 'messages', 'chat-completions'],
         maxOutputTokens: 4000
       }
     }

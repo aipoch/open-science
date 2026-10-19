@@ -7,13 +7,13 @@
 // Matches a trailing `/v1` or `/v1/messages` segment (case-insensitive), with optional trailing slash.
 const REDUNDANT_SUFFIX = /\/v1(\/messages)?\/*$/i
 
-const normalizeAnthropicBaseUrl = (baseUrl: string): string => {
+const normalizeMessagesRootUrl = (baseUrl: string): string => {
   const trimmed = baseUrl.trim().replace(/\/+$/, '')
 
   return trimmed.replace(REDUNDANT_SUFFIX, '')
 }
 
-type OpenAiProviderBase = { openaiBaseUrl?: string; baseUrl?: string }
+type ChatCompletionsEndpointOptions = { chatCompletionsBaseUrl?: string; baseUrl?: string }
 
 const trimTrailingSlash = (value: string): string => value.trim().replace(/\/+$/, '')
 
@@ -33,15 +33,15 @@ const appendPath = (base: string, suffix: string): string => {
 // The Anthropic AI SDK base used by OpenCode. Unlike Claude Code, which appends `/v1/messages`,
 // the SDK appends only `/messages`; give it a base ending in exactly one `/v1` so both runtimes hit
 // the same endpoint as the provider validator.
-const anthropicMessagesBase = (baseUrl: string): string =>
-  appendPath(normalizeAnthropicBaseUrl(baseUrl), '/v1')
+const resolveMessagesBaseUrl = (baseUrl: string): string =>
+  appendPath(normalizeMessagesRootUrl(baseUrl), '/v1')
 
-// Appends `/chat/completions` to an already-resolved OpenAI base (see openAiCompletionsBase).
-const appendChatCompletions = (base: string): string => appendPath(base, '/chat/completions')
+// Appends `/chat/completions` to an already-resolved Chat Completions base (see resolveChatCompletionsBaseUrl).
+const appendChatCompletionsPath = (base: string): string => appendPath(base, '/chat/completions')
 
 // Strips a redundant trailing `/v1` or `/v1/chat/completions` a user may have pasted into a custom
 // gateway root, editing the path so any query/hash survive.
-const stripRedundantOpenAiSuffix = (base: string): string => {
+const stripRedundantChatCompletionsSuffix = (base: string): string => {
   const trimmed = base.trim()
   try {
     const url = new URL(trimmed)
@@ -52,41 +52,46 @@ const stripRedundantOpenAiSuffix = (base: string): string => {
   }
 }
 
-// The OpenAI base a client appends `/chat/completions` to. Two shapes, distinguished by the provider,
+// The Chat Completions base a client appends `/chat/completions` to. Two shapes, distinguished by the provider,
 // NOT by guessing from the path (a custom `/proxy` prefix is indistinguishable from GLM's `/api/paas/v4`
 // as a string):
-//  - Official vendors publish an exact, version-carrying base (openaiBaseUrl): GLM `/api/paas/v4`,
+//  - Official vendors publish an exact, version-carrying base (chatCompletionsBaseUrl): GLM `/api/paas/v4`,
 //    DeepSeek/Kimi/Xiaomi `/v1`, OpenRouter `/api/v1`. Used verbatim.
 //  - A custom gateway's baseUrl is a user-entered ROOT (the form promises "trailing /v1 is added
 //    automatically"), so its endpoint is `<root>/v1/chat/completions`; a redundant pasted /v1 is
 //    collapsed first.
 // Returns undefined when neither base is set.
-const openAiCompletionsBase = (provider: OpenAiProviderBase): string | undefined => {
-  if (provider.openaiBaseUrl?.trim()) return trimTrailingSlash(provider.openaiBaseUrl)
+const resolveChatCompletionsBaseUrl = (
+  provider: ChatCompletionsEndpointOptions
+): string | undefined => {
+  if (provider.chatCompletionsBaseUrl?.trim())
+    return trimTrailingSlash(provider.chatCompletionsBaseUrl)
   if (!provider.baseUrl?.trim()) return undefined
-  return appendPath(stripRedundantOpenAiSuffix(provider.baseUrl), '/v1')
+  return appendPath(stripRedundantChatCompletionsSuffix(provider.baseUrl), '/v1')
 }
 
 // Complete URLs preserve gateway query parameters while appending to the pathname.
-const anthropicMessagesUrl = (baseUrl: string): string => {
+const resolveMessagesUrl = (baseUrl: string): string => {
   try {
     const url = new URL(baseUrl.trim())
-    url.pathname = `${normalizeAnthropicBaseUrl(url.pathname)}/v1/messages`
+    url.pathname = `${normalizeMessagesRootUrl(url.pathname)}/v1/messages`
     return url.toString()
   } catch {
-    return appendPath(anthropicMessagesBase(baseUrl), '/messages')
+    return appendPath(resolveMessagesBaseUrl(baseUrl), '/messages')
   }
 }
 
-const openAiResponsesUrl = (provider: OpenAiProviderBase): string | undefined => {
-  const raw = provider.openaiBaseUrl || provider.baseUrl
+const resolveResponsesUrl = (provider: ChatCompletionsEndpointOptions): string | undefined => {
+  const raw = provider.chatCompletionsBaseUrl || provider.baseUrl
   if (!raw?.trim()) return undefined
   try {
     const url = new URL(raw.trim())
     url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/responses$/i, '')
     // Official bases carry their exact version; custom roots follow the same /v1 contract as Chat.
-    const base = openAiCompletionsBase(
-      provider.openaiBaseUrl ? { openaiBaseUrl: url.toString() } : { baseUrl: url.toString() }
+    const base = resolveChatCompletionsBaseUrl(
+      provider.chatCompletionsBaseUrl
+        ? { chatCompletionsBaseUrl: url.toString() }
+        : { baseUrl: url.toString() }
     )!
     return appendPath(base, '/responses')
   } catch {
@@ -94,18 +99,20 @@ const openAiResponsesUrl = (provider: OpenAiProviderBase): string | undefined =>
   }
 }
 
-// The full OpenAI `/chat/completions` endpoint URL for an OpenAI-compatible provider.
-const openAiChatCompletionsUrl = (provider: OpenAiProviderBase): string | undefined => {
-  const base = openAiCompletionsBase(provider)
-  return base === undefined ? undefined : appendChatCompletions(base)
+// The complete Chat Completions endpoint URL.
+const resolveChatCompletionsUrl = (
+  provider: ChatCompletionsEndpointOptions
+): string | undefined => {
+  const base = resolveChatCompletionsBaseUrl(provider)
+  return base === undefined ? undefined : appendChatCompletionsPath(base)
 }
 
 export {
-  anthropicMessagesBase,
-  anthropicMessagesUrl,
-  openAiResponsesUrl,
-  normalizeAnthropicBaseUrl,
-  appendChatCompletions,
-  openAiCompletionsBase,
-  openAiChatCompletionsUrl
+  resolveMessagesBaseUrl,
+  resolveMessagesUrl,
+  resolveResponsesUrl,
+  normalizeMessagesRootUrl,
+  appendChatCompletionsPath,
+  resolveChatCompletionsBaseUrl,
+  resolveChatCompletionsUrl
 }

@@ -16,15 +16,15 @@ const textRunner = (
 })
 
 const protocolUrls = {
-  openai: 'https://provider.example/v1/chat/completions',
-  anthropic: 'https://provider.example/v1/messages',
+  'chat-completions': 'https://provider.example/v1/chat/completions',
+  messages: 'https://provider.example/v1/messages',
   responses: 'https://provider.example/v1/responses'
 }
 const target = {
   model: 'science-model',
   key: 'private-key',
-  protocol: 'openai' as const,
-  url: protocolUrls['openai' as const]
+  protocol: 'chat-completions' as const,
+  url: protocolUrls['chat-completions' as const]
 }
 const request = {
   target,
@@ -37,12 +37,12 @@ const request = {
 const completion = { choices: [{ finish_reason: 'stop', message: { content: '细胞' } }] }
 
 describe('provider text generation service', () => {
-  it.each(['openai', 'anthropic'] as const)(
+  it.each(['chat-completions', 'messages'] as const)(
     'makes one bounded, tool-less %s request',
     async (apiType) => {
       const fetchImpl = vi.fn(async () =>
         Response.json(
-          apiType === 'openai'
+          apiType === 'chat-completions'
             ? completion
             : {
                 stop_reason: 'end_turn',
@@ -61,7 +61,7 @@ describe('provider text generation service', () => {
       expect(result).toEqual({ text: '细胞', stopReason: 'end_turn' })
       const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
       expect(url).toBe(
-        `https://provider.example/v1/${apiType === 'openai' ? 'chat/completions' : 'messages'}`
+        `https://provider.example/v1/${apiType === 'chat-completions' ? 'chat/completions' : 'messages'}`
       )
       expect(init.redirect).toBe('manual')
       expect(init.signal).toBe(request.signal)
@@ -107,13 +107,13 @@ describe('provider text generation service', () => {
     await expect(runner.run(request)).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
   })
 
-  it.each(['openai', 'anthropic'] as const)(
+  it.each(['chat-completions', 'messages'] as const)(
     'rejects reasoning-only %s responses',
     async (apiType) => {
       const runner = textRunner(
         vi.fn(async () =>
           Response.json(
-            apiType === 'openai'
+            apiType === 'chat-completions'
               ? {
                   choices: [
                     {
@@ -165,12 +165,12 @@ describe('provider text generation service', () => {
   })
 })
 
-it.each(['openai', 'anthropic'] as const)(
+it.each(['chat-completions', 'messages'] as const)(
   'reports %s billed usage even when the answer is rejected',
   async (apiType) => {
     const onUsage = vi.fn()
     const usage =
-      apiType === 'openai'
+      apiType === 'chat-completions'
         ? {
             prompt_tokens: 100,
             completion_tokens: 12,
@@ -358,7 +358,7 @@ it.each([
   }
 )
 
-it.each(['openai', 'anthropic', 'responses'] as const)(
+it.each(['chat-completions', 'messages', 'responses'] as const)(
   'omits unknown thinking controls for %s and never falls back after errors',
   async (protocol) => {
     const onUsage = vi.fn()
@@ -491,8 +491,8 @@ it.each([
         model,
         reasoningEffort: effort,
         vendorId,
-        protocol: 'anthropic',
-        url: protocolUrls['anthropic']
+        protocol: 'messages',
+        url: protocolUrls['messages']
       }
     })
   ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
@@ -521,7 +521,7 @@ it('uses a custom gateway’s explicitly configured thinking transport without g
   }
 })
 
-it.each(['openai', 'anthropic', 'responses'] as const)(
+it.each(['chat-completions', 'messages', 'responses'] as const)(
   'round-trips %s through a real local HTTP endpoint without a framework',
   async (protocol) => {
     const received: Array<{ url?: string; body: Record<string, unknown> }> = []
@@ -532,7 +532,7 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
         JSON.stringify(
-          protocol === 'openai'
+          protocol === 'chat-completions'
             ? completion
             : protocol === 'responses'
               ? responsesCompletion
@@ -560,13 +560,13 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
             ...target,
             key: undefined,
             protocol: protocol,
-            url: `http://127.0.0.1:${port}/gateway/v1/${protocol === 'openai' ? 'chat/completions' : protocol === 'anthropic' ? 'messages' : 'responses'}`
+            url: `http://127.0.0.1:${port}/gateway/v1/${protocol === 'chat-completions' ? 'chat/completions' : protocol === 'messages' ? 'messages' : 'responses'}`
           }
         })
       ).resolves.toEqual({ text: '细胞', stopReason: 'end_turn' })
       expect(received).toHaveLength(1)
       expect(received[0].url).toBe(
-        `/gateway/v1/${protocol === 'openai' ? 'chat/completions' : protocol === 'anthropic' ? 'messages' : 'responses'}`
+        `/gateway/v1/${protocol === 'chat-completions' ? 'chat/completions' : protocol === 'messages' ? 'messages' : 'responses'}`
       )
       expect(received[0].body).not.toHaveProperty('tools')
       expect(received[0].body).not.toHaveProperty('previous_response_id')
@@ -579,14 +579,14 @@ it.each(['openai', 'anthropic', 'responses'] as const)(
   }
 )
 
-it.each(['openai', 'anthropic', 'responses'] as const)(
+it.each(['chat-completions', 'messages', 'responses'] as const)(
   'bounds %s responses and retains complete billing when cancelled after receipt',
   async (protocol) => {
     const apiTarget = { ...target, protocol: protocol, url: protocolUrls[protocol] }
     const controller = new AbortController()
     const onUsage = vi.fn()
     const payload =
-      protocol === 'openai'
+      protocol === 'chat-completions'
         ? { ...completion, usage: { prompt_tokens: 100, completion_tokens: 12 } }
         : protocol === 'responses'
           ? responsesCompletion
@@ -683,7 +683,7 @@ it.each([
     await expect(
       service.run({
         ...request,
-        target: { ...target, protocol: 'anthropic', url: protocolUrls['anthropic'] },
+        target: { ...target, protocol: 'messages', url: protocolUrls['messages'] },
         onUsage
       })
     ).resolves.toEqual({ text: 'answer', stopReason: 'end_turn' })

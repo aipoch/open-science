@@ -13,8 +13,8 @@ import {
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 import {
-  normalizeOpenAiChatModelStepUsage,
-  type ResponsesBridgeNamespacedTool
+  normalizeChatCompletionsUsage,
+  type ResponsesNamespacedTool
 } from '@aipoch/providers/protocol'
 import {
   consumeBoundedResponseBody,
@@ -44,11 +44,11 @@ import {
 } from './provider-loopback-http-host'
 
 import type {
-  ResponsesBridgeConnection,
-  ResponsesBridgeModelTarget,
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput
-} from './responses-bridge-contract'
+  ResponsesConnection,
+  ResponsesModelTarget,
+  ResponsesSkillCandidate,
+  ResponsesSkillInput
+} from './responses-transport-contract'
 import {
   boundedSkillSelectorCatalog,
   renderSkillSelectorCatalog,
@@ -69,7 +69,7 @@ type NativeResponsesCompatibilityTarget = {
   sanitizeRequest?: (body: JsonObject) => JsonObject
   model?: string
   reviewerScope?: {
-    namespacedTools: ResponsesBridgeNamespacedTool[]
+    namespacedTools: ResponsesNamespacedTool[]
   }
 }
 
@@ -641,7 +641,7 @@ const streamResponse = async (
   return observer.summary()
 }
 
-const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
+const namespaceToolDeclarations = (tools: ResponsesNamespacedTool[]): JsonObject[] => {
   const byNamespace = new Map<string, JsonObject[]>()
   for (const tool of tools) {
     const children = byNamespace.get(tool.namespace) ?? []
@@ -662,12 +662,12 @@ const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): Json
 }
 
 export class NativeResponsesCompatibilityProxy {
-  private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
+  private readonly host: ProviderLoopbackHttpHost<ResponsesConnection>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
   private readonly scopedToolLessSessionKeys = new Set<string>()
-  private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly hostMessageSessionScopes = new Map<string, ResponsesNamespacedTool[]>()
   private readonly scopedHostMessageSessionKeys = new Set<string>()
   private readonly strictHostMessageSessionKeys = new Set<string>()
   private readonly deterministicErrors =
@@ -718,16 +718,16 @@ export class NativeResponsesCompatibilityProxy {
     if (changed) this.deterministicErrors.clear()
   }
 
-  setModelTarget(target: ResponsesBridgeModelTarget): void {
+  setModelTarget(target: ResponsesModelTarget): void {
     this.setTarget({ ...this.target, model: target.model })
   }
 
   async selectSkills(
     text: string,
-    catalog: ResponsesBridgeSkillCandidate[],
+    catalog: ResponsesSkillCandidate[],
     signal?: AbortSignal,
     observeUsage?: (observation: SkillSelectorUsageObservation) => void
-  ): Promise<ResponsesBridgeSkillInput[]> {
+  ): Promise<ResponsesSkillInput[]> {
     if (!text.trim() || catalog.length === 0 || signal?.aborted) return []
     const explicit = selectExplicitConnectorSkills(text, catalog)
     if (explicit.length > 0) return explicit
@@ -799,7 +799,7 @@ export class NativeResponsesCompatibilityProxy {
           'Native Responses Skill selection response'
         )
       ) as JsonObject
-      const usage = normalizeOpenAiChatModelStepUsage(payload.usage)
+      const usage = normalizeChatCompletionsUsage(payload.usage)
       if (usage) {
         observeUsage?.({
           usage,
@@ -834,7 +834,7 @@ export class NativeResponsesCompatibilityProxy {
     }
   }
 
-  async start(): Promise<ResponsesBridgeConnection> {
+  async start(): Promise<ResponsesConnection> {
     return this.host.start()
   }
 
@@ -860,7 +860,7 @@ export class NativeResponsesCompatibilityProxy {
 
   registerHostMessageSession(
     promptCacheKey: string,
-    namespacedTools: ResponsesBridgeNamespacedTool[],
+    namespacedTools: ResponsesNamespacedTool[],
     options?: Readonly<{ failClosedUnknownKeys?: boolean }>
   ): void {
     this.hostMessageSessionScopes.set(promptCacheKey, namespacedTools)

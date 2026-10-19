@@ -151,27 +151,33 @@ discovery/   bounded live model-list requests
 errors.ts    browser-safe diagnostics
 ```
 
-Protocol files use protocol-family directories and responsibility names, following the namespace pattern in
-[LangChain Anthropic](https://github.com/langchain-ai/langchainjs/tree/main/libs/providers/langchain-anthropic/src).
-These directories describe compatible wire formats, not the account vendor: multiple providers can use them.
+Protocol directories describe wire formats shared by multiple providers. Vendor-specific connection
+metadata stays under `providers/`; protocol exports and the `ModelProtocol` type use capability names.
 
 ```text
 protocols/
-  anthropic/
+  messages/
     text.ts                 bounded text request/response codec
-    chat.ts                 Chat Completions ↔ Messages conversion
+    conversion.ts           Chat Completions ↔ Messages conversion
     tokens.ts               Messages input token estimation
-  openai/
-    chat/text.ts            Chat Completions text codec
-    chat/stream.ts          completed chat response → SSE frames
-    responses/text.ts       Responses text codec
-    responses/conversion.ts Messages/Chat ↔ Responses conversion
-  xai/responses.ts          xAI Responses request restrictions
+  chat-completions/
+    text.ts                 Chat Completions text codec
+    stream.ts               completed chat response → SSE frames
+  responses/
+    text.ts                 Responses text codec
+    conversion.ts           Messages/Chat Completions ↔ Responses conversion
+  xai/responses.ts          xAI-specific Responses request restrictions
 ```
 
 Shared endpoint, reasoning, usage and wire types remain directly under `protocols/`.
 `responses/` owns the stateful adapter; it is distinct from the pure codecs under `protocols/`.
-No internal directory is a public import path; `/protocol` keeps its existing exports.
+No internal directory is a public import path; consumers use the explicit `/protocol` exports.
+
+`ModelProtocol` is `'chat-completions' | 'messages' | 'responses'` across package and host logic.
+Provider IDs still identify actual vendors. The package does not read application settings or interpret
+legacy protocol values. The host translates historical `openai`/`anthropic` settings at its storage
+boundary and continues writing the established format, preserving compatibility without package aliases.
+Persisted execution-route identities and external SDK driver IDs remain stable and are not protocol enums.
 
 ```mermaid
 flowchart TB
@@ -233,7 +239,7 @@ Upstream builds do not rerun upstream tests. See [test ownership](test-ownership
 
 ## Concrete wire compatibility
 
-`/protocol` includes xAI request sanitization, Anthropic/Chat-to-Responses projections and reverse
+`/protocol` includes xAI request sanitization, Messages/Chat Completions-to-Responses projections and reverse
 completed-response projections. The cached JS token estimator owns one read-only vocabulary; it has no
 native handle or mutable account state. `prepareNativeResponsesRequest(body)` returns the flattened
 request, `resolveTool(name)`, `toolCount` and a bound `restore(payload)` decoder. The alias map is private
@@ -244,7 +250,7 @@ to that request. Callers authorize tools before conversion and retain applicatio
 The package build embeds the tokenizer implementation and its `o200k_base` vocabulary in the
 private protocol implementation. `js-tiktoken` remains a declared direct source dependency; esbuild is a development dependency.
 The emitted token-count module does not load a separate tokenizer at runtime. Consumers install the tarball and its declared runtime dependencies;
-no manual tokenizer installation, resource path, download or host bundler exception is required. Third-party
+no manual tokenizer installation, resource path, download or host bundler exception is required.
 Repository builds invoke the package-owned `build:assets` step after TypeScript compilation;
 standalone `npm run build` performs both steps. MIT notices are shipped in `dist/tokenizer-LICENSE.txt`. Public exports and token-count behavior are
 unchanged. The clean tarball check executes token counting after removing build sources and development

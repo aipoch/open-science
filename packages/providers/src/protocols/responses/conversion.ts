@@ -1,4 +1,4 @@
-import { sanitizeXaiResponsesRequest } from '../../xai/responses'
+import { sanitizeXaiResponsesRequest } from '../xai/responses'
 type Json = Record<string, unknown>
 
 const object = (value: unknown): value is Json =>
@@ -40,7 +40,7 @@ const contentParts = (content: unknown): unknown => {
   })
 }
 
-export const anthropicToResponses = (body: Json, model: string): Json => {
+export const messagesToResponses = (body: Json, model: string): Json => {
   const instructions = textOf(body.system)
   const input: unknown[] = []
   for (const message of Array.isArray(body.messages) ? body.messages : []) {
@@ -128,7 +128,7 @@ export const anthropicToResponses = (body: Json, model: string): Json => {
   })
 }
 
-export const chatToResponses = (body: Json, model: string): Json => {
+export const chatCompletionsToResponses = (body: Json, model: string): Json => {
   const input: unknown[] = []
   const instructions: string[] = []
   for (const message of Array.isArray(body.messages) ? body.messages : []) {
@@ -233,7 +233,7 @@ const responseFinishReason = (response: Json): 'length' | 'content_filter' | und
   return undefined
 }
 
-export const responsesToAnthropic = (response: Json, model: string): Json => {
+export const responsesToMessages = (response: Json, model: string): Json => {
   const finishReason = responseFinishReason(response)
   const content: Json[] = []
   const text = responseText(response)
@@ -271,7 +271,7 @@ export const responsesToAnthropic = (response: Json, model: string): Json => {
   }
 }
 
-export const responsesToChat = (response: Json, model: string): Json => {
+export const responsesToChatCompletions = (response: Json, model: string): Json => {
   const finishReason = responseFinishReason(response)
   const calls = responseCalls(response)
   const counts = usage(response)

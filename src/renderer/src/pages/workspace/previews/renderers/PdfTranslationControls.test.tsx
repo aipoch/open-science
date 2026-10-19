@@ -25,7 +25,7 @@ const apiProvider: ProviderView = {
   name: 'API provider',
   type: 'custom',
   baseUrl: 'https://example.test',
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   models: ['first-model', 'second-model'],
   hasKey: true,
   needsKey: false,
@@ -49,7 +49,7 @@ it('selects an Agent model for this translation without changing global settings
       {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['openai'],
+        supportedApiTypes: ['chat-completions'],
         supportsSkills: true
       }
     ]
@@ -102,7 +102,7 @@ it('allows an Agent translation to return to the main model without retaining a 
       {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['openai'],
+        supportedApiTypes: ['chat-completions'],
         supportsSkills: true
       }
     ]

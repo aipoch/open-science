@@ -24,11 +24,11 @@ type AcpModelChangeWorkflowOptions = Readonly<{
     | 'epoch'
     | 'connection'
     | 'isShuttingDown'
-    | 'anthropicBridgeAvailable'
+    | 'messagesBridgeAvailable'
     | 'providerTransportAvailable'
     | 'assertCurrentConnection'
     | 'setProviderTransportTarget'
-    | 'setAnthropicBridgeTarget'
+    | 'setMessagesBridgeTarget'
     | 'setBridgeModelTarget'
     | 'setBridgeReasoningEffort'
   >
@@ -186,8 +186,8 @@ class AcpModelChangeWorkflow {
       backend.backendId === target.backendId ||
       (backend.framework.id === 'claude-code' &&
         target.route === 'claude-anthropic' &&
-        target.anthropicBridgeTargetId !== undefined &&
-        resources.anthropicBridgeAvailable) ||
+        target.messagesBridgeTargetId !== undefined &&
+        resources.messagesBridgeAvailable) ||
       (target.providerTransportTargetId !== undefined && resources.providerTransportAvailable)
     return (
       !resources.isShuttingDown &&
@@ -247,8 +247,8 @@ class AcpModelChangeWorkflow {
         return false
       }
       if (
-        target.anthropicBridgeTargetId &&
-        !this.options.connectionResources.setAnthropicBridgeTarget(target.anthropicBridgeTargetId)
+        target.messagesBridgeTargetId &&
+        !this.options.connectionResources.setMessagesBridgeTarget(target.messagesBridgeTargetId)
       ) {
         return false
       }

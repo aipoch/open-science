@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import type { ResponsesBridgeNamespacedTool } from './types'
+import type { ResponsesNamespacedTool } from './types'
 
 // Upstream protocol payloads are open-ended and validated at this response seam.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +99,7 @@ export const hasUpstreamImageField = (value: JsonObject): boolean =>
 
 export const responseFunctionIdentity = (
   chatName: unknown,
-  tools: readonly ResponsesBridgeNamespacedTool[]
+  tools: readonly ResponsesNamespacedTool[]
 ): { name: string; namespace?: string } => {
   const name = String(chatName ?? '')
   const namespaced = tools.find((tool) => `${tool.namespace}__${tool.name}` === name)
@@ -185,7 +185,7 @@ export const chatTerminalDetails = (
 
 export const completionToResponse = (
   completion: JsonObject,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesNamespacedTool[] = []
 ): JsonObject => {
   const message = completion.choices?.[0]?.message ?? {}
   const terminal = chatTerminalDetails(completion.choices?.[0]?.finish_reason)

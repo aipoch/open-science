@@ -2,9 +2,9 @@ import type { ModelIdentity } from './types'
 import { fetchProviderRequest } from '../transport/request'
 import { readBoundedResponseText, ResponseBodyLimitError } from '../transport/body'
 import { ProviderTextGenerationError, providerErrorDetails, providerHttpFailure } from '../errors'
-import { openaiTextCodec } from '../protocols/openai/chat/text'
-import { responsesTextCodec } from '../protocols/openai/responses/text'
-import { anthropicTextCodec } from '../protocols/anthropic/text'
+import { chatCompletionsTextCodec } from '../protocols/chat-completions/text'
+import { responsesTextCodec } from '../protocols/responses/text'
+import { messagesTextCodec } from '../protocols/messages/text'
 import type {
   ProviderTextGenerationRequest,
   ProviderTextGenerationTarget,
@@ -12,9 +12,9 @@ import type {
 } from '../protocols/text-types'
 
 const codecs = {
-  openai: openaiTextCodec,
+  'chat-completions': chatCompletionsTextCodec,
   responses: responsesTextCodec,
-  anthropic: anthropicTextCodec
+  messages: messagesTextCodec
 } satisfies Record<string, TextCodec>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -64,11 +64,11 @@ export function createTextGenerationModel(
         throw new ProviderTextGenerationError('invalid-request', 'Invalid text generation limits.')
       const headers: Record<string, string> = {
         'content-type': 'application/json',
-        ...(target.protocol === 'anthropic'
+        ...(target.protocol === 'messages'
           ? {
               'anthropic-version': '2023-06-01',
               ...(target.key
-                ? target.anthropicApiKeyHeader === false
+                ? target.messagesApiKeyHeader === false
                   ? { authorization: 'Bearer ' + target.key }
                   : { 'x-api-key': target.key }
                 : {})

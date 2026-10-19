@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 
 type Json = Record<string, unknown>
 
 // Drive the real loopback HTTP boundary; only the external provider is controlled.
 const createReplayHarness = async (
   replies: Array<{ id?: string; message: Json }>,
-  options: ConstructorParameters<typeof ResponsesBridge>[2] = {}
+  options: ConstructorParameters<typeof ResponsesToChatCompletionsBridge>[2] = {}
 ): Promise<{
-  bridge: ResponsesBridge
+  bridge: ResponsesToChatCompletionsBridge
   requests: Array<{ messages: Json[] }>
   post: (input: unknown, scope?: string | null) => Promise<Json[]>
 }> => {
   const requests: Array<{ messages: Json[] }> = []
-  const bridge = new ResponsesBridge(
+  const bridge = new ResponsesToChatCompletionsBridge(
     { baseUrl: 'https://provider.example/v1', model: 'deepseek-flash' },
     async (_url, init) => {
       requests.push(JSON.parse(String(init?.body)))
@@ -71,7 +71,7 @@ describe('thinking-mode history through the Responses bridge', () => {
         function: { name: 'list_notebook_runtimes', arguments: '{}' }
       }
       const requests: Array<{ messages: Array<Record<string, unknown>> }> = []
-      const bridge = new ResponsesBridge(
+      const bridge = new ResponsesToChatCompletionsBridge(
         { baseUrl: 'https://provider.example/v1', model: 'deepseek-flash' },
         async (_url, init) => {
           const request = JSON.parse(String(init?.body))

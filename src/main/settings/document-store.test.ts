@@ -82,6 +82,66 @@ afterEach(async () => {
 })
 
 describe('settings document store', () => {
+  it('uses neutral runtime protocols while preserving historical settings and validation encodings', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'protocol-settings-store-'))
+    const path = join(storageRoot, 'settings.json')
+    const storedProvider = {
+      id: 'p',
+      type: 'custom',
+      name: 'Gateway',
+      vendorId: 'anthropic',
+      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      lastValidatedAt: 1,
+      lastValidatedTarget: { model: 'm', endpoint: 'anthropic' },
+      lastValidationFailure: {
+        at: 2,
+        category: 'model-not-found',
+        target: { model: 'm', endpoint: 'openai' },
+        targets: [
+          { model: 'm', endpoint: 'openai' },
+          { model: 'm', endpoint: 'responses' }
+        ]
+      }
+    }
+    await writeFile(path, JSON.stringify({ version: 2, providers: [storedProvider] }))
+    const store = new SettingsDocumentStore(storageRoot)
+    const decoded = await store.read()
+    expect(decoded.providers[0]).toMatchObject({
+      vendorId: 'anthropic',
+      apiEndpoints: ['messages', 'chat-completions', 'responses'],
+      lastValidatedTarget: { endpoint: 'messages' },
+      lastValidationFailure: {
+        target: { endpoint: 'chat-completions' },
+        targets: [
+          { model: 'm', endpoint: 'chat-completions' },
+          { model: 'm', endpoint: 'responses' }
+        ]
+      }
+    })
+    const updated = await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
+    expect(updated.providers).toEqual(decoded.providers)
+    expect(JSON.parse(await readFile(path, 'utf8')).providers).toEqual([storedProvider])
+    expect((await store.read()).providers).toEqual(decoded.providers)
+  })
+
+  it.each([{}, { providers: [{ opaque: true, apiEndpoints: ['messages', 'future-protocol'] }] }])(
+    'preserves untouched provider fields during a scoped startup backfill: %j',
+    async (fields) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'protocol-settings-backfill-'))
+      const path = join(storageRoot, 'settings.json')
+      const original = { version: 2, opaque: { keep: true }, ...fields }
+      await writeFile(path, JSON.stringify(original))
+      const store = new SettingsDocumentStore(storageRoot)
+      await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }), undefined, [
+        'notificationsEnabled'
+      ])
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        ...original,
+        notificationsEnabled: false
+      })
+    }
+  )
+
   it('checks the target after staging and keeps the original document on a failed publication guard', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'guarded-settings-store-'))
     const store = new SettingsDocumentStore(storageRoot)

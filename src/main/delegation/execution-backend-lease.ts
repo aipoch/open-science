@@ -9,8 +9,8 @@ const createDelegateExecutionBackendLease = (
 ): DelegateExecutionBackendLease => {
   const runtimeBackend: ResolvedAgentBackend = Object.freeze({
     ...backend,
-    responsesBridgeLease: undefined,
-    anthropicBridgeLease: undefined,
+    responsesTransportLease: undefined,
+    messagesBridgeLease: undefined,
     providerTransportLease: undefined
   })
   let references = 1

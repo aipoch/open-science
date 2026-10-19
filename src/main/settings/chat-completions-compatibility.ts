@@ -17,17 +17,17 @@ import {
 } from './provider-loopback-http-host'
 
 import {
-  chatToResponses,
-  responsesToChat,
-  chatToAnthropic,
-  anthropicToChat,
-  encodeChatCompletionStream
+  chatCompletionsToResponses,
+  responsesToChatCompletions,
+  chatCompletionsToMessages,
+  messagesToChatCompletions,
+  encodeChatCompletionsStream
 } from '@aipoch/providers/protocol'
 
 type Json = Record<string, unknown>
-type CompatibilityWire = 'anthropic' | 'responses'
+type CompatibilityWire = 'messages' | 'responses'
 
-export type ChatProviderCompatibilityTarget = Readonly<{
+export type ChatCompletionsCompatibilityTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
   endpoint: string
   key?: string
@@ -36,16 +36,16 @@ export type ChatProviderCompatibilityTarget = Readonly<{
   adaptRequest?: (request: Json) => Json
 }>
 
-export type ChatProviderCompatibilityConnection = Readonly<{
+export type ChatCompletionsCompatibilityConnection = Readonly<{
   baseUrl: string
   token: string
 }>
 
-export class ChatProviderCompatibilityBridge {
-  private readonly host: ProviderLoopbackHttpHost<ChatProviderCompatibilityConnection>
+export class ChatCompletionsCompatibilityBridge {
+  private readonly host: ProviderLoopbackHttpHost<ChatCompletionsCompatibilityConnection>
 
   constructor(
-    private readonly target: ChatProviderCompatibilityTarget,
+    private readonly target: ChatCompletionsCompatibilityTarget,
     private readonly fetchImpl: typeof fetch = fetch
   ) {
     this.host = new ProviderLoopbackHttpHost({
@@ -67,7 +67,7 @@ export class ChatProviderCompatibilityBridge {
     })
   }
 
-  start(): Promise<ChatProviderCompatibilityConnection> {
+  start(): Promise<ChatCompletionsCompatibilityConnection> {
     return this.host.start()
   }
 
@@ -92,11 +92,11 @@ export class ChatProviderCompatibilityBridge {
     const wantsStream = body.stream === true
     const upstreamBody =
       this.target.wire === 'responses'
-        ? chatToResponses(body, this.target.model)
-        : chatToAnthropic(body, this.target.model)
+        ? chatCompletionsToResponses(body, this.target.model)
+        : chatCompletionsToMessages(body, this.target.model)
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
-    if (this.target.wire === 'anthropic') headers['anthropic-version'] = '2023-06-01'
+    if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
     const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
       method: 'POST',
@@ -133,14 +133,14 @@ export class ChatProviderCompatibilityBridge {
     }
     const completion =
       this.target.wire === 'responses'
-        ? responsesToChat(payload, requestModel)
-        : anthropicToChat(payload, requestModel)
+        ? responsesToChatCompletions(payload, requestModel)
+        : messagesToChatCompletions(payload, requestModel)
     if (!wantsStream) {
       json(response, 200, completion)
       return
     }
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-    response.end(encodeChatCompletionStream(completion))
+    response.end(encodeChatCompletionsStream(completion))
   }
 }
 

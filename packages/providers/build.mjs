@@ -15,8 +15,8 @@ if (!process.argv.includes('--assets-only')) {
 // Keep the public modules and declarations intact; only the private tokenizer needs bundling.
 await build({
   absWorkingDir: root,
-  entryPoints: ['src/protocols/anthropic/tokens.ts'],
-  outfile: 'dist/protocols/anthropic/tokens.js',
+  entryPoints: ['src/protocols/messages/tokens.ts'],
+  outfile: 'dist/protocols/messages/tokens.js',
   bundle: true,
   platform: 'node',
   format: 'cjs',

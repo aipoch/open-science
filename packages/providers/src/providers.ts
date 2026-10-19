@@ -3,11 +3,11 @@ export {
   isOfficialVendorId,
   getOfficialVendor,
   resolveVendorBaseUrl,
-  resolveVendorOpenAiBaseUrl,
+  resolveVendorChatCompletionsBaseUrl,
   resolveVendorResponsesBaseUrl,
   resolveVendorApiKeyUrl,
   resolveVendorModelsUrl,
-  usesVendorAnthropicApiKeyHeader,
+  usesVendorMessagesApiKeyHeader,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
 } from './providers/lookup'
@@ -19,7 +19,7 @@ export type {
 } from './providers/types'
 export { getVendorModelReasoningCapability } from './providers/lookup'
 export type {
-  ChatApiEndpoint,
+  ModelProtocol,
   ModelReasoningEffort,
   ResolvedReasoningEffort,
   CustomReasoningEffortTransport,
