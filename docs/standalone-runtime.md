@@ -31,6 +31,12 @@ Desktop staging also omits the audited renderer-only dependency roots already co
 dependencies are still copied normally. Unknown dependencies remain included. This does not
 bundle backend packages together or change their module identity or resource paths.
 
+Before unattended operation, review [intended use](usage-scope.md), the
+[security model](security.md), and [known limitations](known-limitations.md). A headless service
+retains the host's configured permissions and data recipients; absence of a desktop window does not
+establish isolation or offline operation. Protect its profile and service credentials, and confirm
+task/job cancellation separately from stopping a client wait.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on

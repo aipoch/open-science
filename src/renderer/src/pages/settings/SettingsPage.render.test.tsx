@@ -466,7 +466,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
     baseUrl: 'https://gateway.example',
     model: 'model-a',
     models: ['model-a'],
-    apiEndpoints: ['anthropic'],
+    apiEndpoints: ['messages'],
     supportsImageInput: false,
     hasKey: true,
     maskedKey: 'sk-…test',
@@ -484,7 +484,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
       {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['anthropic', 'openai'],
+        supportedApiTypes: ['messages', 'chat-completions'],
         supportsSkills: true
       }
     ]
@@ -2194,7 +2194,7 @@ describe('SettingsPage layout', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ],
@@ -2226,7 +2226,7 @@ describe('SettingsPage layout', () => {
       baseUrl: 'https://gateway.example',
       model: 'model-a',
       models: ['model-a'],
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       supportsImageInput: false,
       hasKey: true,
       maskedKey: 'sk-…test',
@@ -2244,7 +2244,7 @@ describe('SettingsPage layout', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -5505,7 +5505,7 @@ describe('SettingsPage Codex framework', () => {
       id: 'codebuddy',
       displayName: 'CodeBuddy',
       supportsSkills: false,
-      supportedApiTypes: ['openai']
+      supportedApiTypes: ['chat-completions']
     }
   ]
 

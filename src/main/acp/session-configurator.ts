@@ -5,7 +5,7 @@ import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../shared/permission-profiles'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {

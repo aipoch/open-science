@@ -745,6 +745,67 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'retains all Windows mainlines when the trusted selector returns no focused journeys',
+    () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'windows-mainline-fallback-'))
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      const selector = workflow.jobs.preflight.steps!.find(({ id }) => id === 'windows_mainline')!
+      try {
+        git('init', '--quiet')
+        git('config', 'user.email', 'ci@example.com')
+        git('config', 'user.name', 'CI Test')
+        mkdirSync(join(cwd, 'scripts/ci'), { recursive: true })
+        writeFileSync(
+          join(cwd, 'scripts/ci/windows-e2e-mainline.mjs'),
+          'import { appendFileSync } from "node:fs"; appendFileSync(process.env.GITHUB_OUTPUT, `grep=${process.env.TEST_GREP}\\n`)'
+        )
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'trusted selector')
+        const base = git('rev-parse', 'HEAD')
+        const trustedDir = join(cwd, 'trusted')
+        mkdirSync(trustedDir)
+        writeFileSync(
+          join(cwd, 'scripts/ci/windows-e2e-mainline.mjs'),
+          'throw new Error("candidate selector must not execute")'
+        )
+        for (const grep of ['', '@pr-mainline-notebook']) {
+          const output = join(cwd, 'output')
+          writeFileSync(output, '')
+          const result = spawnSync('bash', ['-e', '-c', selector.run!], {
+            cwd,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              EVENT_NAME: 'pull_request',
+              DRY_RUN_MODE: 'classified',
+              TRUSTED_BASE_SHA: base,
+              TRUSTED_DIR: trustedDir,
+              TEST_GREP: grep,
+              GITHUB_OUTPUT: output,
+              GITHUB_STEP_SUMMARY: join(cwd, 'summary')
+            }
+          })
+          expect(result.status, result.stderr).toBe(0)
+          const selected = readFileSync(output, 'utf8').trim().split('\n').at(-1)!.slice(5)
+          if (grep) expect(selected).toBe(grep)
+          else {
+            const pattern = new RegExp(selected)
+            expect(selected).not.toBe('')
+            for (const group of ['projects', 'conversation', 'files', 'notebook', 'windows']) {
+              expect(pattern.test(`journey @pr-mainline-${group}`)).toBe(true)
+            }
+            expect(pattern.test('extended regression case')).toBe(false)
+            expect(pattern.test('journey @pr-mainline-notebook-extra')).toBe(false)
+          }
+        }
+      } finally {
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('requires a nonempty Windows mainline selection and successful setup and execution', () => {
     const enforce = workflow.jobs.windows_e2e.steps!.find(
       ({ name }) => name === 'Enforce selected Windows E2E checks'

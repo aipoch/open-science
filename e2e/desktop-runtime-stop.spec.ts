@@ -107,7 +107,7 @@ test('keeps the desktop connected after stopping several active chats through th
       const snapshot = await window.api.settings.upsertProvider({
         type: 'custom',
         name: 'Stop E2E provider',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'http://127.0.0.1:9/v1',
         model: 'e2e-model',
         key: 'e2e-key',

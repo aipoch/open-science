@@ -3,7 +3,7 @@ import { useCallback, useMemo } from 'react'
 import type { AcpSessionAgentTarget } from '../../../../shared/acp'
 import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
 import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
-import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import { resolveModelContextWindow } from '../../../../shared/provider-model-policy'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore } from '../../stores/session-store'
 import {

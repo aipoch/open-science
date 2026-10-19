@@ -159,6 +159,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
+    "Preparing to receive package…": "Подготовка к получению пакета…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",
     "Update preparation failed": "Не удалось подготовить обновление",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",
@@ -7752,6 +7754,10 @@
     "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
     "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
+    "Waiting for browser…": "Ожидание браузера…",
+    "Receiving package…": "Получение пакета…",
+    "Cancel transfer": "Отменить передачу",
+    "Transfer cancelled": "Передача отменена",
     "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
     "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены.",
     "Check package": "Проверка пакета",

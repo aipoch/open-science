@@ -196,9 +196,8 @@ test('legacy service recheck API hands the startup window to a usable Desktop', 
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
-    const replacement = app.waitForEvent('window')
     void page.evaluate(() => window.api.runtimeStartup!.recover()).catch(() => undefined)
-    const workspace = await replacement
+    const workspace = page
     await expect
       .poll(() => workspace.evaluate(() => window.api?.runtimeStartup?.getState()), {
         timeout: 60000
@@ -360,7 +359,6 @@ async function main() {
       if (protocol === 'legacy')
         await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
       await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
-      const replacement = app.waitForEvent('window')
       if (protocol === 'legacy')
         await page.getByRole('button', { name: '重试', exact: true }).click()
       else {
@@ -372,7 +370,12 @@ async function main() {
         path: testInfo.outputPath('real-stopping.png'),
         animations: 'disabled'
       })
-      const workspace = await replacement
+      const workspace = page
+      await expect
+        .poll(() => workspace.evaluate(() => window.api.runtimeStartup!.getState()), {
+          timeout: 60000
+        })
+        .toMatchObject({ phase: 'ready' })
       await expect.poll(() => service!.exitCode).toBe(0)
       await expect
         .poll(() => workspace.evaluate(() => window.api.databaseStartup.getState()), {

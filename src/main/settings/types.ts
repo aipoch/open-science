@@ -1,19 +1,22 @@
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
-import type { ClassificationAdapter, ClassificationBinding } from '../../shared/classification'
+import type { ClassificationAdapter } from '@aipoch/providers'
+import type { ClassificationBinding } from '../../shared/classification'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
-import type { ChatApiEndpoint, ReasoningEffort } from '../../shared/model-preference-contract'
+import type {
+  ModelProtocol,
+  OfficialVendorId,
+  CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from '../../shared/reasoning-effort'
+
 import type {
   AppIconVariant,
   ClaudeInfo,
@@ -77,9 +80,9 @@ export type StoredProvider = {
   codexAutoUseHttps?: boolean
   name: string
   // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
-  // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar
+  // means ['messages'] (all pre-existing providers). Legacy records may carry the removed scalar
   // `apiType` on disk; the repository migrates it to this field on read.
-  apiEndpoints?: ChatApiEndpoint[]
+  apiEndpoints?: ModelProtocol[]
   baseUrl?: string
   model?: string
   // Optional custom-model token limits. Context is the shared request/response budget; input/output

@@ -5,7 +5,7 @@ import type { SettingsSnapshot } from '../../../shared/settings'
 import type { ReasoningEffortProfile } from '../../../shared/reasoning-effort'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import type { ResolvedProvider } from '../../settings/provider-env'
-import type { ProviderTextGenerationTarget } from '../../settings/provider-text-generation'
+import type { ProviderTextGenerationTarget } from './text-generation'
 
 export async function capturePdfTranslationApiTarget(
   settings: {
@@ -37,8 +37,24 @@ export async function capturePdfTranslationApiTarget(
     model: { kind: 'required', id: modelId! },
     reasoningEffort: 'low'
   })
+  const direct = resolved.provider
+  if (direct.type !== 'custom' && direct.type !== 'official')
+    throw new PdfTranslationError(
+      'unsupported-model',
+      'Select an available API model for direct translation.'
+    )
   return {
-    ...resolved,
+    providerId: resolved.providerId,
+    provider: {
+      type: direct.type,
+      key: direct.key,
+      baseUrl: direct.baseUrl,
+      chatCompletionsBaseUrl: direct.chatCompletionsBaseUrl,
+      apiEndpoints: direct.apiEndpoints,
+      vendorId: direct.vendorId,
+      reasoningEffortTransport: direct.reasoningEffortTransport,
+      maxOutputTokens: direct.maxOutputTokens
+    },
     providerName: provider?.name,
     model: resolved.provider.model,
     reasoningEffort: resolved.reasoningEffortProfile.supported

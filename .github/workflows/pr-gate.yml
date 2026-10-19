@@ -457,6 +457,12 @@ jobs:
             git show "$TRUSTED_BASE_SHA:$selector" > "$TRUSTED_DIR/windows-e2e-mainline.mjs"
             node "$TRUSTED_DIR/windows-e2e-mainline.mjs"
           fi
+          # Package documentation can retain domain checks while the focused selector skips Markdown.
+          # Preserve every mainline group if the plan still selects the Windows E2E job.
+          if ! grep -q '^grep=.' "$GITHUB_OUTPUT"; then
+            echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'Windows E2E: no focused journeys; retain all mainline groups if the job is selected.' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   registration:
     name: Impact registration

@@ -559,6 +559,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
+          'src/main/composition/session-packages.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
           'src/main/composition/reviewer.test.ts',
@@ -781,7 +782,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/settings/ipc.test.ts',
           'src/main/settings/network-proxy-settings.test.ts',
           'src/main/settings/provider-transport-owner.test.ts',
-          'src/main/settings/responses-bridge.integration.test.ts',
+          'src/main/settings/responses-to-chat-completions-bridge.integration.test.ts',
           'src/main/settings/runtime-application-commands.test.ts',
           'src/main/settings/service.connectors.test.ts',
           'src/main/settings/service.providers.test.ts',

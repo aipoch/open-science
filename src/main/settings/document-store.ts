@@ -1,3 +1,4 @@
+import { encodeProviderProtocolsForStorage } from './record-codec'
 import { validateSettingsDocumentShape } from './document-shape'
 import { settingsDocumentReadError } from './document-read-error'
 import {
@@ -84,9 +85,12 @@ class SettingsDocumentStore {
       const next = update(
         original === undefined ? current : decodeSettingsDocument(JSON.stringify(original))
       )
-      const document = original === undefined ? next : { ...original }
+      const document = original === undefined ? { ...next } : { ...original }
       if (preserveDocumentExcept) {
         for (const key of preserveDocumentExcept) document[key] = next[key]
+      }
+      if (original === undefined || preserveDocumentExcept?.includes('providers')) {
+        document.providers = next.providers.map(encodeProviderProtocolsForStorage)
       }
       await this.write(document, beforePublish)
       return next

@@ -2,12 +2,12 @@ import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { terminateProcessTree } from '../process-tree'
 
-type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
-type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
+type ResponsesTransportLease = ResolvedAgentBackend['responsesTransportLease']
+type MessagesBridgeLease = ResolvedAgentBackend['messagesBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
 type CleanupFailure = (stage: 'connection' | 'agent-process', error: unknown) => void
 
@@ -31,8 +31,8 @@ export type AcpAttachedConnectionResource = {
   process: ChildProcessWithoutNullStreams
   connection: ClientConnection
   framework: AgentFramework['id']
-  bridgeLease: ResponsesBridgeLease
-  anthropicBridgeLease?: AnthropicBridgeLease
+  bridgeLease: ResponsesTransportLease
+  messagesBridgeLease?: MessagesBridgeLease
   providerTransportLease?: ProviderTransportLease
 }
 
@@ -55,8 +55,8 @@ export type AcpConnectionResourceAttempt = Readonly<{
 export type AcpUnattachedConnectionResource = Readonly<{
   process?: ChildProcessWithoutNullStreams
   connection?: ClientConnection
-  bridgeLease?: ResponsesBridgeLease
-  anthropicBridgeLease?: AnthropicBridgeLease
+  bridgeLease?: ResponsesTransportLease
+  messagesBridgeLease?: MessagesBridgeLease
   providerTransportLease?: ProviderTransportLease
 }>
 
@@ -113,8 +113,8 @@ export class AcpConnectionResourceOwner {
     )
   }
 
-  get anthropicBridgeAvailable(): boolean {
-    return Boolean(this.currentResource()?.anthropicBridgeLease)
+  get messagesBridgeAvailable(): boolean {
+    return Boolean(this.currentResource()?.messagesBridgeLease)
   }
 
   get providerTransportAvailable(): boolean {
@@ -189,7 +189,7 @@ export class AcpConnectionResourceOwner {
       this.reportCleanupFailure(onFailure, 'agent-process', error)
     }
     await this.releaseBridgeLease(resource.bridgeLease)
-    await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
+    await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
   }
 
@@ -213,7 +213,7 @@ export class AcpConnectionResourceOwner {
       }
     }
     await this.releaseBridgeLease(resource.bridgeLease)
-    await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
+    await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
   }
 
@@ -225,7 +225,7 @@ export class AcpConnectionResourceOwner {
       safeLogCleanupError('agent process cleanup after unexpected close failed', error)
     })
     void this.releaseBridgeLease(resource.bridgeLease)
-    void this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
+    void this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     void this.releaseProviderTransportLease(resource.providerTransportLease)
   }
 
@@ -250,7 +250,7 @@ export class AcpConnectionResourceOwner {
         }
       }
       void this.releaseBridgeLease(resource?.bridgeLease)
-      void this.releaseAnthropicBridgeLease(resource?.anthropicBridgeLease)
+      void this.releaseMessagesBridgeLease(resource?.messagesBridgeLease)
       void this.releaseProviderTransportLease(resource?.providerTransportLease)
       void this.closeMcp()
     }
@@ -317,7 +317,7 @@ export class AcpConnectionResourceOwner {
 
   registerBridgeMcpSession(
     sessionId: string,
-    tools: ResponsesBridgeNamespacedTool[],
+    tools: ResponsesNamespacedTool[],
     namespaces: readonly string[]
   ): void {
     this.currentResource()?.bridgeLease?.registerMcpSession?.(sessionId, tools, namespaces)
@@ -328,13 +328,13 @@ export class AcpConnectionResourceOwner {
   }
 
   setBridgeReasoningEffort(
-    effort: Parameters<NonNullable<NonNullable<ResponsesBridgeLease>['setReasoningEffort']>>[0]
+    effort: Parameters<NonNullable<NonNullable<ResponsesTransportLease>['setReasoningEffort']>>[0]
   ): void {
     this.currentResource()?.bridgeLease?.setReasoningEffort?.(effort)
   }
 
   setBridgeModelTarget(
-    target: Parameters<NonNullable<NonNullable<ResponsesBridgeLease>['setModelTarget']>>[0]
+    target: Parameters<NonNullable<NonNullable<ResponsesTransportLease>['setModelTarget']>>[0]
   ): boolean {
     const setModelTarget = this.currentResource()?.bridgeLease?.setModelTarget
     if (!setModelTarget) return false
@@ -342,8 +342,8 @@ export class AcpConnectionResourceOwner {
     return true
   }
 
-  setAnthropicBridgeTarget(targetId: string): boolean {
-    return this.currentResource()?.anthropicBridgeLease?.setTarget(targetId) ?? false
+  setMessagesBridgeTarget(targetId: string): boolean {
+    return this.currentResource()?.messagesBridgeLease?.setTarget(targetId) ?? false
   }
 
   setProviderTransportTarget(targetId: string): boolean {
@@ -351,11 +351,13 @@ export class AcpConnectionResourceOwner {
   }
 
   async selectBridgeSkills(
-    text: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[0],
-    catalog: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[1],
-    signal?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[2],
-    observeUsage?: Parameters<NonNullable<ResponsesBridgeLease>['selectSkills']>[3]
-  ): Promise<Awaited<ReturnType<NonNullable<ResponsesBridgeLease>['selectSkills']>> | undefined> {
+    text: Parameters<NonNullable<ResponsesTransportLease>['selectSkills']>[0],
+    catalog: Parameters<NonNullable<ResponsesTransportLease>['selectSkills']>[1],
+    signal?: Parameters<NonNullable<ResponsesTransportLease>['selectSkills']>[2],
+    observeUsage?: Parameters<NonNullable<ResponsesTransportLease>['selectSkills']>[3]
+  ): Promise<
+    Awaited<ReturnType<NonNullable<ResponsesTransportLease>['selectSkills']>> | undefined
+  > {
     const resource = this.currentResource()
     const selectSkills =
       resource?.bridgeLease?.selectSkills ?? resource?.providerTransportLease?.selectSkills
@@ -371,7 +373,7 @@ export class AcpConnectionResourceOwner {
     this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
   }
 
-  private async releaseBridgeLease(lease: ResponsesBridgeLease): Promise<void> {
+  private async releaseBridgeLease(lease: ResponsesTransportLease): Promise<void> {
     if (!lease || this.releasedBridgeLeases.has(lease)) return
     this.releasedBridgeLeases.add(lease)
     try {
@@ -381,7 +383,7 @@ export class AcpConnectionResourceOwner {
     }
   }
 
-  private async releaseAnthropicBridgeLease(lease: AnthropicBridgeLease): Promise<void> {
+  private async releaseMessagesBridgeLease(lease: MessagesBridgeLease): Promise<void> {
     if (!lease || this.releasedBridgeLeases.has(lease)) return
     this.releasedBridgeLeases.add(lease)
     try {

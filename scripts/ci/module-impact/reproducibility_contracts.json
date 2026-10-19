@@ -923,14 +923,14 @@
       "src/main/settings/codex-reviewer-readiness.integration.test.ts",
       "src/main/settings/codex-skill-loading.integration.test.ts",
       "src/main/settings/native-responses-compatibility.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
       "src/main/settings/opencode-go-validation.integration.test.ts",
       "src/main/settings/provider-privacy.test.ts",
       "src/main/settings/validate.test.ts",
       "src/main/settings/list-models.test.ts",
-      "src/main/settings/responses-bridge.plan-tools.test.ts",
-      "src/main/settings/responses-bridge.skill-loading.test.ts",
-      "src/main/settings/responses-bridge.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.plan-tools.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.skill-loading.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
       "src/main/reviewer/mcp-server.test.ts",
       "src/main/agent-framework/codex.test.ts",
@@ -1009,7 +1009,8 @@
       "src/main/web-service/session-payload.integration.test.ts",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/main/desktop-runtime-controller.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [],

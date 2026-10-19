@@ -442,7 +442,7 @@ export function SmartCollectionPanel({
                       <Trash2 className="size-4" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="bg-black text-white">
+                  <TooltipContent side="top">
                     {t(
                       'Abandon this run. Completed results will be kept, and this run will not resume.'
                     )}
@@ -481,9 +481,7 @@ export function SmartCollectionPanel({
                         <RotateCcw className="size-4" aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="bg-black text-white">
-                      {t('Continue in a new run')}
-                    </TooltipContent>
+                    <TooltipContent side="top">{t('Continue in a new run')}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               )

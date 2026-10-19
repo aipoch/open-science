@@ -55,7 +55,9 @@ const backend = (
   ...extra
 })
 
-const codexToolLessBridgeLease = (): NonNullable<ResolvedAgentBackend['responsesBridgeLease']> => ({
+const codexToolLessBridgeLease = (): NonNullable<
+  ResolvedAgentBackend['responsesTransportLease']
+> => ({
   selectSkills: vi.fn(async () => []),
   registerReviewerSession: vi.fn(),
   unregisterReviewerSession: vi.fn(() => false),
@@ -101,7 +103,7 @@ const runtimeHarness = (
     cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' }) as never),
     respondToPermission: vi.fn(async () => undefined),
     shutdownForQuit: vi.fn(async () => {
-      await resolvedBackend?.responsesBridgeLease?.release()
+      await resolvedBackend?.responsesTransportLease?.release()
     })
   } as unknown as RestrictedInferenceRuntime
 }
@@ -408,7 +410,7 @@ describe('RestrictedInferenceRunner', () => {
       'Codex Responses',
       backend(codexFramework, {
         modelRoute: 'codex-responses',
-        responsesBridgeLease: codexToolLessBridgeLease()
+        responsesTransportLease: codexToolLessBridgeLease()
       }),
       target('codex')
     ],
@@ -416,7 +418,7 @@ describe('RestrictedInferenceRunner', () => {
       'Codex Bridge',
       backend(codexFramework, {
         modelRoute: 'codex-bridge',
-        responsesBridgeLease: codexToolLessBridgeLease()
+        responsesTransportLease: codexToolLessBridgeLease()
       }),
       target('codex')
     ]
@@ -457,7 +459,7 @@ describe('RestrictedInferenceRunner', () => {
     const release = vi.fn(async () => undefined)
     const { runner, resolveTarget } = await makeRunner(
       backend(codexFramework, {
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -510,7 +512,7 @@ describe('RestrictedInferenceRunner', () => {
       () =>
         backend(codexFramework, {
           modelRoute: 'codex-responses',
-          responsesBridgeLease: codexToolLessBridgeLease()
+          responsesTransportLease: codexToolLessBridgeLease()
         }),
       target('codex')
     ],
@@ -519,7 +521,7 @@ describe('RestrictedInferenceRunner', () => {
       () =>
         backend(codexFramework, {
           modelRoute: 'codex-bridge',
-          responsesBridgeLease: codexToolLessBridgeLease()
+          responsesTransportLease: codexToolLessBridgeLease()
         }),
       target('codex')
     ]
@@ -605,7 +607,7 @@ describe('RestrictedInferenceRunner', () => {
       framework,
       framework.id === 'codex'
         ? {
-            responsesBridgeLease: {
+            responsesTransportLease: {
               selectSkills: vi.fn(async () => []),
               registerReviewerSession: vi.fn(),
               unregisterReviewerSession: vi.fn(() => false),
@@ -634,13 +636,13 @@ describe('RestrictedInferenceRunner', () => {
     const releaseTransport = vi.fn(async () => undefined)
     const { runner, runtimes } = await makeRunner(
       backend(codexFramework, {
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
           release: releaseResponses
         },
-        anthropicBridgeLease: { setTarget: vi.fn(() => true), release: releaseAnthropic },
+        messagesBridgeLease: { setTarget: vi.fn(() => true), release: releaseAnthropic },
         providerTransportLease: { setTarget: vi.fn(() => true), release: releaseTransport }
       })
     )
@@ -733,7 +735,7 @@ describe('RestrictedInferenceRunner', () => {
     const unregisterToolLessSession = vi.fn(() => true)
     const { runner, runtimes } = await makeRunner(
       backend(codexFramework, {
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),

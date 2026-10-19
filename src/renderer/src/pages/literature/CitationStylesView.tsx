@@ -390,11 +390,11 @@ const CitationStylesView = ({
             {example ? (
               <>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('In-text citation')}</p>
+                  <p className="font-medium text-muted-foreground">{t('In-text citation')}</p>
                   <p className="mt-0.5 leading-5">{example.inText}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('Reference')}</p>
+                  <p className="font-medium text-muted-foreground">{t('Reference')}</p>
                   <p className="mt-0.5 leading-5">{example.reference}</p>
                 </div>
               </>

@@ -1,5 +1,5 @@
 import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
-import { normalizeOpenAiChatModelStepUsage } from '../settings/openai-chat-usage'
+import { normalizeChatCompletionsUsage } from '@aipoch/providers/protocol'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,
@@ -84,7 +84,7 @@ export const codeBuddyTurnAdapter: AcpProviderTurnAdapter = {
         const meta = record(update._meta)
         const messageId = meta?.['codebuddy.ai/messageId']
         if (typeof messageId !== 'string' || !messageId) return
-        const usage = normalizeOpenAiChatModelStepUsage(meta?.usage)
+        const usage = normalizeChatCompletionsUsage(meta?.usage)
         if (usage) usageByMessageId.set(messageId, { ...usage, sourceInvocationId: messageId })
       },
       finalize: () => {

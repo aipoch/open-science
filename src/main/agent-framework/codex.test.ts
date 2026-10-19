@@ -355,7 +355,7 @@ describe('codexFramework', () => {
       framework.prepareModelConfig(
         {
           type: 'custom',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: 'https://gateway.example/v1',
           model: 'chat-model',
           key: 'secret'
@@ -363,7 +363,10 @@ describe('codexFramework', () => {
         {
           storageRoot: '/data/bridge',
           executablePath: '/runtime/codex-acp',
-          responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+          responsesConnection: {
+            baseUrl: 'http://127.0.0.1:43123/v1',
+            token: 'local-token'
+          }
         }
       ),
       framework.prepareModelConfig(
@@ -377,7 +380,7 @@ describe('codexFramework', () => {
         {
           storageRoot: '/data/compatibility',
           executablePath: '/runtime/codex-acp',
-          responsesBridge: {
+          responsesConnection: {
             baseUrl: 'http://127.0.0.1:43124/v1',
             token: 'local-token',
             kind: 'responses-compatibility'
@@ -678,7 +681,7 @@ describe('codexFramework', () => {
     const config = framework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://gateway.example/v1',
         model: 'chat-model',
         contextWindow: 128_000,
@@ -687,7 +690,10 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' },
+        responsesConnection: {
+          baseUrl: 'http://127.0.0.1:43123/v1',
+          token: 'local-token'
+        },
         systemPromptAppends: ['Stable bridge guidance.']
       }
     )
@@ -731,9 +737,9 @@ describe('codexFramework', () => {
       {
         type: 'official',
         vendorId: 'deepseek',
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         baseUrl: 'https://api.deepseek.com/anthropic',
-        openaiBaseUrl: 'https://api.deepseek.com/v1',
+        chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
         responsesBaseUrl: 'https://api.deepseek.com',
         model: 'deepseek-flash',
         key: 'sk-plaintext-secret'
@@ -758,14 +764,14 @@ describe('codexFramework', () => {
   it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
     const framework = createCodexFramework()
     // A dual-endpoint vendor (e.g. MiniMax) advertises openai + responses and keeps its Anthropic
-    // route in baseUrl and its OpenAI/Responses /v1 root in openaiBaseUrl. Even if a bridge object
+    // route in baseUrl and its OpenAI/Responses /v1 root in chatCompletionsBaseUrl. Even if a bridge object
     // is present, native Responses must post to the vendor's own /v1 base with the vendor key.
     const config = framework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         baseUrl: 'https://api.minimaxi.com/anthropic',
-        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        chatCompletionsBaseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M3',
         contextWindow: 1_000_000,
         key: 'mm-secret'
@@ -775,7 +781,10 @@ describe('codexFramework', () => {
         executablePath: '/runtime/codex-acp',
         reasoningEffort: 'none',
         reasoningEfforts: ['none', 'high'],
-        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+        responsesConnection: {
+          baseUrl: 'http://127.0.0.1:43123/v1',
+          token: 'local-token'
+        }
       }
     )
 
@@ -859,7 +868,7 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        responsesBridge: {
+        responsesConnection: {
           baseUrl: 'http://127.0.0.1:43123/v1',
           token: 'local-token',
           kind: 'responses-compatibility'

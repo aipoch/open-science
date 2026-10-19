@@ -947,6 +947,10 @@ export function pdfTranslationCopiesEnglishProse(
       (prose.match(/\b[A-Za-z]{2,}\b/gu)?.length ?? 0) >= 6,
     sentence =
       isScientificStatementTitle(source) ||
+      // Sentence-initial capitals do not turn short subject/verb statements into names.
+      // Keep the verb case-sensitive so title-case names such as "Science Is Fun" stay protected.
+      (/\b(?:is|are|was|were|has|have|had)\b/u.test(prose) &&
+        (prose.match(/\b[A-Za-z]{2,}\b/gu)?.length ?? 0) >= 3) ||
       (/\b(?:is|are|was|were|has|have|had|the|this)\b/i.test(prose) && words >= 4),
     instruction =
       /^(?:\d+[:.)]\s*)?(?:Add|Apply|Compute|Initialize|Update|Calculate|Normalize|Modify|Estimate|Return|Repeat|Remove)\s/i.test(

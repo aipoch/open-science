@@ -11,12 +11,13 @@ import {
   configuredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import type { ReasoningEffort } from '../../../../shared/model-preference-contract'
-import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
   resolveReasoningEffortControl,
   type ReasoningEffortProfile
 } from '../../../../shared/reasoning-effort'
+import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+
 import type { ProviderView } from '../../../../shared/settings'
 import { SettingsSection } from './SettingsLayout'
 import {

@@ -175,6 +175,18 @@ export type OAuthClientProviderOptions = {
   openExternal?: (url: string) => Promise<void> | void
 }
 
+export function clearUnboundOAuthCredentials(state: McpOAuthState): boolean {
+  const unbound = [state.tokens, state.clientInformation].some(
+    (value) => value && (typeof value.issuer !== 'string' || !value.issuer.trim())
+  )
+  if (!unbound) return false
+  // Discovery is controlled by the MCP server; it cannot establish a legacy credential's issuer.
+  delete state.tokens
+  delete state.clientInformation
+  delete state.discoveryState
+  return true
+}
+
 // Persistent provider backed by the app's encrypted state callback. The SDK owns discovery, PKCE,
 // dynamic registration, token exchange, and refresh; this class only supplies storage and browser IO.
 export class PersistentOAuthClientProvider implements OAuthClientProvider {
@@ -224,11 +236,13 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    await this.clearUnboundCredentials()
     // If pre-registered client credentials are configured, use them directly.
     // This bypasses both URL-based client IDs (SEP-991) and dynamic client registration (RFC 7591).
     if (this.options.config.clientId) {
       return {
         client_id: this.options.config.clientId,
+        issuer: this.options.config.authorizationServerUrl!,
         ...(this.options.clientSecret ? { client_secret: this.options.clientSecret } : {})
       }
     }
@@ -254,7 +268,8 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     await this.persist()
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
+    await this.clearUnboundCredentials()
     return this.oauthState.tokens
   }
 
@@ -308,7 +323,8 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     await this.persist()
   }
 
-  discoveryState(): OAuthDiscoveryState | undefined {
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    await this.clearUnboundCredentials()
     const state =
       this.oauthState.discoveryState ??
       (this.options.config.authorizationServerUrl
@@ -326,6 +342,10 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     if (scope === 'all' || scope === 'discovery') delete this.oauthState.discoveryState
     if (scope === 'all' || scope === 'verifier') this.codeVerifierValue = undefined
     await this.persist()
+  }
+
+  private async clearUnboundCredentials(): Promise<void> {
+    if (clearUnboundOAuthCredentials(this.oauthState)) await this.persist()
   }
 
   private persist(): Promise<void> {

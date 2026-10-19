@@ -287,6 +287,7 @@ it.each([
   'diagnostics',
   'durable-files',
   'resilient-download',
+  'providers',
   'environment',
   'notebook-analysis',
   'notebook-code-risk',

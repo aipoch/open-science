@@ -49,6 +49,19 @@ eligibility, blocking reasons and available input evidence. It returns `undefine
 and exposes entity identities rather than private storage keys. The host only assembles this result
 with its public snapshot metadata.
 
+## Safety and integration
+
+- **Scope:** Captured-recipe validation, replay through an injected runtime, and bounded output comparison.
+- **Controls:** Input identity/size/digest checks, preflight validation, and teardown-confirmed cleanup
+  protect the documented attempt lifecycle. The host supplies authorization and process isolation.
+- **Remaining risks:** Recipe code can have side effects within its runtime's authority. Integrity
+  checks do not make it safe. A matching output does not prove scientific validity; missing evidence,
+  environment differences, and nondeterminism can prevent or limit reproduction.
+- **Safe integration:** Review the recipe and original inputs, use a constrained runtime and disposable
+  attempt storage, and report the exact comparison performed. Review exported evidence for sensitive
+  content. See the application's
+  [research-use boundaries](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md#research-judgment-and-high-consequence-uses).
+
 ## Compatibility
 
 Existing recipe, execution-context and comparison schema versions, checksums, comparator identifiers,

@@ -1,11 +1,11 @@
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
+import type { ModelProtocol } from '@aipoch/providers'
 
 export type ProviderFailureObservation = Readonly<{
   category: 'auth' | 'model-not-found'
   status: number
   startedAt: number
   model?: string
-  endpoint: ChatApiEndpoint
+  endpoint: ModelProtocol
 }>
 
 export type ProviderFailureObserver = (failure: ProviderFailureObservation) => void | Promise<void>

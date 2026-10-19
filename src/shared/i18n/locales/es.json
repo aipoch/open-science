@@ -158,6 +158,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado."
   },
   "renderer": {
+    "Preparing to receive package…": "Preparando la recepción del paquete…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",
     "Update preparation failed": "Error al preparar la actualización",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "La aplicación sigue abierta. Resuelva el problema e inténtelo de nuevo, o cancele para seguir trabajando.",
     "Select one or more options": "Seleccionar una o varias opciones",
@@ -7612,6 +7614,10 @@
     "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
     "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
     "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje.",
+    "Waiting for browser…": "Esperando al navegador…",
+    "Receiving package…": "Recibiendo paquete…",
+    "Cancel transfer": "Cancelar transferencia",
+    "Transfer cancelled": "Transferencia cancelada",
     "Sign in to continue this conversation": "Iniciar sesión para continuar esta conversación",
     "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "El Agente requiere autenticación. Abra la configuración del modelo, inicie sesión en su proveedor y vuelva a intentarlo. Su conversación y su borrador se conservan.",
     "Check package": "Comprobar paquete",

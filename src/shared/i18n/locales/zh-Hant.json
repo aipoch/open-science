@@ -156,6 +156,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "目前的應用程式版本不支援此加密資料格式。請使用相容的應用程式版本或還原原始設定檔。現有憑證未被替換。"
   },
   "renderer": {
+    "Preparing to receive package…": "正在準備接收套件…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "無法準備瀏覽器匯入。請解決啟動錯誤後重試。",
     "Update preparation failed": "更新準備失敗",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "應用程式仍保持開啟。解決問題後重試，或取消更新以繼續工作。",
     "Select one or more options": "選擇一個或多個選項",
@@ -7282,6 +7284,10 @@
     "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
     "You can configure up to 32 pages.": "最多可設定 32 頁。",
     "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。",
+    "Waiting for browser…": "等待瀏覽器…",
+    "Receiving package…": "正在接收研究包…",
+    "Cancel transfer": "取消傳輸",
+    "Transfer cancelled": "傳輸已取消",
     "Sign in to continue this conversation": "登入後繼續此對話",
     "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。",
     "Check package": "檢查套件",

@@ -156,6 +156,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
   },
   "renderer": {
+    "Preparing to receive package…": "패키지 수신 준비 중…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "브라우저 가져오기를 준비할 수 없습니다. 시작 오류를 해결한 후 다시 시도하세요.",
     "Update preparation failed": "업데이트 준비 실패",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",
@@ -7280,6 +7282,10 @@
     "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
     "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
     "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다.",
+    "Waiting for browser…": "브라우저 대기 중…",
+    "Receiving package…": "패키지 수신 중…",
+    "Cancel transfer": "전송 취소",
+    "Transfer cancelled": "전송이 취소됨",
     "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
     "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다.",
     "Check package": "패키지 검사",

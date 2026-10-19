@@ -86,7 +86,7 @@ describe('ProviderAccountsModule', () => {
         }
         expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe(model)
         const stored = (await new SettingsRepository(dir).getSettings()).providers[0]
-        expect(stored.lastValidatedTarget).toEqual({ model, endpoint: 'openai' })
+        expect(stored.lastValidatedTarget).toEqual({ model, endpoint: 'chat-completions' })
         expect(stored.lastValidationFailure).toBeUndefined()
         const framework = getAgentFramework(frameworkId)
         const catalog = buildConfiguredModelCatalog({
@@ -112,7 +112,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'model-a',
         key: 'existing-secret',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       await module.setActiveProvider('gateway', 'model-a')
       vi.stubGlobal(
@@ -178,7 +178,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const before = await repository.getSettings()
     vi.stubGlobal(
@@ -202,13 +202,13 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'model-a',
         key: 'existing-secret',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       await repository.updateProviderValidationIfTargetMatches(
         'gateway',
         () => true,
         { ok: true, category: 'ok' },
-        { model: 'model-a', endpoint: 'openai' }
+        { model: 'model-a', endpoint: 'chat-completions' }
       )
       const before = await repository.getSettings()
       vi.stubGlobal(
@@ -233,7 +233,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'model-a',
         key: 'existing-secret',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       const response = deferred<Response>()
       const started = deferred<void>()
@@ -263,7 +263,7 @@ describe('ProviderAccountsModule', () => {
           'gateway',
           () => true,
           { ok: true, category: 'ok' },
-          { model: 'model-a', endpoint: 'openai' }
+          { model: 'model-a', endpoint: 'chat-completions' }
         )
       const before = await repository.getSettings()
       response.resolve(new Response('Forbidden', { status: 403 }))
@@ -281,7 +281,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     vi.stubGlobal(
       'fetch',
@@ -298,7 +298,7 @@ describe('ProviderAccountsModule', () => {
     expect(result).toMatchObject({ ok: false, category: 'model-not-found', applied: true })
     expect((await repository.getSettings()).providers[0].lastValidationFailure?.target).toEqual({
       model: 'model-a',
-      endpoint: 'openai'
+      endpoint: 'chat-completions'
     })
   })
 
@@ -313,7 +313,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'model-a',
         key: 'existing-secret',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       const olderResponse = deferred<Response>()
       const started = deferred<void>()
@@ -367,7 +367,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     vi.stubGlobal(
       'fetch',
@@ -414,13 +414,13 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     await repository.updateProviderValidationIfTargetMatches(
       'gateway',
       () => true,
       { ok: false, category: 'model-not-found', status: 404 },
-      { model: 'model-b', endpoint: 'openai' }
+      { model: 'model-b', endpoint: 'chat-completions' }
     )
     vi.stubGlobal(
       'fetch',
@@ -441,10 +441,10 @@ describe('ProviderAccountsModule', () => {
     expect(result.providerId).toBe('gateway')
     const saved = (await new SettingsRepository(dir).getSettings()).providers[0]
     expect(saved.name).toBe('Renamed gateway')
-    expect(saved.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'openai' })
+    expect(saved.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'chat-completions' })
     expect(saved.lastValidationFailure).toMatchObject({
       category: 'model-not-found',
-      target: { model: 'model-b', endpoint: 'openai' }
+      target: { model: 'model-b', endpoint: 'chat-completions' }
     })
   })
 
@@ -457,7 +457,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const started = deferred<void>()
     const response = deferred<Response>()
@@ -519,7 +519,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'test-model',
       key: 'secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     expect(result.validation.ok).toBe(false)
     expect(result.providerId).toBeUndefined()
@@ -535,7 +535,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://old.example/v1',
       model: 'old-model',
       key: 'stored-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     await module.setActiveProvider('gateway', 'old-model')
     const before = await repository.getSettings()
@@ -558,7 +558,7 @@ describe('ProviderAccountsModule', () => {
         expectedConfigRevision: before.providers[0].configRevision
       }
     })
-    expect(result.testedTarget).toEqual({ model: 'new-model', endpoint: 'openai' })
+    expect(result.testedTarget).toEqual({ model: 'new-model', endpoint: 'chat-completions' })
     expect(result.ok).toBe(true)
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://new.example/v1/chat/completions')
@@ -576,7 +576,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://old.example/v1',
       model: 'old-model',
       key: 'old-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     await module.setActiveProvider('gateway', 'old-model')
     vi.stubGlobal(
@@ -595,7 +595,7 @@ describe('ProviderAccountsModule', () => {
       model: 'new-model',
       baseUrl: 'https://new.example/v1',
       key: 'new-secret',
-      apiEndpoints: ['anthropic', 'openai'],
+      apiEndpoints: ['messages', 'chat-completions'],
       requireExisting: true
     })
     expect(result.validation.ok).toBe(true)
@@ -605,7 +605,7 @@ describe('ProviderAccountsModule', () => {
     expect(saved.providers[0]).toMatchObject({
       model: 'new-model',
       baseUrl: 'https://new.example/v1',
-      lastValidatedTarget: { model: 'new-model', endpoint: 'openai' }
+      lastValidatedTarget: { model: 'new-model', endpoint: 'chat-completions' }
     })
     expect(module.resolveProvider(saved.providers[0]).key).toBe('new-secret')
   })
@@ -632,12 +632,12 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'test-model',
       key: 'secret',
-      apiEndpoints: ['anthropic', 'responses']
+      apiEndpoints: ['messages', 'responses']
     })
     expect(result.validation.ok).toBe(true)
     expect((await repository.getSettings()).providers[0].lastValidatedTarget).toEqual({
       model: 'test-model',
-      endpoint: 'anthropic'
+      endpoint: 'messages'
     })
   })
 
@@ -660,7 +660,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'model',
         key,
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       }
     })
     expect(result.message).not.toContain('synthetic-private')
@@ -714,7 +714,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model',
       key: 'secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const response = deferred<Response>()
     const started = deferred<void>()
@@ -763,7 +763,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'old-model',
         key: 'secret',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       const response = deferred<Response>()
       const started = deferred<void>()
@@ -812,7 +812,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'old-model',
       key: 'secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     vi.stubGlobal(
       'fetch',
@@ -857,7 +857,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://old.example/v1',
         model: 'old-model',
         key: 'old-key',
-        apiEndpoints: ['openai' as const]
+        apiEndpoints: ['chat-completions' as const]
       }
       await module.upsertProvider(original)
       if (active) await module.setActiveProvider(original.id, original.model)
@@ -1239,7 +1239,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
 
     let settings = await repository.getSettings()
@@ -1284,7 +1284,7 @@ describe('ProviderAccountsModule', () => {
           baseUrl: 'https://lab.example/v1',
           model: 'lab-model',
           key: 'secret-key',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           [field]: value
         })
       ).rejects.toThrow(message)
@@ -1322,7 +1322,7 @@ describe('ProviderAccountsModule', () => {
           baseUrl,
           model: 'lab-model',
           key: 'secret-key',
-          apiEndpoints: ['openai']
+          apiEndpoints: ['chat-completions']
         })
       ).rejects.toThrow(error)
 
@@ -1353,7 +1353,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: `https://provider-${index}.example/v1`,
         model: `model-${index}`,
         key: `key-${index}`,
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     }
 
@@ -1364,7 +1364,7 @@ describe('ProviderAccountsModule', () => {
         baseUrl: 'https://provider-65.example/v1',
         model: 'model-65',
         key: 'key-65',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     ).rejects.toThrow('Provider limit of 64 reached.')
 
@@ -1378,7 +1378,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai' as const]
+      apiEndpoints: ['chat-completions' as const]
     }
     await module.upsertProvider(draft)
     const providerId = (await repository.getSettings()).providers[0].id
@@ -1653,7 +1653,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const before = await repository.getSettings()
     const stored = before.providers[0]
@@ -1668,9 +1668,9 @@ describe('ProviderAccountsModule', () => {
       providerId: stored.id,
       effectiveModel: 'lab-model',
       provider: { model: 'lab-model', key: 'secret-key' },
-      needsChatResponsesBridge: true
+      needsChatResponsesToChatCompletionsBridge: true
     })
-    expect(module.resolveProviderApiEndpoints(stored)).toEqual(['openai'])
+    expect(module.resolveProviderApiEndpoints(stored)).toEqual(['chat-completions'])
     expect(module.resolveProvider(stored)).toMatchObject({
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
@@ -1693,7 +1693,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const before = await repository.getSettings()
     const stored = before.providers[0]
@@ -1763,7 +1763,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'model-a',
       key: 'secret-key',
-      apiEndpoints: ['anthropic']
+      apiEndpoints: ['messages']
     })
     const providerId = (await repository.getSettings()).providers[0].id
     vi.stubGlobal(
@@ -1796,15 +1796,15 @@ describe('ProviderAccountsModule', () => {
 
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeTypeOf('number')
-    expect(stored.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'anthropic' })
+    expect(stored.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'messages' })
     expect(stored.lastValidationFailure?.target).toEqual({
       model: 'model-b',
-      endpoint: 'anthropic'
+      endpoint: 'messages'
     })
     const catalog = buildConfiguredModelCatalog({
       providers: [module.toProviderView(stored)],
       frameworkId: 'claude-code',
-      frameworkEndpoints: ['anthropic']
+      frameworkEndpoints: ['messages']
     })
     expect(catalog.map((entry) => entry.model)).toEqual(['model-a'])
   })
@@ -1854,7 +1854,7 @@ describe('ProviderAccountsModule', () => {
       type: 'xai-subscription',
       name: 'xAI (Grok) OAuth',
       model: 'grok-4.7',
-      apiEndpoints: ['anthropic', 'openai', 'responses']
+      apiEndpoints: ['messages', 'chat-completions', 'responses']
     })
     expect(stored.keyRef).toBeUndefined()
     await expect(module.beginXaiOAuthLogin()).resolves.toMatchObject({ userCode: 'GROK-1234' })
@@ -1948,7 +1948,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const providerId = (await repository.getSettings()).providers[0].id
     await expect(module.refreshProviderModels({ providerId })).resolves.toEqual({
@@ -1980,7 +1980,7 @@ describe('ProviderAccountsModule', () => {
       baseUrl: 'https://lab.example/v1',
       model: 'lab-model',
       key: 'secret-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const storedProvider = (await repository.getSettings()).providers[0]
     const result = await module.validateProvider({ providerId: storedProvider.id })
@@ -1998,7 +1998,7 @@ describe('ProviderAccountsModule', () => {
 
     const saved = (await repository.getSettings()).providers[0]
     expect(saved.lastValidatedAt).toBeGreaterThan(0)
-    expect(saved.lastValidatedTarget).toEqual({ model: 'lab-model', endpoint: 'openai' })
+    expect(saved.lastValidatedTarget).toEqual({ model: 'lab-model', endpoint: 'chat-completions' })
     expect(saved.lastValidationFailure).toBeUndefined()
     vi.unstubAllGlobals()
   })
@@ -2032,7 +2032,10 @@ describe('ProviderAccountsModule', () => {
     expect(probedUrls).toEqual(['https://opencode.ai/zen/v1/chat/completions'])
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeGreaterThan(0)
-    expect(stored.lastValidatedTarget).toEqual({ model: 'kimi-k2.7-code', endpoint: 'openai' })
+    expect(stored.lastValidatedTarget).toEqual({
+      model: 'kimi-k2.7-code',
+      endpoint: 'chat-completions'
+    })
     expect(stored.lastValidationFailure).toBeUndefined()
     vi.unstubAllGlobals()
   })
@@ -2050,7 +2053,7 @@ describe('ProviderAccountsModule', () => {
       name: 'Local',
       baseUrl: 'http://localhost:11434',
       model: 'qwen3:14b',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const providerId = (await repository.getSettings()).providers[0].id
 
@@ -2069,7 +2072,7 @@ describe('ProviderAccountsModule', () => {
       name: 'Gateway',
       baseUrl: 'http://localhost:11434',
       model: 'qwen3:14b',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const providerId = (await repository.getSettings()).providers[0].id
     await expect(
@@ -2080,7 +2083,7 @@ describe('ProviderAccountsModule', () => {
         name: 'Gateway',
         baseUrl: 'https://gateway.example/v1',
         model: 'qwen3:14b',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     ).rejects.toThrow('API key is required for a custom provider.')
 
@@ -2092,7 +2095,7 @@ describe('ProviderAccountsModule', () => {
       name: 'Gateway',
       baseUrl: 'https://gateway.example/v1',
       model: 'qwen3:14b',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       key: 'sk-secret'
     })
     await module.upsertProvider({
@@ -2102,7 +2105,7 @@ describe('ProviderAccountsModule', () => {
       name: 'Gateway',
       baseUrl: 'http://localhost:11434',
       model: 'qwen3:14b',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.baseUrl).toBe('http://localhost:11434')
@@ -2160,7 +2163,7 @@ describe('ProviderAccountsModule', () => {
         restored,
         { kind: 'provider-default' },
         getAgentFramework('codex')
-      ).provider.openaiBaseUrl
+      ).provider.chatCompletionsBaseUrl
     ).toBe('https://token.sensenova.ai/v1')
   })
 
@@ -2336,7 +2339,7 @@ describe('ProviderAccountsModule', () => {
             baseUrl: 'https://lab.example/v1',
             model: 'lab-model',
             key: 'secret-key',
-            apiEndpoints: ['openai'],
+            apiEndpoints: ['chat-completions'],
             [field]: 0
           }
         })

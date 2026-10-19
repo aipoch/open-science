@@ -4,6 +4,7 @@
     "artifact_reproducibility_contract": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
@@ -108,10 +109,39 @@
     "pdf_structure_engine": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "pdf_text": ["src/main/composition/session-packages.test.ts"],
     "project_file_mentions": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "providers_package": [
+      "src/main/credential-identity/inventory-handoff.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/update/deb-gate-recovery.test.ts",
+      "src/main/update/deb-systemd-gate.test.ts",
+      "src/main/update/installation-artifact.test.ts",
+      "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-formats.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/update/installation-protection.test.ts",
+      "src/main/update/installation-reboot-recovery.test.ts",
+      "src/main/update/verification-process.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_acp": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "renderer_action_menu": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -235,6 +265,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
     "renderer_streamdown": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -296,6 +327,10 @@
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
+    ],
+    "settings_record_contracts": [
+      "src/main/literature/pdf-translation/api-target.test.ts",
+      "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
     "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
     "shared_promise_identity": [

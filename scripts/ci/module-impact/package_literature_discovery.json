@@ -605,10 +605,10 @@
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/record-codec.test.ts",
       "src/main/settings/repository.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
-      "src/main/settings/responses-bridge.plan-tools.test.ts",
-      "src/main/settings/responses-bridge.skill-loading.test.ts",
-      "src/main/settings/responses-bridge.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.plan-tools.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.skill-loading.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
@@ -896,7 +896,8 @@
       "src/main/web-service/internal-web-event-stream.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [],

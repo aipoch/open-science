@@ -168,7 +168,7 @@ for (const concurrency of [1, 2, 4] as const) {
           type: 'custom',
           name: 'Local PDF performance provider',
           model: 'pdf-perf',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: `http://127.0.0.1:${port}`
         })
       }, address.port)

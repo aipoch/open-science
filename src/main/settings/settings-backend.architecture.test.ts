@@ -61,7 +61,10 @@ const settingsPaths = {
   backendTarget: resolve(settingsRoot, 'backend-target.ts'),
   backendRoutePlanner: resolve(settingsRoot, 'backend-route-planner.ts'),
   providerTransportOwner: resolve(settingsRoot, 'provider-transport-owner.ts'),
-  responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
+  responsesToChatCompletionsBridge: resolve(
+    settingsRoot,
+    'responses-to-chat-completions-bridge.ts'
+  ),
   responsesProtocolTypes: resolve(settingsRoot, 'responses-protocol-types.ts'),
   responsesRequestAdapter: resolve(settingsRoot, 'responses-request-adapter.ts'),
   responsesResponseAdapter: resolve(settingsRoot, 'responses-response-adapter.ts'),
@@ -287,21 +290,15 @@ describe('Settings backend ownership architecture', () => {
       'type:ProviderTransportOwnerOptions',
       'value:ProviderTransportOwner'
     ])
-    expect(exportInventoryFrom(settingsPaths.responsesBridge)).toEqual([
-      'type:ResponsesBridgeConnection',
-      'type:ResponsesBridgeModelTarget',
-      'type:ResponsesBridgeNamespacedTool',
-      'type:ResponsesBridgeOptions',
-      'type:ResponsesBridgeSkillCandidate',
-      'type:ResponsesBridgeSkillInput',
-      'type:ResponsesBridgeTarget',
-      'value:ResponsesBridge',
-      'value:chatUrl',
-      'value:completionToResponse',
-      'value:inputToMessages',
-      'value:responsesToChatRequest',
-      'value:toolsToChat',
-      'value:upstreamErrorMessage'
+    expect(exportInventoryFrom(settingsPaths.responsesToChatCompletionsBridge)).toEqual([
+      'type:ResponsesConnection',
+      'type:ResponsesModelTarget',
+      'type:ResponsesSkillCandidate',
+      'type:ResponsesSkillInput',
+      'type:ResponsesToChatCompletionsBridgeOptions',
+      'type:ResponsesToChatCompletionsBridgeTarget',
+      'value:ResponsesToChatCompletionsBridge',
+      'value:chatUrl'
     ])
     expect(exportInventoryFrom(settingsPaths.service)).toEqual([
       'type:AgentBackendResolutionContext',
@@ -465,7 +462,12 @@ describe('Settings backend ownership architecture', () => {
     expect(
       publicOperationsOf(settingsPaths.providerTransportOwner, 'ProviderTransportOwner')
     ).toEqual(['acquire'])
-    expect(publicOperationsOf(settingsPaths.responsesBridge, 'ResponsesBridge')).toEqual([
+    expect(
+      publicOperationsOf(
+        settingsPaths.responsesToChatCompletionsBridge,
+        'ResponsesToChatCompletionsBridge'
+      )
+    ).toEqual([
       'close',
       'registerHostMessageSession',
       'registerMcpSession',
@@ -533,6 +535,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
       'src/main/settings/document-codec.ts',
+      'src/main/settings/document-store.ts',
       'src/main/settings/repository.ts'
     ])
     expect(importersOf(settingsPaths.documentCodec)).toEqual([
@@ -555,7 +558,7 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.providerTransportOwner)).toEqual([
       'src/main/settings/backend-resolver.ts'
     ])
-    expect(importersOf(settingsPaths.responsesBridge)).toEqual([
+    expect(importersOf(settingsPaths.responsesToChatCompletionsBridge)).toEqual([
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/validate.ts'
     ])
@@ -884,11 +887,31 @@ describe('Settings backend ownership architecture', () => {
         ].filter((path) => !movedPaths.has(path))
       )
     )
+    expectBoundaryPaths(manifest, 'providers_package', [
+      'packages/providers/src/providers/lookup.ts',
+      'packages/providers/src/errors.ts',
+      'packages/providers/src/protocols/endpoints.ts',
+      'packages/providers/src/transport/request.ts',
+      'packages/providers/src/transport/body.ts',
+      'packages/providers/src/protocols/usage.ts',
+      'packages/providers/src/protocols/reasoning.ts',
+      'packages/providers/src/responses/request.ts',
+      'packages/providers/src/responses/response.ts',
+      'packages/providers/src/responses/types.ts',
+      'packages/providers/src/models/text-generation.ts'
+    ])
+    expectBoundaryPaths(manifest, 'shared_application_contracts', [
+      'src/shared/reasoning-effort.ts',
+      'src/shared/model-preference-contract.ts',
+      'src/shared/provider-url-policy.ts',
+      'src/shared/provider-model-policy.ts',
+      'src/shared/provider-bridge-policy.ts',
+      'src/shared/provider-error.ts'
+    ])
     expectBoundaryPaths(
       manifest,
       'settings_provider_accounts',
       [
-        'src/main/settings/bounded-response.ts',
         'src/main/settings/provider-accounts.ts',
         'src/main/settings/provider-auth-lifecycle.ts',
         'src/main/settings/provider-draft-projection.ts',
@@ -906,7 +929,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/crypto.test.ts',
         'src/main/settings/crypto.ts',
         'src/main/settings/list-models.test.ts',
-        'src/main/settings/list-models.ts',
         'src/main/settings/provider-accounts.test.ts',
         'src/main/settings/provider-auth-lifecycle.architecture.test.ts',
         'src/main/settings/provider-auth-lifecycle.test.ts',
@@ -917,27 +939,22 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/validate.test.ts',
         'src/main/settings/validate.ts',
         'src/main/settings/xai-oauth.test.ts',
-        'src/main/settings/xai-provider-account-owner.test.ts',
-        'src/main/settings/provider-text-generation.ts',
-        'src/main/settings/provider-text-generation.test.ts'
+        'src/main/settings/xai-provider-account-owner.test.ts'
       ].filter((path) => !movedPaths.has(path))
     )
     expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual(
       expect.arrayContaining(
         [
           'src/main/settings/provider-accounts.ts',
-          'src/main/settings/bounded-response.ts',
           'src/main/settings/claude-isolated-auth.ts',
           'src/main/settings/claude-shared-auth.ts',
           'src/main/settings/codex-auth.ts',
           'src/main/settings/crypto.ts',
-          'src/main/settings/list-models.ts',
           'src/main/settings/provider-draft-projection.ts',
           'src/main/settings/provider-env.ts',
           'src/main/settings/provider-resource-limits.ts',
           'src/main/settings/provider-runtime-projection.ts',
-          'src/main/settings/validate.ts',
-          'src/main/settings/provider-text-generation.ts'
+          'src/main/settings/validate.ts'
         ].filter((path) => !movedPaths.has(path))
       )
     )
@@ -954,21 +971,17 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/environment-check.ts',
         'src/main/settings/system-proxy.ts',
         'src/main/settings/native-responses-compatibility.ts',
-        'src/main/settings/anthropic-provider-bridge.ts',
-        'src/main/settings/openai-provider-bridge.ts',
+        'src/main/settings/messages-bridge.ts',
+        'src/main/settings/protocol-forwarding-bridge.ts',
         'src/main/settings/xai-oauth-provider-bridge.ts',
-        'src/main/settings/xai-protocol.ts',
         'src/main/settings/provider-error-replay.ts',
         'src/main/settings/provider-loopback-http-host.ts',
         'src/main/settings/provider-transport-owner.ts',
         'src/main/settings/provider-failure-observation.ts',
         'src/main/settings/provider-runtime-health-owner.ts',
-        'src/main/settings/responses-bridge.ts',
-        'src/main/settings/responses-bridge.plan-tools.test.ts',
-        'src/main/settings/responses-protocol-types.ts',
-        'src/main/settings/responses-request-adapter.ts',
-        'src/main/settings/responses-response-adapter.ts',
-        'src/main/settings/anthropic-provider-bridge.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.plan-tools.test.ts',
+        'src/main/settings/messages-bridge.test.ts',
         'src/main/settings/backend-resolver.test.ts',
         'src/main/settings/backend-route-planner.architecture.test.ts',
         'src/main/settings/backend-route-planner.test.ts',
@@ -978,23 +991,20 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/environment-check.test.ts',
         'src/main/settings/native-responses-compatibility.test.ts',
         'src/main/settings/network-proxy-runtime.test.ts',
-        'src/main/settings/openai-provider-bridge.test.ts',
+        'src/main/settings/protocol-forwarding-bridge.test.ts',
         'src/main/settings/provider-error-replay.test.ts',
         'src/main/settings/provider-loopback-http-host.architecture.test.ts',
         'src/main/settings/provider-loopback-http-host.test.ts',
         'src/main/settings/provider-transport-owner.architecture.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/settings/provider-runtime-health-owner.test.ts',
-        'src/main/settings/responses-bridge.integration.test.ts',
-        'src/main/settings/responses-bridge.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.integration.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.test.ts',
         'src/main/settings/responses-reasoning-replay.test.ts',
         'src/main/settings/responses-request-adapter.architecture.test.ts',
-        'src/main/settings/responses-request-adapter.test.ts',
         'src/main/settings/responses-response-adapter.architecture.test.ts',
-        'src/main/settings/responses-response-adapter.test.ts',
         'src/main/settings/system-proxy.test.ts',
         'src/main/settings/xai-oauth-provider-bridge.test.ts',
-        'src/main/settings/xai-protocol.test.ts',
         'src/main/settings/backend-target.ts'
       ].filter((path) => !movedPaths.has(path))
     )
@@ -1002,22 +1012,19 @@ describe('Settings backend ownership architecture', () => {
       expect.arrayContaining(
         [
           'src/main/settings/backend-resolver.ts',
-          'src/main/settings/responses-bridge.ts',
-          'src/main/settings/anthropic-provider-bridge.ts',
+          'src/main/settings/responses-to-chat-completions-bridge.ts',
+          'src/main/settings/messages-bridge.ts',
           'src/main/settings/backend-route-planner.ts',
           'src/main/settings/environment-check.ts',
           'src/main/settings/native-responses-compatibility.ts',
           'src/main/settings/network-proxy-runtime.ts',
-          'src/main/settings/openai-provider-bridge.ts',
+          'src/main/settings/protocol-forwarding-bridge.ts',
           'src/main/settings/provider-loopback-http-host.ts',
           'src/main/settings/provider-transport-owner.ts',
           'src/main/settings/provider-failure-observation.ts',
           'src/main/settings/provider-runtime-health-owner.ts',
-          'src/main/settings/responses-request-adapter.ts',
-          'src/main/settings/responses-response-adapter.ts',
           'src/main/settings/system-proxy.ts',
           'src/main/settings/xai-oauth-provider-bridge.ts',
-          'src/main/settings/xai-protocol.ts',
           'src/main/settings/backend-target.ts'
         ].filter((path) => !movedPaths.has(path))
       )
@@ -1466,7 +1473,7 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/authenticated-provider-redirects.test.ts',
         'src/main/settings/bootstrap.integration.test.ts',
         'src/main/settings/capabilities.test.ts',
-        'src/main/settings/chat-provider-compatibility.test.ts',
+        'src/main/settings/chat-completions-compatibility.test.ts',
         'src/main/settings/claude-provider-configuration.integration.test.ts',
         'src/main/settings/codex-auth.test.ts',
         'src/main/settings/codex-skill-loading.integration.test.ts',
@@ -1501,7 +1508,7 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/provider-runtime-projection.test.ts',
         'src/main/settings/record-codec.test.ts',
         'src/main/settings/repository.test.ts',
-        'src/main/settings/responses-bridge.skill-loading.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.skill-loading.test.ts',
         'src/main/settings/runtime-application-commands.test.ts',
         'src/main/settings/service.connectors.test.ts',
         'src/main/settings/service.providers.test.ts',

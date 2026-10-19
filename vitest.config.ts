@@ -46,8 +46,8 @@ export const VITEST_PROCESS_TEST_GLOBS = [
   'src/main/local-rpc-transport.test.ts',
   'src/main/session-plan/plan-mcp-server.test.ts',
   'src/main/acp/mcp-http-host.test.ts',
-  'src/main/settings/openai-provider-bridge.test.ts',
-  'src/main/settings/anthropic-provider-bridge.test.ts',
+  'src/main/settings/protocol-forwarding-bridge.test.ts',
+  'src/main/settings/messages-bridge.test.ts',
   'resources/skills/literature-review/kernel.test.ts'
 ] as const
 
@@ -222,6 +222,10 @@ export default defineConfig({
       : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
       ...(portableTestScope === 'host' ||
+      packageTestExcludePatterns(process.env).includes('packages/providers/**')
+        ? []
+        : ['packages/providers/vitest.config.ts']),
+      ...(portableTestScope === 'host' ||
       packageTestExcludePatterns(process.env).includes('packages/resilient-download/**')
         ? []
         : ['packages/resilient-download/vitest.config.ts']),
@@ -240,6 +244,7 @@ export default defineConfig({
           name: 'default',
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**',
@@ -256,6 +261,7 @@ export default defineConfig({
           include: [...VITEST_ARCHITECTURE_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'
@@ -273,6 +279,7 @@ export default defineConfig({
           include: [...VITEST_PROCESS_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'
@@ -289,6 +296,7 @@ export default defineConfig({
           include: [...VITEST_DATABASE_TEST_GLOBS],
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/providers/**',
             'packages/compute/**',
             'packages/durable-files/**',
             'packages/resilient-download/**'

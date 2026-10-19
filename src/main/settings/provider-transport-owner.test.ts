@@ -6,38 +6,41 @@ import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
-import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
-import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
-import type { ChatProviderCompatibilityTarget } from './chat-provider-compatibility'
+import {
+  ProtocolForwardingBridge,
+  type ProtocolForwardingBridgeTarget
+} from './protocol-forwarding-bridge'
+import type { MessagesBridgeTarget } from './messages-bridge'
+import type { ChatCompletionsCompatibilityTarget } from './chat-completions-compatibility'
 
-type ResponsesBridgeStub = ReturnType<
-  NonNullable<ProviderTransportOwnerOptions['createResponsesBridge']>
+type ResponsesToChatCompletionsBridgeStub = ReturnType<
+  NonNullable<ProviderTransportOwnerOptions['createResponsesToChatCompletionsBridge']>
 >
 type NativeProxyStub = ReturnType<
   NonNullable<ProviderTransportOwnerOptions['createNativeResponsesProxy']>
 >
-type AnthropicBridgeStub = ReturnType<
-  NonNullable<ProviderTransportOwnerOptions['createAnthropicProviderBridge']>
+type MessagesBridgeStub = ReturnType<
+  NonNullable<ProviderTransportOwnerOptions['createMessagesBridge']>
 >
 type OpenAiBridgeStub = ReturnType<
-  NonNullable<ProviderTransportOwnerOptions['createOpenAiProviderBridge']>
+  NonNullable<ProviderTransportOwnerOptions['createProtocolForwardingBridge']>
 >
 type ChatCompatibilityBridgeStub = ReturnType<
-  NonNullable<ProviderTransportOwnerOptions['createChatProviderCompatibilityBridge']>
+  NonNullable<ProviderTransportOwnerOptions['createChatCompletionsCompatibilityBridge']>
 >
 
 const makeTarget = (): ProviderRuntimeTarget => ({
   providerId: 'provider-a',
   providerType: 'custom',
   effectiveModel: 'model-a',
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   provider: {
     type: 'custom',
     baseUrl: 'https://provider.example/v1',
-    openaiBaseUrl: 'https://provider.example/v1',
+    chatCompletionsBaseUrl: 'https://provider.example/v1',
     model: 'model-a',
     key: 'plain-provider-key',
-    apiEndpoints: ['openai']
+    apiEndpoints: ['chat-completions']
   },
   reasoningEffortProfile: {
     supported: true,
@@ -45,11 +48,13 @@ const makeTarget = (): ProviderRuntimeTarget => ({
   },
   frameworkCompatible: true,
   modelBridgeSupported: true,
-  needsChatResponsesBridge: true,
+  needsChatResponsesToChatCompletionsBridge: true,
   needsNativeResponsesCompatibility: false
 })
 
-const makeResponsesBridge = (index: number): ResponsesBridgeStub => ({
+const makeResponsesToChatCompletionsBridge = (
+  index: number
+): ResponsesToChatCompletionsBridgeStub => ({
   start: vi.fn(async () => ({
     baseUrl: `http://127.0.0.1:${41000 + index}/v1`,
     token: `bridge-token-${index}`,
@@ -91,7 +96,7 @@ const makeNativeProxy = (startError?: Error, closeError?: Error): NativeProxyStu
   setTarget: vi.fn()
 })
 
-const makeAnthropicBridge = (): AnthropicBridgeStub => ({
+const makeMessagesBridge = (): MessagesBridgeStub => ({
   start: vi.fn(async () => ({
     baseUrl: 'http://127.0.0.1:43000',
     token: 'anthropic-bridge-token'
@@ -134,13 +139,13 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
 
 describe('ProviderTransportOwner generations', () => {
   it('routes only CodeBuddy model traffic through its image-normalizing bridge', async () => {
-    const selector = makeResponsesBridge(0)
+    const selector = makeResponsesToChatCompletionsBridge(0)
     const bridge = makeOpenAiBridge(0)
-    let targets: readonly OpenAiProviderBridgeTarget[] = []
-    const createResponsesBridge = vi.fn(() => selector)
+    let targets: readonly ProtocolForwardingBridgeTarget[] = []
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
     const owner = new ProviderTransportOwner({
-      createResponsesBridge,
-      createOpenAiProviderBridge: (registered) => {
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge: (registered) => {
         targets = registered
         return bridge
       }
@@ -155,7 +160,7 @@ describe('ProviderTransportOwner generations', () => {
     await generation.providerTransportLease?.selectSkills?.('use pubmed', [])
 
     expect(selector.start).not.toHaveBeenCalled()
-    expect(createResponsesBridge).toHaveBeenCalledWith(expect.any(Object), {
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(expect.any(Object), {
       skillSelectorFailureMode: 'throw'
     })
     expect(selector.selectSkills).toHaveBeenCalledWith('use pubmed', [], undefined, undefined)
@@ -169,7 +174,7 @@ describe('ProviderTransportOwner generations', () => {
       adaptRequest: expect.any(Function)
     })
     expect(generation.provider).toMatchObject({
-      openaiBaseUrl: 'http://127.0.0.1:44000/v1',
+      chatCompletionsBaseUrl: 'http://127.0.0.1:44000/v1',
       key: 'openai-token-0',
       model: 'model-a'
     })
@@ -181,16 +186,16 @@ describe('ProviderTransportOwner generations', () => {
   })
 
   it('routes CodeBuddy xAI subscription traffic through the OAuth bridge', async () => {
-    const selector = makeResponsesBridge(0)
+    const selector = makeResponsesToChatCompletionsBridge(0)
     const oauthBridge = makeOpenAiBridge(0)
     const openAiBridge = makeOpenAiBridge(1)
     const createXaiOAuthProviderBridge = vi.fn(() => oauthBridge as never)
-    const createOpenAiProviderBridge = vi.fn(() => openAiBridge)
-    const createResponsesBridge = vi.fn(() => selector)
+    const createProtocolForwardingBridge = vi.fn(() => openAiBridge)
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
     const getXaiOAuthAccessToken = vi.fn(async () => 'oauth-access-token')
     const owner = new ProviderTransportOwner({
-      createResponsesBridge,
-      createOpenAiProviderBridge,
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge,
       createXaiOAuthProviderBridge,
       getXaiOAuthAccessToken
     })
@@ -220,12 +225,12 @@ describe('ProviderTransportOwner generations', () => {
     expect(createXaiOAuthProviderBridge).toHaveBeenCalledWith(
       [{ id: expect.any(String), model: 'grok-4.6' }],
       expect.any(String),
-      'openai',
+      'chat-completions',
       getXaiOAuthAccessToken,
-      expect.objectContaining({ adaptOpenAiRequest: expect.any(Function) })
+      expect.objectContaining({ adaptChatCompletionsRequest: expect.any(Function) })
     )
-    expect(createOpenAiProviderBridge).not.toHaveBeenCalled()
-    expect(createResponsesBridge).toHaveBeenCalledWith(
+    expect(createProtocolForwardingBridge).not.toHaveBeenCalled()
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: 'http://127.0.0.1:44000/v1',
         key: 'openai-token-0'
@@ -237,11 +242,11 @@ describe('ProviderTransportOwner generations', () => {
 
   it('closes both CodeBuddy transports when its model bridge fails to start', async () => {
     const startError = new Error('CodeBuddy bridge start failed')
-    const selector = makeResponsesBridge(0)
+    const selector = makeResponsesToChatCompletionsBridge(0)
     const bridge = makeOpenAiBridge(0, startError)
     const owner = new ProviderTransportOwner({
-      createResponsesBridge: () => selector,
-      createOpenAiProviderBridge: () => bridge
+      createResponsesToChatCompletionsBridge: () => selector,
+      createProtocolForwardingBridge: () => bridge
     })
 
     await expect(
@@ -265,18 +270,18 @@ describe('ProviderTransportOwner generations', () => {
       endpoint: 'https://provider.example/v1/responses'
     },
     {
-      wire: 'anthropic' as const,
-      apiEndpoints: ['anthropic'] as const,
+      wire: 'messages' as const,
+      apiEndpoints: ['messages'] as const,
       endpoint: 'https://provider.example/v1/messages'
     }
   ])('routes a $wire-only CodeBuddy provider through Chat compatibility', async (testCase) => {
-    const selector = makeResponsesBridge(0)
+    const selector = makeResponsesToChatCompletionsBridge(0)
     const bridge = makeChatCompatibilityBridge()
-    let compatibilityTarget: ChatProviderCompatibilityTarget | undefined
-    const createResponsesBridge = vi.fn(() => selector)
+    let compatibilityTarget: ChatCompletionsCompatibilityTarget | undefined
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
     const owner = new ProviderTransportOwner({
-      createResponsesBridge,
-      createChatProviderCompatibilityBridge: (target) => {
+      createResponsesToChatCompletionsBridge,
+      createChatCompletionsCompatibilityBridge: (target) => {
         compatibilityTarget = target
         return bridge
       }
@@ -287,9 +292,9 @@ describe('ProviderTransportOwner generations', () => {
       provider: {
         ...makeTarget().provider,
         apiEndpoints: [...testCase.apiEndpoints],
-        openaiBaseUrl: 'https://provider.example/v1'
+        chatCompletionsBaseUrl: 'https://provider.example/v1'
       },
-      needsChatResponsesBridge: true
+      needsChatResponsesToChatCompletionsBridge: true
     }
     const generation = await owner.acquire({
       activeTarget,
@@ -306,7 +311,7 @@ describe('ProviderTransportOwner generations', () => {
       key: 'plain-provider-key',
       adaptRequest: expect.any(Function)
     })
-    expect(createResponsesBridge).toHaveBeenCalledWith(
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: 'http://127.0.0.1:45000/v1',
         key: 'chat-compatibility-token'
@@ -314,8 +319,8 @@ describe('ProviderTransportOwner generations', () => {
       { skillSelectorFailureMode: 'throw' }
     )
     expect(generation.provider).toMatchObject({
-      openaiBaseUrl: 'http://127.0.0.1:45000/v1',
-      apiEndpoints: ['openai']
+      chatCompletionsBaseUrl: 'http://127.0.0.1:45000/v1',
+      apiEndpoints: ['chat-completions']
     })
     await generation.release()
     expect(bridge.close).toHaveBeenCalledOnce()
@@ -323,11 +328,11 @@ describe('ProviderTransportOwner generations', () => {
   })
 
   it('creates independent Responses generations and releases each idempotently', async () => {
-    const bridges: ReturnType<typeof makeResponsesBridge>[] = []
+    const bridges: ReturnType<typeof makeResponsesToChatCompletionsBridge>[] = []
     let generation = 0
     const owner = new ProviderTransportOwner({
-      createResponsesBridge: () => {
-        const bridge = makeResponsesBridge(bridges.length)
+      createResponsesToChatCompletionsBridge: () => {
+        const bridge = makeResponsesToChatCompletionsBridge(bridges.length)
         bridges.push(bridge)
         return bridge
       },
@@ -340,9 +345,9 @@ describe('ProviderTransportOwner generations', () => {
 
     const first = await owner.acquire(request)
     const second = await owner.acquire(request)
-    first.responsesBridge?.lease.setReasoningEffort?.('low')
-    second.responsesBridge?.lease.setReasoningEffort?.('high')
-    first.responsesBridge?.lease.registerHostMessageSession?.('side-session', [], {
+    first.responsesConnection?.lease.setReasoningEffort?.('low')
+    second.responsesConnection?.lease.setReasoningEffort?.('high')
+    first.responsesConnection?.lease.registerHostMessageSession?.('side-session', [], {
       failClosedUnknownKeys: true
     })
     await first.release()
@@ -373,7 +378,7 @@ describe('ProviderTransportOwner generations', () => {
     const request = {
       activeTarget: {
         ...makeTarget(),
-        needsChatResponsesBridge: false,
+        needsChatResponsesToChatCompletionsBridge: false,
         needsNativeResponsesCompatibility: true
       },
       plan: makePlan({ kind: 'codex-responses-compatibility' as const, targets: [] })
@@ -381,7 +386,7 @@ describe('ProviderTransportOwner generations', () => {
 
     const first = await owner.acquire(request)
     const second = await owner.acquire(request)
-    first.responsesBridge?.lease.registerHostMessageSession?.('side-session', [], {
+    first.responsesConnection?.lease.registerHostMessageSession?.('side-session', [], {
       failClosedUnknownKeys: true
     })
 
@@ -408,14 +413,14 @@ describe('ProviderTransportOwner generations', () => {
     })
     const activeTarget: ProviderRuntimeTarget = {
       ...makeTarget(),
-      needsChatResponsesBridge: false,
+      needsChatResponsesToChatCompletionsBridge: false,
       needsNativeResponsesCompatibility: true,
       apiEndpoints: ['responses'],
       provider: {
         ...makeTarget().provider,
         apiEndpoints: ['responses'],
         vendorId: 'deepseek',
-        openaiBaseUrl: 'https://api.deepseek.com/v1',
+        chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
         responsesBaseUrl: 'https://api.deepseek.com'
       }
     }
@@ -442,7 +447,7 @@ describe('ProviderTransportOwner generations', () => {
       owner.acquire({
         activeTarget: {
           ...makeTarget(),
-          needsChatResponsesBridge: false,
+          needsChatResponsesToChatCompletionsBridge: false,
           needsNativeResponsesCompatibility: true
         },
         plan: makePlan({ kind: 'codex-responses-compatibility', targets: [] })
@@ -453,9 +458,9 @@ describe('ProviderTransportOwner generations', () => {
   })
 
   it('owns Claude bridge credentials, retargeting, bypass aliases, and idempotent release', async () => {
-    const bridge = makeAnthropicBridge()
+    const bridge = makeMessagesBridge()
     const owner = new ProviderTransportOwner({
-      createAnthropicProviderBridge: () => bridge
+      createMessagesBridge: () => bridge
     })
 
     const generation = await owner.acquire({
@@ -486,9 +491,9 @@ describe('ProviderTransportOwner generations', () => {
       headers: { 'x-api-key': 'anthropic-bridge-token' }
     })
     expect(generation.environment?.NO_PROXY).toBe(generation.environment?.no_proxy)
-    expect(generation.anthropicBridgeLease?.setTarget('provider-a/model-a')).toBe(true)
+    expect(generation.messagesBridgeLease?.setTarget('provider-a/model-a')).toBe(true)
     await generation.release()
-    await generation.anthropicBridgeLease?.release()
+    await generation.messagesBridgeLease?.release()
 
     expect(bridge.setTarget).toHaveBeenCalledWith('provider-a/model-a')
     expect(bridge.close).toHaveBeenCalledTimes(1)
@@ -499,7 +504,7 @@ describe('ProviderTransportOwner generations', () => {
     const bridges = [makeOpenAiBridge(0), makeOpenAiBridge(1, startError)]
     let bridgeIndex = 0
     const owner = new ProviderTransportOwner({
-      createOpenAiProviderBridge: () => bridges[bridgeIndex++]!
+      createProtocolForwardingBridge: () => bridges[bridgeIndex++]!
     })
     const targetA = makeTarget()
     const targetB: ProviderRuntimeTarget = {
@@ -531,22 +536,22 @@ describe('ProviderTransportOwner generations', () => {
   })
 
   it('uses TokenHub x-api-key authentication for OpenCode Anthropic traffic', async () => {
-    const bridge = makeAnthropicBridge()
-    let targets: readonly AnthropicProviderBridgeTarget[] = []
+    const bridge = makeMessagesBridge()
+    let targets: readonly MessagesBridgeTarget[] = []
     const owner = new ProviderTransportOwner({
-      createAnthropicProviderBridge: (registered) => {
+      createMessagesBridge: (registered) => {
         targets = registered
         return bridge
       }
     })
     const target: ProviderRuntimeTarget = {
       ...makeTarget(),
-      apiEndpoints: ['anthropic'],
-      needsChatResponsesBridge: false,
+      apiEndpoints: ['messages'],
+      needsChatResponsesToChatCompletionsBridge: false,
       provider: {
         ...makeTarget().provider,
         vendorId: 'tencent',
-        apiEndpoints: ['anthropic']
+        apiEndpoints: ['messages']
       }
     }
 
@@ -581,8 +586,8 @@ describe('ProviderTransportOwner generations', () => {
         : Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
     })
     const owner = new ProviderTransportOwner({
-      createOpenAiProviderBridge: (targets, initialTargetId) =>
-        new OpenAiProviderBridge(targets, initialTargetId, upstreamFetch)
+      createProtocolForwardingBridge: (targets, initialTargetId) =>
+        new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
     })
     const targetA = makeTarget()
     const targetB: ProviderRuntimeTarget = {
@@ -611,9 +616,10 @@ describe('ProviderTransportOwner generations', () => {
       ({ provider }) => provider.model === 'model-a'
     )?.provider
     expect(generation.providerConfiguration).toBeUndefined()
-    if (!providerA?.openaiBaseUrl || !providerA.key) throw new Error('Missing provider A loopback')
+    if (!providerA?.chatCompletionsBaseUrl || !providerA.key)
+      throw new Error('Missing provider A loopback')
     const sendA = (): Promise<Response> =>
-      fetch(`${providerA.openaiBaseUrl}/chat/completions`, {
+      fetch(`${providerA.chatCompletionsBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: { authorization: `Bearer ${providerA.key}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model: 'ignored', messages: [] })
@@ -633,13 +639,13 @@ describe('ProviderTransportOwner generations', () => {
   it('owns the native Codex provider projection, retargeting, and release', async () => {
     const bridge = makeOpenAiBridge(0)
     const owner = new ProviderTransportOwner({
-      createOpenAiProviderBridge: () => bridge
+      createProtocolForwardingBridge: () => bridge
     })
     const activeTarget: ProviderRuntimeTarget = {
       ...makeTarget(),
       apiEndpoints: ['responses'],
       provider: { ...makeTarget().provider, apiEndpoints: ['responses'] },
-      needsChatResponsesBridge: false
+      needsChatResponsesToChatCompletionsBridge: false
     }
     const initialTargetId = 'codex/provider-a/model-a'
 
@@ -658,7 +664,7 @@ describe('ProviderTransportOwner generations', () => {
 
     expect(generation.provider).toMatchObject({
       baseUrl: 'http://127.0.0.1:44000',
-      openaiBaseUrl: 'http://127.0.0.1:44000/v1',
+      chatCompletionsBaseUrl: 'http://127.0.0.1:44000/v1',
       key: 'openai-token-0',
       model: 'model-a',
       apiEndpoints: ['responses']

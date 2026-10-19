@@ -41,7 +41,8 @@
     "src/renderer/src/components/runtime-update-copy.ts",
     "src/renderer/src/components/runtime-update-outcome-notice.tsx",
     "src/renderer/src/components/runtime-update-view.test.ts",
-    "src/renderer/src/components/runtime-update-view.ts"
+    "src/renderer/src/components/runtime-update-view.ts",
+    "src/renderer/src/components/ApplicationStartup.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
@@ -115,7 +116,8 @@
     "src/renderer/src/components/runtime-startup-gate.tsx",
     "src/renderer/src/components/runtime-update-copy.ts",
     "src/renderer/src/components/runtime-update-outcome-notice.tsx",
-    "src/renderer/src/components/runtime-update-view.ts"
+    "src/renderer/src/components/runtime-update-view.ts",
+    "src/renderer/src/components/ApplicationStartup.tsx"
   ],
   "consumerModules": ["renderer_hooks"],
   "testFiles": {

@@ -1,12 +1,18 @@
 import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
+import type { OfficialVendorId, CustomReasoningEffortTransport } from '@aipoch/providers'
+
 import type { SkillSelectorUsageObservation } from '../agent-framework/types'
-import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
-import { fetchProviderRequest } from './provider-fetch'
-import { resolveChatReasoningTransport } from './reasoning-transport'
+import {
+  normalizeChatCompletionsUsage,
+  resolveChatReasoningTransport
+} from '@aipoch/providers/protocol'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
+
 import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill-selection-contract'
 import {
   boundedSkillSelectorCatalog,
@@ -152,7 +158,7 @@ export async function selectChatSkills(input: {
           'Chat Skill selector response'
         )
       ) as JsonObject
-      const usage = normalizeOpenAiChatModelStepUsage(completion.usage)
+      const usage = normalizeChatCompletionsUsage(completion.usage)
       if (usage) {
         observeUsage?.({
           usage,

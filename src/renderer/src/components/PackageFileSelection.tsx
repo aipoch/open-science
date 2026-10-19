@@ -186,6 +186,7 @@ export const PackageFileSelection = ({
       <div
         className={`${dialogBodyClassName} min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
+        {notice}
         <fieldset className="grid gap-2 sm:grid-cols-2">
           <legend className="sr-only">{t('Package contents')}</legend>
           {(['compact', 'full'] as const).map((preset) => (
@@ -404,7 +405,7 @@ export const PackageFileSelection = ({
                         ) : null
                       })}
                     </div>
-                    <div className="max-h-48 overflow-y-auto">
+                    <div>
                       {visibleRetainedFiles
                         .slice(
                           currentRetainedPage * PAGE_SIZE,
@@ -690,18 +691,19 @@ export const PackageFileSelection = ({
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t('Review private data before sharing.')}
         </p>
-        {notice}
+        {summary?.pdfNotesAvailable ? (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includePdfNotes}
+              onChange={(event) => setIncludePdfNotes(event.target.checked)}
+            />
+            {t(
+              'Include shared PDF notes and annotations from all projects as a read-only snapshot'
+            )}
+          </label>
+        ) : null}
       </div>
-      {summary?.pdfNotesAvailable ? (
-        <label className="flex items-start gap-2 px-5 py-3 text-sm">
-          <input
-            type="checkbox"
-            checked={includePdfNotes}
-            onChange={(event) => setIncludePdfNotes(event.target.checked)}
-          />
-          {t('Include shared PDF notes and annotations from all projects as a read-only snapshot')}
-        </label>
-      ) : null}
       <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
         <Button variant="ghost" className={dialogCancelButtonClassName} onClick={onCancel}>
           {t('Cancel')}

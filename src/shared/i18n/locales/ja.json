@@ -156,6 +156,8 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "このアプリのバージョンは、この暗号化データ形式に対応していません。対応するバージョンを使用するか、元のプロファイルを復元してください。既存の認証情報は置き換えられていません。"
   },
   "renderer": {
+    "Preparing to receive package…": "パッケージの受信を準備中…",
+    "Unable to prepare browser import. Resolve the startup error and try again.": "ブラウザーからのインポートを準備できません。起動エラーを解決してから再試行してください。",
     "Update preparation failed": "更新の準備に失敗しました",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "アプリは開いたままです。問題を解決して再試行するか、更新をキャンセルして作業を続けてください。",
     "Select one or more options": "1つ以上の選択肢を選択",
@@ -7282,6 +7284,10 @@
     "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
     "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
+    "Waiting for browser…": "ブラウザーを待機中…",
+    "Receiving package…": "パッケージを受信中…",
+    "Cancel transfer": "転送をキャンセル",
+    "Transfer cancelled": "転送がキャンセルされました",
     "Sign in to continue this conversation": "ログインしてこの会話を続ける",
     "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。",
     "Check package": "パッケージを検証",

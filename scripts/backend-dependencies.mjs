@@ -192,6 +192,7 @@ export function backendDependencyIncludes(
       '@aipoch/connector-core',
       '@aipoch/connector-mcp-client',
       '@aipoch/diagnostics',
+      '@aipoch/providers',
       '@aipoch/environment',
       '@aipoch/notebook-analysis',
       '@aipoch/notebook-code-risk',

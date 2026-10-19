@@ -11,7 +11,7 @@ const provider: ProviderView = {
   name: 'API',
   type: 'custom',
   baseUrl: 'https://example.test',
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   models: ['one', 'two'],
   hasKey: true,
   needsKey: false,
@@ -68,7 +68,7 @@ it('keeps configured API models distinct and excludes missing credentials or fai
       lastValidationFailure: {
         category: 'model-not-found',
         at: 1,
-        target: { model: 'one', endpoint: 'openai' }
+        target: { model: 'one', endpoint: 'chat-completions' }
       }
     },
     { ...provider, id: 'no-key', hasKey: false },

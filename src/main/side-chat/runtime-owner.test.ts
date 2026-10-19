@@ -490,7 +490,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       const resolved: ResolvedAgentBackend = {
         ...backend(framework),
         ...(subscription ? { providerId: 'builtin-codex-subscription' } : {}),
-        responsesBridgeLease: subscription
+        responsesTransportLease: subscription
           ? undefined
           : {
               selectSkills: vi.fn(async () => []),
@@ -1347,7 +1347,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       resolveTarget: vi.fn(async () => ({
         ...backend(codexFramework),
         backendId: 'codex:provider-a',
-        responsesBridgeLease: bridges[Math.min(resolution++, bridges.length - 1)]
+        responsesTransportLease: bridges[Math.min(resolution++, bridges.length - 1)]
       })),
       relay: createRelayOwner(),
       persistence: createPersistence(),
@@ -1760,7 +1760,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       return capturedTarget.frameworkId === 'opencode'
         ? {
             ...resolved,
-            responsesBridgeLease: {
+            responsesTransportLease: {
               selectSkills: vi.fn(async () => []),
               registerReviewerSession: vi.fn(),
               unregisterReviewerSession: vi.fn(() => false),
