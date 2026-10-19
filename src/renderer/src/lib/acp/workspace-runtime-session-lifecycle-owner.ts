@@ -32,6 +32,7 @@ import type { useAcpRuntime } from './useAcpRuntime'
 import { resolveHistoryReplayTarget, type HistoryReplayDescriptor } from './history-preamble'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
+  cancelPreparingWorkspacePrompt,
   sendWorkspaceMessage,
   type SendWorkspaceMessageIntent
 } from './workspace-runtime-command-owner'
@@ -726,6 +727,7 @@ const cancelWorkspaceRun = async (
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
   clearWorkspaceOperationError(sessionId)
+  if (await cancelPreparingWorkspacePrompt(sessionId)) return
   // A run that only exists because a failed rollback kept its preparation was never admitted, so
   // there is nothing for the provider to cancel; releasing the exact preparation is the stop.
   if (hasPendingWorkspacePromptRollback(sessionId)) {
