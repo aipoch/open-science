@@ -85,17 +85,11 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
       ? t('You can cancel the download at any time.')
       : t('Review what’s new, then download the update.')
     : id === 'S23'
-      ? t(
-          'Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.'
-        )
+      ? t('Cannot cancel; the app will reopen automatically.')
       : status.state === 'applying'
-        ? t(
-            'Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.'
-          )
+        ? t('Please wait for the app to close and reopen.')
         : id === 'S01'
-          ? t(
-              'The update is downloaded. Restart when you’re ready; running tasks will be checked first.'
-            )
+          ? t('Ready to restart; running tasks will be checked.')
           : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
@@ -212,9 +206,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 </span>
                 <div className="min-w-0 space-y-1">
                   <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {statusDescription}
-                  </p>
+                  <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
                 </div>
               </div>
               {downloading ? (
@@ -235,7 +227,10 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               ) : null}
             </section>
           ) : null}
-          <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain`}>
+          <div
+            data-testid="update-scroll-body"
+            className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain ${standardFlow ? 'max-h-80' : ''}`}
+          >
             {confirming ? (
               <section
                 data-runtime-update-state={

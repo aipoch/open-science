@@ -7302,8 +7302,8 @@
     "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。",
     "You can cancel the download at any time.": "ダウンロードはいつでもキャンセルできます。",
     "Review what’s new, then download the update.": "更新内容を確認してから、アップデートをダウンロードしてください。",
-    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science は更新をインストールするために終了し、完了後に自動で起動します。手動で起動しないでください。",
-    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "更新のダウンロードが完了しました。準備ができたら再起動してください。実行中のタスクを先に確認します。",
-    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "インストールはキャンセルできません。完了すると Open-Science が自動で起動します。"
+    "Please wait for the app to close and reopen.": "アプリが終了し、自動で起動するまでお待ちください。",
+    "Ready to restart; running tasks will be checked.": "再起動の準備ができました。実行中のタスクを確認します。",
+    "Cannot cancel; the app will reopen automatically.": "キャンセルできません。完了後に自動で起動します。"
   }
 }

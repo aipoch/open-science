@@ -7632,8 +7632,8 @@
     "Historical result; current library status is unavailable.": "Resultado histórico; el estado actual en la biblioteca no está disponible.",
     "You can cancel the download at any time.": "Se puede cancelar la descarga en cualquier momento.",
     "Review what’s new, then download the update.": "Revise las novedades y descargue la actualización.",
-    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science se cerrará para instalar la actualización y se abrirá de nuevo automáticamente. No vuelva a abrir la aplicación manualmente.",
-    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "La actualización se ha descargado. Reinicie cuando esté listo; primero se comprobarán las tareas en curso.",
-    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "No se puede cancelar la instalación. Open-Science se abrirá de nuevo automáticamente cuando termine."
+    "Please wait for the app to close and reopen.": "Espere a que la aplicación se cierre y vuelva a abrirse.",
+    "Ready to restart; running tasks will be checked.": "Listo para reiniciar; se comprobarán las tareas en curso.",
+    "Cannot cancel; the app will reopen automatically.": "No se puede cancelar; la aplicación se abrirá automáticamente."
   }
 }

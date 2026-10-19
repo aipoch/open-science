@@ -7772,8 +7772,8 @@
     "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно.",
     "You can cancel the download at any time.": "Загрузку можно отменить в любой момент.",
     "Review what’s new, then download the update.": "Ознакомьтесь с изменениями, затем загрузите обновление.",
-    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science закроется для установки обновления и затем откроется автоматически. Не открывайте приложение самостоятельно.",
-    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "Обновление загружено. Перезапустите приложение, когда будете готовы. Сначала будут проверены выполняемые задачи.",
-    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "Установку нельзя отменить. После её завершения Open-Science откроется автоматически."
+    "Please wait for the app to close and reopen.": "Дождитесь закрытия и автоматического открытия приложения.",
+    "Ready to restart; running tasks will be checked.": "Всё готово к перезапуску; текущие задачи будут проверены.",
+    "Cannot cancel; the app will reopen automatically.": "Отмена невозможна; приложение откроется автоматически."
   }
 }

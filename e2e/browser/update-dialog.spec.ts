@@ -33,7 +33,7 @@ test('recovers historical records only after confirmation in the update dialog',
   await expect(
     page
       .getByRole('dialog', { name: 'Update', exact: true })
-      .getByText('Open-Science will close to install the update', { exact: false })
+      .getByText('Please wait for the app to close and reopen.', { exact: false })
   ).toBeVisible()
   await expect(recover).toBeHidden()
 })
@@ -225,7 +225,9 @@ for (const theme of ['light', 'dark']) {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto(`/update-dialog.html?continuous&short&stage=installing&${theme}`)
     const dialog = page.getByRole('dialog')
-    await expect(dialog.getByRole('status')).toContainText('Installation cannot be cancelled')
+    await expect(dialog.getByRole('status')).toContainText(
+      'Cannot cancel; the app will reopen automatically.'
+    )
     await expect(
       dialog.getByRole('button', { name: 'Installing update…', exact: true })
     ).toBeDisabled()
@@ -234,5 +236,37 @@ for (const theme of ['light', 'dark']) {
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('region', { name: "What's new" })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`update-installing-${theme}.png`) })
+  })
+}
+
+for (const locale of ['en', 'zh-Hans']) {
+  test(`keeps status copy on one line and scrolls long notes independently (${locale})`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1000, height: 1000 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`/update-dialog.html?continuous&stage=installing&locale=${locale}`)
+    const dialog = page.getByRole('dialog')
+    const status = page.getByTestId('update-status')
+    const body = page.getByTestId('update-scroll-body')
+    const action = dialog.getByRole('button')
+    await expect(status).toBeVisible()
+    const description = status.locator('p')
+    expect(
+      await description.evaluate((node) => {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        return range.getClientRects().length
+      })
+    ).toBe(1)
+    const before = { status: await status.boundingBox(), action: await action.boundingBox() }
+    expect((await dialog.boundingBox())!.height).toBeLessThan(650)
+    await body.hover()
+    await page.mouse.wheel(0, 600)
+    await expect.poll(() => body.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    expect(await status.boundingBox()).toEqual(before.status)
+    expect(await action.boundingBox()).toEqual(before.action)
+    await expect(action).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath(`bounded-update-notes-${locale}.png`) })
   })
 }

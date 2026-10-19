@@ -7300,8 +7300,8 @@
     "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다.",
     "You can cancel the download at any time.": "다운로드는 언제든지 취소할 수 있습니다.",
     "Review what’s new, then download the update.": "변경 사항을 확인한 다음 업데이트를 다운로드하세요.",
-    "Open-Science will close to install the update, then reopen automatically. Please do not reopen it yourself.": "Open-Science가 업데이트 설치를 위해 종료된 후 자동으로 다시 열립니다. 직접 다시 열지 마세요.",
-    "The update is downloaded. Restart when you’re ready; running tasks will be checked first.": "업데이트가 다운로드되었습니다. 준비되면 다시 시작하세요. 실행 중인 작업을 먼저 확인합니다.",
-    "Installation cannot be cancelled. Open-Science will reopen automatically when it finishes.": "설치는 취소할 수 없습니다. 완료되면 Open-Science가 자동으로 다시 열립니다."
+    "Please wait for the app to close and reopen.": "앱이 종료되고 자동으로 다시 열릴 때까지 기다려 주세요.",
+    "Ready to restart; running tasks will be checked.": "다시 시작할 준비가 되었습니다. 실행 중인 작업을 확인합니다.",
+    "Cannot cancel; the app will reopen automatically.": "취소할 수 없습니다. 완료 후 앱이 자동으로 다시 열립니다."
   }
 }
