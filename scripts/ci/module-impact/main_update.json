@@ -47,7 +47,9 @@
     "src/main/update/installation-occupancy.test.ts",
     "src/main/update/installation-preparation.test.ts",
     "src/main/update/windows-update-handoff.ts",
-    "src/main/update/windows-update-handoff.test.ts"
+    "src/main/update/windows-update-handoff.test.ts",
+    "scripts/windows-install-publication.test.ts",
+    "scripts/windows-installer-extractor.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -96,7 +98,9 @@
       "src/main/update/verification-process.test.ts",
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
+      "src/main/update/windows-update-handoff.test.ts",
+      "scripts/windows-install-publication.test.ts",
+      "scripts/windows-installer-extractor.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

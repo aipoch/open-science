@@ -67,4 +67,5 @@ exports.default = async function signWindows(context) {
       console.log(`[windows-sign] signed bundled PE: ${path.relative(context.appOutDir, file)}`)
     }
   await verifyPackagedNativeComponents(path.join(context.appOutDir, 'resources'), `win32-${arch}`)
+  await require('./stage-windows-extractor.cjs')(context)
 }

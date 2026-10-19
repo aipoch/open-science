@@ -48,3 +48,21 @@ diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 
    DoesNotExist:
      SetErrors
+diff --git a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
+--- a/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/include/extractAppPackage.nsh
+@@ -104,5 +104,8 @@ !macroend
+
+ !macro extractUsing7za FILE
++  !ifmacrodef customExtractAppPackage
++    !insertmacro customExtractAppPackage "${FILE}"
++  !else
+   Push $OUTDIR
+   CreateDirectory "$PLUGINSDIR\7z-out"
+   ClearErrors
+@@ -155,4 +158,5 @@ !macro extractUsing7za FILE
+     Goto LoopExtract7za
+
+   DoneExtract7za:
++  !endif
+ !macroend

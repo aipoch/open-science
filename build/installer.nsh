@@ -30,10 +30,12 @@
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
 
 # Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
 # receipt at each explicit failure exit so the detached presentation can become dismissible.
 !macro quitFailedUpdate
+  Call cleanupInstallPublication
   Push "failed"
   Call writeUpdateReceipt
   SetErrorLevel 2
@@ -407,12 +409,14 @@ FunctionEnd
   FunctionEnd
 
   Function restorePreservedOnAbort
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
     Push "failed"
     Call writeUpdateReceipt
   FunctionEnd
 
   Function .onInstFailed
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
     Push "failed"
     Call writeUpdateReceipt

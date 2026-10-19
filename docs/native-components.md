@@ -185,3 +185,34 @@ npm test -- build/packaging.test.ts scripts/windows-update-notice.test.ts script
 Retain the fixtures' Windows/toolchain requirements and report skipped native cases separately.
 Real upgrade acceptance must still verify installer outcome, successor readiness, profile/data
 retention and normal process cleanup; seeing an installer window is insufficient.
+
+### Windows installer extraction
+
+NSIS embeds the official standalone 7-Zip 26.04 executable for its target architecture. The existing
+`afterSign` hook downloads the pinned archive, verifies the executable and license hashes even on
+cache hits, copies the tool to `out/windows-installer/<arch>`, and applies the configured Windows
+signing identity to that copy. The shared cache stays unchanged. The tool runs only as a hidden,
+synchronous installer child; it is not an installed updater or service. Its license and upstream
+source notice accompany the application.
+
+Only extractor exit code zero permits publication. CRC errors, truncated archives, write errors,
+warnings and cancellation results fail installation. The native installer shows an extraction
+stage instead of the old plugin's independent percentage. Download and installer-signature checks,
+blockmaps and differential downloading are unchanged.
+
+For an eligible ordinary-user installation, extraction uses a uniquely created child of the
+installation directory after old-version removal. Directory identity, reparse points and equivalent
+inherited permissions are checked before moving absent `resources` and `locales` directories.
+Other files and ineligible installations retain NSIS copying and its error handling. Copy fallback
+keeps the upstream short `7z-out` path inside the installer's private plugin directory. A failed
+publication never proceeds to successor launch. Cleanup targets only this installer's verified
+stage; uncertain identities and interrupted older stages are preserved rather than swept by name.
+There is no user-data migration, new runtime state, persistent service or handoff-schema change.
+
+Run `scripts/windows-install-publication.test.ts`, `scripts/windows-installer-extractor.test.ts` and
+the packaging/signing regressions. Set `OPEN_SCIENCE_MAKENSIS` to the real compiler and
+`OPEN_SCIENCE_7ZA` to the verified standalone tool for native extraction cases;
+`OPEN_SCIENCE_7ZIP_EXTRA` enables real upstream-cache staging checks, and
+`OPEN_SCIENCE_INSTALL_PUBLICATION_NATIVE=1` enables ordinary-user move/ACL cases. A simulated
+extractor exit code 255 verifies rejection, not interactive cancellation or interrupted-install
+recovery. Report unavailable native tools and unsupported fallback paths separately.
