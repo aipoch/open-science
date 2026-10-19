@@ -83,7 +83,7 @@ export function isTypeOnlyDependency(node) {
 export function createConsumerDependencyReader(
   source,
   runtimeEdges,
-  { staticOnly = false, runtimeOnly = false, includeAssets = true } = {}
+  { staticOnly = false, runtimeOnly = false } = {}
 ) {
   const root = resolve('/__module_evidence__').replaceAll('\\', '/')
   const key = (path) => posix.relative(root, path.replaceAll('\\', '/'))
@@ -165,7 +165,7 @@ export function createConsumerDependencyReader(
     parsed.set(path, result)
     // Resources can contain further URLs/imports. Their known edges add coverage, but
     // never prove that unrelated consumers can retire; do not parse binary data as TS.
-    if (includeAssets && !/\.(?:[cm]?[jt]sx?|json)$/.test(path)) {
+    if (!/\.(?:[cm]?[jt]sx?|json)$/.test(path)) {
       result.complete = false
       return result
     }
@@ -340,7 +340,7 @@ export function createConsumerDependencyReader(
     }
     visit(ast)
     for (const spec of specs) {
-      const asset = includeAssets && assetPath(spec, path)
+      const asset = assetPath(spec, path)
       if (asset) {
         result.paths.add(asset)
         result.complete = false

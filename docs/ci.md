@@ -254,10 +254,11 @@ selection explanations identify derived tests. See [registration steps](testing.
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
 missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
 Older bases retain legacy rules; existing explicit contracts are not retired automatically.
-Index v2 adds static resource import edges. Deploy its trusted reader first, then regenerate the
-index in a follow-up PR; a v1 base cannot validate v2 data. Both versions are recomputed using their
-own algorithm during rollout, and a candidate cannot downgrade an established v2 index. Resource
-edges add coverage without proving a complete dependency cone or authorizing consumer retirement.
+Static resource imports also contribute consumer evidence. Current resource consumers are declared
+explicitly in their owning modules so trusted-base verification can preserve coverage while the
+reader is updated. Future additional consumers are captured by the generated index in its existing
+format. Resource edges add coverage without proving a complete dependency cone or authorizing
+consumer retirement.
 
 ## CI control-plane approval
 

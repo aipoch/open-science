@@ -45,7 +45,7 @@ const manifest = (): ModuleImpactManifest => ({
     }
   }
 })
-const expected = { schemaVersion: 2, modules: { owner: [consumer] } }
+const expected = { schemaVersion: 1, modules: { owner: [consumer] } }
 const source = (extra: Record<string, string> = {}) => {
   const contents: Record<string, string> = {
     [owner]: 'export const value = 1',
@@ -149,32 +149,25 @@ it.each(['./missing.svg', './icon.svg?unknown', './icon.svg?raw&plugin', '../esc
   }
 )
 
-it('keeps legacy evidence reproducible but requires all resource consumers in v2', () => {
+it('requires resource consumers in the existing index or explicit module evidence', () => {
   const asset = 'src/main/icon.svg'
   const registration = manifest()
   registration.modules.owner.ownerPaths = [asset, ownerTest]
   registration.modules.owner.interfacePaths = [asset]
   const input = source({ [asset]: '<svg />', 'src/main/bridge.ts': "import './icon.svg'" })
-  const legacy = generateDerivedConsumers(
-    registration,
-    consumerDependencyGraph(input, [], { includeAssets: false }).reverse,
-    1
-  )
+  const empty = { schemaVersion: 1, modules: {} }
   const withIndex = (index: object) => ({
     ...input,
     read: (path: string) =>
       path === derivedConsumersPath ? JSON.stringify(index) : input.read(path)
   })
-  expect(legacy.modules.owner).toBeUndefined()
-  expect(() => checkDerivedConsumers(withIndex(legacy), registration)).not.toThrow()
-  expect(() =>
-    checkDerivedConsumers(withIndex({ ...legacy, schemaVersion: 2 }), registration)
-  ).toThrow('Stale')
-  const upgraded = generateDerivedConsumers(
-    registration,
-    consumerDependencyGraph(input, []).reverse
-  )
-  expect(() => checkDerivedConsumers(withIndex(upgraded), registration)).not.toThrow()
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).toThrow('Stale')
+  const index = generateDerivedConsumers(registration, consumerDependencyGraph(input, []).reverse)
+  expect(index).toEqual(expected)
+  expect(() => checkDerivedConsumers(withIndex(index), registration)).not.toThrow()
+  registration.modules.owner.testFiles.consumer.push(consumer)
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).not.toThrow()
+  expect(createModuleTestPlan('owner', registration).testFiles).toContain(consumer)
 })
 
 it('requires shared test helpers to be interfaces before propagating their consumers', () => {
@@ -270,7 +263,7 @@ it.each([
 })
 it.each([
   null,
-  { schemaVersion: 3, modules: {} },
+  { schemaVersion: 2, modules: {} },
   { schemaVersion: 1, modules: [], extra: true },
   { schemaVersion: 1, modules: { missing: [] } },
   { schemaVersion: 1, modules: { owner: [consumer, consumer] } }
@@ -373,14 +366,6 @@ it('rejects Git symlinks without following them on any platform', () => {
   expect(() => checkDerivedConsumerRevisions(base, f.git('rev-parse', 'HEAD'), f.root)).toThrow(
     'Missing'
   )
-}, 30_000)
-
-it('rejects downgrading a trusted v2 index even when legacy contents are valid', () => {
-  const f = repository()
-  runDerivedConsumersCli(['--write'], f.root)
-  const base = f.commit()
-  f.put(derivedConsumersPath, JSON.stringify({ ...expected, schemaVersion: 1 }))
-  expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow('cannot downgrade')
 }, 30_000)
 
 it('follows explicit native intermediates and source package exports', () => {

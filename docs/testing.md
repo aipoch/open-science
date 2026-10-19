@@ -76,13 +76,12 @@ use the repository's TypeScript-based reader. Neither missing static edges nor a
 coverage sample proves independence. Dynamic evidence only covers the tests and inputs actually
 executed; IPC, events and filesystem relationships still need explicit contracts.
 
-Derived-consumer index v2 also follows literal relative and renderer-alias imports of SVG, PNG,
+The derived-consumer reader also follows literal relative and renderer-alias imports of SVG, PNG,
 JPEG, GIF, WebP, AVIF, ICO and CSS files, including `?raw`, `?url`, `?inline`, `?no-inline` and
 fragment suffixes. These edges add consumers but remain incomplete for retirement/pruning:
 resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Computed
-imports and unsupported query combinations retain uncertainty. The trusted checker accepts v1
-during rollout; merge the checker before regenerating the index as v2. Once v2 is established,
-CI rejects a downgrade to v1.
+imports and unsupported query combinations retain uncertainty. Resource consumers can be registered
+explicitly in their owning module; the generated index stores only additional memberships.
 
 ### Full fallback
 
