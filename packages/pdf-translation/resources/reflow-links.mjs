@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled Node worker. */
-import { PDFArray, PDFDict, PDFName, PDFString } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFName, PDFNumber, PDFString, PDFHexString } from 'pdf-lib'
 import { translatedPdfLinkLabel, translatedPdfLinkFragment } from './link-labels.mjs'
 
 const compact = (text) => text.replace(/\s/gu, '')
@@ -28,6 +28,95 @@ function span(text, label) {
   return { start: from, text: text.slice(from, end) }
 }
 
+// Keep the source hierarchy and presentation, but resolve destinations through
+// PDFium so named targets use the same parser as ordinary page links.
+function readOutlines(original, native, source, readDestination) {
+  const outlines = [],
+    seen = new Set(),
+    { p } = native
+  try {
+    const root = original.catalog.lookup(PDFName.of('Outlines'))
+    if (!root) return { outlines }
+    if (!(root instanceof PDFDict)) throw Error('Outline root')
+    const walk = (raw, bookmark, parent, depth) => {
+      while (raw || bookmark) {
+        if (
+          !(raw instanceof PDFDict) ||
+          !bookmark ||
+          seen.has(raw) ||
+          depth > 64 ||
+          outlines.length >= 10000
+        )
+          throw Error('Outline structure limit')
+        seen.add(raw)
+        const title = raw.lookup(PDFName.of('Title'))
+        if (!(title instanceof PDFString || title instanceof PDFHexString))
+          throw Error('Outline title')
+        const action = raw.lookup(PDFName.of('A'))
+        if (
+          raw.has(PDFName.of('AA')) ||
+          (action &&
+            (!(action instanceof PDFDict) ||
+              action.lookup(PDFName.of('S'))?.toString() !== '/GoTo' ||
+              action.has(PDFName.of('Next'))))
+        )
+          throw Error('Unsupported outline action')
+        const nativeAction = p.FPDFBookmark_GetAction(bookmark)
+        const dest =
+          p.FPDFBookmark_GetDest(source.doc, bookmark) ||
+          (action ? p.FPDFAction_GetDest(source.doc, nativeAction) : 0)
+        const destination = dest ? readDestination(dest) : undefined
+        if ((raw.has(PDFName.of('Dest')) || action || dest) && !destination)
+          throw Error('Outline destination')
+        const style = {}
+        for (const key of ['Count', 'F']) {
+          const value = raw.lookup(PDFName.of(key))
+          if (value !== undefined) {
+            if (!(value instanceof PDFNumber) || !Number.isSafeInteger(value.asNumber()))
+              throw Error('Outline style')
+            style[key] = value
+          }
+        }
+        const color = raw.lookup(PDFName.of('C'))
+        if (color !== undefined) {
+          if (!(color instanceof PDFArray) || color.size() !== 3) throw Error('Outline color')
+          style.C = color.asArray().map((value) => {
+            const number = original.context.lookup(value)
+            if (!(number instanceof PDFNumber) || !Number.isFinite(number.asNumber()))
+              throw Error('Outline color')
+            return number.asNumber()
+          })
+        }
+        const index = outlines.length
+        outlines.push({ title, parent, style, destination })
+        walk(
+          raw.lookup(PDFName.of('First')),
+          p.FPDFBookmark_GetFirstChild(source.doc, bookmark),
+          index,
+          depth + 1
+        )
+        raw = raw.lookup(PDFName.of('Next'))
+        bookmark = p.FPDFBookmark_GetNextSibling(source.doc, bookmark)
+      }
+    }
+    walk(root.lookup(PDFName.of('First')), p.FPDFBookmark_GetFirstChild(source.doc, 0), -1, 0)
+    const count = root.lookup(PDFName.of('Count'))
+    if (
+      count !== undefined &&
+      (!(count instanceof PDFNumber) || !Number.isSafeInteger(count.asNumber()))
+    )
+      throw Error('Outline count')
+    return {
+      outlines,
+      outlineCount: count,
+      showOutlines: original.catalog.lookup(PDFName.of('PageMode'))?.toString() === '/UseOutlines'
+    }
+  } catch {
+    // The original bytes retain malformed or unsupported document-level graphs.
+    return { outlines: [], wholeDocument: true }
+  }
+}
+
 export function readReflowLinks(native, source, input, originalDocument) {
   const pageCount = input.pages.length,
     unsafePages = new Set()
@@ -35,6 +124,38 @@ export function readReflowLinks(native, source, input, originalDocument) {
     result = [],
     geometry = []
   const at = native.alloc(32)
+  const readDestination = (dest) => {
+    const target = p.FPDFDest_GetDestPageIndex(source.doc, dest) + 1
+    const mode = p.FPDFDest_GetView(dest, at, at + 4)
+    const count = m.HEAPU32[at / 4]
+    const params = [...m.HEAPF32.slice(at / 4 + 1, at / 4 + 1 + Math.min(count, 4))]
+    if (
+      target < 1 ||
+      target > pageCount ||
+      mode < 1 ||
+      mode > 8 ||
+      count > 4 ||
+      !params.every(Number.isFinite) ||
+      // PDFium's view API collapses null FitH/FitV operands to zero.
+      // Do not replace "keep current position" with a guessed coordinate.
+      ([3, 4, 7, 8].includes(mode) && (count !== 1 || params[0] === 0))
+    )
+      return undefined
+    else {
+      const destination = { pageNumber: target, mode, params }
+      if (mode === 1) {
+        if (!p.FPDFDest_GetLocationInPage(dest, at, at + 4, at + 8, at + 12, at + 16, at + 20))
+          return undefined
+        else
+          destination.params = [
+            m.HEAP32[at / 4] ? m.HEAPF32[at / 4 + 3] : null,
+            m.HEAP32[at / 4 + 1] ? m.HEAPF32[at / 4 + 4] : null,
+            m.HEAP32[at / 4 + 2] ? m.HEAPF32[at / 4 + 5] : null
+          ]
+      }
+      return destination
+    }
+  }
   try {
     for (let number = 1; number <= pageCount; number++) {
       const page = p.FPDF_LoadPage(source.doc, number - 1)
@@ -102,45 +223,8 @@ export function readReflowLinks(native, source, input, originalDocument) {
                 entry.unsupported = true
               }
               if (dest) {
-                const target = p.FPDFDest_GetDestPageIndex(source.doc, dest) + 1
-                const mode = p.FPDFDest_GetView(dest, at, at + 4)
-                const count = m.HEAPU32[at / 4]
-                const params = [...m.HEAPF32.slice(at / 4 + 1, at / 4 + 1 + Math.min(count, 4))]
-                if (
-                  target < 1 ||
-                  target > pageCount ||
-                  mode < 1 ||
-                  mode > 8 ||
-                  count > 4 ||
-                  !params.every(Number.isFinite) ||
-                  // PDFium's view API collapses null FitH/FitV operands to zero.
-                  // Do not replace "keep current position" with a guessed coordinate.
-                  ([3, 4, 7, 8].includes(mode) && (count !== 1 || params[0] === 0))
-                )
-                  entry.unsupported = true
-                else {
-                  entry.destination = { pageNumber: target, mode, params }
-                  if (mode === 1) {
-                    if (
-                      !p.FPDFDest_GetLocationInPage(
-                        dest,
-                        at,
-                        at + 4,
-                        at + 8,
-                        at + 12,
-                        at + 16,
-                        at + 20
-                      )
-                    )
-                      entry.unsupported = true
-                    else
-                      entry.destination.params = [
-                        m.HEAP32[at / 4] ? m.HEAPF32[at / 4 + 3] : null,
-                        m.HEAP32[at / 4 + 1] ? m.HEAPF32[at / 4 + 4] : null,
-                        m.HEAP32[at / 4 + 2] ? m.HEAPF32[at / 4 + 5] : null
-                      ]
-                  }
-                }
+                entry.destination = readDestination(dest)
+                if (!entry.destination) entry.unsupported = true
               } else if (kind === 3) {
                 const length = p.FPDFAction_GetURIPath(source.doc, action, 0, 0)
                 if (length < 1 || length > 65536) {
@@ -231,11 +315,13 @@ export function readReflowLinks(native, source, input, originalDocument) {
         p.FPDF_ClosePage(page)
       }
     }
+    const bookmarks = readOutlines(originalDocument, native, source, readDestination)
     return {
+      ...bookmarks,
       links: result,
       geometry,
       unsafePages,
-      wholeDocument: result.some((link) => link.unsupported)
+      wholeDocument: bookmarks.wholeDocument || result.some((link) => link.unsupported)
     }
   } finally {
     native.free(at)
@@ -262,7 +348,7 @@ export function retainLinkedPages(retained, links, units) {
 }
 
 export function mapReflowLinks(
-  { links, geometry },
+  { links, geometry, outlines, outlineCount, showOutlines },
   input,
   { originals, lines, crops, placements, sourcePages },
   measure
@@ -391,19 +477,25 @@ export function mapReflowLinks(
       if (link.destination) failed.add(link.destination.pageNumber)
     } else mapped.push({ link, regions, target })
   }
-  return { failed, mapped }
+  const mappedOutlines = outlines.map((outline) => {
+    const target = outline.destination ? destination(outline.destination) : undefined
+    if (outline.destination && !target) failed.add(outline.destination.pageNumber)
+    return { ...outline, target }
+  })
+  return { failed, mapped, outlines: mappedOutlines, outlineCount, showOutlines }
 }
 
-export function writeReflowLinks(document, mapped, originals) {
+export function writeReflowLinks(document, navigation, originals) {
+  const { mapped, outlines, outlineCount, showOutlines } = navigation
   const modes = ['', 'XYZ', 'Fit', 'FitH', 'FitV', 'FitR', 'FitB', 'FitBH', 'FitBV']
+  const destination = (target) =>
+    document.context.obj([
+      document.getPage(target.pageNumber - 1).ref,
+      PDFName.of(modes[target.mode]),
+      ...target.params
+    ])
   for (const { link, regions, target } of mapped) {
-    const dest =
-      target &&
-      document.context.obj([
-        document.getPage(target.pageNumber - 1).ref,
-        PDFName.of(modes[target.mode]),
-        ...target.params
-      ])
+    const dest = target && destination(target)
     if (originals.has(link.pageNumber)) {
       // Rewrite the existing dictionary, preserving appearance and quad geometry.
       const page = document.getPage(originals.get(link.pageNumber) - 1)
@@ -444,4 +536,32 @@ export function writeReflowLinks(document, mapped, originals) {
       page.node.addAnnot(document.context.register(annotation))
     }
   }
+  if (!outlines.length) return
+  const root = document.context.obj({
+    Type: 'Outlines',
+    ...(outlineCount ? { Count: outlineCount } : {})
+  })
+  const rootRef = document.context.register(root)
+  const nodes = outlines.map((outline) =>
+    document.context.obj({
+      Title: outline.title,
+      ...outline.style,
+      ...(outline.target ? { Dest: destination(outline.target) } : {})
+    })
+  )
+  const refs = nodes.map((node) => document.context.register(node)),
+    siblings = new Map()
+  for (const [index, outline] of outlines.entries()) {
+    const parent = outline.parent < 0 ? root : nodes[outline.parent]
+    nodes[index].set(PDFName.of('Parent'), outline.parent < 0 ? rootRef : refs[outline.parent])
+    const previous = siblings.get(outline.parent)
+    if (previous !== undefined) {
+      nodes[index].set(PDFName.of('Prev'), refs[previous])
+      nodes[previous].set(PDFName.of('Next'), refs[index])
+    } else parent.set(PDFName.of('First'), refs[index])
+    parent.set(PDFName.of('Last'), refs[index])
+    siblings.set(outline.parent, index)
+  }
+  document.catalog.set(PDFName.of('Outlines'), rootRef)
+  if (showOutlines) document.catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'))
 }

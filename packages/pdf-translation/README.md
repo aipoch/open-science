@@ -100,6 +100,11 @@ destinations or unsupported link actions retain the complete original document a
 limitation rather than publish an output with silently missing links. Existing broken links are
 not repaired. No extra source-links area is added to the translated document.
 
+Exported PDFs preserve the source bookmark titles, hierarchy, styles and expansion state.
+Bookmark destinations use the same mapping as internal links, including named destinations.
+An ambiguous destination retains its original page; unsupported actions or malformed bookmark
+trees retain the complete original PDF. No nearest-paragraph destination is guessed.
+
 The host supplies inference execution, provider error interpretation, diagnostics, write admission,
 source authorization, application paths and storage connections. Model/account/Agent lifetimes,
 credential access, global usage aggregation, process supervision and application shutdown stay

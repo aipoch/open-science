@@ -709,7 +709,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
       return generateReflow(input, retainedLinkPages)
     }
-    writeReflowLinks(document, links.mapped, originalPlacements)
+    writeReflowLinks(document, links, originalPlacements)
     const data = await document.save()
     if (data.length > 64 * 1024 ** 2) throw Error('Reflow output size')
     return {

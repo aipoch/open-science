@@ -1,4 +1,13 @@
-import { PDFDocument, PDFName, PDFString, StandardFonts, degrees, rgb } from 'pdf-lib'
+import {
+  PDFDocument,
+  PDFDict,
+  PDFHexString,
+  PDFName,
+  PDFString,
+  StandardFonts,
+  degrees,
+  rgb
+} from 'pdf-lib'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
 import { PdfTranslationWriter } from '../src/writer.js'
@@ -925,3 +934,202 @@ it('maps a link on an unchanged page to a translated cross-page paragraph', asyn
     await task.destroy()
   }
 })
+
+it.each(['direct', 'action', 'named'])(
+  'preserves Unicode outline hierarchy and maps %s targets after pagination',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    for (const label of ['Introduction.', 'Target paragraph.'])
+      pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+    const dest = pdf.context.obj([pdf.getPage(1).ref, 'XYZ', 40, 450, null])
+    pdf.catalog.set(
+      PDFName.of('Names'),
+      pdf.context.obj({ Dests: { Names: [PDFString.of('target'), dest] } })
+    )
+    const root = pdf.context.obj({ Type: 'Outlines', Count: 3 }),
+      rootRef = pdf.context.register(root)
+    const group = pdf.context.obj({
+      Title: PDFHexString.fromText('章节'),
+      Count: 1,
+      Parent: rootRef
+    })
+    const groupRef = pdf.context.register(group)
+    const child = pdf.context.obj({
+      Title: PDFHexString.fromText('重复标题'),
+      Parent: groupRef,
+      Count: -1,
+      C: [1, 0, 0],
+      F: 3,
+      ...(kind === 'action'
+        ? { A: { S: 'GoTo', D: dest } }
+        : { Dest: kind === 'named' ? PDFString.of('target') : dest })
+    })
+    const childRef = pdf.context.register(child)
+    const grandchild = pdf.context.obj({
+      Title: PDFHexString.fromText('重复标题'),
+      Parent: childRef,
+      Dest: dest
+    })
+    const grandchildRef = pdf.context.register(grandchild)
+    child.set(PDFName.of('First'), grandchildRef)
+    child.set(PDFName.of('Last'), grandchildRef)
+    group.set(PDFName.of('First'), childRef)
+    group.set(PDFName.of('Last'), childRef)
+    const sibling = pdf.context.obj({
+      Title: PDFString.of('Appendix'),
+      Parent: rootRef,
+      Prev: groupRef,
+      Dest: [pdf.getPage(0).ref, 'Fit']
+    })
+    const siblingRef = pdf.context.register(sibling)
+    group.set(PDFName.of('Next'), siblingRef)
+    root.set(PDFName.of('First'), groupRef)
+    root.set(PDFName.of('Last'), siblingRef)
+    pdf.catalog.set(PDFName.of('Outlines'), rootRef)
+    pdf.catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'))
+    const output = await generate(pdf, [
+      {
+        source: 'Introduction.',
+        translation: 'Expanded introduction. '.repeat(400),
+        fragments: [fragment(1, 0.08)]
+      },
+      {
+        source: 'Target paragraph.',
+        translation: 'Translated target.',
+        fragments: [fragment(2, 0.08)]
+      }
+    ])
+    expect(output.layoutFailures).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        outline = (await parsed.getOutline())!
+      expect(outline.map((node) => node.title)).toEqual(['章节', 'Appendix'])
+      expect(outline[0].dest).toBeNull()
+      expect(outline[0].count).toBe(1)
+      const child = outline[0].items[0]
+      expect(child).toMatchObject({ title: '重复标题', count: -1, bold: true, italic: true })
+      expect([...child.color]).toEqual([255, 0, 0])
+      expect(child.items[0].title).toBe('重复标题')
+      const target = output.reflow!.units.find((unit) => unit.unitIndex === 1)!.fragments[0]
+      expect(target.pageNumber).toBeGreaterThan(2)
+      for (const item of [child, child.items[0]]) {
+        expect(Array.isArray(item.dest)).toBe(true)
+        const destination = item.dest as unknown[]
+        expect(await parsed.getPageIndex(destination[0] as { num: number; gen: number })).toBe(
+          target.pageNumber - 1
+        )
+        expect(destination[3]).toBeCloseTo((1 - target.rect.y) * 841.89, 2)
+      }
+      expect(await parsed.getPageMode()).toBe('UseOutlines')
+      const saved = await PDFDocument.load(output.data)
+      const tree = saved.catalog.lookup(PDFName.of('Outlines'), PDFDict)
+      expect(tree.lookup(PDFName.of('Count'))!.toString()).toBe('3')
+      const first = tree.lookup(PDFName.of('First'), PDFDict)
+      const last = tree.lookup(PDFName.of('Last'), PDFDict)
+      expect(first.lookup(PDFName.of('Next'))).toBe(last)
+      expect(last.lookup(PDFName.of('Prev'))).toBe(first)
+      expect(first.lookup(PDFName.of('Parent'))).toBe(tree)
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it('retains an ambiguous bookmark target page without guessing the nearest paragraph', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Introduction.', 'Target paragraph.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  const root = pdf.context.obj({ Type: 'Outlines', Count: 1 }),
+    rootRef = pdf.context.register(root)
+  const item = pdf.context.register(
+    pdf.context.obj({
+      Title: PDFString.of('Target'),
+      Parent: rootRef,
+      Dest: [pdf.getPage(1).ref, 'XYZ', 40, 200, null]
+    })
+  )
+  root.set(PDFName.of('First'), item)
+  root.set(PDFName.of('Last'), item)
+  pdf.catalog.set(PDFName.of('Outlines'), rootRef)
+  const output = await generate(pdf, [
+    {
+      source: 'Introduction.',
+      translation: 'Expanded introduction. '.repeat(400),
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Target paragraph.',
+      translation: 'Translated target.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([
+    expect.objectContaining({ code: 'annotations', unitIndex: 1 })
+  ])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      outline = (await parsed.getOutline())!
+    expect(parsed.numPages).toBeGreaterThan(2)
+    const dest = outline[0].dest as unknown[]
+    expect(await parsed.getPageIndex(dest[0] as { num: number; gen: number })).toBe(
+      parsed.numPages - 1
+    )
+    expect(dest.slice(2)).toEqual([40, 200, null])
+    const text = await (await parsed.getPage(parsed.numPages)).getTextContent()
+    expect(text.items.map((item) => ('str' in item ? item.str : '')).join(' ')).toContain(
+      'Target paragraph.'
+    )
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each(['external-action', 'chained-action', 'unresolved', 'cycle', 'null-fit'])(
+  'preserves the complete original PDF for an unsupported outline (%s)',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    pdf.addPage([400, 500]).drawText('Original.', { font, size: 12, x: 40, y: 440 })
+    const root = pdf.context.obj({ Type: 'Outlines', Count: 1 }),
+      rootRef = pdf.context.register(root)
+    const node = pdf.context.obj({
+      Title: PDFString.of('Bookmark'),
+      Parent: rootRef,
+      ...(kind === 'external-action'
+        ? { A: { S: 'URI', URI: PDFString.of('https://example.org') } }
+        : kind === 'chained-action'
+          ? {
+              A: {
+                S: 'GoTo',
+                D: [pdf.getPage(0).ref, 'Fit'],
+                Next: { S: 'GoTo', D: [pdf.getPage(0).ref, 'Fit'] }
+              }
+            }
+          : {
+              Dest:
+                kind === 'unresolved'
+                  ? PDFString.of('missing')
+                  : kind === 'null-fit'
+                    ? [pdf.getPage(0).ref, 'FitH', null]
+                    : [pdf.getPage(0).ref, 'Fit']
+            })
+    })
+    const ref = pdf.context.register(node)
+    if (kind === 'cycle') node.set(PDFName.of('Next'), ref)
+    root.set(PDFName.of('First'), ref)
+    root.set(PDFName.of('Last'), ref)
+    pdf.catalog.set(PDFName.of('Outlines'), rootRef)
+    const bytes = await pdf.save()
+    const output = await generate(pdf, [
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+    ])
+    expect(output.data).toEqual(bytes)
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ code: 'annotations', unitIndex: 0 })
+    ])
+  }
+)
