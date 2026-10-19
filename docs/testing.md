@@ -39,6 +39,14 @@ Module's curated owner, contract, and representative consumer tests; it is not c
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
 
+Large `test:module` and `test:affected` selections use a temporary argument file to avoid operating
+system command-line limits, including Windows npm's shell limit. The internal
+`test:module:arguments` script runs the same `pretest` preparation and restores the complete argument
+list before starting the installed Vitest CLI. Filters, exclusions, coverage and shard options keep
+their normal meaning; the selection is neither truncated nor expanded to the full suite. The parent
+removes the temporary file after the command exits, including test or spawn failures. Forced parent
+termination can leave a file in the OS temporary directory; it contains test arguments only.
+
 ### Dependency boundaries and explainable convergence
 
 `test:affected` refines a declared selection against immutable merge-base, head and actual checkout

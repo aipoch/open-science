@@ -25,7 +25,11 @@
     "packages/open-science/locate-backend.test.ts",
     "packages/open-science/test/fixtures.ts",
     "packages/open-science/installation-startup.cjs",
-    "packages/open-science/installation-startup.d.cts"
+    "packages/open-science/installation-startup.d.cts",
+    "packages/open-science/browser-import.mjs",
+    "packages/open-science/browser-import.d.ts",
+    "packages/open-science/browser-import.test.ts",
+    "packages/open-science/BROWSER_IMPORT.md"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -39,7 +43,9 @@
     "packages/open-science/runtime-control.d.mts",
     "packages/open-science/runtime-package.mjs",
     "packages/open-science/installation-startup.cjs",
-    "packages/open-science/installation-startup.d.cts"
+    "packages/open-science/installation-startup.d.cts",
+    "packages/open-science/browser-import.mjs",
+    "packages/open-science/browser-import.d.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -51,7 +57,8 @@
       "cli/connector-contract.test.ts",
       "packages/open-science/connector.test.ts",
       "packages/open-science/appimage-launcher.test.ts",
-      "packages/open-science/locate-backend.test.ts"
+      "packages/open-science/locate-backend.test.ts",
+      "packages/open-science/browser-import.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -85,6 +92,7 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-formats.test.ts",
       "src/main/update/installation-artifact.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/update/installation-preparation.test.ts"
     ]
   },

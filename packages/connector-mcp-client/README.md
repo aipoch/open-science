@@ -16,3 +16,16 @@ that configuration. `saveOAuthState(serverId, state, persistenceGuard)` must com
 against current storage before writing. The manager does not interpret its fields, encrypt
 values or choose storage paths; it still owns generations and shared-auth write ordering.
 The host supplies fingerprint/secret-reference fields and retains its stale-write checks.
+
+## Safety and integration
+
+- **Scope:** Local/remote MCP connections, discovery, cancellation, and OAuth lifecycle management.
+- **Controls:** Connection generations, ordered auth-state writes, redirect validation, and bounded,
+  redacted diagnostics support the host's policy.
+- **Remaining risks:** A local MCP server executes code; a remote server receives tool arguments
+  and applicable credentials. Discovery and OAuth success do not establish server trustworthiness.
+  The client does not provide a server-process sandbox or encrypt caller-persisted OAuth state.
+- **Safe integration:** Review server sources, executable arguments, destinations, and OAuth scopes.
+  Inject a minimal environment and enforce process/network policy, tool authorization, and secure
+  credential persistence in the host. See the application's
+  [service boundaries](https://github.com/aipoch/open-science/blob/main/docs/security.md#models-connectors-and-external-services).

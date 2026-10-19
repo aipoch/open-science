@@ -7,7 +7,7 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { UpdateReleaseNotes } from './UpdateReleaseNotes'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -26,7 +26,6 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
-import { isLocale } from '../../../shared/locale'
 import { formatBytes, UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 
 const UPDATE_BACKGROUND_PROCESS_ERROR =
@@ -40,7 +39,7 @@ const UPDATE_SETTINGS_INSTALL_ERROR =
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
 const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const closeDialog = useUpdateStore((state) => state.closeDialog)
@@ -56,7 +55,6 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
       failureNotice.current?.scrollIntoView({ block: 'start' })
     }
   }, [open, dialogStatus?.error])
-  const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
   const isInstallationRequired = dialogStatus?.error === UPDATE_INSTALLATION_REQUIRED
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
@@ -108,11 +106,6 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
       void apply({ force: true })
     }
   }
-  const activeLanguage = i18n.resolvedLanguage ?? i18n.language
-  const locale = isLocale(activeLanguage) ? activeLanguage : 'en'
-  const localizedNotes = locale === 'en' ? undefined : dialogStatus?.localizedNotes?.[locale]
-  const releaseNotes = localizedNotes ?? dialogStatus?.notes
-  const isEnglishFallback = locale !== 'en' && !localizedNotes && Boolean(dialogStatus?.notes)
 
   return (
     <Dialog.Root
@@ -266,31 +259,7 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
                     </ErrorNotice>
                   </div>
                 ) : null}
-                {releaseNotes ? (
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">
-                      {t("What's new")}
-                    </p>
-                    {isEnglishFallback ? (
-                      <p className="mb-2 text-xs text-muted-foreground">
-                        {t('Localized release notes are unavailable; showing English.')}
-                      </p>
-                    ) : null}
-                    <div className="rounded-lg bg-muted px-3 py-2">
-                      <AgentMarkdown content={releaseNotes} />
-                    </div>
-                    <ExternalTextLink href={releaseUrl} className="mt-2 text-xs">
-                      {t('View full release notes on GitHub')}
-                    </ExternalTextLink>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                    {t("Release notes aren't available in-app for this version.")}{' '}
-                    <ExternalTextLink href={releaseUrl} className="text-xs">
-                      {t('View release notes on GitHub')}
-                    </ExternalTextLink>
-                  </div>
-                )}
+                <UpdateReleaseNotes status={dialogStatus} />
 
                 {isApplying ? (
                   <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
@@ -431,17 +400,20 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
 
 const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
   const status = useUpdateStore((state) => state.status)
-  return status.reason ||
-    status.recovery ||
-    status.cliConfirmation ||
-    status.outcome ||
-    (status.state === 'ready' &&
+  const runtimeLifecycle =
+    status.reason || status.recovery || status.cliConfirmation || status.outcome
+  const hasUpdateState = ['available', 'downloading', 'ready', 'applying', 'error'].includes(
+    status.state
+  )
+  return runtimeLifecycle ||
+    ((hasUpdateState || status.state === 'checking') &&
       status.applyKind === 'restart' &&
-      !status.error &&
+      (!status.error || (status.state === 'error' && !status.blockedBy?.length)) &&
+      status.error !== UPDATE_INSTALLATION_REQUIRED &&
       !status.legacyShellRecovery) ? (
     <RuntimeUpdateDialog active={active} />
   ) : (
-    <LegacyUpdateDialog active={active} />
+    <LegacyUpdateDialog active={active && hasUpdateState} />
   )
 }
 

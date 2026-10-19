@@ -102,10 +102,10 @@ describe('production application command wiring', () => {
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
+      'sessionPackageDesktopLifecycle.isActive = () => browserPackageImport.active || sessionPackageDesktop.operations.active'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.close = async () => { browserPackageImport.stop() await sessionPackageDesktop.close() await browserPackageImport.close() }'
     )
     expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
@@ -768,6 +768,7 @@ it('connects committed deletion to the same credential broker used by approval s
     },
     settingsSnapshotCommits: { currentSnapshotAfter },
     specialistService: { resolveRunnableByReference: resolveSpecialist },
+    browserPackageImport: { active: false },
     sessionPackageDesktop: {
       reportOpenOverflow: vi.fn(),
       enqueueFile: vi.fn(),
@@ -872,6 +873,11 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(owners.sessionPackageDesktop.reportOpenOverflow).toHaveBeenCalledOnce()
   expect(owners.sessionPackageDesktop.enqueueFile).toHaveBeenCalledWith('/session.osci')
   expect(result.hasActivePackageTransfer()).toBe(true)
+  owners.sessionPackageDesktop.hasActiveTransfer.mockReturnValue(false)
+  owners.browserPackageImport.active = true
+  expect(result.hasActivePackageTransfer()).toBe(true)
+  owners.browserPackageImport.active = false
+  expect(result.hasActivePackageTransfer()).toBe(false)
   expect(result.hasActiveReviewerWork()).toBe(true)
   expect(result.getActiveSettingsInstallId()).toBe('install')
   result.holdSettingsInstallAdmission()

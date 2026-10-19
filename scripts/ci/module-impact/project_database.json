@@ -242,7 +242,8 @@
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
       "src/renderer/src/stores/project-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": [],

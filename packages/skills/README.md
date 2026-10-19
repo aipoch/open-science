@@ -44,6 +44,19 @@ A repository read callback must finish before its lock is released.
 `UserSkillCatalogObserver.dispose()` is synchronous; call it when releasing the observer. Application notifications,
 session approvals, ACP reload scheduling and Notebook execution remain host responsibilities.
 
+## Safety and integration
+
+- **Scope:** Skill documents, source imports, helper snapshots, installation, and runtime projection.
+- **Controls:** Package/path validation, required non-builtin helper validation, immutable bindings,
+  and recoverable mutations preserve the documented installation contract.
+- **Remaining risks:** Skill instructions can redirect an Agent, and helpers can execute code when
+  invoked. Structural validation or a source digest does not prove harmless behavior. Marketplace
+  trust verification belongs to the host; this package does not establish it for arbitrary sources.
+- **Safe integration:** Review content and updates, supply trusted source policy and helper validation,
+  and keep invocation approvals and execution isolation in the host. Enable only needed capabilities.
+  See the application's
+  [extension precautions](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md#extensions-remote-access-and-automation).
+
 ## Compatibility and persistence
 
 Extraction preserves existing Skill IDs, frontmatter, directory layout, `.source.json`,

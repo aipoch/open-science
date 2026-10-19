@@ -36,6 +36,7 @@
     "src/main/composition/upload-storage.ts",
     "src/main/composition/notebook-environment.ts",
     "src/main/composition/notebook-environment.test.ts",
+    "src/main/composition/session-packages.test.ts",
     "src/main/composition/reviewer.test.ts",
     "src/main/app-branding.test.ts",
     "src/main/app-icon.test.ts",
@@ -269,6 +270,7 @@
     "owner": [
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/app-branding.test.ts",
       "src/main/app-icon.test.ts",

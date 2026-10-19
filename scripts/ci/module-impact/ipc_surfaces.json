@@ -1066,7 +1066,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
-      "src/main/node-entry.test.ts"
+      "src/main/node-entry.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

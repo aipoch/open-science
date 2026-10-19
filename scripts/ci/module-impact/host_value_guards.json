@@ -997,7 +997,8 @@
       "src/main/desktop-recovery-readiness.test.ts",
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

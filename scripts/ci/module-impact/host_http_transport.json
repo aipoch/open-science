@@ -684,7 +684,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/runtime-network-node.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["settings_service_facade"],

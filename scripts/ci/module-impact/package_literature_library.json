@@ -1298,7 +1298,8 @@
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [],

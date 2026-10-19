@@ -134,6 +134,11 @@ export type IpcRegistrationOptions = {
 export type ApplicationRuntimeInterfaces = {
   fetchPreview: (request: Request) => Promise<Response>
   openSessionPackageFile: (path: string | null) => void
+  beginBrowserPackageImport: (url: unknown, cancelled?: boolean) => Promise<void>
+  cancelBrowserPackageImport: (id: string) => Promise<void>
+  packageOperationSnapshot: () =>
+    import('../shared/session-package').PackageOperationSnapshot | null
+  startBrowserPackageImportDiscovery: (port?: number) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
     'localWeb' | 'remoteWeb' | 'task' | 'desktop'
@@ -820,6 +825,13 @@ export const createApplicationModules = async (
       if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
       else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
     },
+    beginBrowserPackageImport: (url, cancelled) =>
+      sessionPackageSurfaces.browserPackageImport.begin(url, cancelled),
+    cancelBrowserPackageImport: (id) => sessionPackageSurfaces.browserPackageImport.cancel(id),
+    packageOperationSnapshot: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.operations.snapshot,
+    startBrowserPackageImportDiscovery: (port) =>
+      sessionPackageSurfaces.browserPackageImport.startDiscovery(port),
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
@@ -892,6 +904,7 @@ export const createApplicationModules = async (
     inspectDesktopUpdate: handoff.inspectDesktopUpdate,
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
+      sessionPackageSurfaces.browserPackageImport.active ||
       sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,

@@ -1376,6 +1376,7 @@
       "src/main/update/installation-protection.test.ts",
       "src/main/update/installation-reboot-recovery.test.ts",
       "src/main/update/installation-artifact.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts"
     ]

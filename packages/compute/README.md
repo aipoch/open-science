@@ -33,6 +33,19 @@ connection lease. The repository contracts require atomic compare-and-set update
 cancellation claims. Implementations must preserve their documented status/claim checks across
 concurrent writers. Callback notification failure must not undo a committed lifecycle transition.
 
+## Safety and integration
+
+- **Scope:** SSH/SCP transfers, direct SSH or Slurm job execution, and remote lifecycle coordination.
+- **Controls:** Input/profile validation, queue admission, lifecycle claims, and cancellation/collection
+  protocols operate through the host-supplied connection and storage contracts.
+- **Remaining risks:** Scripts and inputs leave the local machine. Jobs act with the remote account's
+  permissions and may modify data or incur resource costs. Local Notebook protection does not sandbox
+  remote processes. Disconnecting or stopping client observation does not establish remote termination.
+- **Safe integration:** The host must authorize submissions, validate inputs/destinations, protect
+  credentials, and apply budgets. Use dedicated least-privilege accounts and verify cancellation,
+  result collection, and cleanup on the remote host. See the application's
+  [execution boundaries](https://github.com/aipoch/open-science/blob/main/docs/security.md#code-and-notebook-execution).
+
 ## Execution ownership
 
 Create one execution scope for one running host/database. Supply the **same scope** to submission,

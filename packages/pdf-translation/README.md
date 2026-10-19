@@ -111,6 +111,19 @@ back all mutations. The package contains no SQL, application table names or sour
 The host adapter translates existing database payloads and source contracts without a migration.
 Structural results come through the declared `@aipoch/pdf-structure/result` dependency.
 
+## Safety and integration
+
+- **Scope:** PDF translation orchestration and output generation through host-supplied inference and storage.
+- **Controls:** Source authorization contracts, caller leases, transactional checkpoints, cancellation,
+  and bounded workflow processing preserve the documented ownership rules.
+- **Remaining risks:** The inference recipient can receive prepared document content. Translation
+  and layout can change meaning, omit text, or misrepresent numbers and units. Checkpoints and usage
+  records do not establish translation accuracy or provider-side deletion.
+- **Safe integration:** The host must review inference destinations and data permissions, protect
+  source/cache/output storage, and enforce execution policy. Retain the original PDF and compare
+  consequential passages, tables, and figures before use. See the application's
+  [data-recipient notice](https://github.com/aipoch/open-science/blob/main/docs/security.md#data-recipients).
+
 ## Build and verification
 
 With declared dependencies installed, run `npm run build`, `npm test`, and `npm pack` here.

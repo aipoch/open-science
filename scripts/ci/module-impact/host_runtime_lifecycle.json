@@ -920,6 +920,7 @@
       "src/main/desktop-runtime-controller.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/runtime-control.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/update/installation-preparation.test.ts",
       "src/main/legacy-service-termination.test.ts"
     ]
