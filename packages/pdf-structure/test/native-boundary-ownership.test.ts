@@ -20,9 +20,12 @@ const { collectTableRules: packetRules } = await import(
 const { proveNativeCompleteRuledSourcePacket } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-leaf-record-repair.mjs')).href
 )
-const { recoverNativeClosedProseSymbolRows, recoverNativeCaptionedTwoFieldRows } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href
-)
+const {
+  recoverNativeClosedParameterRows,
+  recoverNativeClosedProseSymbolRows,
+  recoverNativeCaptionedTwoFieldRows,
+  recoverNativeRuledIntervalColumns
+} = await import(pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href)
 const { recoverNativeHeterogeneousRuledParts } = await import(
   pathToFileURL(resolve('resources/literature-pdf-ruled-narrative-grid.mjs')).href
 )
@@ -30,7 +33,10 @@ type AnonymousRuledPacket = ReturnType<typeof JSON.parse>
 
 // Small ordinary-font paint packets keep source text and paint independent of
 // the model grid. Every font and line is owned; no paper fixture is involved.
-function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRuledPacket {
+function anonymousRuledPacket(
+  kind: 'prose' | 'scripts' | 'parts' | 'records' | 'interval',
+  options: { gap?: number; stroke?: number; offpage?: number } = {}
+): AnonymousRuledPacket {
   const O = ruledPacketOPS
   const viewport = {
     scale: 1,
@@ -50,7 +56,8 @@ function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRul
   add(O.dependency, ['f'])
   add(O.setFillRGBColor, ['#000000'])
   add(O.setStrokeRGBColor, ['#000000'])
-  add(O.setLineWidth, [1])
+  const stroke = options.stroke ?? 1
+  add(O.setLineWidth, [stroke])
   add(O.setLineCap, [0])
   add(O.setDash, [[], 0])
   const font = (text: string, x: number, baseline: number, h = 10): void => {
@@ -95,10 +102,10 @@ function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRul
       [Math.min(p[1], p[4]), Math.min(p[2], p[5]), Math.max(p[1], p[4]), Math.max(p[2], p[5])]
     ])
     const bounds = [
-      Math.min(r[0], r[2]) - 0.5,
-      Math.min(r[1], r[3]) - 0.5,
-      Math.max(r[0], r[2]) + 0.5,
-      Math.max(r[1], r[3]) + 0.5
+      Math.min(r[0], r[2]) - stroke / 2,
+      Math.min(r[1], r[3]) - stroke / 2,
+      Math.max(r[0], r[2]) + stroke / 2,
+      Math.max(r[1], r[3]) + stroke / 2
     ]
     graphics.push({
       kind: 'path',
@@ -115,7 +122,19 @@ function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRul
   font('Table 1: Values', 20, 65)
   const captions = [{ page: 1, lines: ['Table 1: Values'], rect: [20, 55, 95, 65] }]
   let cropRect: number[]
-  if (kind === 'prose') {
+  if (kind === 'interval') {
+    for (const y of [80, 108, 183]) line([20, y, 220, y])
+    line([110, 108, 110, 183])
+    font('Choice', 30, 100)
+    font('Interval', 140, 100)
+    for (const [row, label] of ['A', 'B', 'C'].entries()) {
+      font(label, 30, 125 + row * 25)
+      font(`${row + 1}.5`, 128, 125 + row * 25)
+      font('−', 157, 125 + row * 25)
+      font(`${row + 4}.5`, 170, 125 + row * 25)
+    }
+    cropRect = [20, 77, 220, 185]
+  } else if (kind === 'prose') {
     const xs = [20, 180, 220, 380],
       ys = [80, 105, 145, 185, 225, 265]
     for (const y of ys) line([20, y, 380, y])
@@ -129,6 +148,59 @@ function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRul
       }
     }
     cropRect = [20, 80, 380, 265]
+  } else if (kind === 'records') {
+    for (const y of [80, 200, 260]) line([20, y, 400, y])
+    for (const [top, bottom] of [
+      [80, 200],
+      [200, 260]
+    ])
+      for (const x of [20, 80, 145, 400])
+        line([x, top + (options.gap ?? 0.5), x, bottom - (options.gap ?? 0.5)])
+    font('θ', 30, 95)
+    font('2', 35, 97, 6)
+    font('0.25', 90, 95)
+    font('units', 90, 115)
+    for (const [n, text] of [
+      'First measured value',
+      'has a continued definition',
+      'inside one physical record',
+      'and a final clause.'
+    ].entries())
+      font(text, 155, 95 + n * 30)
+    font('2.5', 260, 95)
+    font('3.5', 290, 125)
+    font('κ', 30, 215)
+    font('3', 35, 217, 6)
+    font('12', 90, 215)
+    for (const [n, text] of [
+      'Second value belongs here',
+      'with its independent meaning',
+      'and its enclosed last sentence.'
+    ].entries())
+      font(text, 155, 215 + n * 20)
+    add(O.constructPath, [
+      O.fill,
+      [[0, 0, 20, 1, 500, 20, 1, 500, 22, 1, 0, 22, 4]],
+      [0, 20, 500, 22]
+    ])
+    graphics.push({
+      kind: 'path',
+      rect: [0, 478, 500, 480].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 500 : 600)) * 256)
+            : Math.ceil((v / (k % 2 ? 500 : 600)) * 256) + 1) *
+            (k % 2 ? 500 : 600)) /
+          256
+      )
+    })
+    cropRect = [20, 80, 400, 260]
+    if (options.offpage !== undefined) {
+      font('Outside', options.offpage, 470)
+      content.items.pop()
+      tokens.pop()
+      font('Page', 510, 470)
+    }
   } else if (kind === 'scripts') {
     for (const y of [80, 105, 225]) line([20, y, 200, y])
     font('Position', 30, 95)
@@ -180,6 +252,288 @@ function anonymousRuledPacket(kind: 'prose' | 'scripts' | 'parts'): AnonymousRul
   }
 }
 
+function intervalPacket(): AnonymousRuledPacket {
+  const x = anonymousRuledPacket('interval')
+  x.table.structure = {
+    objects: [
+      ...[0, 90, 145].map((left, index) => ({
+        label: 'table column',
+        score: 1,
+        rect: [left, 0, [90, 145, 200][index], 108]
+      })),
+      ...[8, 33, 58, 83].map((top) => ({
+        label: 'table row',
+        score: 1,
+        rect: [0, top, 200, top + 20]
+      }))
+    ]
+  }
+  const header = x.tokens.find((token: AnonymousRuledPacket) => token.text === 'Interval')
+  x.measured = [{ text: header.text, rect: header.rect, gaps: [], literalGlyphs: [...header.text] }]
+  return x
+}
+
+it('uses complete native ruled domains to keep every interval in one field', () => {
+  const x = intervalPacket()
+  const result = refineTable(
+    x.table,
+    x.tokens,
+    x.captions,
+    [],
+    x.rules,
+    x.measured,
+    undefined,
+    undefined,
+    x.context
+  )
+  expect(result.grid).toEqual([
+    ['Choice', 'Interval'],
+    ['A', '1.5 − 4.5'],
+    ['B', '2.5 − 5.5'],
+    ['C', '3.5 − 6.5']
+  ])
+  expect(result.repairs).toContain('native-ruled-interval-columns-recovered')
+  expect(
+    result.cells
+      .flatMap((cell: AnonymousRuledPacket) => cell.sourceItems)
+      .sort((a: AnonymousRuledPacket, b: AnonymousRuledPacket) => a.index - b.index)
+  ).toEqual(
+    x.tokens
+      .filter((token: AnonymousRuledPacket) => token.rect[1] > 80)
+      .map((token: AnonymousRuledPacket) => token.sourceItem)
+  )
+})
+
+const intervalRejections: [string, (x: AnonymousRuledPacket) => void][] = [
+  [
+    'no native separator',
+    (x) => {
+      x.rules = x.rules.filter((r: number[]) => r[0] !== r[2])
+    }
+  ],
+  [
+    'incomplete native separator',
+    (x) => {
+      x.rules.find((r: number[]) => r[0] === r[2])[3] = 150
+    }
+  ],
+  [
+    'genuine separate numeric field',
+    (x) => {
+      x.rules.push([165, 108, 165, 183])
+    }
+  ],
+  [
+    'incomplete lower rule',
+    (x) => {
+      x.rules.find((r: number[]) => r[1] === 183)[2] = 210
+    }
+  ],
+  [
+    'missing measured header witness',
+    (x) => {
+      x.measured = []
+    }
+  ],
+  [
+    'measured header has a leaf gap',
+    (x) => {
+      x.measured[0].gaps = [{ left: 160, right: 170, index: 4 }]
+    }
+  ],
+  [
+    'partly visible native glyph',
+    (x) => {
+      x.tokens[1].rect[0] = 10
+    }
+  ],
+  [
+    'crossing native separator glyph',
+    (x) => {
+      x.tokens[2].rect[0] = 105
+    }
+  ],
+  [
+    'overlapping interval operands',
+    (x) => {
+      x.tokens.find((t: AnonymousRuledPacket) => t.text === '4.5').rect[0] = 135
+    }
+  ],
+  [
+    'independent scalars without interval operator',
+    (x) => {
+      x.tokens = x.tokens.filter((t: AnonymousRuledPacket) => t.text !== '−')
+    }
+  ],
+  [
+    'crop-external parent alias',
+    (x) => {
+      x.tokens.push({ ...x.tokens[1], rect: [500, 400, 530, 410] })
+    }
+  ],
+  [
+    'unknown graphics state',
+    (x) => {
+      x.context.operators.fnArray.push(ruledPacketOPS.setGState)
+      x.context.operators.argsArray.push([[['ca', 0.5]]])
+    }
+  ],
+  [
+    'unproved clip',
+    (x) => {
+      x.context.operators.fnArray.push(ruledPacketOPS.clip)
+      x.context.operators.argsArray.push(null)
+    }
+  ]
+]
+
+it.each(intervalRejections)(
+  'retains model interval columns without complete proof: %s',
+  (_, change) => {
+    const x = intervalPacket()
+    change(x)
+    expect(
+      recoverNativeRuledIntervalColumns(x.table, x.tokens, x.rules, x.measured, x.context)
+    ).toBeUndefined()
+  }
+)
+
+function colorIntervalCaption(x: AnonymousRuledPacket): void {
+  const op = x.context.operators
+  const begin = op.fnArray.indexOf(ruledPacketOPS.beginText)
+  op.fnArray.splice(begin, 0, ruledPacketOPS.setFillRGBColor)
+  op.argsArray.splice(begin, 0, ['#102694'])
+  const end = op.fnArray.indexOf(ruledPacketOPS.endText)
+  op.fnArray.splice(end + 1, 0, ruledPacketOPS.setFillRGBColor)
+  op.argsArray.splice(end + 1, 0, ['#000000'])
+}
+
+it('proves outside colored native text without relaxing the default complete packet guard', () => {
+  const x = intervalPacket()
+  colorIntervalCaption(x)
+  expect(
+    proveNativeCompleteRuledSourcePacket(
+      x.tokens.filter((t: AnonymousRuledPacket) => t.rect[1] > 80),
+      x.rules,
+      x.context,
+      x.table.cropRect
+    )
+  ).toBe(false)
+  expect(
+    recoverNativeRuledIntervalColumns(x.table, x.tokens, x.rules, x.measured, x.context)
+  ).toBeDefined()
+})
+
+it.each(['inside', 'touching', 'stroke', 'unrestored', 'transparent'])(
+  'rejects interval recovery with unproved colored paint: %s',
+  (kind) => {
+    const x = intervalPacket()
+    colorIntervalCaption(x)
+    const op = x.context.operators
+    if (kind === 'inside' || kind === 'unrestored') {
+      const restore = op.fnArray.indexOf(ruledPacketOPS.endText) + 1
+      op.fnArray.splice(restore, 1)
+      op.argsArray.splice(restore, 1)
+    } else if (kind === 'touching') {
+      // The first painted caption ends exactly on the top crop boundary.
+      const matrix = op.fnArray.indexOf(ruledPacketOPS.setTextMatrix)
+      op.argsArray[matrix][5] = 500 - x.table.cropRect[1]
+      x.context.content.items[0].transform[5] = 500 - x.table.cropRect[1]
+      x.tokens[0].baseline = x.table.cropRect[1]
+      x.tokens[0].rect = [20, x.table.cropRect[1] - 10, 90, x.table.cropRect[1]]
+    } else if (kind === 'stroke') {
+      const line = op.fnArray.indexOf(ruledPacketOPS.constructPath)
+      op.fnArray.splice(line, 0, ruledPacketOPS.setStrokeRGBColor)
+      op.argsArray.splice(line, 0, ['#102694'])
+    } else {
+      op.fnArray.push(ruledPacketOPS.setGState)
+      op.argsArray.push([[['ca', 0.5]]])
+    }
+    expect(
+      recoverNativeRuledIntervalColumns(x.table, x.tokens, x.rules, x.measured, x.context)
+    ).toBeUndefined()
+  }
+)
+
+it('tracks save and restore around exterior colored text before proving the black interval', () => {
+  const x = intervalPacket()
+  colorIntervalCaption(x)
+  const op = x.context.operators
+  const firstText = op.fnArray.indexOf(ruledPacketOPS.beginText)
+  op.fnArray.splice(firstText - 1, 0, ruledPacketOPS.save)
+  op.argsArray.splice(firstText - 1, 0, null)
+  const restore = op.fnArray.indexOf(ruledPacketOPS.endText) + 1
+  op.fnArray[restore] = ruledPacketOPS.restore
+  op.argsArray[restore] = null
+  expect(
+    recoverNativeRuledIntervalColumns(x.table, x.tokens, x.rules, x.measured, x.context)
+  ).toBeDefined()
+})
+
+function refineAnonymousRecords(x: AnonymousRuledPacket): AnonymousRuledPacket {
+  const table = {
+    ...x.table,
+    rowCount: 3,
+    columnCount: 3,
+    spans: [],
+    grid: [
+      ['', '', ''],
+      ['', '', ''],
+      ['', '', '']
+    ],
+    unassigned: [],
+    structure: {
+      objects: [
+        ...[
+          [17, 32],
+          [29, 126],
+          [121, 163]
+        ].map(([top, bottom]) => ({
+          label: 'table row',
+          score: 0.95,
+          rect: [0, top, 380, bottom]
+        })),
+        ...[
+          [0, 60],
+          [60, 125],
+          [125, 380]
+        ].map(([left, right]) => ({
+          label: 'table column',
+          score: 0.95,
+          rect: [left, 0, right, 180]
+        }))
+      ]
+    }
+  }
+  return refineTable(table, x.tokens, x.captions, [], x.rules, [], undefined, undefined, x.context)
+}
+
+it('keeps two fully fenced parameter records whole despite model cuts through their continued descriptions', () => {
+  const x = anonymousRuledPacket('records'),
+    before = structuredClone(x)
+  const result = refineAnonymousRecords(x)
+  expect(result.grid).toEqual([
+    [
+      'θ2',
+      '0.25 units',
+      'First measured value 2.5 has a continued definition 3.5 inside one physical record and a final clause.'
+    ],
+    [
+      'κ3',
+      '12',
+      'Second value belongs here with its independent meaning and its enclosed last sentence.'
+    ]
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(result.cells).toHaveLength(6)
+  expect(
+    result.cells
+      .flatMap((cell: AnonymousRuledPacket) => cell.sourceItems)
+      .sort((a: AnonymousRuledPacket, b: AnonymousRuledPacket) => a.index - b.index)
+  ).toEqual(x.tokens.slice(1).map((token: AnonymousRuledPacket) => token.sourceItem))
+  expect(x).toEqual(before)
+})
+
 function recoverAnonymousRuled(x: AnonymousRuledPacket, kind: string): AnonymousRuledPacket {
   return kind === 'prose'
     ? recoverNativeClosedProseSymbolRows(x.table, x.tokens, x.rules, x.context)
@@ -197,6 +551,268 @@ function moveAnonymousWholeFont(x: AnonymousRuledPacket, index: number, dx: numb
     .filter((n: number) => n >= 0)
   x.context.operators.argsArray[matrices[index]][4] += dx
 }
+
+function appendAnonymousRecordFont(
+  x: AnonymousRuledPacket,
+  text: string,
+  left: number,
+  baseline: number,
+  height = 10
+): void {
+  const O = ruledPacketOPS,
+    index = x.context.content.items.length,
+    width = (text.length * height) / 2
+  const sourceItem = { pageNumber: 1, index, text }
+  x.context.content.items.push({
+    str: text,
+    width,
+    height,
+    fontName: 'f',
+    transform: [height, 0, 0, height, left, 500 - baseline],
+    sourceItem
+  })
+  x.tokens.push({
+    text,
+    height,
+    baseline,
+    horizontal: true,
+    rect: [left, baseline - height, left + width, baseline],
+    sourceItem
+  })
+  x.context.operators.fnArray.push(O.beginText, O.setFont, O.setTextMatrix, O.showText, O.endText)
+  x.context.operators.argsArray.push(
+    null,
+    ['f', height],
+    [1, 0, 0, 1, left, 500 - baseline],
+    [
+      [...text].map((char) => ({
+        unicode: char,
+        fontChar: char,
+        width: 500,
+        isInFont: true,
+        originalCharCode: char.codePointAt(0),
+        accent: null
+      }))
+    ],
+    null
+  )
+}
+
+it('refuses a right-aligned independent numeric subtable with unequal digit widths', () => {
+  const x = anonymousRuledPacket('records')
+  for (const [oldText, newText, left] of [
+    ['First measured value', 'First measured value here', 155],
+    ['2.5', '2.5', 290],
+    ['3.5', '23.5', 285]
+  ] as const) {
+    const index = x.tokens.findIndex((i: AnonymousRuledPacket) => i.text === oldText),
+      token = x.tokens[index],
+      raw = x.context.content.items[index]
+    moveAnonymousWholeFont(x, index, left - token.rect[0])
+    token.text = newText
+    token.sourceItem.text = newText
+    raw.str = newText
+    raw.width = newText.length * 5
+    token.rect[2] = left + raw.width
+    const shows = x.context.operators.fnArray
+      .map((code: number, n: number) => (code === ruledPacketOPS.showText ? n : -1))
+      .filter((n: number) => n >= 0)
+    x.context.operators.argsArray[shows[index]] = [
+      Array.from(newText, (char) => ({
+        unicode: char,
+        fontChar: char,
+        width: 500,
+        isInFont: true,
+        originalCharCode: char.codePointAt(0),
+        accent: null
+      }))
+    ]
+  }
+  expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeUndefined()
+  expect(refineAnonymousRecords(x).repairs ?? []).not.toContain(
+    'native-closed-parameter-records-recovered'
+  )
+})
+
+it.each([0.2, 0.6, 1.5])(
+  'preserves complete native records with stroke width %s under the existing edge contract',
+  (stroke) => {
+    const x = anonymousRuledPacket('records', { stroke, gap: 0.75 })
+    expect(
+      recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)?.ownedTokens.size
+    ).toBe(x.tokens.length - 1)
+    expect(refineAnonymousRecords(x).grid).toHaveLength(2)
+  }
+)
+
+it('retains the global guard while proving an outside rectangular fill and a wholly off-page text run locally', () => {
+  const x = anonymousRuledPacket('records', { offpage: -100 })
+  expect(proveNativeCompleteRuledSourcePacket(x.tokens, x.rules, x.context, x.table.cropRect)).toBe(
+    false
+  )
+  expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeDefined()
+  const result = refineAnonymousRecords(x)
+  expect(result.grid).toHaveLength(2)
+  expect(result.unassigned).toEqual([])
+})
+
+it('preserves complete record ownership under a non-unit native viewport scale', () => {
+  const scale = 0.5
+  const x = anonymousRuledPacket('records')
+  x.context.viewport = {
+    ...x.context.viewport,
+    scale,
+    width: 600 * scale,
+    height: 500 * scale,
+    transform: [scale, 0, 0, -scale, 0, 500 * scale]
+  }
+  for (const token of x.tokens) {
+    token.rect = token.rect.map((v: number) => v * scale)
+    token.height *= scale
+    token.baseline *= scale
+  }
+  for (const g of x.context.nativeEvidenceGraphics) g.rect = g.rect.map((v: number) => v * scale)
+  x.table.cropRect = x.table.cropRect.map((v: number) => v * scale)
+  const paint = new Map()
+  x.rules = packetRules(x.context.operators, x.context.viewport, paint)
+  x.context.rulePaintBounds = [...paint]
+  const proof = recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)
+  expect(proof?.ownedTokens.size).toBe(x.tokens.length - 1)
+  expect(proof?.rows).toHaveLength(2)
+})
+
+it.each([115, 112])(
+  'refuses a detached small numeric unit-line font at baseline %s',
+  (baseline) => {
+    const x = anonymousRuledPacket('records')
+    appendAnonymousRecordFont(x, '3', 137, baseline, 6)
+    expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeUndefined()
+    expect(refineAnonymousRecords(x).repairs ?? []).not.toContain(
+      'native-closed-parameter-records-recovered'
+    )
+  }
+)
+
+it.each([
+  'second-scalar',
+  'unit-with-separated-scalars',
+  'multiple-stub-values',
+  'numeric-subtable',
+  'detached-scalar-digits'
+] as const)('refuses the independent %s record domain inside a closed frame', (kind) => {
+  const x = anonymousRuledPacket('records')
+  if (kind === 'second-scalar') appendAnonymousRecordFont(x, '3', 90, 145)
+  if (kind === 'unit-with-separated-scalars') {
+    appendAnonymousRecordFont(x, '3', 125, 115)
+    appendAnonymousRecordFont(x, '4', 136, 115)
+  }
+  if (kind === 'multiple-stub-values') {
+    appendAnonymousRecordFont(x, 'β', 30, 145)
+    appendAnonymousRecordFont(x, '5', 90, 145)
+  }
+  if (kind === 'numeric-subtable')
+    moveAnonymousWholeFont(
+      x,
+      x.tokens.findIndex((i: AnonymousRuledPacket) => i.text === '3.5'),
+      -30
+    )
+  if (kind === 'detached-scalar-digits') appendAnonymousRecordFont(x, '2', 125, 95)
+  const before = structuredClone(x)
+  expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeUndefined()
+  expect(refineAnonymousRecords(x).repairs ?? []).not.toContain(
+    'native-closed-parameter-records-recovered'
+  )
+  expect(x).toEqual(before)
+})
+
+it.each(['sourceItem', 'sourceSegment', 'sourceToken', 'nestedItem', 'nestedSegment'] as const)(
+  'refuses a crop-external %s alias of an owned record font',
+  (carrier) => {
+    const x = anonymousRuledPacket('records'),
+      origin = x.tokens[1].sourceItem
+    const alias: AnonymousRuledPacket = {
+      text: origin.text,
+      rect: [500, 300, 505, 310],
+      height: 10,
+      baseline: 310,
+      horizontal: true
+    }
+    if (carrier === 'nestedItem') alias.sourceToken = { sourceItem: origin }
+    else if (carrier === 'nestedSegment')
+      alias.sourceToken = { sourceSegment: { ...origin, start: 0, end: 1 } }
+    else alias[carrier] = carrier === 'sourceSegment' ? { ...origin, start: 0, end: 1 } : origin
+    x.tokens.push(alias)
+    expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeUndefined()
+    expect(refineAnonymousRecords(x).repairs ?? []).not.toContain(
+      'native-closed-parameter-records-recovered'
+    )
+  }
+)
+
+it.each([
+  'open-edge',
+  'crossed-leaf',
+  'touching-ink',
+  'partial-viewport',
+  'fill-at-frame',
+  'clip',
+  'alpha',
+  'unknown-state',
+  'transformed-paint',
+  'missing-source',
+  'missing-graphic'
+] as const)('refuses the scoped closed-record %s counterexample', (kind) => {
+  const x = anonymousRuledPacket(
+    'records',
+    kind === 'open-edge' ? { gap: 1.01 } : kind === 'partial-viewport' ? { offpage: -5 } : {}
+  )
+  const op = x.context.operators,
+    O = ruledPacketOPS
+  if (kind === 'crossed-leaf') moveAnonymousWholeFont(x, 1, 48)
+  if (kind === 'touching-ink') moveAnonymousWholeFont(x, 1, 44.8)
+  if (kind === 'fill-at-frame') {
+    const n = op.fnArray.findIndex(
+      (code: number, n: number) => code === O.constructPath && op.argsArray[n][0] === O.fill
+    )
+    op.argsArray[n] = [
+      O.fill,
+      [[0, 0, 238, 1, 500, 238, 1, 500, 240, 1, 0, 240, 4]],
+      [0, 238, 500, 240]
+    ]
+    x.context.nativeEvidenceGraphics.at(-1).rect = [0, 260, 500, 262].map(
+      (v: number, k: number) =>
+        ((k < 2
+          ? Math.floor((v / (k % 2 ? 500 : 600)) * 256)
+          : Math.ceil((v / (k % 2 ? 500 : 600)) * 256) + 1) *
+          (k % 2 ? 500 : 600)) /
+        256
+    )
+  }
+  if (kind === 'clip') {
+    op.fnArray.unshift(O.clip)
+    op.argsArray.unshift(null)
+  }
+  if (kind === 'alpha') {
+    op.fnArray.unshift(O.setGState)
+    op.argsArray.unshift([['ca', 0.5]])
+  }
+  if (kind === 'unknown-state') {
+    op.fnArray.unshift(987654)
+    op.argsArray.unshift(null)
+  }
+  if (kind === 'transformed-paint') {
+    op.fnArray.unshift(O.transform)
+    op.argsArray.unshift([1, 0.1, 0, 1, 0, 0])
+  }
+  if (kind === 'missing-source') x.tokens.splice(5, 1)
+  if (kind === 'missing-graphic') x.context.nativeEvidenceGraphics.pop()
+  const before = structuredClone(x)
+  expect(recoverNativeClosedParameterRows(x.table, x.tokens, x.rules, x.context)).toBeUndefined()
+  expect(refineAnonymousRecords(x).repairs ?? []).not.toContain(
+    'native-closed-parameter-records-recovered'
+  )
+  expect(x).toEqual(before)
+})
 
 it.each([
   ['prose', 3, 40],

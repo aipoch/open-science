@@ -263,6 +263,110 @@ function findStraightLineProcedure(page, title, titles, lines, rules) {
   return frames.length === 1 ? frames : []
 }
 
+// Explicit numbered closures are a separate grammar from the input/return forms.
+// The ordinal gutter stays fixed even when the statements themselves are nested.
+function hasClosedNumberedBody(page, title, titles, lines, aligned, top, bottom, ordinals) {
+  if (
+    ordinals.length < 4 ||
+    ordinals.some(
+      (line, n) =>
+        Number(line.text.match(/^(\d+)\s*:/)[1]) !== n + 1 || (n && line.y <= ordinals[n - 1].y)
+    )
+  )
+    return false
+  const gutter = new Map()
+  for (const line of ordinals) {
+    // Two-digit labels can extend left of one-digit labels. Compare like-width
+    // ordinal labels, without estimating their glyph widths from a string ratio.
+    const digits = line.text.match(/^\d+/)[0].length
+    if (gutter.has(digits) && Math.abs(line.x - gutter.get(digits)) > line.fontSize * 0.2)
+      return false
+    gutter.set(digits, line.x)
+  }
+  const dividers = aligned.filter(
+    (rule) =>
+      rule !== top &&
+      rule !== bottom &&
+      rule[1] > title.bottom &&
+      rule[1] < ordinals[0].bottom &&
+      Math.abs(rule[2] - bottom[2]) <= 8
+  )
+  if (dividers.length !== 1) return false
+  const rect = [top[0] - 2, Math.min(top[1], title.y) - 2, top[2] + 2, bottom[3] + 2]
+  if (
+    titles.some(
+      (other) =>
+        other !== title &&
+        other.x < rect[2] &&
+        other.right > rect[0] &&
+        other.y < rect[3] &&
+        other.bottom > rect[1]
+    )
+  )
+    return false
+  if (
+    page.lines.some(
+      (line) =>
+        line.text.trim() &&
+        line.x < rect[2] &&
+        line.x + line.width > rect[0] &&
+        line.y < rect[3] &&
+        line.y + line.height > rect[1] &&
+        (line.x < rect[0] ||
+          line.x + line.width > rect[2] ||
+          line.y < rect[1] ||
+          line.y + line.height > rect[3])
+    )
+  )
+    return false
+  const body = lines.filter(
+    (line) =>
+      line.y > title.bottom && line.y < bottom[3] && line.x >= rect[0] && line.right <= rect[2]
+  )
+  // Detached scripts and math fragments retain their native pixels. A separate
+  // unnumbered paragraph is not evidence for a numbered step merely by proximity.
+  if (
+    body.some(
+      (line) =>
+        !ordinals.includes(line) &&
+        (!ordinals.some((step) => line.y < step.bottom && line.bottom > step.y) ||
+          (!/^▷/.test(line.text) && /\p{L}{3,}\s+\p{L}{3,}\s+\p{L}{3,}/u.test(line.text)))
+    )
+  )
+    return false
+  const stack = []
+  let loops = 0
+  for (const line of ordinals) {
+    const text = line.text
+      .replace(/^\d+\s*:\s*/, '')
+      .split('▷')[0]
+      .trim()
+    const open = /^(for|while)\b.+\bdo$/i.exec(text) ?? /^(if)\b.+\bthen$/i.exec(text)
+    if (open) {
+      stack.push({ kind: open[1].toLowerCase(), body: false, alternate: false })
+      continue
+    }
+    if (/^else$/i.test(text)) {
+      const current = stack.at(-1)
+      if (current?.kind !== 'if' || !current.body || current.alternate) return false
+      current.alternate = true
+      current.body = false
+      continue
+    }
+    const close = /^end\s+(for|while|if)$/i.exec(text)
+    if (close) {
+      const current = stack.pop()
+      if (!current?.body || current.kind !== close[1].toLowerCase()) return false
+      if (current.kind !== 'if') loops++
+      if (stack.length) stack.at(-1).body = true
+      continue
+    }
+    if (!text || /^(?:for|while|if|else|end)\b/i.test(text)) return false
+    if (stack.length) stack.at(-1).body = true
+  }
+  return loops > 0 && stack.length === 0
+}
+
 // Complete labelled native rules own the pseudocode; keep its original image.
 export function findAlgorithmCandidates(page, nativeRules = []) {
   const lines = groupPageLines(page)
@@ -400,7 +504,15 @@ export function findAlgorithmCandidates(page, nativeRules = []) {
           rule[1] < ordinals[0].bottom &&
           Math.abs(rule[2] - bottom[2]) <= 8
       )
-    if (!(io && ordinals.length >= 2) && !loops && !headed && !routine && !numberedLoop) return []
+    if (
+      !(io && ordinals.length >= 2) &&
+      !loops &&
+      !headed &&
+      !routine &&
+      !numberedLoop &&
+      !hasClosedNumberedBody(page, title, titles, lines, aligned, top, bottom, ordinals)
+    )
+      return []
     const titleTails = content.filter(
       (l) =>
         /[-–]$/.test(title.text) &&

@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from './index'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
 
-it.skipIf(!process.env.RUN_KERNEL).each(['python', 'r'] as const)(
+it.each(['python', 'r'] as const)(
   'matches %s snapshot analysis with native file reads and writes',
   async (language) => {
     const command =

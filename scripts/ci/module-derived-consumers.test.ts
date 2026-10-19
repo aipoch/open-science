@@ -104,6 +104,72 @@ it('keeps known edges in opaque cones without claiming coverage of computed impo
   expect(generateDerivedConsumers(manifest(), graph.reverse)).toEqual(expected)
 })
 
+it.each([
+  ['./icon.svg', 'src/main/icon.svg'],
+  ['./icon.svg?raw', 'src/main/icon.svg'],
+  ['./icon.svg?url#mark', 'src/main/icon.svg'],
+  ['@/assets/logo.png', 'src/renderer/src/assets/logo.png'],
+  ['@renderer/assets/logo.png?inline', 'src/renderer/src/assets/logo.png'],
+  ['../renderer/src/annotations/controls.css', 'src/renderer/src/annotations/controls.css']
+])(
+  'selects resource consumers through %s without proving the cone complete',
+  (specifier, asset) => {
+    const registration = manifest()
+    registration.modules.owner.ownerPaths = [asset, ownerTest]
+    registration.modules.owner.interfacePaths = [asset]
+    const input = source({
+      [asset]: 'not JavaScript',
+      'src/main/bridge.ts': `import asset from '${specifier}'; export { asset }`
+    })
+    const graph = consumerDependencyGraph(input, [])
+    const index = generateDerivedConsumers(registration, graph.reverse)
+    expect(index.modules.owner).toContain(consumer)
+    expect(graph.inspect(consumer, new Set([asset])).reachable).toBe(true)
+    expect(graph.inspect(consumer, new Set(['unrelated.ts'])).complete).toBe(false)
+    const effective = withDerivedConsumers(registration, index)
+    expect(createModuleTestPlan('owner', effective).testFiles).toContain(consumer)
+    expect(createModuleTestPlan('owner', effective).reasonChains).toContain(
+      `owner -> derived dependency evidence -> ${consumer}`
+    )
+  }
+)
+
+it.each(['./missing.svg', './icon.svg?unknown', './icon.svg?raw&plugin', '../escape.svg'])(
+  'does not invent resource edges for %s',
+  (specifier) => {
+    const graph = consumerDependencyGraph(
+      source({
+        [consumer]: `import '${specifier}'`,
+        'src/main/icon.svg': '<svg />'
+      }),
+      []
+    )
+    expect([...graph.inspect.dependencies(consumer).paths]).toEqual([])
+    expect(graph.inspect.dependencies(consumer).complete).toBe(false)
+  }
+)
+
+it('requires resource consumers in the existing index or explicit module evidence', () => {
+  const asset = 'src/main/icon.svg'
+  const registration = manifest()
+  registration.modules.owner.ownerPaths = [asset, ownerTest]
+  registration.modules.owner.interfacePaths = [asset]
+  const input = source({ [asset]: '<svg />', 'src/main/bridge.ts': "import './icon.svg'" })
+  const empty = { schemaVersion: 1, modules: {} }
+  const withIndex = (index: object) => ({
+    ...input,
+    read: (path: string) =>
+      path === derivedConsumersPath ? JSON.stringify(index) : input.read(path)
+  })
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).toThrow('Stale')
+  const index = generateDerivedConsumers(registration, consumerDependencyGraph(input, []).reverse)
+  expect(index).toEqual(expected)
+  expect(() => checkDerivedConsumers(withIndex(index), registration)).not.toThrow()
+  registration.modules.owner.testFiles.consumer.push(consumer)
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).not.toThrow()
+  expect(createModuleTestPlan('owner', registration).testFiles).toContain(consumer)
+})
+
 it('requires shared test helpers to be interfaces before propagating their consumers', () => {
   const input = source({
     [consumer]: "import './owner.test'",

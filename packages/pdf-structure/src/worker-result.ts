@@ -83,7 +83,9 @@ const rawSchema = z.object({
       rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)])
     })
   ),
-  figures: z.array(candidate).max(128),
+  figures: z
+    .array(candidate.extend({ sourceItems: pdfTableSourceItemsSchema.optional() }))
+    .max(128),
   algorithms: z.array(candidate).max(32).default([]),
   tables: z
     .array(
@@ -245,6 +247,7 @@ export const readWorkerResult = async (
         kind,
         regions: [region(item.page, item.region)],
         thumbnailId: item.id,
+        ...('sourceItems' in item && item.sourceItems ? { sourceItems: item.sourceItems } : {}),
         ...(item.caption
           ? {
               caption: {
@@ -253,7 +256,7 @@ export const readWorkerResult = async (
               }
             }
           : {}),
-        issues: []
+        issues: item.issue ? [{ code: item.issue, detail: item.issue }] : []
       }
       const convertNote = (
         note: z.infer<typeof rawNote>

@@ -162,7 +162,7 @@ it('offers full and compact export without exposing customization and preserves 
     '[role="checkbox"][aria-label="plot.png"]'
   )!
   expect(required.disabled).toBe(true)
-  await act(async () => button('Export').click())
+  await act(async () => button('Choose save location…').click())
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'select',
     includePdfNotes: false,
@@ -192,7 +192,7 @@ it('does not label an oversized exclusion as full export and blocks oversized re
     files: snapshot.files!.map((file) => ({ ...file, requiredForEvidence: true }))
   }
   await act(async () => usePackageOperationStore.getState().receive(operation))
-  expect(button('Export').disabled).toBe(true)
+  expect(button('Choose save location…').disabled).toBe(true)
   expect(document.body.textContent).toContain('This Session cannot be exported.')
   expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([])
 })
@@ -287,7 +287,7 @@ it.each(['succeeded', 'failed', 'cancelled'] as const)(
     )
     expect(document.body.textContent).toContain(
       state === 'succeeded'
-        ? 'Completed, cleanup pending'
+        ? 'Session imported'
         : state === 'failed'
           ? 'Package operation failed'
           : 'Package operation cancelled'
@@ -363,7 +363,7 @@ it('labels measurable progress as the current stage and removes stale counters d
     }
   })
   await act(async () => root.render(<SessionPackageOperation />))
-  expect(document.body.textContent).toContain('Current stage')
+  expect(document.body.textContent).toContain('Copying files…')
   expect(document.body.textContent).toContain('40%')
   act(() => publish({ ...running, progress: { phase: 'compressing' } }))
   const indeterminate = document.querySelector('[role="progressbar"]')
@@ -377,6 +377,137 @@ it('labels measurable progress as the current stage and removes stale counters d
     'Removing temporary files. Keep the app open until cleanup finishes.'
   )
 })
+it('distinguishes import checks from the confirmed transfer, including background feedback', async () => {
+  const operation: PackageOperationSnapshot = {
+    id: 'checked-import',
+    kind: 'import',
+    state: 'running',
+    importFilename: 'research.science',
+    progress: { phase: 'copying', completedBytes: 1024, totalBytes: 2048 },
+    ioBytesPerSecond: 1024
+  }
+  vi.stubGlobal('api', {
+    sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Check package')
+  expect(document.body.textContent).toContain('No Session has been created yet.')
+  expect(document.body.textContent).toContain('1.0 KiB / 2.0 KiB')
+  expect(document.querySelector('[role="progressbar"], progress')).toBeNull()
+  act(() => usePackageOperationStore.getState().setOpen(false))
+  expect(document.querySelector('[role="status"]')?.textContent).toBe('Checking Session package…')
+  expect(document.body.textContent).toContain('Disk activity: 1.0 KiB/s')
+  act(() =>
+    usePackageOperationStore.getState().receive({ ...operation, progress: { phase: 'validating' } })
+  )
+  expect(document.body.textContent).toContain('Validating package…')
+  expect(document.body.textContent).not.toContain('1.0 KiB / 2.0 KiB')
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      state: 'awaiting-selection',
+      progress: { phase: 'confirming' },
+      importPreview: {
+        title: 'Research',
+        projectName: 'Source',
+        branchCount: 1,
+        messageCount: 2,
+        fileCount: 1,
+        totalBytes: 2048,
+        omissions: []
+      }
+    })
+  )
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Review contents')
+  expect(document.querySelector('[role="progressbar"], progress')).toBeNull()
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'importing', completedBytes: 1024, totalBytes: 2048 }
+    })
+  )
+  expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Import')
+  expect(document.querySelector('progress')?.getAttribute('aria-valuetext')).toBe(
+    'Importing research…: 50%'
+  )
+  expect(document.body.textContent).not.toContain('No Session has been created yet.')
+})
+
+it.each([false, true])(
+  'offers the next queued package only after cleanup finishes (%s)',
+  async (cleanupPending) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'finished-import',
+      kind: 'import',
+      state: 'succeeded',
+      progress: { phase: 'cleaning' },
+      importTarget: { projectName: 'Research destination' },
+      cleanupPending,
+      result: { imported: { projectId: 'destination', sessionId: 'imported' } },
+      pendingImports: [{ id: 'next', filename: 'next.science' }]
+    }
+    const request = vi.fn(async () => operation)
+    vi.stubGlobal('api', {
+      sessions: { packageOperation: request, onPackageOperation: () => () => undefined }
+    })
+    usePackageOperationStore.setState({ operation, open: true })
+    await act(async () => root.render(<SessionPackageOperation />))
+    expect(document.body.textContent).toContain('Session imported')
+    expect(document.body.textContent).toContain('Research destination')
+    expect(document.body.textContent).not.toContain('Keep the app open')
+    expect(document.querySelector('[aria-current="step"]')).toBeNull()
+    const next = [...document.querySelectorAll('button')].find((item) =>
+      item.textContent?.startsWith('Open next package')
+    )
+    expect(Boolean(next)).toBe(!cleanupPending)
+    if (next) {
+      await act(async () => next.click())
+      expect(request).toHaveBeenCalledWith({ action: 'next-import', operationId: operation.id })
+    }
+  }
+)
+
+it('distinguishes saving from package creation and shows the exported path', async () => {
+  const operation: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'running',
+    progress: { phase: 'compressing' }
+  }
+  vi.stubGlobal('api', {
+    sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Create package')
+  act(() =>
+    usePackageOperationStore
+      .getState()
+      .receive({ ...operation, progress: { phase: 'saving', completedBytes: 80, totalBytes: 100 } })
+  )
+  expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Save package')
+  expect(document.querySelector('progress')?.getAttribute('aria-valuetext')).toBe(
+    'Saving package…: 80%'
+  )
+  act(() =>
+    usePackageOperationStore
+      .getState()
+      .receive({ ...operation, state: 'succeeded', result: { filePath: 'research.science' } })
+  )
+  expect(document.body.textContent).toContain('Session package exported')
+  expect(document.body.textContent).toContain('research.science')
+  expect(document.querySelector('[role="progressbar"], progress')).toBeNull()
+})
+
 afterEach(() => {
   act(() => root.unmount())
   document.body.innerHTML = ''
@@ -400,9 +531,9 @@ it('starts with a simple export summary and reveals optional controls on request
   expect(document.activeElement?.textContent).toBe('Export Session package')
   expect(document.querySelector('[role="checkbox"]')).toBeNull()
   expect(document.body.textContent).not.toContain('Transfer settings')
-  expect(document.body.textContent).toContain('Selected: 0 / 3 files')
+  expect(document.body.textContent).toContain('Optional files: 0 / 3 selected')
   expect(document.body.textContent).not.toContain('Some file contents are not included')
-  await act(async () => button('Export').click())
+  await act(async () => button('Choose save location…').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     includePdfNotes: false,
@@ -435,14 +566,14 @@ it('allows selecting a 32 GiB file while disabling files over the limit', async 
     sessions: { onPackageOperation: () => () => undefined, packageOperation: request }
   })
   await act(async () => root.render(<SessionPackageOperation />))
-  expect(document.body.textContent).toContain('Selected: 0 / 2 files')
+  expect(document.body.textContent).toContain('Optional files: 0 / 2 selected')
   act(() => button('Customize contents').click())
   expect(document.body.textContent).toContain('Files larger than 32.0 GiB cannot be included.')
   expect(document.querySelector('[role="checkbox"][disabled]')?.getAttribute('aria-label')).toBe(
     'raw.bin'
   )
   act(() => button('Select all').click())
-  await act(async () => button('Export').click())
+  await act(async () => button('Choose save location…').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     includePdfNotes: false,
@@ -487,7 +618,7 @@ it('shows a matching renamed version beyond the initial version page without cha
   expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(1)
   expect(document.body.textContent).toContain('All versions')
   act(() => (document.querySelector('[role="checkbox"]') as HTMLElement).click())
-  expect(document.body.textContent).toContain('Selected: 0 / 60 files')
+  expect(document.body.textContent).toContain('Optional files: 0 / 60 selected')
 })
 
 it('retains the failed processing stage in the result', async () => {
@@ -555,11 +686,11 @@ it('selects file contents with a size filter and keeps selection separate from m
   })
   expect(document.body.textContent).toContain('Notebook run-1')
   act(() => button('Exclude large files').click())
-  expect(document.body.textContent).toContain('Selected: 1 / 3 files')
+  expect(document.body.textContent).toContain('Optional files: 1 / 3 selected')
   act(() => (document.querySelector('[aria-label="Hide progress"]') as HTMLButtonElement).click())
   act(() => button('Continue setup').click())
-  expect(document.body.textContent).toContain('Selected: 1 / 3 files')
-  await act(async () => button('Export').click())
+  expect(document.body.textContent).toContain('Optional files: 1 / 3 selected')
+  await act(async () => button('Choose save location…').click())
   expect(request).toHaveBeenLastCalledWith({
     action: 'select',
     includePdfNotes: false,
@@ -567,7 +698,7 @@ it('selects file contents with a size filter and keeps selection separate from m
     excludedStorageKeys: ['artifacts/p/s/oversized', 'artifacts/p/s/large']
   })
   act(() => publish({ ...snapshot, id: 'operation-2' }))
-  expect(document.body.textContent).toContain('Selected: 0 / 3 files')
+  expect(document.body.textContent).toContain('Optional files: 0 / 3 selected')
 })
 
 it('keeps a running export in the header and restores detailed progress on demand', async () => {
@@ -772,7 +903,7 @@ it('shows retained bytes and small-file units and searches without changing the 
   })
   expect(document.querySelector('[aria-label="result.csv"]')).toBeNull()
   expect(document.querySelector('[aria-label="plot.png"]')).not.toBeNull()
-  expect(document.body.textContent).toContain('Selected: 2 / 3 files')
+  expect(document.body.textContent).toContain('Optional files: 2 / 3 selected')
 })
 
 it('shows a partly selected group and retains its draft across a failed export retry', async () => {
@@ -854,7 +985,7 @@ it('paginates large inventories while selection applies across all pages', async
   act(() => button('Next').click())
   expect(document.querySelector('[aria-label="file999"]')).toBeNull()
   expect(document.body.textContent).toContain('Page 2 of 40')
-  expect(document.body.textContent).toContain('Selected: 1000 / 1000 files')
+  expect(document.body.textContent).toContain('Optional files: 1000 / 1000 selected')
 })
 
 it('does not carry a previous operation action error into a new transfer', async () => {
@@ -880,7 +1011,7 @@ it('does not carry a previous operation action error into a new transfer', async
       </>
     )
   )
-  await act(async () => button('Export').click())
+  await act(async () => button('Choose save location…').click())
   expect(document.body.textContent).toContain('Selection submission failed')
   act(() => publish({ ...snapshot, id: 'next-transfer' }))
   expect(document.body.textContent).not.toContain('Selection submission failed')
@@ -1232,7 +1363,7 @@ it('explains the always-included content without displaying an empty optional se
   })
   usePackageOperationStore.getState().receive(operation)
   await act(async () => root.render(<SessionPackageOperation />))
-  expect(document.body.textContent).not.toContain('Selected: 0 / 0')
+  expect(document.body.textContent).not.toContain('Optional files: 0 / 0')
   expect(document.body.textContent).toContain('History and required evidence')
   expect(document.body.textContent).toContain('8.0 KiB')
 })
@@ -1512,7 +1643,7 @@ it('requires explicit opt-in before exporting notes shared across projects', asy
   const checkbox = label.querySelector<HTMLInputElement>('input')!
   expect(checkbox.checked).toBe(false)
   await act(async () => checkbox.click())
-  await act(async () => button('Export').click())
+  await act(async () => button('Choose save location…').click())
   expect(request).toHaveBeenLastCalledWith(
     expect.objectContaining({ action: 'select', includePdfNotes: true })
   )

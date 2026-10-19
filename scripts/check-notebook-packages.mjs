@@ -29,6 +29,7 @@ try {
     for (const file of [
       'src',
       ...(name === 'notebook-syntax' ? ['assets'] : []),
+      ...(name === 'notebook-analysis' ? ['test'] : []),
       'package.json',
       'tsconfig.json',
       'tsconfig.test.json',

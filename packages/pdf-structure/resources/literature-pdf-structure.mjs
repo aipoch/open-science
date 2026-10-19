@@ -17,7 +17,10 @@ import {
   startsDetachedTextColumn
 } from './literature-pdf-caption-group.mjs'
 import { collectGraphicsBounds } from './literature-pdf-graphics.mjs'
-import { recordPaintedOperationBounds } from './literature-pdf-render-bounds.mjs'
+import {
+  recordPaintedOperationBounds,
+  captureNativeFigureRenderContext
+} from './literature-pdf-render-bounds.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation } from './literature-pdf-orientation.mjs'
@@ -33,6 +36,10 @@ if (renderPages)
   )
 assert((await stat(inputPath)).size <= 50 * 1024 * 1024, 'Probe input exceeds 50 MiB.')
 const bytes = await readFile(inputPath)
+const sourceSha256 = createHash('sha256').update(bytes).digest('hex')
+// Requested-page evidence survives only until the extractor consumes this batch.
+// The existing renderPages contract, not a second truncation, bounds the batch.
+export const nativeFigureRenderContexts = new Map()
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
   data: new Uint8Array(bytes),
@@ -193,6 +200,18 @@ try {
         recordPaintedOperationBounds(rendering)
         await rendering.promise
         Object.assign(pages.at(-1), collectGraphicsBounds(rendering, page.recordedBBoxes))
+        if (mode === 'production' && renderPages?.includes(pageNumber)) {
+          const proof = captureNativeFigureRenderContext(
+            rendering,
+            pageNumber,
+            await page.getTextContent(),
+            viewport,
+            pages.at(-1).graphicsBounds,
+            sourceSha256,
+            page.commonObjs
+          )
+          if (proof) nativeFigureRenderContexts.set(pageNumber, proof)
+        }
         if (mode !== 'production') {
           await writeFile(
             join(outputDirectory, `page-${pageNumber}.png`),
@@ -221,7 +240,7 @@ try {
   }
   const summary = {
     pdfjsVersion: version,
-    checksum: createHash('sha256').update(bytes).digest('hex'),
+    checksum: sourceSha256,
     pageCount: document.numPages,
     nativeOutlineRoots: outline?.length ?? 0,
     taggedPages: pages.filter((page) => Object.keys(page.structureRoles).length).length,
@@ -234,6 +253,12 @@ try {
     JSON.stringify({ summary, outline, pages }, null, 2) + '\n'
   )
   console.log(JSON.stringify(summary, null, 2))
+} catch (error) {
+  nativeFigureRenderContexts.clear()
+  throw error
 } finally {
-  await task.destroy()
+  await task.destroy().catch((error) => {
+    nativeFigureRenderContexts.clear()
+    throw error
+  })
 }

@@ -44,6 +44,143 @@ it('preserves every source fragment and character without mutating native input'
     emitted = p.runs.flatMap((r: { text: string }) => [...r.text]).sort()
   expect(emitted).toEqual(native)
 })
+it.each(['−', '-'])(
+  'preserves a %s upper lane and positive lower lane in their printed order',
+  (minus) => {
+    const x = fixture()
+    for (const item of x.items) {
+      if (item.text === '+') item.text = minus
+      else if (item.text === '−') item.text = '+'
+    }
+    const before = JSON.stringify(x.items)
+    const expected = [
+      { text: '6.84', position: 'normal' },
+      { text: `${minus}0.27`, position: 'superscript' },
+      { text: '+0.39', position: 'subscript' }
+    ]
+    const proof = recoverNativeStackedUncertainty(x.items, x.rules)
+    expect(proof?.runs).toEqual(expected)
+    expect(proof?.ownedTokens.size).toBe(x.items.length)
+    expect(JSON.stringify(x.items)).toBe(before)
+    const refined = refineTable(x.table, x.items, x.captions, [], x.rules)
+    const cell = refined.cells.find((c: { text: string }) => c.text.includes('6.84'))
+    expect(cell?.text).toBe(`6.84${minus}0.27+0.39`)
+    expect(cell?.textRuns).toEqual(expected)
+    expect(cell?.sourceRects).toHaveLength(x.items.length)
+  }
+)
+it.each(['duplicate-sign', 'both-positive', 'both-negative', 'incomplete-lane', 'ordinary-prose'])(
+  'does not infer reversed numeric script lanes for %s',
+  (variant) => {
+    const x = fixture()
+    const upper = x.items.find((item: { text: string }) => item.text === '+')
+    const lower = x.items.find((item: { text: string }) => item.text === '−')
+    upper.text = '−'
+    lower.text = '+'
+    if (variant === 'duplicate-sign') upper.text = '−−'
+    if (variant === 'both-positive') upper.text = '+'
+    if (variant === 'both-negative') lower.text = '-'
+    if (variant === 'incomplete-lane')
+      x.items = x.items.filter(
+        (item: { baseline: number }) => item === lower || item.baseline !== lower.baseline
+      )
+    if (variant === 'ordinary-prose') x.items[0].text = 'Mean'
+    const before = JSON.stringify(x.items)
+    expect(recoverNativeStackedUncertainty(x.items, x.rules)).toBeUndefined()
+    expect(JSON.stringify(x.items)).toBe(before)
+  }
+)
+it('does not reorder different native glyphs that claim the same whole source identity', () => {
+  const x = fixture()
+  x.items.forEach((item: ReturnType<typeof JSON.parse>, index: number) => {
+    if (item.text === '+') item.text = '−'
+    else if (item.text === '−') item.text = '+'
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  })
+  const zeros = x.items.filter((item: { text: string }) => item.text === '0')
+  zeros[1].sourceItem = { ...zeros[0].sourceItem }
+  const before = JSON.stringify(x.items)
+  const refined = refineTable(x.table, x.items, x.captions, [], x.rules)
+  const cell = refined.cells.find((c: { text: string }) => c.text.includes('6.84'))
+  expect(cell?.text).not.toBe('6.84−0.27+0.39')
+  expect(recoverNativeStackedUncertainty(x.items, x.rules)).toBeUndefined()
+  expect(JSON.stringify(x.items)).toBe(before)
+})
+const measuredStack = (): ReturnType<typeof JSON.parse> => {
+  const x = fixture()
+  x.items.forEach((item: ReturnType<typeof JSON.parse>, index: number) => {
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  })
+  let offset = 0
+  for (const item of x.items.filter((i: { baseline: number }) => i.baseline === 50)) {
+    item.sourceSegment = {
+      pageNumber: 1,
+      index: 100,
+      text: '6.84',
+      start: offset,
+      end: offset + item.text.length,
+      rect: [...item.rect]
+    }
+    offset += item.text.length
+    delete item.sourceItem
+  }
+  return x
+}
+it('retains valid measured fragments sharing a native parent when recovering scripts', () => {
+  const x = measuredStack()
+  expect(recoverNativeStackedUncertainty(x.items, x.rules)?.runs).toEqual([
+    { text: '6.84', position: 'normal' },
+    { text: '+0.27', position: 'superscript' },
+    { text: '−0.39', position: 'subscript' }
+  ])
+  const refined = refineTable(x.table, x.items, x.captions, [], x.rules)
+  expect(refined.cells.find((c: { text: string }) => c.text.includes('6.84'))?.text).toBe(
+    '6.84+0.27−0.39'
+  )
+})
+it.each(['duplicate-range', 'overlapping-range', 'whole-and-segment', 'wrong-text', 'wrong-rect'])(
+  'declines script recovery with an unproved native range: %s',
+  (variant) => {
+    const x = measuredStack()
+    const zeros = x.items.filter((i: { text: string }) => i.text === '0')
+    if (variant === 'duplicate-range' || variant === 'overlapping-range') {
+      for (const [n, item] of zeros.entries()) {
+        delete item.sourceItem
+        item.sourceSegment = {
+          pageNumber: 1,
+          index: 101,
+          text: '00',
+          start: 0,
+          end: n === 1 && variant === 'overlapping-range' ? 2 : 1,
+          rect: [...item.rect]
+        }
+        if (n === 1 && variant === 'overlapping-range') item.text = '00'
+      }
+    }
+    if (variant === 'whole-and-segment')
+      x.items[0].sourceItem = { pageNumber: 1, index: 100, text: '6.84' }
+    if (variant === 'wrong-text') x.items[0].sourceSegment.text = '7.84'
+    if (variant === 'wrong-rect') x.items[0].sourceSegment.rect[0] += 1
+    const before = JSON.stringify(x.items)
+    expect(recoverNativeStackedUncertainty(x.items, x.rules)).toBeUndefined()
+    expect(JSON.stringify(x.items)).toBe(before)
+  }
+)
+it.each(['wrong-whole-text', 'conflicting-parent', 'conflicting-parent-rect'])(
+  'does not reorder a stack with inconsistent origin carriers: %s',
+  (variant) => {
+    const x = measuredStack()
+    const token = x.items.find((item: { sourceItem?: unknown }) => item.sourceItem)
+    if (variant === 'wrong-whole-text') token.sourceItem.text = 'different'
+    else if (variant === 'conflicting-parent')
+      token.sourceToken = { ...token, sourceItem: { ...token.sourceItem, index: 999 } }
+    else {
+      x.items[0].sourceToken = structuredClone(x.items[0])
+      x.items[0].sourceToken.sourceSegment.rect[0]++
+    }
+    expect(recoverNativeStackedUncertainty(x.items, x.rules)).toBeUndefined()
+  }
+)
 it('allows native font rounding at the three-quarter script size boundary', () => {
   const x = fixture()
   for (const item of x.items.filter((i: { baseline: number }) => i.baseline === 50)) {

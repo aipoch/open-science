@@ -6,6 +6,113 @@ import { readPdfFixture } from './read-fixture'
 const moduleUrl = pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 const { hasTableEvidence } = await import(moduleUrl)
 
+function locallyRuledComparison(): ReturnType<typeof JSON.parse> {
+  const grid = [
+    ['Collection', 'Count', 'Ready'],
+    ['Set A (2021)', '12,345', '✓'],
+    ['Set B (2022)', '23,456', '×'],
+    ['Set C (2023)', '34,567', '✓']
+  ]
+  const items: ReturnType<typeof JSON.parse>[] = []
+  const cells = grid.flatMap((row, r) =>
+    row.map((text, c) => {
+      const baseline = [30, 54, 70, 86][r]
+      const rect = [5 + c * 65, baseline - 10, 60 + c * 65, baseline]
+      const sourceItem = { pageNumber: 1, index: items.length, text }
+      items.push({ text, rect, baseline, height: 10, horizontal: true, sourceItem })
+      return {
+        row: r,
+        column: c,
+        rowSpan: 1,
+        colSpan: 1,
+        text,
+        rect: [c * 65, baseline - 10, (c + 1) * 65, baseline],
+        sourceRects: [rect],
+        sourceItems: [sourceItem]
+      }
+    })
+  )
+  const label = {
+    text: '(a) Conditions',
+    rect: [20, -8, 95, 4],
+    baseline: 4,
+    height: 12,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: 12, text: '(a) Conditions' }
+  }
+  items.push(label)
+  for (let n = 1; n <= 3; n++)
+    items.push({
+      text: `${n}.`,
+      rect: [250, 120 + n * 15, 260, 130 + n * 15],
+      baseline: 130 + n * 15,
+      height: 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: 12 + n, text: `${n}.` }
+    })
+  return {
+    table: {
+      cropRect: [0, 0, 197, 95],
+      grid,
+      cells,
+      clipped: [{ text: label.text, rect: label.rect }],
+      unassigned: [],
+      issues: ['text-crosses-crop-boundary']
+    },
+    items,
+    rules: [10, 36, 92].map((y) => [0, y, 200, y])
+  }
+}
+
+it('keeps a completely owned ruled comparison independent of citation markers outside its frame', () => {
+  const f = locallyRuledComparison()
+  expect(hasTableEvidence(f.table, undefined, f.items, f.rules)).toBe(true)
+})
+
+it.each([
+  'missing rule',
+  'crossing rule glyph',
+  'unowned frame text',
+  'partial clipped text',
+  'source alias',
+  'segment alias',
+  'token alias',
+  'nested segment alias',
+  'cell literal mismatch'
+])('does not localize reference evidence without complete frame ownership: %s', (change) => {
+  const f = locallyRuledComparison()
+  if (change === 'missing rule') f.rules.pop()
+  if (change === 'crossing rule glyph') f.items[11].rect[2] = 202
+  if (change === 'unowned frame text')
+    f.items.push({
+      text: 'extra',
+      rect: [193, 40, 199, 50],
+      baseline: 50,
+      height: 10,
+      horizontal: true
+    })
+  if (change === 'partial clipped text') {
+    f.items[12].rect[3] = 15
+    f.table.clipped[0].rect = f.items[12].rect
+  }
+  if (change === 'source alias') f.items.push({ ...f.items[0], rect: [250, 10, 300, 20] })
+  if (change === 'segment alias' || change === 'token alias' || change === 'nested segment alias') {
+    const origin = { ...f.items[0].sourceItem }
+    const segment = { ...origin, start: 0, end: origin.text.length }
+    f.items.push({
+      text: origin.text,
+      rect: [250, 10, 300, 20],
+      ...(change === 'segment alias'
+        ? { sourceSegment: segment }
+        : change === 'token alias'
+          ? { sourceToken: origin }
+          : { sourceToken: { sourceSegment: segment } })
+    })
+  }
+  if (change === 'cell literal mismatch') f.table.cells[3].text = 'Other'
+  expect(hasTableEvidence(f.table, undefined, f.items, f.rules)).toBe(false)
+})
+
 it('rejects an article-history and keyword sidebar crossing into an abstract without requiring a DOI', () => {
   const table = {
     cropRect: [0, 0, 500, 220],

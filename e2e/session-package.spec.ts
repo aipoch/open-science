@@ -27,7 +27,9 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
   ] as const) {
     const status =
       state === 'succeeded'
-        ? 'Completed, cleanup pending'
+        ? kind === 'export'
+          ? 'Session package exported'
+          : 'Session imported'
         : state === 'failed'
           ? 'Package operation failed'
           : 'Package operation cancelled'
@@ -76,7 +78,7 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
   }
 })
 
-test('keeps import progress visible when a stage has no measurable total', async ({
+test('distinguishes package checks from confirmed import progress without a measurable total', async ({
   app
 }, testInfo) => {
   const page = await app.completeOnboarding()
@@ -98,6 +100,25 @@ test('keeps import progress visible when a stage has no measurable total', async
       timeout: 1000
     })
   }).toPass({ timeout: 10000 })
+  await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+  await expect(
+    dialog.getByText('Disk activity: 12.0 MiB/s', { exact: true }).filter({ visible: true })
+  ).toBeVisible()
+  await expect(meter).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('import-validating.png') })
+  await dialog.getByRole('button', { name: 'Run in background' }).click()
+  const background = page.getByRole('region', { name: 'Package progress', exact: true })
+  await expect(background.getByRole('status')).toHaveText('Checking Session package…')
+  await expect(background.getByRole('progressbar')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('import-background.png') })
+  await background.getByRole('button', { name: 'View progress' }).click()
+  await app.emitSessionPackageProgress({
+    ...operation,
+    progress: { phase: 'importing', completedBytes: 40, totalBytes: 100 }
+  })
+  await expect(dialog.getByText('40%', { exact: true })).toBeVisible()
+  await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'importing' } })
+  await expect(dialog.getByText('40%', { exact: true })).toHaveCount(0)
   // A screen-reader-only progress element is not a visual progress bar.
   await expect.poll(async () => (await meter.boundingBox())?.height ?? 0).toBeGreaterThan(3)
   await expect(meter).not.toHaveAttribute('aria-valuenow')
@@ -108,22 +129,6 @@ test('keeps import progress visible when a stage has no measurable total', async
   await expect
     .poll(() => segment.evaluate((element) => getComputedStyle(element).transform))
     .not.toBe(initialTransform)
-  await page.screenshot({ path: testInfo.outputPath('import-validating.png') })
-  await dialog.getByRole('button', { name: 'Run in background' }).click()
-  const background = page.getByRole('region', { name: 'Package progress', exact: true })
-  await expect
-    .poll(async () => (await background.getByRole('progressbar').boundingBox())?.height ?? 0)
-    .toBeGreaterThan(3)
-  await page.screenshot({ path: testInfo.outputPath('import-background.png') })
-  await background.getByRole('button', { name: 'View progress' }).click()
-  await app.emitSessionPackageProgress({
-    ...operation,
-    progress: { phase: 'importing', completedBytes: 40, totalBytes: 100 }
-  })
-  await expect(dialog.getByText('40%', { exact: true })).toBeVisible()
-  await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'importing' } })
-  await expect(dialog.getByText('40%', { exact: true })).toHaveCount(0)
-  await expect.poll(async () => (await meter.boundingBox())?.height ?? 0).toBeGreaterThan(3)
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(meter.locator('[aria-hidden="true"]')).toHaveCSS('animation-name', 'none')
   await page.screenshot({ path: testInfo.outputPath('import-reduced-motion.png') })
@@ -325,7 +330,7 @@ test('exports a Session package and opens the imported Session with replay', asy
   await page.screenshot({ path: testInfo.outputPath('session-package-export.png') })
   await exportPackage.click()
   const operation = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-  await expect(operation.getByRole('button', { name: 'Export' })).toBeVisible()
+  await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeVisible()
   await expect(operation.getByRole('spinbutton')).toHaveCount(0)
   await expect(operation.getByRole('checkbox')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-default.png') })
@@ -351,7 +356,7 @@ test('exports a Session package and opens the imported Session with replay', asy
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -374,11 +379,11 @@ test('exports a Session package and opens the imported Session with replay', asy
   ).toBeVisible()
   await operation.getByRole('spinbutton').fill('1')
   await operation.getByRole('button', { name: 'Exclude large files' }).click()
-  await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
+  await expect(operation.getByText(/Optional files: 1 \/ 2 selected/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-selection.png') })
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -408,12 +413,12 @@ test('exports a Session package and opens the imported Session with replay', asy
     .getByRole('region', { name: 'Package progress', exact: true })
     .getByRole('button', { name: 'Continue setup', exact: true })
     .click()
-  await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
+  await expect(operation.getByText(/Optional files: 1 \/ 2 selected/)).toBeVisible()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
   await operation.getByText('File filters', { exact: true }).click()
   await expect(operation.getByRole('spinbutton')).toHaveValue('1')
-  await operation.getByRole('button', { name: 'Export' }).click()
-  await expect(operation.getByText('Package operation completed', { exact: true })).toBeVisible({
+  await operation.getByRole('button', { name: 'Choose save location…' }).click()
+  await expect(operation.getByText('Session package exported', { exact: true })).toBeVisible({
     timeout: 60_000
   })
   await page.screenshot({ path: testInfo.outputPath('session-package-progress.png') })
@@ -447,7 +452,7 @@ test('exports a Session package and opens the imported Session with replay', asy
   await page.screenshot({ path: testInfo.outputPath('session-package-import-background.png') })
   await backgroundImport.getByRole('button', { name: 'View progress' }).click()
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(importing.getByText('Package operation completed', { exact: true })).toBeVisible({
+  await expect(importing.getByText('Session imported', { exact: true })).toBeVisible({
     timeout: 60_000
   })
   await expect(page.getByTestId('replay-panel')).toBeVisible()

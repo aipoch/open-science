@@ -20,8 +20,10 @@ export type PdfTranslationExtraction = Readonly<{
       reason: PdfTranslationExclusionReason
       items: readonly Readonly<{ pageNumber: number; index: number; text: string }>[]
     }>[]
-    /** Advisory grouping uncertainty; does not silently remove source text. */
+    /** Advisory grouping or decoding uncertainty; never silently removes source text. */
     warnings: readonly Readonly<{ unitId: string; reasons: readonly string[] }>[]
+    /** Painted glyphs without a native text owner; does not change translation eligibility. */
+    pageDiagnostics?: readonly Readonly<{ pageNumber: number; reason: 'unreliable-font-unicode' }>[]
   }>
 }>
 
@@ -98,6 +100,10 @@ export async function extractPdfTranslationSource({
   const styles: Record<string, TextStyle>[] = []
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
+  const unreliableItems = new Set<string>()
+  const pageDiagnostics: NonNullable<
+    PdfTranslationExtraction['coverage']['pageDiagnostics']
+  >[number][] = []
   let textItemCount = 0
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
     signal.throwIfAborted()
@@ -110,7 +116,16 @@ export async function extractPdfTranslationSource({
       !viewport.transform.every(Number.isFinite)
     )
       throw new Error('Invalid PDF page geometry')
-    const content = await getPdfTranslationTextContent(page)
+    const content = await getPdfTranslationTextContent(
+      page,
+      (indexes) => {
+        for (const index of indexes) unreliableItems.add(`${pageNumber}:${index}`)
+      },
+      (proved) => {
+        if (proved)
+          pageDiagnostics.push(Object.freeze({ pageNumber, reason: 'unreliable-font-unicode' }))
+      }
+    )
     signal.throwIfAborted()
     let pageTextItems = 0
     const items = content.items.map((item, index) => {
@@ -255,12 +270,17 @@ export async function extractPdfTranslationSource({
         item = page.items[original.index]
       const rect = independentRect(item, page, styles[fragment.pageNumber - 1][item.fontName ?? ''])
       if (rect) {
+        const id = `rot-p${fragment.pageNumber}-i${original.index}`
         independent.push({
-          id: `rot-p${fragment.pageNumber}-i${original.index}`,
+          id,
           source: original.text,
           sourceOnly: true,
           fragments: [{ ...fragment, rect }]
         })
+        if (unreliableItems.has(`${fragment.pageNumber}:${original.index}`))
+          warnings.push(
+            Object.freeze({ unitId: id, reasons: Object.freeze(['unreliable-font-unicode']) })
+          )
         continue
       }
     }
@@ -280,8 +300,15 @@ export async function extractPdfTranslationSource({
         ...(unit.preserve ? { preserve: unit.preserve } : {}),
         fragments
       })
-      if (unit.risks.length)
-        warnings.push(Object.freeze({ unitId: unit.id, reasons: Object.freeze([...unit.risks]) }))
+      const reasons = [...unit.risks]
+      if (
+        fragments.some((fragment) =>
+          fragment.items.some((item) => unreliableItems.has(`${fragment.pageNumber}:${item.index}`))
+        )
+      )
+        reasons.push('unreliable-font-unicode')
+      if (reasons.length)
+        warnings.push(Object.freeze({ unitId: unit.id, reasons: Object.freeze(reasons) }))
     }
   }
   if (accounted.size !== textItemCount) throw new Error('Incomplete PDF source item coverage')
@@ -306,6 +333,7 @@ export async function extractPdfTranslationSource({
       includedItemCount: textItemCount - excludedItemCount,
       excludedItemCount,
       pagesWithoutText: Object.freeze(pagesWithoutText),
+      ...(pageDiagnostics.length ? { pageDiagnostics: Object.freeze(pageDiagnostics) } : {}),
       exclusions: Object.freeze(
         exclusions.map((entry) =>
           Object.freeze({

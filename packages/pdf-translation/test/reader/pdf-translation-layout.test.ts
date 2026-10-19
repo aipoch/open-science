@@ -9,7 +9,769 @@ import {
   type PdfLayoutPage,
   type PdfLayoutTextItem
 } from '../../src/reader/layout.js'
+
+test.each([2, 3])(
+  'keeps body after %i native contents entries translatable until the actual bibliography',
+  (entryCount) => {
+    const pages = [
+      page([
+        item('Contents', 240, 80, 80, 12),
+        item('1. Introduction', 60, 120, 140),
+        item('2', 500, 120, 10),
+        item('2. Methods', 60, 140, 100),
+        item('4', 500, 140, 10),
+        item('References', 60, 160, 100),
+        item('8', 500, 160, 10)
+      ]),
+      page(
+        [
+          item('1. Introduction', 60, 90, 160, 12),
+          item(
+            'This ordinary introductory paragraph explains the method and remains available for translation.',
+            60,
+            125,
+            450
+          )
+        ],
+        2
+      ),
+      page(
+        [
+          item('References', 60, 90, 120, 12),
+          item('[1] A. Author. A synthetic study in a scientific journal.', 60, 125, 450),
+          item('Appendix A', 60, 200, 120, 12),
+          item(
+            'This appendix supplies additional ordinary explanatory text for translation.',
+            60,
+            235,
+            450
+          )
+        ],
+        3
+      )
+    ]
+    if (entryCount === 2) {
+      pages[0].items.splice(3, 2)
+      pages[0].items[3].transform[5] = 660
+      pages[0].items[4].transform[5] = 660
+    }
+    const result = extractDocument(document(pages))
+    expect(
+      result.units.find((unit) => unit.source.startsWith('This ordinary'))?.sourceOnly
+    ).not.toBe(true)
+    expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+    expect(
+      result.units.find((unit) => unit.source.startsWith('This appendix'))?.sourceOnly
+    ).not.toBe(true)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((entry) => entry.str)).sort()
+    )
+  }
+)
 const extractPage = (page: PdfLayoutPage) => extractDocument({ pages: [page] }).pages[0]
+
+const nativeProseItem = (...args: Parameters<typeof item>) => ({
+  ...item(...args),
+  fontAscent: 1,
+  fontDescent: 0
+})
+
+test('keeps an ordinary native noun before a parenthesized document path translatable', () => {
+  const parts = [
+    {
+      ...nativeProseItem(
+        'The complete experimental procedure is described in our published guidance',
+        60,
+        166,
+        480
+      ),
+      fontName: 'Body'
+    },
+    { ...nativeProseItem('document (', 60, 180, 52, 10, false), fontName: 'Body' },
+    { ...nativeProseItem('docs/security.md', 112, 180, 85, 10, false), fontName: 'Code' },
+    {
+      ...nativeProseItem(
+        ') identifies the complete procedure for handling reported concerns.',
+        197,
+        180,
+        343
+      ),
+      fontName: 'Body'
+    }
+  ]
+  const result = extractDocument({ pages: [page(parts)] })
+  const owner = result.units.find((unit) => unit.items.includes('1:1'))!
+  expect(owner).toBeDefined()
+  expect(owner.sourceOnly).not.toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => `1:${i}`))
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    parts.map((part) => part.str).sort()
+  )
+})
+
+test.each([
+  'missing-font',
+  'body-font-mismatch',
+  'missing-metric',
+  'unknown-metric',
+  'foreign-missing-metric',
+  'descent-overlap',
+  'crossing-extent',
+  'rotated-foreign',
+  'unclosed-path',
+  'math',
+  'foreign-ink',
+  'separate-paragraph',
+  'wide-gap',
+  'zero-width',
+  'unknown-position'
+])('keeps a parenthesized noun source-only without full prose proof: %s', (variation) => {
+  const parts = [
+    {
+      ...nativeProseItem(
+        'The complete experimental procedure is described in our published guidance',
+        60,
+        166,
+        480
+      ),
+      fontName: 'Body'
+    },
+    { ...nativeProseItem('document (', 60, 180, 52, 10, false), fontName: 'Body' },
+    { ...nativeProseItem('docs/security.md', 112, 180, 85, 10, false), fontName: 'Code' },
+    {
+      ...nativeProseItem(
+        ') identifies the complete procedure for handling reported concerns.',
+        197,
+        180,
+        343
+      ),
+      fontName: 'Body'
+    }
+  ]
+  if (variation === 'descent-overlap') {
+    for (const part of parts) Object.assign(part, { fontAscent: 1, fontDescent: -0.2 })
+    parts.push({ ...nativeProseItem('foreign', 300, 185, 40, 4), fontName: 'Other' })
+  }
+  if (variation === 'missing-metric') Object.assign(parts[1], { fontDescent: undefined })
+  if (variation === 'unknown-metric') parts[1].fontDescent = Number.NaN
+  if (variation === 'foreign-missing-metric')
+    parts.push(
+      Object.assign(
+        { ...nativeProseItem('foreign', 200, 200, 20), fontName: 'Other' },
+        { fontDescent: undefined }
+      )
+    )
+  if (variation === 'missing-font') parts[1].fontName = ''
+  if (variation === 'body-font-mismatch') parts[0].fontName = 'Other'
+  if (variation === 'crossing-extent' || variation === 'rotated-foreign') {
+    const foreign = { ...nativeProseItem('foreign', 300, 200, 40, 30), fontName: 'Other' }
+    if (variation === 'rotated-foreign')
+      foreign.transform = [0, 30, -30, 0, 300, foreign.transform[5]]
+    parts.push(foreign)
+  }
+  if (variation === 'unclosed-path')
+    parts[3].str = 'identifies the complete procedure for handling reported concerns.'
+  if (variation === 'math') parts[2].str = 'x/y + z'
+  if (variation === 'foreign-ink')
+    parts.push({ ...nativeProseItem('independent', 300, 176, 40), fontName: 'Other' })
+  if (variation === 'separate-paragraph') parts[0].str += '.'
+  if (variation === 'wide-gap') parts[2].transform[4] += 8
+  if (variation === 'zero-width')
+    parts.push({ ...nativeProseItem('foreign', 200, 174, 0), fontName: 'Other' })
+  if (variation === 'unknown-position')
+    parts.push({ ...nativeProseItem('foreign', Number.NaN, 174, 20), fontName: 'Other' })
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => '1:' + i))
+})
+
+test.each([
+  'complete',
+  'different-heading-font',
+  'descent-overlap',
+  'missing-section',
+  'foreign-ink',
+  'crossing-extent',
+  'rotated-foreign'
+])('uses complete native post-reference section proof: %s', (variation) => {
+  const fontItem = (str: string, y: number, width: number, fontName = 'Body') => ({
+    ...nativeProseItem(str, 60, y, width, 11.04, false),
+    fontName,
+    fontAscent: 0.77,
+    fontDescent: -0.23
+  })
+  const pages = [
+    page([
+      { ...nativeProseItem('References', 60, 100, 120, 14), fontName: 'Heading' },
+      fontItem(
+        '[1] A. Author. A synthetic journal article with a complete bibliography citation.',
+        130,
+        480,
+        'Citation'
+      ),
+      ...Array.from({ length: 6 }, (_, i) =>
+        fontItem(
+          '[2] A further synthetic bibliography entry in a research journal.',
+          143 + i * 13,
+          480,
+          'Citation'
+        )
+      ),
+      fontItem('Acknowledgements', 275, 105, 'Bold'),
+      fontItem(
+        'This work received support from the institutional research programme and the',
+        292,
+        480
+      ),
+      fontItem('associated funding programme.', 305, 160),
+      fontItem('Author contributions', 330, 110, 'Bold'),
+      fontItem('The authors designed the experiment and reviewed the complete analysis.', 347, 480),
+      fontItem(
+        'All authors discussed the results and revised the complete final manuscript.',
+        360,
+        480
+      ),
+      fontItem('Competing interests', 385, 108, 'Bold'),
+      fontItem('The authors report no competing interests.', 402, 270)
+    ])
+  ]
+  if (variation === 'crossing-extent' || variation === 'rotated-foreign') {
+    const foreign = { ...nativeProseItem('foreign', 300, 420, 40, 30), fontName: 'Other' }
+    if (variation === 'rotated-foreign')
+      foreign.transform = [0, 30, -30, 0, 300, foreign.transform[5]]
+    pages[0].items.push(foreign)
+  }
+  if (variation === 'descent-overlap')
+    pages[0].items.push({ ...nativeProseItem('foreign', 200, 407, 40, 4), fontName: 'Other' })
+  if (variation === 'different-heading-font') pages[0].items[11].fontName = 'Other'
+  if (variation === 'missing-section') pages[0].items[14].str = 'Ordinary journal title'
+  if (variation === 'foreign-ink')
+    pages[0].items.push({ ...nativeProseItem('unrelated', 500, 303, 45), fontName: 'Other' })
+  const result = extractDocument(document(pages))
+  expect(result.units.find((unit) => unit.items.includes('1:8'))?.sourceOnly === true).toBe(
+    variation !== 'complete'
+  )
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages[0].items.map((_, i) => '1:' + i).sort()
+  )
+})
+
+test.each(['ToolName [37', 'Hence Eq. (2.4)', 'From Eq. (B.2),', 'Equations (B.1) and (B.3)'])(
+  'keeps a complete native prose reference translatable: %s',
+  (source) => {
+    const citation = source.includes('[')
+    const parts = [
+      {
+        ...nativeProseItem(
+          'The complete reasoning follows from the preceding argument and the',
+          60,
+          166,
+          480
+        ),
+        fontName: 'Body'
+      },
+      { ...nativeProseItem(source, 60, 180, 140, 10, false), fontName: 'Body' },
+      {
+        ...nativeProseItem(
+          citation
+            ? '] provides a complete account of the fully documented experimental procedure.'
+            : 'provides a complete account of the fully documented experimental procedure.',
+          200,
+          180,
+          340
+        ),
+        fontName: 'Body'
+      }
+    ]
+    const result = extractDocument({ pages: [page(parts)] })
+    expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).not.toBe(true)
+  }
+)
+
+test.each(['complete', 'missing-font', 'unclosed-row', 'missing-peer', 'unknown-position'])(
+  'separates only a complete native prose connector: %s',
+  (variation) => {
+    const parts = [
+      {
+        ...nativeProseItem(
+          'This complete explanatory paragraph establishes the body font and ordinary prose context.',
+          60,
+          150,
+          480
+        ),
+        fontName: 'Body'
+      },
+      {
+        ...nativeProseItem(
+          'The preceding argument gives the required estimate for every admissible parameter.',
+          60,
+          164,
+          480
+        ),
+        fontName: 'Body'
+      },
+      { ...nativeProseItem('and therefore', 60, 190, 75, 10, false), fontName: 'Body' },
+      { ...nativeProseItem('x', 138, 190, 8, 10, false), fontName: 'Math' },
+      { ...nativeProseItem('≤', 150, 190, 8, 10, false), fontName: 'Symbols' },
+      { ...nativeProseItem('y', 162, 190, 8), fontName: 'Math' }
+    ]
+    if (variation === 'missing-font') parts[2].fontName = ''
+    if (variation === 'unclosed-row') parts[5].hasEOL = false
+    if (variation === 'missing-peer') parts[0].fontName = 'Other'
+    if (variation === 'unknown-position')
+      parts.push({ ...nativeProseItem('foreign', Number.NaN, 188, 25), fontName: 'Other' })
+    const result = extractDocument(document([page(parts)]))
+    const prose = result.units.find((unit) => unit.items.includes('1:2'))!
+    if (variation === 'complete') {
+      expect(prose.source).toBe('and therefore')
+      expect(prose.sourceOnly).not.toBe(true)
+    } else expect(prose.sourceOnly).toBe(true)
+    expect(
+      result.units
+        .filter((unit) => unit.items.some((key) => ['1:3', '1:4', '1:5'].includes(key)))
+        .every((unit) => unit.sourceOnly)
+    ).toBe(true)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => '1:' + i))
+  }
+)
+
+test.each([
+  'complete',
+  'different-font',
+  'incomplete-parenthesis',
+  'math-continuation',
+  'mathematical-function',
+  'unspecified-quantity',
+  'unknown-position'
+])('requires complete native prose date context: %s', (variation) => {
+  const parts = [
+    {
+      ...nativeProseItem(
+        'The complete measurement was calculated for a representative winter',
+        60,
+        150,
+        480
+      ),
+      fontName: 'Body'
+    },
+    { ...nativeProseItem('day (1/1) and', 60, 168, 75, 10, false), fontName: 'Body' },
+    {
+      ...nativeProseItem(
+        'the representative summer day (8/1) in the complete calendar record.',
+        138,
+        168,
+        400
+      ),
+      fontName: 'Body'
+    }
+  ]
+  if (variation === 'mathematical-function') parts[1].str = 'log (1/1) and'
+  if (variation === 'unspecified-quantity') parts[1].str = 'value (1/1) and'
+  if (variation === 'different-font') parts[2].fontName = 'Math'
+  if (variation === 'incomplete-parenthesis')
+    parts[2].str = 'the representative summer day (8/1 in the complete calendar record.'
+  if (variation === 'math-continuation')
+    parts[2].str = 'x = y + z + the complete mathematical expression follows.'
+  if (variation === 'unknown-position')
+    parts.push({ ...nativeProseItem('foreign', Number.NaN, 168, 30), fontName: 'Other' })
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly === true).toBe(
+    variation !== 'complete'
+  )
+})
+
+test.each([
+  'different-font',
+  'unknown-position',
+  'zero-width',
+  'competing-ink',
+  'insufficient-prose',
+  'descent-overlap',
+  'crossing-extent',
+  'rotated-foreign',
+  'negative-advance'
+])('does not release a named equation reference without native context: %s', (variation) => {
+  const parts = [
+    {
+      ...nativeProseItem(
+        'The complete reasoning follows from the preceding argument and the',
+        60,
+        166,
+        480
+      ),
+      fontName: 'Body'
+    },
+    { ...nativeProseItem('Hence Eq. (2.4)', 60, 180, 140, 10, false), fontName: 'Body' },
+    {
+      ...nativeProseItem(
+        'provides a complete account of the fully documented experimental procedure.',
+        200,
+        180,
+        340
+      ),
+      fontName: 'Body'
+    }
+  ]
+  if (variation === 'negative-advance')
+    parts.push({ ...nativeProseItem('foreign', 300, 220, -240, 50), fontName: 'Other' })
+  if (variation === 'different-font') parts[1].fontName = 'Math'
+  if (variation === 'insufficient-prose') parts[0].str = 'A brief heading'
+  if (variation === 'descent-overlap') {
+    for (const part of parts) Object.assign(part, { fontAscent: 1, fontDescent: -0.2 })
+    parts.push({ ...nativeProseItem('foreign', 100, 185, 20, 4), fontName: 'Other' })
+  }
+  if (variation === 'crossing-extent' || variation === 'rotated-foreign') {
+    const foreign = { ...nativeProseItem('foreign', 100, 200, 20, 30), fontName: 'Other' }
+    if (variation === 'rotated-foreign')
+      foreign.transform = [0, 30, -30, 0, 100, foreign.transform[5]]
+    parts.push(foreign)
+  }
+  if (variation === 'unknown-position')
+    parts.push({ ...nativeProseItem('foreign', Number.NaN, 180, 30), fontName: 'Other' })
+  if (variation === 'zero-width')
+    parts.push({ ...nativeProseItem('foreign', 100, 180, 0), fontName: 'Other' })
+  if (variation === 'competing-ink')
+    parts.push({ ...nativeProseItem('x', 100, 180, 10), fontName: 'Math' })
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).toBe(true)
+})
+
+test('reads each symbolic prefix before its complete native prose suffix and the next row', () => {
+  const parts = [
+    { ...item('U − 1 | g(U)', 60, 180, 80, 10, false), fontName: 'Math' },
+    {
+      ...item(
+        '. This first complete argument continues directly after the expression.',
+        140,
+        180,
+        360
+      ),
+      fontName: 'Body'
+    },
+    { ...item('and β3 = 1', 60, 197.4, 60, 10, false), fontName: 'Math' },
+    {
+      ...item(
+        '. This second complete argument follows its own expression in order.',
+        120,
+        197.4,
+        380
+      ),
+      fontName: 'Body'
+    },
+    { ...item('U3 − 1 = (U + 1)(U2 + U + 1),', 60, 214.8, 190, 10, false), fontName: 'Math' },
+    { ...item(', the final consequence now follows.', 250, 214.8, 250), fontName: 'Body' }
+  ]
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.map((unit) => unit.items)).toEqual(parts.map((_, i) => [`1:${i}`]))
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    parts.map((part) => part.str)
+  )
+  expect(
+    result.units
+      .filter((unit) => [0, 2, 4].some((i) => unit.items.includes(`1:${i}`)))
+      .every((unit) => unit.sourceOnly)
+  ).toBe(true)
+})
+
+test('retains symbolic source policy when a native prose suffix separates a leading formula condition', () => {
+  const parts = [
+    item('of [−2/7, 2/7] × Vm(2/7)', 60, 180, 108, 10, false),
+    item(
+      '. This complete argument follows the expression and gives the next conclusion.',
+      168,
+      180,
+      360
+    ),
+    item('For (β, γ) ∈ H0 × (0, γ0]', 60, 192, 106, 10, false)
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.map((unit) => unit.items)).toEqual(parts.map((_, i) => [`1:${i}`]))
+  expect(result.units.find((unit) => unit.items.includes('1:2'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    parts.map((part) => part.str)
+  )
+})
+
+test('keeps alternating native introductions and centered equations in a complete single-column frame', () => {
+  const parts = [
+    item(
+      'A full width paragraph provides an independent single column frame for the following displayed equations.',
+      60,
+      120,
+      480
+    ),
+    item('The first result is defined as', 60, 180, 150),
+    item('x = a + b', 280, 210, 80),
+    item('or equivalently as', 60, 240, 85),
+    item('y = c + d', 280, 270, 80),
+    item(
+      'A closing full width paragraph returns to the same complete column and explains the two displayed expressions.',
+      60,
+      310,
+      480
+    )
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.map((unit) => unit.items)).toEqual(parts.map((_, i) => [`1:${i}`]))
+})
+
+test('finishes both complete native author bands before entering two-column body text', () => {
+  const parts = [
+    item('A generic title across the complete two column page', 80, 70, 440, 16),
+    item('First Author', 130, 110, 100, 12),
+    item('First Institute', 120, 124, 120),
+    item('North City', 135, 138, 90),
+    item('first@example.test', 115, 152, 130),
+    item('Second Author', 370, 110, 100, 12),
+    item('Second Institute', 360, 124, 120),
+    item('South City', 375, 138, 90),
+    item('second@example.test', 355, 152, 130),
+    item('Abstract', 60, 180, 80, 12),
+    item(
+      'This left column begins a complete ordinary paragraph with enough words to establish the native body frame',
+      60,
+      210,
+      220
+    ),
+    item(
+      'and then continues down the left column before it reaches the next column in the document.',
+      60,
+      224,
+      220
+    ),
+    item(
+      'A second independent left paragraph provides the rest of the explanation for the reader.',
+      60,
+      270,
+      220
+    ),
+    item(
+      'The right column begins with the continuation of the ordinary body paragraph printed on the other side',
+      320,
+      180,
+      220
+    ),
+    item(
+      'and completes the explanation using the remaining source words in this native column.',
+      320,
+      194,
+      220
+    ),
+    item(
+      'A second right paragraph demonstrates that the column is independent below the complete author band.',
+      320,
+      240,
+      220
+    )
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.flatMap((unit) => unit.items).slice(0, 9)).toEqual(
+    parts.slice(0, 9).map((_, i) => `1:${i}`)
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.map((_, i) => `1:${i}`).sort()
+  )
+})
+
+const supplementaryBoundaryPages = () => {
+  const named = (part: ReturnType<typeof item>, fontName: string) => ({ ...part, fontName })
+  const pages = [
+    page([
+      named(item('References', 60, 100, 100, 14), 'Heading'),
+      named(
+        item(
+          '[1] A. Example. A complete bibliographic record with a sufficiently long ordinary title and the full details of its publication.',
+          60,
+          130,
+          480
+        ),
+        'Body'
+      )
+    ]),
+    page(
+      [
+        named(item('Supplementary Information for:', 130, 90, 340, 16), 'Title'),
+        named(
+          item('A generic explanatory study of measured signals and their', 110, 110, 380, 16),
+          'Title'
+        ),
+        named(
+          item(
+            'independently repeated experimental observations across several controlled conditions',
+            110,
+            130,
+            380,
+            16
+          ),
+          'Title'
+        ),
+        named(item('First Author and Second Author', 170, 170, 260), 'Body'),
+        named(item('Institute of Experimental Measurements', 150, 190, 300), 'Body'),
+        named(item('Supplementary Note 1: additional results', 60, 250, 280, 14), 'Heading'),
+        named(item('Forward results', 60, 290, 120, 12), 'Heading'),
+        named(
+          item(
+            'These additional experiments describe complete new results and provide sufficient explanatory text for the reader to interpret all measured values in the following comparison table.',
+            60,
+            320,
+            480
+          ),
+          'Body'
+        )
+      ],
+      2
+    )
+  ]
+  return pages
+}
+test('a complete multiline supplementary title and numbered note end bibliography before ordinary body', () => {
+  const pages = supplementaryBoundaryPages()
+  const result = extractDocument({ pages })
+  expect(
+    result.units.find((unit) => unit.source.startsWith('These additional'))?.sourceOnly
+  ).not.toBe(true)
+  expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+})
+
+test.each([
+  'body font title',
+  'not first content',
+  'missing note',
+  'small note',
+  'narrow body without peer',
+  'citation body',
+  'unfinished body',
+  'foreign title font'
+])(
+  'does not infer a supplementary boundary from incomplete native section evidence: %s',
+  (fault) => {
+    const pages = supplementaryBoundaryPages(),
+      parts = pages[1].items
+    if (fault === 'body font title')
+      for (const part of parts.slice(0, 3)) {
+        part.height = 10
+        part.transform[0] = part.transform[3] = 10
+      }
+    if (fault === 'not first content')
+      parts.unshift({
+        ...item(
+          'Earlier independent native text remains part of this reference page.',
+          60,
+          60,
+          480
+        ),
+        fontName: 'Body'
+      })
+    if (fault === 'missing note') parts[5].str = 'Additional measured results'
+    if (fault === 'small note') {
+      parts[5].height = 10
+      parts[5].transform[0] = parts[5].transform[3] = 10
+    }
+    if (fault === 'narrow body without peer') parts[7].width = 200
+    if (fault === 'citation body') parts[7].str = '[2] Example Author. ' + parts[7].str
+    if (fault === 'unfinished body') parts[7].str = parts[7].str.slice(0, -1)
+    if (fault === 'foreign title font') parts[2].fontName = 'Other'
+    const result = extractDocument({ pages })
+    const body = result.units.find((unit) =>
+      unit.originalStrings.some((s) => s.includes('These additional experiments'))
+    )!
+    expect(body.sourceOnly).toBe(true)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+    )
+  }
+)
+
+test.each([
+  'native column streams',
+  'no independent frame',
+  'right prose instead of equations',
+  'foreign source inside interval'
+])('does not replace a column cut without a complete alternating equation packet: %s', (fault) => {
+  const parts = [
+    item(
+      'A full width paragraph provides an independent single column frame for the following displayed equations.',
+      60,
+      120,
+      480
+    ),
+    item('The first result is defined as', 60, 180, 150),
+    item('x = a + b', 280, 210, 80),
+    item('or equivalently as', 60, 240, 85),
+    item('y = c + d', 280, 270, 80),
+    item(
+      'A closing full width paragraph returns to the same complete column and explains the two displayed expressions.',
+      60,
+      310,
+      480
+    )
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  if (fault === 'native column streams') [parts[2], parts[3]] = [parts[3], parts[2]]
+  if (fault === 'no independent frame') {
+    parts[0].width = 150
+    parts[5].width = 150
+  }
+  if (fault === 'right prose instead of equations') {
+    parts[2].str = 'A separate description'
+    parts[4].str = 'Another separate description'
+  }
+  if (fault === 'foreign source inside interval')
+    parts.splice(3, 0, { ...item('note', 550, 230, 30), fontName: 'Body' })
+  const result = extractDocument({ pages: [page(parts)] })
+  expect(result.units.findIndex((unit) => unit.source === 'or equivalently as')).toBeLessThan(
+    result.units.findIndex((unit) =>
+      unit.originalStrings.includes(parts.find((part) => part.transform[4] === 280)!.str)
+    )
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.map((_, i) => `1:${i}`).sort()
+  )
+})
+
+test('keeps independent column metadata with its own later native body stream', () => {
+  const parts = [
+    item('Left column heading', 120, 110, 120, 12),
+    item('Local institution', 120, 124, 120),
+    item('Northern city', 135, 138, 90),
+    item('left@example.test', 115, 152, 130),
+    item(
+      'This left column begins an ordinary independent paragraph with enough words to establish its native body frame',
+      60,
+      210,
+      220
+    ),
+    item(
+      'and then continues down the same column to finish its complete separate discussion.',
+      60,
+      224,
+      220
+    ),
+    item('Right column heading', 360, 110, 120, 12),
+    item('Local institution', 360, 124, 120),
+    item('Southern city', 375, 138, 90),
+    item('right@example.test', 355, 152, 130),
+    item(
+      'This right column begins another ordinary independent paragraph with enough words to establish its native body frame',
+      320,
+      210,
+      220
+    ),
+    item(
+      'and then continues down the same column to finish its complete separate discussion.',
+      320,
+      224,
+      220
+    )
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument({ pages: [page(parts)] })
+  const order = result.units.flatMap((unit) => unit.items)
+  expect(order.indexOf('1:5')).toBeLessThan(order.indexOf('1:6'))
+  expect(order.sort()).toEqual(parts.map((_, i) => `1:${i}`).sort())
+})
 const item = (str: string, x: number, y: number, width = 240, size = 10, hasEOL = true) => ({
   str,
   width,
@@ -26,6 +788,266 @@ const page = (items: PdfLayoutPage['items'], n = 1) => ({
   items
 })
 const document = (pages: PdfLayoutPage[]) => ({ id: 'synthetic', sha256: 'fixture', pages })
+
+test('keeps a native ragged cited noun tail in its unfinished body paragraph', () => {
+  const items = [
+    item(
+      'A continuing discussion explains how repeated investment can support useful outcomes',
+      60,
+      150,
+      466,
+      12
+    ),
+    item(
+      'The common framework gives every participant a reliable way to build a',
+      60,
+      164,
+      444,
+      12
+    ),
+    item('market [2].', 60, 178, 60, 12)
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument(document([page(items)]))
+  expect(result.units).toHaveLength(1)
+  expect(result.units[0].source).toBe(items.map((part) => part.str).join(' '))
+  expect(result.units[0].sourceOnly).not.toBe(true)
+  expect(result.units[0].items).toEqual(['1:0', '1:1', '1:2'])
+})
+
+test.each([
+  'different font',
+  'distant row',
+  'indented label',
+  'intervening native item',
+  'closed sentence',
+  'mathematical function'
+])('does not infer a cited noun tail from %s', (variant) => {
+  const items = [
+    item(
+      'A continuing discussion explains how repeated investment can support useful outcomes',
+      60,
+      150,
+      466,
+      12
+    ),
+    item(
+      'The common framework gives every participant a reliable way to build a',
+      60,
+      164,
+      444,
+      12
+    ),
+    item('market [2].', 60, 178, 60, 12)
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  if (variant === 'different font') items[2].fontName = 'Label'
+  if (variant === 'distant row') items[2].transform[5] -= 30
+  if (variant === 'indented label') items[2].transform[4] += 80
+  if (variant === 'intervening native item')
+    items.splice(2, 0, { ...item('annotation', 550, 164, 40, 12), fontName: 'Label' })
+  if (variant === 'closed sentence') items[1].str += '.'
+  if (variant === 'mathematical function') items[2].str = 'sin [2].'
+  const result = extractDocument(document([page(items)]))
+  const tailIndex = items.length - 1
+  expect(result.units.find((unit) => unit.items.includes(`1:${tailIndex}`))?.items).not.toContain(
+    '1:1'
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    items.map((_, index) => `1:${index}`).sort()
+  )
+})
+
+test('preserves a complete inline formula and its prose in native order', () => {
+  const items = [
+    item('The estimator uses a more precise calculation for every result only', 60, 150, 245, 12),
+    item('when', 60, 164, 28, 12, false),
+    item('x', 96, 164, 8, 12, false),
+    item('>', 108, 164, 8, 12, false),
+    item('y', 120, 164, 8, 12, false),
+    item('. Fast evalu-', 138, 164, 167, 12),
+    item('ation gives a useful improvement for every result in the collection.', 60, 178, 245, 12)
+  ].map((part, index) => ({
+    ...part,
+    fontName: index >= 2 && index <= 4 ? 'Math' : 'Body',
+    fontAscent: 0.8,
+    fontDescent: -0.2
+  }))
+  const result = extractDocument(document([page(items)]))
+  expect(result.units).toHaveLength(1)
+  expect(result.units[0].items).toEqual(items.map((_, index) => `1:${index}`))
+  expect(result.units[0].sourceOnly).not.toBe(true)
+})
+
+test('keeps a native body wrap beside an independently owned neighboring column', () => {
+  const items = [
+    item('The evaluation explains a complete native body row with a continuing', 60, 150, 240),
+    item('Independent neighboring column.', 340, 150, 220),
+    item('sentence that continues directly on the following row.', 60, 162, 240)
+  ].map((part) => ({ ...part, fontName: 'Body' }))
+  const result = extractDocument(document([page(items)]))
+  expect(result.units.find((unit) => unit.items.includes('1:0'))?.items).toEqual(['1:0', '1:2'])
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.items).toEqual(['1:1'])
+})
+
+test('does not skip an owned inline formula suffix when joining the next native body row', () => {
+  const items = [
+    {
+      ...item(
+        'The estimator calculates every entry with additional accuracy for the final calcula-',
+        50.01400000000007,
+        153.16899999999964,
+        245.0799600000001,
+        9.9626,
+        true
+      ),
+      fontName: 'Body'
+    },
+    {
+      ...item('tion if', 50.01400000000007, 164.62599999999964, 25.74335839999999, 9.9626, false),
+      fontName: 'Body'
+    },
+    {
+      ...item('ε', 78.80591399999992, 164.62599999999964, 4.3735814, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('E', 84.00200000000007, 161.00899999999962, 4.5044753, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('νλ', 83.17500000000007, 167.67899999999963, 10.34493492, 6.9738, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('b', 93.51993492000008, 167.67899999999963, 3.68615, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('>', 100.22400000000005, 164.62599999999964, 7.74891028, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('θ', 110.48348548000007, 164.62599999999964, 5.1905146, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('E', 116.82400000000007, 161.00899999999962, 4.5044753, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('q12', 115.67800000000005, 167.6009999999996, 13.5134259, 7.3723, false),
+      fontName: 'Body'
+    },
+    {
+      ...item('or', 132.73700000000008, 164.62599999999958, 8.2988458, 9.9626, false),
+      fontName: 'Body'
+    },
+    {
+      ...item('ε', 144.08440140000005, 164.62599999999958, 4.3735814, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('K', 149.2820000000001, 161.00899999999956, 4.9173241, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('νλ', 148.45600000000007, 167.67899999999958, 10.337961119999974, 6.9738, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('b', 158.79396112000006, 167.67899999999958, 3.68615, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('>', 165.50400000000008, 164.62599999999958, 7.74891028, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('θ', 175.7634854800001, 164.62599999999958, 5.1905146, 9.9626, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('K', 182.1040000000001, 161.00899999999956, 4.9173241, 7.3723, false),
+      fontName: 'Math'
+    },
+    {
+      ...item('q12', 180.95900000000012, 167.60099999999954, 13.5134259, 7.3723, false),
+      fontName: 'Body'
+    },
+    {
+      ...item(
+        '. The next evalu-',
+        194.97000000000014,
+        164.62599999999952,
+        100.12413000000008,
+        9.9626,
+        true
+      ),
+      fontName: 'Body'
+    },
+    {
+      ...item(
+        'ation offers a useful improvement for every entry in this collection.',
+        50.014000000000124,
+        176.08299999999952,
+        245.0799600000003,
+        9.9626,
+        true
+      ),
+      fontName: 'Body'
+    },
+    {
+      ...item(
+        'The resulting entries are retained for subsequent comparison.',
+        50.014000000000124,
+        187.5399999999995,
+        245.07996000000026,
+        9.9626,
+        true
+      ),
+      fontName: 'Body'
+    }
+  ].map((part) => ({ ...part, fontAscent: 0.8, fontDescent: -0.2 }))
+  const result = extractDocument(document([page(items)]))
+  const following = result.units.find((unit) => unit.items.includes('1:20'))!
+  expect(following.items).toContain('1:19')
+  expect(following.source).toMatch(/evalu-?ation offers/)
+  expect(result.units.flatMap((unit) => unit.items)).toEqual(items.map((_, index) => `1:${index}`))
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    items.map((part) => part.str)
+  )
+})
+
+test.each([
+  'missing contents',
+  'missing peer',
+  'different lane',
+  'duplicate peer',
+  'different baseline'
+])('preserves reference mode when contents evidence has %s', (variant) => {
+  const entries = [
+    item('Contents', 240, 80, 80, 12),
+    item('Introduction', 60, 120, 140),
+    item('2', 500, 120, 10),
+    item('Methods', 60, 140, 100),
+    item('4', 500, 140, 10),
+    item('References', 60, 160, 100),
+    item('8', 500, 160, 10)
+  ]
+  if (variant === 'missing contents') entries[0].str = 'Overview'
+  if (variant === 'missing peer') entries[6].str = 'annotation'
+  if (variant === 'different lane') entries[6].transform[4] = 400
+  if (variant === 'duplicate peer') entries.push(item('9', 530, 160, 10))
+  if (variant === 'different baseline') entries[6].transform[5] -= 8
+  const pages = [
+    page(entries),
+    page([item('[1] A. Author. A complete synthetic bibliographic entry.', 60, 120, 450)], 2)
+  ]
+  const result = extractDocument(document(pages))
+  expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+})
 
 test.each(
   [
@@ -11150,3 +12172,1731 @@ test('keeps small panel legends above their larger caption beside a panel letter
   expect(lines.find((line) => line.items.includes('8:3'))?.items).not.toContain('8:1')
   expect(lines.find((line) => line.items.includes('8:3'))?.items).not.toContain('8:2')
 })
+
+function detachedTerminalBulletFixture(): PdfLayoutTextItem[] {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    size = 10,
+    hasEOL = true
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height: size,
+    dir: 'ltr',
+    transform: [size, 0, 0, size, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    hasEOL
+  })
+  return [
+    native('•', 60, 650, 4, 'Bullet', 7, false),
+    native('The sample encoding of all points is denoted', 70, 650, 230),
+    native('as', 70, 638, 9, 'Body', 10, false),
+    native('q', 84, 638, 5, 'Math', 10, false),
+    native('12', 89, 636.5, 9, 'Math', 7, false),
+    native('(', 100, 638, 4, 'Math', 10, false),
+    native('b', 104, 638, 4, 'Math', 10, false),
+    native(')', 112, 638, 4, 'Math', 10, false),
+    native('=', 122, 638, 8, 'Math', 10, false),
+    native('t', 137, 638, 4, 'Math', 10, false),
+    native('i', 142, 636.5, 4, 'Math', 7, false),
+    native('∈', 156, 638, 7, 'Math', 10, false),
+    native('R', 169, 638, 7, 'Math', 10, false),
+    native('d', 177, 641.5, 4, 'Math', 7, false),
+    native('node', 181, 640.5, 14, 'Math', 5, false),
+    native(', is represented using a', 196, 638, 104),
+    native('bounded encoding rule given in [7].', 70, 626, 176),
+    native('Consequently, the combined features describe the sample', 60, 612.6, 240),
+    native('with all values in the same vector space.', 50, 600.6, 230)
+  ]
+}
+
+test('keeps a detached terminal bullet tail separate from the following paragraph', () => {
+  const items = detachedTerminalBulletFixture()
+  const result = extractDocument({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  const owner = (index: number) => result.units.find((unit) => unit.items.includes(`1:${index}`))!
+  expect(owner(16)).not.toBe(owner(17))
+  expect(owner(16).source).toBe('bounded encoding rule given in [7].')
+  expect(owner(17).source).toBe(
+    'Consequently, the combined features describe the sample with all values in the same vector space.'
+  )
+  // The paragraph fix must not restore the original jump over the inline math row.
+  expect(owner(16)).not.toBe(owner(2))
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    items.map((_, index) => `1:${index}`).sort()
+  )
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    items.map((part) => part.str).sort()
+  )
+})
+
+test.each(['unfinished-tail', 'same-indent', 'no-bullet', 'different-start'] as const)(
+  'does not borrow a detached bullet width without the paragraph boundary proof (%s)',
+  (fault) => {
+    const items = detachedTerminalBulletFixture()
+    if (fault === 'unfinished-tail') items[16].str = 'bounded encoding rule given by the'
+    if (fault === 'same-indent') for (const part of items.slice(17)) part.transform[4] = 70
+    if (fault === 'no-bullet') items[0].str = 'A'
+    if (fault === 'different-start') items[17].transform[4] = 55
+    const result = extractDocument({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const owner = (index: number) => result.units.find((unit) => unit.items.includes(`1:${index}`))!
+    expect(owner(16)).toBe(owner(17))
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
+
+test('does not inherit a detached bullet width across an intervening native owner without EOL', () => {
+  const items = detachedTerminalBulletFixture()
+  items.splice(16, 0, {
+    ...items[16],
+    str: 'Independent side note',
+    width: 100,
+    transform: [10, 0, 0, 10, 400, 631],
+    hasEOL: false
+  })
+  const result = extractDocument({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  const owner = (index: number) => result.units.find((unit) => unit.items.includes(`1:${index}`))!
+  expect(owner(17)).toBe(owner(18))
+  expect(owner(16)).not.toBe(owner(17))
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    items.map((_, index) => `1:${index}`).sort()
+  )
+})
+
+function dualLaneFormulaItems(): PdfLayoutTextItem[] {
+  const rows: [string, number, number, number, number, string, boolean, number][] = [
+    [
+      'REF',
+      211.61759912000002,
+      369.22999999999996,
+      13.489421339999998,
+      6.9738,
+      'Font0',
+      true,
+      6.9738
+    ],
+    ['α', 214.28641612, 361.438, 3.79444458, 6.9738, 'Font1', false, 6.9738],
+    ['123', 247.30518916, 364.443, 14.9439, 9.9626, 'Font2', false, 9.9626],
+    ['and', 283.03000000000003, 364.443, 16.05174112, 9.9626, 'Font2', true, 9.9626],
+    ['∆', 54.00000000000003, 349.981, 8.30183458, 9.9626, 'Font2', false, 9.9626],
+    ['Q', 62.301834580000026, 349.981, 7.35439132, 9.9626, 'Font3', false, 9.9626],
+    ['rel', 70.23100000000002, 354.768, 11.528388779999998, 6.9738, 'Font0', false, 6.9738],
+    [',', 81.75938878000002, 354.768, 2.36621034, 6.9738, 'Font1', false, 6.9738],
+    ['REF', 84.12559912000002, 354.768, 13.489421339999998, 6.9738, 'Font0', true, 6.9738],
+    [
+      'Model+',
+      69.65700000000002,
+      346.97499999999997,
+      31.177767659999997,
+      6.9738,
+      'Font0',
+      false,
+      6.9738
+    ],
+    ['α', 100.83476766000003, 346.97499999999997, 3.79444458, 6.9738, 'Font1', false, 6.9738],
+    [' ', 104.62921224000003, 346.97499999999997, 3.4767877599999935, 6.9738, 'Font1', false, 0],
+    ['=', 108.10600000000002, 349.98099999999994, 7.74891028, 9.9626, 'Font2', false, 9.9626],
+    [' ', 115.85491028000003, 349.98099999999994, 2.7696028000000013, 9.9626, 'Font2', false, 0],
+    ['−', 118.62451308000003, 349.98099999999994, 7.74891028, 9.9626, 'Font4', false, 9.9626],
+    ['0', 126.37342336000003, 349.98099999999994, 4.9813, 9.9626, 'Font2', false, 9.9626],
+    ['.', 131.35472336000004, 349.98099999999994, 2.76761028, 9.9626, 'Font3', false, 9.9626],
+    ['456', 134.12233364000005, 349.98099999999994, 14.9439, 9.9626, 'Font2', false, 9.9626],
+    [' ', 149.06623364000006, 349.98099999999994, 3.20795720000001, 9.9626, 'Font2', false, 0],
+    ['U', 152.27419084000007, 349.98099999999994, 7.35439132, 9.9626, 'Font3', false, 9.9626],
+    [
+      's',
+      159.63300000000004,
+      348.48599999999993,
+      5.881005539999999,
+      6.9738,
+      'Font0',
+      false,
+      6.9738
+    ],
+    [' ', 165.51400554000003, 348.48599999999993, 3.7129944600000044, 6.9738, 'Font0', false, 0],
+    [
+      'for Model+',
+      169.22700000000003,
+      349.98099999999994,
+      54.575122799999995,
+      9.9626,
+      'Font2',
+      false,
+      9.9626
+    ],
+    ['α', 223.80212280000006, 349.98099999999994, 4.67644444, 9.9626, 'Font3', false, 9.9626],
+    [
+      '). This shows the',
+      228.7575200400001,
+      349.98099999999994,
+      70.31901958,
+      9.9626,
+      'Font2',
+      true,
+      9.9626
+    ],
+    [
+      'value measured for Model+',
+      54.00000000000003,
+      338.52399999999994,
+      124.5474439,
+      9.9626,
+      'Font2',
+      false,
+      9.9626
+    ]
+  ]
+  return rows.map(([str, x, y, width, size, fontName, hasEOL, height]) => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    transform: [size, 0, 0, size, x, y],
+    fontName,
+    hasEOL,
+    fontAscent: 0.694,
+    fontDescent: -0.194
+  }))
+}
+
+function nativeTwoColumnPage(sectioned = false): PdfLayoutPage {
+  const text = (str: string, x: number, y: number, width = 250) => ({
+    ...item(str, x, y, width),
+    fontName: 'Body',
+    fontAscent: 0.8,
+    fontDescent: -0.2
+  })
+  const paragraph = (name: string, x: number, y: number) => [
+    text(`${name} explains the complete procedure with enough ordinary words for`, x, y),
+    text('a second native line that ends the independent paragraph.', x, y + 12)
+  ]
+  if (sectioned)
+    return page(
+      [
+        ...paragraph('First left section', 50, 80),
+        ...paragraph('First right section', 320, 80),
+        ...paragraph('Second left section', 50, 170),
+        ...paragraph('Second right section', 320, 170)
+      ],
+      2
+    )
+  return page(
+    [
+      ...paragraph('Upper left paragraph', 50, 80),
+      text('x + y = z', 250, 135, 68),
+      ...paragraph('Lower left paragraph', 50, 180),
+      ...paragraph('Upper right paragraph', 312, 80),
+      ...paragraph('Lower right paragraph', 312, 180)
+    ],
+    2
+  )
+}
+
+test('keeps proved native columns together when a formula tail crosses the gutter', () => {
+  const input = nativeTwoColumnPage()
+  const blocks = extractPage(input).blocks
+  const at = (index: number) => blocks.findIndex((block) => block.items.includes(`2:${index}`))
+  expect(at(3)).toBeLessThan(at(5))
+  expect(at(2)).toBeLessThan(at(3))
+  expect(blocks.flatMap((block) => block.originalStrings).sort()).toEqual(
+    input.items.map((item) => item.str).sort()
+  )
+})
+
+test.each(['interleaved stream', 'large overhang', 'prose overhang'])(
+  'requires complete native column proof for a gutter obscured by %s',
+  (shape) => {
+    const input = nativeTwoColumnPage()
+    if (shape === 'interleaved stream')
+      input.items = [
+        ...input.items.slice(0, 2),
+        ...input.items.slice(5, 7),
+        ...input.items.slice(2, 5),
+        ...input.items.slice(7)
+      ]
+    if (shape === 'large overhang') input.items[2].width = 180
+    if (shape === 'prose overhang') input.items[2].str = 'Separate annotation'
+    const blocks = extractPage(input).blocks
+    const left = blocks.findIndex((block) => block.source.startsWith('Lower left paragraph'))
+    const right = blocks.findIndex((block) => block.source.startsWith('Upper right paragraph'))
+    expect(right).toBeLessThan(left)
+  }
+)
+
+test('reads both columns of a proved horizontal section before the next section', () => {
+  const blocks = extractPage(nativeTwoColumnPage(true)).blocks
+  expect(blocks.map((block) => block.source.split(' explains')[0])).toEqual([
+    'First left section',
+    'First right section',
+    'Second left section',
+    'Second right section'
+  ])
+})
+
+test('keeps column-major flow when native streams do not establish horizontal sections', () => {
+  const input = nativeTwoColumnPage(true)
+  input.items = [
+    ...input.items.slice(0, 2),
+    ...input.items.slice(4, 6),
+    ...input.items.slice(2, 4),
+    ...input.items.slice(6)
+  ]
+  expect(extractPage(input).blocks.map((block) => block.source.split(' explains')[0])).toEqual([
+    'First left section',
+    'Second left section',
+    'First right section',
+    'Second right section'
+  ])
+})
+
+function nativeHierarchyPages(): PdfLayoutPage[] {
+  const rows: [string, number, number, number, number, number, string, boolean][] = [
+    ['Appendix', 89.798, 708.189, 72.6235512, 15.9402, 15.9402, 'Font3', false],
+    ['', 89.798, 680.449, 0, 0, 13.9477, 'Font3', true],
+    ['A.1', 89.798, 680.449, 21.702621200000003, 13.9477, 13.9477, 'Font3', false],
+    [' ', 111.50062120000001, 680.449, 13.947699999999998, 0, 13.9477, 'Font3', false],
+    [
+      'Aaaaaaaaaaaaa Aaaaaa aaa aaa Aaaaaaaaa Aaaaaaaaaaa',
+      125.44832120000001,
+      680.449,
+      353.6020904000001,
+      13.9477,
+      13.9477,
+      'Font3',
+      false
+    ],
+    ['', 89.798, 656.467, 0, 0, 13.9477, 'Font6', true],
+    ['A.1.1', 89.798, 656.467, 32.5678795, 13.9477, 13.9477, 'Font6', false],
+    [' ', 122.3658795, 656.467, 13.947699999999998, 0, 13.9477, 'Font6', false],
+    [
+      'Aaaaaaa of aaaaa aaaaaa',
+      136.3135795,
+      656.467,
+      158.54350590000007,
+      13.9477,
+      13.9477,
+      'Font6',
+      false
+    ],
+    ['', 89.798, 635.872, 0, 0, 10.9091, 'Font0', true],
+    [
+      'Aaaaaaaaaaaaaaaa of aaa Aaaaaaa Aaaaaaaa Aaaaa',
+      125.44832120000001,
+      262.488,
+      310.3781681000001,
+      13.9477,
+      13.9477,
+      'Font3',
+      false
+    ],
+    ['', 89.798, 238.506, 0, 0, 13.9477, 'Font6', true],
+    ['A.2.1', 89.798, 238.506, 32.5678795, 13.9477, 13.9477, 'Font6', false],
+    [
+      'Aaaaaa aaaaa aaaaaaaaaa aaaaaaaaaaaaa',
+      136.3135795,
+      238.506,
+      217.68175390000013,
+      13.9477,
+      13.9477,
+      'Font6',
+      false
+    ],
+    ['', 89.79800000000006, 217.911, 0, 0, 10.9091, 'Font0', true]
+  ]
+  const items = rows.map(([str, x, y, width, height, size, fontName, hasEOL]) => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    fontName,
+    hasEOL,
+    transform: [size, 0, 0, size, x, y],
+    fontAscent: 0.722,
+    fontDescent: -0.217
+  }))
+  return [
+    {
+      page: 2,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items: [
+        {
+          str: 'References',
+          dir: 'ltr',
+          width: 85.77421620000001,
+          height: 15.9402,
+          transform: [15.9402, 0, 0, 15.9402, 89.798, 449.9280000000003],
+          fontName: 'Font3',
+          hasEOL: false,
+          fontAscent: 0.722,
+          fontDescent: -0.217
+        }
+      ]
+    },
+    { page: 3, width: 612, height: 792, rotation: 0, items }
+  ]
+}
+
+test('keeps native parent and child headings separate when repeated heading spacing dominates', () => {
+  const pages = nativeHierarchyPages()
+  const result = extractDocument({ pages })
+  expect(result.units.find((unit) => unit.source === 'Appendix')?.sourceOnly).not.toBe(true)
+  expect(result.units.map((unit) => unit.source)).toEqual(
+    expect.arrayContaining([
+      'Appendix',
+      'A.1 Aaaaaaaaaaaaa Aaaaaa aaa aaa Aaaaaaaaa Aaaaaaaaaaa',
+      'A.1.1 Aaaaaaa of aaaaa aaaaaa'
+    ])
+  )
+  expect(result.units.find((unit) => unit.source === 'References')?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    pages
+      .flatMap((page) => page.items.filter((item) => item.str.trim()).map((item) => item.str))
+      .sort()
+  )
+})
+
+test.each(['unrelated label', 'different column', 'mixed row style', 'intervening native text'])(
+  'does not infer a native heading hierarchy from %s',
+  (shape) => {
+    const pages = nativeHierarchyPages(),
+      items = pages[1].items
+    if (shape === 'unrelated label') items[6].str = 'B.1.1'
+    if (shape === 'different column') for (const index of [6, 8]) items[index].transform[4] += 240
+    if (shape === 'mixed row style') items[8].fontName = 'Body'
+    if (shape === 'intervening native text')
+      items.splice(5, 0, {
+        ...items[3],
+        str: 'Separate content',
+        transform: [14, 0, 0, 14, 450, 670],
+        width: 90
+      })
+    const result = extractDocument({ pages })
+    expect(
+      result.units.some(
+        (unit) => unit.source === 'A.1 Aaaaaaaaaaaaa Aaaaaa aaa aaa Aaaaaaaaa Aaaaaaaaaaa'
+      )
+    ).toBe(false)
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      pages
+        .flatMap((page) => page.items.filter((item) => item.str.trim()).map((item) => item.str))
+        .sort()
+    )
+  }
+)
+
+function displayedDualScriptItems(): PdfLayoutTextItem[] {
+  return [
+    ['u', 54, 478, 4.8, 10, 'Base', false],
+    ['top', 59.2, 482.1, 14.7, 7, 'Script', true],
+    ['low', 58.8, 475.5, 11, 7, 'Script', false],
+    ['=', 77.2, 478, 7.7, 10, 'Relation', false]
+  ].map(([str, x, y, width, size, fontName, hasEOL]) => ({
+    str: str as string,
+    width: width as number,
+    height: size as number,
+    dir: 'ltr',
+    transform: [size as number, 0, 0, size as number, x as number, y as number],
+    fontName: fontName as string,
+    hasEOL: hasEOL as boolean,
+    fontAscent: 0.694,
+    fontDescent: -0.194
+  }))
+}
+
+test.each([0, 70])(
+  'keeps an entire displayed dual-script relation source-only at offset %i',
+  (offset) => {
+    const items = displayedDualScriptItems()
+    for (const item of items) item.transform[4] += offset
+    const result = extractDocument({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    expect(result.units).toHaveLength(1)
+    expect(result.units[0].sourceOnly).toBe(true)
+    expect(result.units[0].originalStrings).toEqual(['u', 'top', 'low', '='])
+    expect(result.units[0].items).toEqual(['1:0', '1:1', '1:2', '1:3'])
+  }
+)
+
+test('keeps returning prose eligible after a dual-script relation', () => {
+  const items = displayedDualScriptItems()
+  items.push({ ...items[3], str: 'ordinary words', width: 70, transform: [10, 0, 0, 10, 88, 478] })
+  const result = extractDocument({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  expect(
+    result.units.find((unit) => unit.originalStrings.includes('ordinary words'))?.sourceOnly
+  ).not.toBe(true)
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    items.map((item) => item.str).sort()
+  )
+})
+
+test('keeps dual native script lanes with their common mathematical base before the value', () => {
+  const items = dualLaneFormulaItems()
+  const result = extractDocument({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  const order = result.units.flatMap((u) => u.items)
+  expect(order.indexOf('1:4')).toBeLessThan(order.indexOf('1:17'))
+  const owner = result.units.find((u) => u.items.includes('1:5'))!
+  expect(owner.items).toEqual(expect.arrayContaining(['1:6', '1:7', '1:8', '1:9', '1:10', '1:12']))
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    items
+      .filter((i) => i.str.trim())
+      .map((i) => i.str)
+      .sort()
+  )
+  expect(new Set(order).size).toBe(order.length)
+})
+
+test.each([
+  'no relation',
+  'raised relation',
+  'different bases',
+  'competing script',
+  'interrupted native interval',
+  'prose inside script',
+  'different lane font',
+  'ambiguous base'
+])('dual native script lanes require a complete unique mathematical owner: %s', (shape) => {
+  const items = dualLaneFormulaItems()
+  if (shape === 'no relation') items[12].str = '+'
+  if (shape === 'raised relation') items[12].transform[5] += 2
+  if (shape === 'different bases')
+    items.splice(9, 0, {
+      ...items[5],
+      str: 'R',
+      hasEOL: false,
+      transform: [...items[5].transform.slice(0, 4), 68, items[5].transform[5]]
+    })
+  if (shape === 'competing script')
+    items.push({
+      ...items[6],
+      str: 'ink',
+      hasEOL: true,
+      transform: [...items[6].transform.slice(0, 4), 75, items[6].transform[5]]
+    })
+  if (shape === 'interrupted native interval')
+    items.splice(9, 0, {
+      ...items[5],
+      str: 'Side',
+      hasEOL: false,
+      transform: [...items[5].transform.slice(0, 4), 450, items[5].transform[5]]
+    })
+  if (shape === 'prose inside script') items[6].str = 'one two'
+  if (shape === 'different lane font')
+    for (const at of [9, 10]) {
+      items[at].height = items[at].transform[0] = items[at].transform[3] = 6
+    }
+  if (shape === 'ambiguous base') items.push({ ...items[5], str: 'R', hasEOL: true })
+  const result = extractDocument({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  const base = result.units.find((u) => u.originalStrings.includes('Q'))!
+  expect(base.originalStrings).not.toContain(shape === 'prose inside script' ? 'one two' : 'rel')
+  const keys = result.units.flatMap((u) => u.items)
+  expect(new Set(keys).size).toBe(keys.length)
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    items
+      .filter((i) => i.str.trim())
+      .map((i) => i.str)
+      .sort()
+  )
+})
+
+test.each(['same lane', 'distant lower lane', 'full-size words'])(
+  'dual native script proof leaves existing nonmatching lanes unchanged: %s',
+  (shape) => {
+    const items = dualLaneFormulaItems()
+    if (shape === 'same lane')
+      for (const at of [9, 10]) items[at].transform[5] = items[6].transform[5]
+    if (shape === 'distant lower lane') for (const at of [9, 10]) items[at].transform[4] += 6
+    if (shape === 'full-size words')
+      for (const at of [6, 7, 8, 9, 10]) {
+        items[at].height = items[at].transform[0] = items[at].transform[3] = items[5].height
+      }
+    const result = extractDocument({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const base = result.units.find((u) => u.originalStrings.includes('Q'))!
+    if (shape === 'same lane')
+      expect(base.source).toBe(
+        '123 and ∆QModel+rel,REF = −0.456 Us for Model+α). This shows the value measured for Model+'
+      )
+    else expect(base.source).toBe(shape === 'distant lower lane' ? '∆Qrel' : '∆Qrel,REF')
+    expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+      items
+        .filter((i) => i.str.trim())
+        .map((i) => i.str)
+        .sort()
+    )
+  }
+)
+
+function nativeSectionTailFixture(): { pages: PdfLayoutPage[] } {
+  const text = (str: string, x: number, y: number, width: number): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, y],
+    fontName: 'Body',
+    hasEOL: true
+  })
+  return {
+    pages: [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [
+          text('This complete paragraph supplies an independent body record', 60, 650, 260),
+          text('these ordinary records establish the complete con-', 60, 637, 260),
+          text('tinuation (§2.4).', 60, 624, 75)
+        ]
+      }
+    ]
+  }
+}
+
+test('keeps a native hyphenated body tail with a closed section locator translatable', () => {
+  const input = nativeSectionTailFixture(),
+    saved = structuredClone(input)
+  const result = extractDocument(input)
+  const tail = result.units.find((unit) => unit.items.includes('1:2'))!
+  expect(tail.source).toBe('tinuation (§2.4).')
+  expect(tail.sourceOnly).not.toBe(true)
+  expect(tail.items).toEqual(['1:2'])
+  expect(result.units.flatMap((unit) => unit.items)).toEqual(['1:0', '1:1', '1:2'])
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    input.pages[0].items.map((item) => item.str)
+  )
+  expect(input).toEqual(saved)
+})
+
+test.each([
+  'foreign font',
+  'other column',
+  'no hyphen',
+  'custom function',
+  'no body peer',
+  'open locator',
+  'foreign intervening item',
+  'late competing ink',
+  'no native EOL',
+  'distant row'
+])('keeps an unproved native section tail protected: %s', (shape) => {
+  const input = nativeSectionTailFixture(),
+    items = input.pages[0].items
+  if (shape === 'foreign font') items[2].fontName = 'Other'
+  if (shape === 'other column') items[2].transform[4] = 370
+  if (shape === 'no hyphen') items[1].str = 'these ordinary records establish the complete pattern'
+  if (shape === 'custom function') items[2].str = 'custom(x)'
+  if (shape === 'no body peer') items.shift()
+  if (shape === 'open locator') items[2].str = 'tinuation (§2.4'
+  if (shape === 'foreign intervening item')
+    items.splice(2, 0, {
+      ...items[1],
+      str: 'other',
+      width: 20,
+      transform: [10, 0, 0, 10, 400, 637]
+    })
+  if (shape === 'late competing ink')
+    items.push({
+      ...items[1],
+      str: 'other',
+      width: 20,
+      transform: [10, 0, 0, 10, 80, 630]
+    })
+  if (shape === 'no native EOL') items[1].hasEOL = false
+  if (shape === 'distant row') items[2].transform[5] -= 25
+  const result = extractDocument(input)
+  expect(
+    result.units.find((unit) =>
+      unit.source.includes(shape === 'custom function' ? 'custom(x)' : 'tinuation')
+    )?.sourceOnly
+  ).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    items.map((_, index) => `1:${index}`).sort()
+  )
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    items.map((item) => item.str).sort()
+  )
+})
+
+test('keeps column flow when paired titles do not prove independent horizontal prose sections', () => {
+  const input = nativeTwoColumnPage(true)
+  input.items.splice(
+    0,
+    4,
+    { ...input.items[0], str: 'Left discussion', width: 100 },
+    { ...input.items[2], str: 'Right references', width: 100 }
+  )
+  const blocks = extractPage(input).blocks
+  expect(blocks.map((block) => block.source.split(' explains')[0])).toEqual([
+    'Left discussion',
+    'Second left section',
+    'Right references',
+    'Second right section'
+  ])
+})
+
+function nativeInlineBridgePage(): PdfLayoutPage {
+  const rows: [
+    string,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    string,
+    boolean,
+    number,
+    number
+  ][] = [
+    [
+      'A previous body record provides the entire column width for independent confirmation of the neighboring line.',
+      59.19,
+      482.166,
+      476.5576736000003,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font0',
+      true,
+      0.686,
+      -0.218
+    ],
+    [
+      'Under this mapping',
+      59.528,
+      448.293,
+      106.42132504799996,
+      11.127282000000001,
+      10.9091,
+      10.9091,
+      'Font0',
+      false,
+      0.686,
+      -0.218
+    ],
+    [
+      ' ',
+      165.94932504800002,
+      448.293,
+      3.248700933333319,
+      11.127282000000001,
+      10.9091,
+      0,
+      'Font0',
+      false,
+      0.686,
+      -0.218
+    ],
+    [
+      'Θ',
+      169.263,
+      448.293,
+      7.876370200000001,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font1',
+      false,
+      0.692,
+      -0.177
+    ],
+    [
+      'Γ',
+      177.299,
+      452.253,
+      4.678448700000001,
+      7.9701,
+      7.9701,
+      7.9701,
+      'Font1',
+      false,
+      0.692,
+      -0.177
+    ],
+    [' ', 181.9774487, 452.253, 4.82355130000002, 7.9701, 7.9701, 0, 'Font1', false, 0.692, -0.177],
+    [
+      '\u001b',
+      186.80100000000002,
+      448.293,
+      6.938187600000001,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font2',
+      false,
+      0.464,
+      0
+    ],
+    [' ', 193.7391876, 448.293, 4.7127312000000074, 10.9091, 10.9091, 0, 'Font2', false, 0.464, 0],
+    [
+      '(',
+      198.45191880000002,
+      448.293,
+      3.6327303000000004,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font3',
+      false,
+      0.707,
+      -0.152
+    ],
+    [
+      'Θ',
+      202.5210131,
+      448.293,
+      7.876370200000001,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font1',
+      false,
+      0.692,
+      -0.177
+    ],
+    [
+      '𝑌',
+      209.95800000000003,
+      452.253,
+      5.0610135000000005,
+      7.9701,
+      7.9701,
+      7.9701,
+      'Font4',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ' ',
+      215.01901350000003,
+      452.253,
+      1.3669864999999959,
+      7.9701,
+      7.9701,
+      0,
+      'Font4',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ')',
+      216.38600000000002,
+      448.293,
+      3.6327303000000004,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font3',
+      false,
+      0.707,
+      -0.152
+    ],
+    [
+      '𝐻',
+      220.92300000000003,
+      452.253,
+      6.4239006000000005,
+      7.9701,
+      7.9701,
+      7.9701,
+      'Font4',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ' ',
+      227.34690060000003,
+      452.253,
+      1.0710994000000085,
+      7.9701,
+      7.9701,
+      0,
+      'Font4',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ',',
+      228.41800000000003,
+      448.293,
+      2.7272750000000006,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font5',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ' ',
+      231.14527500000003,
+      448.293,
+      3.429724999999962,
+      10.9091,
+      10.9091,
+      0,
+      'Font5',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      'the complete native bridge should connect to',
+      234.575,
+      448.293,
+      171.33788823599994,
+      11.127282000000001,
+      10.9091,
+      10.9091,
+      'Font0',
+      false,
+      0.686,
+      -0.218
+    ],
+    [
+      ' ',
+      405.9128882360001,
+      448.293,
+      3.52756055294113,
+      11.127282000000001,
+      10.9091,
+      0,
+      'Font0',
+      false,
+      0.686,
+      -0.218
+    ],
+    [
+      '𝐻',
+      409.511,
+      448.293,
+      7.876370200000001,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font5',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      ' ',
+      417.3873702,
+      448.293,
+      3.9196297999999956,
+      10.9091,
+      10.9091,
+      0,
+      'Font5',
+      false,
+      0.438,
+      -0.009
+    ],
+    [
+      'is a complete native row and',
+      421.307,
+      448.293,
+      114.44409537000001,
+      11.127282000000001,
+      10.9091,
+      10.9091,
+      'Font0',
+      true,
+      0.686,
+      -0.218
+    ],
+    [
+      'therefore holds. With (12),',
+      59.528,
+      434.744,
+      117.24009770000002,
+      10.9091,
+      10.9091,
+      10.9091,
+      'Font0',
+      false,
+      0.686,
+      -0.218
+    ]
+  ]
+  return {
+    page: 1,
+    width: 595.276,
+    height: 841.89,
+    rotation: 0,
+    items: rows.map(
+      ([str, x, y, width, a, d, height, fontName, hasEOL, fontAscent, fontDescent]) => ({
+        str,
+        dir: 'ltr',
+        width,
+        height,
+        transform: [a, 0, 0, d, x, y],
+        fontName,
+        hasEOL,
+        fontAscent,
+        fontDescent
+      })
+    )
+  }
+}
+
+test('reads a complete native formula bridge before its next body row', () => {
+  const input = nativeInlineBridgePage(),
+    saved = structuredClone(input),
+    result = extractDocument({ pages: [input] })
+  const order = result.units.flatMap((unit) => unit.items)
+  expect(order.indexOf('1:21')).toBeLessThan(order.indexOf('1:22'))
+  expect(order).toEqual(
+    input.items.flatMap((item, index) => (item.str.trim() ? ['1:' + index] : []))
+  )
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    input.items.filter((item) => item.str.trim()).map((item) => item.str)
+  )
+  expect(result.units.find((unit) => unit.originalStrings.includes('\u001b'))?.sourceOnly).toBe(
+    true
+  )
+  expect(input).toEqual(saved)
+})
+
+// Rejected bridge proofs still preserve every native source. Their fallback
+// must not jump over nearby right-hand ink to consume the following row.
+const rejectedNativeBridges: [string, string[][]][] = [
+  [
+    'no peer',
+    [
+      ['1:0', '1:2', '1:3'],
+      ['1:5'],
+      ['1:7', '1:8', '1:9', '1:11', '1:12', '1:14'],
+      ['1:16', '1:18', '1:20'],
+      ['1:21']
+    ]
+  ],
+  [
+    'missing bridge',
+    [
+      ['1:0'],
+      [
+        '1:1',
+        '1:3',
+        '1:4',
+        '1:7',
+        '1:8',
+        '1:9',
+        '1:11',
+        '1:12',
+        '1:14',
+        '1:16',
+        '1:18',
+        '1:20',
+        '1:21'
+      ]
+    ]
+  ],
+  ['bare three prose', [['1:0', '1:2'], ['1:1']]],
+  [
+    'native row break',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  [
+    'unclosed row',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  [
+    'competing owner',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:23', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  [
+    'competing peer owner',
+    [
+      ['1:0', '1:23'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  [
+    'foreign ending font',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  [
+    'wide bridge gap',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4', '1:8', '1:9'],
+      ['1:6'],
+      ['1:10', '1:12', '1:13', '1:15', '1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ],
+  ['two independent columns', [['1:0'], ['1:1', '1:3'], ['1:2']]],
+  [
+    'distant peer',
+    [
+      ['1:0'],
+      ['1:1', '1:3', '1:4'],
+      ['1:6'],
+      ['1:8', '1:9', '1:10', '1:12', '1:13', '1:15'],
+      ['1:17', '1:19', '1:21'],
+      ['1:22']
+    ]
+  ]
+]
+test.each(rejectedNativeBridges)(
+  'does not infer a native formula bridge with %s',
+  (shape, expectedOwners) => {
+    const input = nativeInlineBridgePage(),
+      items = input.items
+    if (shape === 'no peer') items.shift()
+    if (shape === 'missing bridge') items.splice(6, 1)
+    if (shape === 'bare three prose') input.items = items.filter((_, i) => [1, 21, 22].includes(i))
+    if (shape === 'native row break') items[4].hasEOL = true
+    if (shape === 'unclosed row') items[21].hasEOL = false
+    if (shape === 'competing owner')
+      items.push({ ...items[17], str: 'Other', width: 20, hasEOL: true })
+    if (shape === 'competing peer owner')
+      items.push({ ...items[0], str: 'Other', width: 20, hasEOL: true })
+    if (shape === 'foreign ending font') items[21].fontName = 'Foreign'
+    if (shape === 'wide bridge gap') items[6].transform[4] += 12
+    if (shape === 'two independent columns') {
+      input.items = items.filter((_, i) => [0, 1, 21, 22].includes(i))
+      input.items[0].width = 120
+      input.items[1].hasEOL = true
+    }
+    if (shape === 'distant peer') items[0].transform[5] += 60
+    const saved = structuredClone(input),
+      result = extractDocument({ pages: [input] })
+    expect(result.units.map((unit) => unit.items)).toEqual(expectedOwners)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      input.items.flatMap((part, i) => (part.str.trim() ? ['1:' + i] : [])).sort()
+    )
+    if (!['missing bridge', 'bare three prose', 'two independent columns'].includes(shape)) {
+      const prefix = result.units.find((unit) =>
+        unit.originalStrings.includes('Under this mapping')
+      )!
+      expect(prefix.originalStrings).not.toContain('therefore holds. With (12),')
+      expect(prefix.originalStrings).not.toContain('is a complete native row and')
+    }
+
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      input.items
+        .filter((item) => item.str.trim())
+        .map((item) => item.str)
+        .sort()
+    )
+    expect(input).toEqual(saved)
+  }
+)
+
+const wrappedExpansionItems = (): PdfLayoutTextItem[] =>
+  [
+    item('We study the response using adaptive control', 60, 180, 220),
+    item('method (', 60, 194, 40, 10, false),
+    item('ACM', 100, 194, 18, 10, false),
+    item(')', 118, 194, 4, 10, false),
+    item(' explains the result.', 126, 194, 100)
+  ].map((part) => ({ ...part, fontName: 'F', fontAscent: 0.7, fontDescent: -0.2 }))
+
+test('keeps a wrapped expansion with its matching acronym and returning prose', () => {
+  const parts = wrappedExpansionItems()
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units).toHaveLength(1)
+  expect(result.units[0].source).toBe(
+    'We study the response using adaptive control method (ACM) explains the result.'
+  )
+  expect(result.units[0].sourceOnly).not.toBe(true)
+  expect(result.units[0].items).toEqual(parts.map((_, i) => `1:${i}`))
+  expect(result.units[0].originalStrings).toEqual(parts.map((part) => part.str))
+})
+
+test.each([
+  'different initials',
+  'missing expansion',
+  'independent gap',
+  'overlapping acronym',
+  'different font',
+  'raised acronym',
+  'symbolic return',
+  'completed sentence',
+  'native row break'
+])('does not exempt an unexplained or discontinuous acronym: %s', (fault) => {
+  const parts = wrappedExpansionItems()
+  if (fault === 'different initials') parts[2].str = 'XYZ'
+  if (fault === 'missing expansion') parts.shift()
+  if (fault === 'independent gap') parts[2].transform[4] += 20
+  if (fault === 'overlapping acronym') parts[2].transform[4] -= 10
+  if (fault === 'different font') parts[2].fontName = 'Other'
+  if (fault === 'raised acronym') parts[2].transform[5] += 4
+  if (fault === 'symbolic return') parts[4].str = ' = x + y'
+  if (fault === 'completed sentence') parts[0].str += '.'
+  if (fault === 'native row break') parts[1].hasEOL = true
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.find((unit) => unit.originalStrings.includes('method ('))?.sourceOnly).toBe(
+    true
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.map((_, i) => `1:${i}`).sort()
+  )
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    parts.map((part) => part.str).sort()
+  )
+})
+
+test.each(['custom(x)', 'sin(x)'])('keeps the symbolic function %s source-only', (formula) => {
+  const width = formula.startsWith('custom') ? 40 : 20
+  const parts = [
+    item(formula.slice(0, -2), 60, 194, width, 10, false),
+    item('x', 60 + width, 194, 6, 10, false),
+    item(')', 66 + width, 194, 4)
+  ].map((part) => ({ ...part, fontName: 'F', fontAscent: 0.7, fontDescent: -0.2 }))
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units).toHaveLength(1)
+  expect(result.units[0].source).toBe(formula)
+  expect(result.units[0].sourceOnly).toBe(true)
+  expect(result.units[0].originalStrings).toEqual(parts.map((part) => part.str))
+})
+// A short native prefix must not jump over the adjacent equation's right half.
+const interruptedNativePrefix = (): PdfLayoutTextItem[] =>
+  (
+    [
+      ['By Lemma 1.1(a) and', 60, 180, 98.92, 9.96, 10.16, 'F0', 0.694, -0.194, false],
+      ['∇U', 190.16, 180, 13.73, 9.96, 9.96, 'F1', 0.75, -0.194, false],
+      ['1', 235.48, 176.38, 3.97, 6.97, 6.97, 'F2', 0.694, -0.194, false],
+      [') = (', 259.04, 180, 23.27, 9.96, 10.16, 'F0', 0.694, -0.194, false],
+      ['V', 303.24, 180, 8.28, 9.96, 9.96, 'F3', 0.694, -0.194, false],
+      ['−', 319.13, 175.21000000000004, 6.23, 6.97, 6.97, 'F4', 0.75, -0.194, false],
+      ['1', 325.36, 175.21000000000004, 3.97, 6.97, 6.97, 'F2', 0.694, -0.194, true],
+      ['∇', 329.83, 180, 8.3, 9.96, 9.96, 'F1', 0.75, -0.194, false],
+      ['V', 338.13, 180, 8.28, 9.96, 9.96, 'F3', 0.694, -0.194, false],
+      ['0', 346.41, 181.49, 3.97, 6.97, 6.97, 'F2', 0.694, -0.194, false],
+      ['=', 354.61, 180, 7.9, 9.96, 10.16, 'F0', 0.694, -0.194, false],
+      ['∇', 366.24, 180, 8.3, 9.96, 9.96, 'F1', 0.75, -0.194, false],
+      ['WV', 378.5, 180, 17.46, 9.96, 9.96, 'F3', 0.694, -0.194, false],
+      ['q', 396.76, 175.21000000000004, 4.11, 6.97, 6.97, 'F5', 0.694, -0.194, false],
+      ['0', 395.95, 182.65999999999997, 3.97, 6.97, 6.97, 'F2', 0.694, -0.194, false],
+      ['claim follows.', 60, 191.95000000000005, 58.73, 9.96, 9.96, 'F0', 0.694, -0.194, false]
+    ] as const
+  ).map(([str, x, y, width, height, scale, fontName, fontAscent, fontDescent, hasEOL]) => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    hasEOL,
+    fontName,
+    fontAscent,
+    fontDescent,
+    transform: [scale, 0, 0, height, x, 800 - y]
+  }))
+
+test('does not skip same-row body text after a styled run-in heading', () => {
+  const parts = [
+    { ...item('Additional independent measurements.', 60, 180, 200, 10, false), fontName: 'Bold' },
+    {
+      ...item('For an input value, consider the complete', 270, 180, 230, 10, false),
+      fontName: 'Body'
+    },
+    {
+      ...item('result and its surrounding experimental context.', 60, 192, 400, 10, false),
+      fontName: 'Body'
+    }
+  ]
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.some((u) => u.items.includes('1:0') && u.items.includes('1:2'))).toBe(false)
+  expect(result.units.flatMap((u) => u.items)).toEqual(['1:0', '1:1', '1:2'])
+  expect(result.units.flatMap((u) => u.originalStrings)).toEqual(parts.map((p) => p.str))
+})
+
+test('does not attach a following prose line before intervening right-hand native ink', () => {
+  const parts = interruptedNativePrefix()
+  const result = extractDocument(document([page(parts)]))
+  const lead = result.units.find((u) => u.items.includes('1:0'))!
+  const tail = result.units.find((u) => u.items.includes('1:15'))!
+  expect(lead).not.toBe(tail)
+  expect(tail.source).toBe('claim follows.')
+  const sourceOrder = result.units.flatMap((u) => u.items)
+  expect(sourceOrder.indexOf('1:14')).toBeLessThan(sourceOrder.indexOf('1:15'))
+  expect(sourceOrder.slice().sort()).toEqual(parts.map((_, i) => '1:' + i).sort())
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    parts.map((i) => i.str).sort()
+  )
+})
+
+test.each([
+  'present',
+  'absent',
+  'remote',
+  'different row',
+  'later native order',
+  'aligned column',
+  'raised glyph'
+])('does not join right-hand prose across incoming native ink: %s', (condition) => {
+  const mark = (str: string, x: number, y: number, width: number, fontName = 'Body') => ({
+    ...item(str, x, y, width, 12, false),
+    fontName,
+    fontAscent: 0.694,
+    fontDescent: -0.194
+  })
+  const parts = [
+    mark('θ', 367, 354, 5, 'Math'),
+    mark('The interior values are', 389, 354, 134),
+    item('', 0, 800, 0, 0, true),
+    mark('= 2', 259, 372, 18),
+    mark(', . . . , K', 277, 372, 33, 'Math'),
+    { ...mark(', and the outer value is fixed', 311, 372, 212), hasEOL: true }
+  ]
+  if (condition === 'absent') parts.splice(3, 2)
+  if (condition === 'remote') parts[4].width -= 20
+  if (condition === 'different row') parts[4].transform[5] += 12
+  if (condition === 'later native order') parts.push(parts.splice(4, 1)[0])
+  if (condition === 'aligned column') {
+    parts[0].transform[4] = 289
+    parts[1].transform[4] = 311
+  }
+  if (condition === 'raised glyph') parts[4].transform[5] += 4
+  const saved = structuredClone(parts),
+    result = extractDocument(document([page(parts)]))
+  expect(
+    result.units.some(
+      (unit) =>
+        unit.originalStrings.includes('The interior values are') &&
+        unit.originalStrings.includes(', and the outer value is fixed')
+    )
+  ).toBe(!['present', 'raised glyph'].includes(condition))
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.flatMap((part, i) => (part.str ? ['1:' + i] : [])).sort()
+  )
+  expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+    parts
+      .filter((part) => part.str)
+      .map((part) => part.str)
+      .sort()
+  )
+  expect(parts).toEqual(saved)
+})
+
+test.each(['.', ','])(
+  'retains the paragraph edge after splitting incoming math before a %s tail',
+  (punctuation) => {
+    const mark = (str: string, x: number, y: number, width: number, fontName = 'Body') => ({
+      ...item(str, x, y, width, 11, false),
+      fontName,
+      fontAscent: 0.69,
+      fontDescent: -0.194
+    })
+    const parts = [
+      mark(', the nominal value of', 404, 335, 136),
+      mark('ρ', 72, 349, 6, 'Math'),
+      mark('has a fixed normalization and the measured response depends on', 85, 349, 350),
+      mark('k', 442, 349, 6, 'Math'),
+      { ...mark(punctuation, 457, 349, 3), hasEOL: true },
+      mark('An independent paragraph introduces the next model.', 89, 362, 270)
+    ]
+    const saved = structuredClone(parts),
+      result = extractDocument(document([page(parts)]))
+    expect(
+      result.units.some((unit) => unit.items.includes('1:2') && unit.items.includes('1:5'))
+    ).toBe(punctuation === ',')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      parts.map((_, i) => '1:' + i).sort()
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      parts.map((part) => part.str).sort()
+    )
+    expect(parts).toEqual(saved)
+  }
+)
+
+test('keeps an uninterrupted prose wrap after the adjacent equation is absent', () => {
+  const parts = interruptedNativePrefix().filter((_, i) => i === 0 || i === 15)
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units).toHaveLength(1)
+  expect(result.units[0].items).toEqual(['1:0', '1:1'])
+  expect(result.units[0].source).toBe('By Lemma 1.1(a) and claim follows.')
+})
+
+test.each(['none', 'different appendix', 'body-sized heading', 'no section', 'body reference'])(
+  'keeps a floating appendix caption outside bibliography only with its later section: %s',
+  (fault) => {
+    const caption =
+      fault === 'body reference'
+        ? 'Table A.1 contains the independent measurements discussed in the study.'
+        : 'Table A.1. Independent measurements for the following appendix.'
+    const floats = [
+      item(caption, 60, 100, 440, 9),
+      item('Fig. A.2. A separate explanatory drawing for the appendix.', 60, 300, 440, 9),
+      item(
+        fault === 'different appendix'
+          ? 'Appendix B: Additional results'
+          : 'Appendix A: Additional results',
+        60,
+        500,
+        280,
+        fault === 'body-sized heading' ? 9 : 12
+      ),
+      item(
+        'This appendix describes the independent experiment and its additional results.',
+        60,
+        530,
+        440
+      )
+    ]
+    if (fault === 'no section') floats.splice(2, 1)
+    const pages = [
+      page([
+        item('References', 60, 100, 120, 12),
+        item('[1] A. Writer. A study in a journal.', 60, 140, 400)
+      ]),
+      page(floats, 2)
+    ]
+    const result = extractDocument(document(pages))
+    const target = result.units.find((u) => u.originalStrings.includes(caption))!
+    expect(!!target.sourceOnly).toBe(fault !== 'none')
+    expect(result.units.find((u) => u.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+    )
+  }
+)
+
+test('recognizes a repeated centered running title with a parenthesized version', () => {
+  const pages = runningHeaderFixture()
+  for (const p of pages) p.items[0].str = 'Repeated centered document title (revision 2)'
+  const result = extractDocument(document(pages))
+  for (const p of pages)
+    expect(result.units.find((u) => u.items.includes(`${p.page}:0`))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+})
+
+test.each([
+  'none',
+  'body position',
+  'nearby text',
+  'two pages',
+  'varying font',
+  'varying position'
+])('isolates a short repeated publication label only in an empty upper margin: %s', (fault) => {
+  const pages = [1, 2, 3].slice(0, fault === 'two pages' ? 2 : 3).map((n) =>
+    page(
+      [
+        {
+          ...item(
+            'Draft.',
+            fault === 'varying position' && n === 3 ? 120 : 100,
+            fault === 'body position' ? 95 : 35,
+            28,
+            10
+          ),
+          fontName: fault === 'varying font' && n === 3 ? 'other' : 'body'
+        },
+        {
+          ...item(
+            'The complete body paragraph explains the measurements and retains its original source.',
+            100,
+            fault === 'nearby text' ? 55 : 100,
+            400
+          ),
+          fontName: 'body'
+        }
+      ],
+      n
+    )
+  )
+  const result = extractDocument(document(pages))
+  for (const p of pages)
+    expect(!!result.units.find((u) => u.items.includes(`${p.page}:0`))?.sourceOnly).toBe(
+      fault === 'none'
+    )
+  expect(
+    result.units.filter((u) => u.source.includes('complete body')).every((u) => !u.sourceOnly)
+  ).toBe(true)
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+})
+
+function nativeCitationItem(
+  str: string,
+  x: number,
+  y: number,
+  width: number,
+  hasEOL = false
+): PdfLayoutTextItem {
+  return {
+    str,
+    transform: [10, 0, 0, 10, x, y],
+    width,
+    height: 10,
+    dir: 'ltr',
+    fontName: 'F',
+    fontAscent: 0.7,
+    fontDescent: -0.2,
+    hasEOL
+  }
+}
+test.each([
+  'positive',
+  'missing target',
+  'target not equation',
+  'missing numbered peers',
+  'no prose',
+  'variable argument',
+  'prefix row break',
+  'far context',
+  'foreign context font',
+  'competing ink',
+  'intervening owner'
+])('requires native equation-reference and prose evidence before restoring a word: %s', (fault) => {
+  const input: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      nativeCitationItem('x = y + z', 120, 700, 100),
+      nativeCitationItem('(2.3)', 500, 700, 25, true),
+      nativeCitationItem('a = b + c', 120, 650, 100),
+      nativeCitationItem('(2.4)', 500, 650, 25, true),
+      nativeCitationItem('d = e + f', 120, 600, 100),
+      nativeCitationItem('(2.5)', 500, 600, 25, true),
+      nativeCitationItem('Inspect', 60, 500, 35),
+      nativeCitationItem('(2.3)', 98, 500, 25),
+      nativeCitationItem(' before continuing our argument.', 126, 500, 170, true)
+    ]
+  }
+  const parts = input.items
+  if (fault === 'missing target') parts[1].str = '(9.9)'
+  if (fault === 'target not equation') parts[0].str = 'ordinary explanatory prose'
+  if (fault === 'missing numbered peers') parts.splice(2, 4)
+  if (fault === 'no prose') parts.at(-1)!.str = ' + x = y'
+  if (fault === 'variable argument') parts[7].str = '(x)'
+  if (fault === 'prefix row break') parts[6].hasEOL = true
+  if (fault === 'far context') parts.at(-1)!.transform[4] += 35
+  if (fault === 'foreign context font') parts.at(-1)!.fontName = 'Other'
+  if (fault === 'competing ink') parts.push(nativeCitationItem('Other', 110, 500, 30, true))
+  if (fault === 'intervening owner')
+    parts.splice(7, 0, nativeCitationItem('side note', 450, 350, 50, true))
+  const saved = structuredClone(input),
+    result = extractDocument({ pages: [input] })
+  const target = result.units.find((u) => u.originalStrings.includes('Inspect'))!
+  expect(target).toBeDefined()
+  expect(!!target.sourceOnly).toBe(fault !== 'positive')
+  expect(
+    result.units.filter((u) => /^\(\d+\.\d+\)$/.test(u.source)).every((u) => u.sourceOnly)
+  ).toBe(true)
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(parts.map((_, i) => '1:' + i).sort())
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    parts.map((p) => p.str).sort()
+  )
+  expect(input).toEqual(saved)
+})
+test.each([
+  'tail',
+  'list',
+  'missing peer',
+  'terminal previous',
+  'formula previous',
+  'variable index',
+  'math operator',
+  'foreign font',
+  'shifted column',
+  'different rhythm',
+  'unclosed native line',
+  'competing ink',
+  'intervening owner'
+])('requires a native square-citation body continuation before restoring a line: %s', (fault) => {
+  const input: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      nativeCitationItem(
+        'Several independent methods provide useful evidence for this analysis',
+        60,
+        700,
+        300,
+        true
+      ),
+      nativeCitationItem(
+        'The complete experimental description allows us to evaluate performance',
+        60,
+        682.5,
+        300,
+        true
+      ),
+      nativeCitationItem('quantitatively [23].', 60, 665, 95, true)
+    ]
+  }
+  const parts = input.items,
+    target = parts[2]
+  if (fault === 'list') target.str = 'MethodAlpha [21], MethodBeta [22], MethodGamma [23], and'
+  if (fault === 'missing peer') parts.shift()
+  if (fault === 'terminal previous') parts[1].str += '.'
+  if (fault === 'formula previous') parts[1].str = 'function [x] = formula [y]'
+  if (fault === 'variable index') target.str = 'function [x].'
+  if (fault === 'math operator') target.str = 'function [23] = value'
+  if (fault === 'foreign font') target.fontName = 'Math'
+  if (fault === 'shifted column') target.transform[4] += 100
+  if (fault === 'different rhythm') target.transform[5] -= 8
+  if (fault === 'unclosed native line') target.hasEOL = false
+  if (fault === 'competing ink') parts.push(nativeCitationItem('other', 80, 665, 20, true))
+  if (fault === 'intervening owner')
+    parts.splice(2, 0, nativeCitationItem('Side caption', 450, 300, 40, true))
+  const saved = structuredClone(input),
+    result = extractDocument({ pages: [input] }),
+    owner = result.units.find((u) => u.originalStrings.includes(target.str))!
+  expect(owner).toBeDefined()
+  expect(!!owner.sourceOnly).toBe(!['tail', 'list', 'math operator'].includes(fault))
+  // The operator control is already part of ordinary prose; the exception
+  // must not split it or turn it into a standalone translatable expression.
+  if (fault === 'math operator') expect(owner.items).toEqual(['1:0', '1:1', '1:2'])
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(parts.map((_, i) => '1:' + i).sort())
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    parts.map((p) => p.str).sort()
+  )
+  expect(input).toEqual(saved)
+})
+
+test.each([
+  ...['bullets', 'algorithm'].flatMap((shape) =>
+    [
+      'positive',
+      'missing previous marker',
+      'missing next marker',
+      'different column',
+      'different font',
+      'missing arrow'
+    ].map((fault) => [shape, fault])
+  ),
+  ['algorithm', 'nonsequential number'],
+  ['algorithm', 'same number'],
+  ['algorithm', 'no marker fonts']
+])(
+  'keeps separately marked native record descriptions apart only with full evidence: %s / %s',
+  (shape, fault) => {
+    const mark = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      height = 10
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      fontName,
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, 800 - y],
+      hasEOL: false
+    })
+    const parts =
+      shape === 'bullets'
+        ? [
+            mark('•', 60, 180, 5, 'Symbol'),
+            mark('→', 152, 180, 10, 'Symbol'),
+            mark('first response 0.0', 165, 180, 70),
+            mark('•', 60, 191, 5, 'Symbol'),
+            mark('→', 148, 191, 10, 'Symbol'),
+            mark('next response 0.0', 161, 191, 74)
+          ]
+        : [
+            mark('6:', 60, 180, 7, 'Body', 9),
+            mark('←', 126, 180, 10, 'Symbol'),
+            mark('the current input prefix', 139, 180, 96),
+            mark('7:', 60, 191, 7, 'Body', 9),
+            mark('y ←', 117, 191, 21, 'Math'),
+            mark('the available next result', 141, 191, 90)
+          ]
+    if (fault === 'missing previous marker') parts[0].str = ''
+    if (fault === 'missing next marker') parts[3].str = ''
+    if (fault === 'different column') parts[3].transform[4] -= 20
+    if (fault === 'different font') parts[3].fontName = 'Other'
+    if (fault === 'missing arrow') parts[4].str = 'z'
+    if (fault === 'nonsequential number') parts[3].str = '9:'
+    if (fault === 'same number') parts[3].str = '6:'
+    if (fault === 'no marker fonts') {
+      delete parts[0].fontName
+      delete parts[3].fontName
+    }
+    const saved = structuredClone(parts),
+      result = extractDocument({
+        pages: [{ page: 1, width: 600, height: 800, rotation: 0, items: parts }]
+      })
+    expect(
+      result.units.some((unit) => unit.items.includes('1:2') && unit.items.includes('1:5'))
+    ).toBe(fault !== 'positive')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      parts.flatMap((part, i) => (part.str.trim() ? ['1:' + i] : [])).sort()
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      parts
+        .filter((part) => part.str.trim())
+        .map((part) => part.str)
+        .sort()
+    )
+    expect(parts).toEqual(saved)
+  }
+)

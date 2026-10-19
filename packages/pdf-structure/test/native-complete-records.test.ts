@@ -3025,6 +3025,79 @@ const nativeCompoundMeasurements = (): ReturnType<typeof JSON.parse> => {
   }
 }
 
+function nativeTieredMarkerRecords(): ReturnType<typeof JSON.parse> {
+  const f = nativeCompoundMeasurements()
+  f.items = f.items.filter((item: { text: string }) => !['±', '0.01', '↓'].includes(item.text))
+  for (const item of f.items.filter((item: { baseline: number }) => item.baseline > 82)) {
+    item.baseline += 12
+    item.rect[1] += 12
+    item.rect[3] += 12
+  }
+  f.table.cropRect[3] += 12
+  f.rules.at(-1)[1] += 12
+  f.rules.at(-1)[3] += 12
+  f.items.push({
+    text: 'Section',
+    rect: [24, 84, 74, 96],
+    height: 12,
+    baseline: 96,
+    horizontal: true
+  })
+  const label = f.items.find((item: { text: string }) => item.text === 'Choice2')
+  f.items.push({
+    text: '∗',
+    rect: [label.rect[2], label.baseline - 13, label.rect[2] + 5, label.baseline - 5],
+    baseline: label.baseline - 5,
+    height: 8,
+    horizontal: true
+  })
+  f.items.forEach((item: { sourceItem: unknown; text: string }, index: number) => {
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  })
+  return f
+}
+
+it.each([false, true])(
+  'keeps a raised native marker with its complete record beneath a proved tiered header with numeric underline %s',
+  (underline) => {
+    const f = nativeTieredMarkerRecords()
+    const label = f.items.find((item: { text: string }) => item.text === 'Choice2')
+    if (underline) f.rules.push([100, label.baseline - 9, 123, label.baseline - 9])
+    const result = refineTable(f.table, f.items, f.captions, [], f.rules, [])
+    expect(result.repairs).toContain('native-tiered-header-body-records-recovered')
+    expect(result.grid).toHaveLength(9)
+    expect(result.grid[4][0]).toBe('Choice2∗')
+    expect(result.grid.slice(3).map((row: string[]) => row.slice(1))).toEqual(
+      Array.from({ length: 6 }, () => Array.from({ length: 8 }, () => '0.25'))
+    )
+    expect(
+      result.cells
+        .flatMap((cell: { sourceItems?: { index: number }[] }) => cell.sourceItems ?? [])
+        .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    ).toEqual(f.items.map((item: { sourceItem: unknown }) => item.sourceItem))
+  }
+)
+
+it.each(['stub rule', 'external alias', 'distant script'])(
+  'does not pair a tiered stub script without a unique unobstructed native anchor: %s',
+  (change) => {
+    const f = nativeTieredMarkerRecords()
+    const label = f.items.find((item: { text: string }) => item.text === 'Choice2')
+    const script = f.items.find((item: { text: string }) => item.text === '∗')
+    if (change === 'stub rule') f.rules.push([24, label.baseline - 9, 85, label.baseline - 9])
+    if (change === 'external alias') f.items.push({ ...script, rect: [800, 10, 805, 18] })
+    if (change === 'distant script') {
+      script.rect[0] += 8
+      script.rect[2] += 8
+    }
+    const result = refineTable(f.table, f.items, f.captions, [], f.rules, [])
+    expect(result.grid).toHaveLength(10)
+    expect(
+      result.grid.some((row: string[]) => row[0] === '∗' && row.slice(1).every((s) => !s))
+    ).toBe(true)
+  }
+)
+
 it('keeps complete compound source leaves when a later scalar header plan crosses their fonts', () => {
   const f = nativeCompoundMeasurements(),
     before = structuredClone(f),

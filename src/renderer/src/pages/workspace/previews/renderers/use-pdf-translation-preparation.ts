@@ -7,6 +7,7 @@ import {
   preservePdfFigureSources,
   type PdfTranslationExtraction,
   applyCachedPdfTableSources,
+  applyCachedPdfFigureSources,
   type PdfTranslationSourceIdentity
 } from '@aipoch/pdf-translation/reader'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -103,7 +104,7 @@ export function usePdfTranslationPreparation(
       onProgress: (pagesRead) => publish({ status: 'running', pagesRead })
     })
       .then(async (extraction) => {
-        const withTables =
+        let prepared =
           attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached
             ? await applyCachedPdfTableSources({
                 extraction,
@@ -115,15 +116,24 @@ export function usePdfTranslationPreparation(
                   window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
               })
             : extraction
-        const prepared = checkpoint
-          ? withTables
-          : await preservePdfFigureSources({
-              document,
-              extraction: withTables,
-              operators: pdfjsLib.OPS,
-              skipTranslation: false,
-              signal: controller.signal
-            })
+        if (attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached)
+          prepared = await applyCachedPdfFigureSources({
+            extraction: prepared,
+            document,
+            sourceId: attachmentVersionId,
+            sourceIdentity,
+            signal: controller.signal,
+            readCached: ({ sourceId, page }) =>
+              window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
+          })
+        if (!checkpoint)
+          prepared = await preservePdfFigureSources({
+            document,
+            extraction: prepared,
+            operators: pdfjsLib.OPS,
+            skipTranslation: false,
+            signal: controller.signal
+          })
         controller.signal.throwIfAborted()
         rememberPdfTranslationExtraction(prepared)
         if (checkpoint && !checkpoint.layoutSnapshot && window.api.pdfTranslation?.saveSnapshot) {
