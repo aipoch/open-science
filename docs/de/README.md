@@ -199,7 +199,7 @@ AIPOCH Open-Science erreichte mit **gpt-5.6-sol (xhigh)** in einer internen Bewe
 
 Der Vergleich mischt Einträge mit unterschiedlicher Bewerterabdeckung und ist keine offizielle Rangfolge unter einheitlichen Bewertungsbedingungen.
 
-**Bewertungsumfang:** Dies sind selbst berichtete lokale/interne Ergebnisse. Spitzenwerte in den aufgeführten Vergleichen belegen weder einen offiziellen ersten Rang noch statistisch signifikante Verbesserungen. Quellenstände, Modell- und Laufzeitkonfigurationen, Bewertungsumfang und das separate PaperFinding-Ergebnis auf 66 Validierungsfragen stehen im [ausführlichen Benchmark-Bericht (Englisch)](../benchmarks/README.md).
+**Bewertungsumfang:** Dies sind selbst berichtete lokale/interne Ergebnisse. Spitzenwerte in den aufgeführten Vergleichen belegen weder einen offiziellen ersten Rang noch statistisch signifikante Verbesserungen.
 
 ## Kernkompetenzen
 

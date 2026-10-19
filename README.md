@@ -206,7 +206,7 @@ AIPOCH Open-Science achieved **79.05** with **gpt-5.6-sol (xhigh)** in an intern
 
 The comparison mixes different judge-coverage patterns and should not be interpreted as an official ranking under uniform judging conditions.
 
-**Evaluation scope:** These are self-reported local/internal results. Leading the listed comparisons does not establish official first-place leaderboard status or statistically significant improvements. See the [detailed benchmark report](docs/benchmarks/README.md) for source dates, model/runtime configurations, evaluation scope, and the separate 66-query PaperFinding validation result.
+**Evaluation scope:** These are self-reported local/internal results. Leading the listed comparisons does not establish official first-place leaderboard status or statistically significant improvements.
 
 ## Core Capabilities
 
