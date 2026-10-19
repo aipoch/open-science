@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import { bindPdfTranslation } from '../../src/reader/source.js'
-import { groupPdfTranslationPages } from '../../src/reader/layout.js'
+import { groupPdfTranslationPages, type PdfLayoutPage } from '../../src/reader/layout.js'
 
 const text = (str: string, x = 40, y = 100) => ({
   str,
@@ -448,7 +448,7 @@ it('keeps the synthetic abstract intact after legacy multiplication decoding', a
 it('extracts the native clinical dose paragraph as one checked body region', async () => {
   const { source: expected, page: native } = readPdfTranslationCases<{
     source: string
-    page: import('./pdf-translation-layout').PdfLayoutPage
+    page: PdfLayoutPage
   }>('wrapped-dose-native-body.jsonl')[0]
   const fixture = setup()
   fixture.page.getViewport.mockReturnValue({
@@ -481,7 +481,7 @@ it('extracts the native clinical dose paragraph as one checked body region', asy
 it.each(
   readPdfTranslationCases<{
     name: string
-    page: import('./pdf-translation-layout').PdfLayoutPage
+    page: PdfLayoutPage
   }>('observed-time-and-numeric-tail.jsonl')
 )('$name extracts one region without changing native ownership', async ({ page: native }) => {
   const fixture = setup()
@@ -512,7 +512,7 @@ it.each(
 it('keeps the verified reference/model-script paragraph in one region, apart from its footnote', async () => {
   const { source: expected, page: native } = readPdfTranslationCases<{
     source: string
-    page: import('./pdf-translation-layout').PdfLayoutPage
+    page: PdfLayoutPage
   }>('reference-script-native-seam.jsonl')[0]
   const fixture = setup()
   fixture.page.getViewport.mockReturnValue({
@@ -544,7 +544,7 @@ it('keeps the verified reference/model-script paragraph in one region, apart fro
 
 it('keeps short wrapped prose in separate physical rows outside its protected formula', async () => {
   const { page: native } = readPdfTranslationCases<{
-    page: import('./pdf-translation-layout').PdfLayoutPage
+    page: PdfLayoutPage
   }>('short-formula-prose-native.jsonl')[0]
   const fixture = setup()
   fixture.page.getViewport.mockReturnValue({
