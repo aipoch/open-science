@@ -518,6 +518,12 @@ export function verifiedPromiseIdentityOwnerSplit(
 
 export function verifiedFuzzyMatchOwnerSplit(base, head, baseManifest, headManifest, options = {}) {
   // Its existing behavior suite belongs to the composer facade and must keep that owner.
+  if (
+    !headManifest.modules.shared_fuzzy_match?.testFiles.consumer.includes(
+      'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'
+    )
+  )
+    return new Set()
   return verifiedPureHelperSplit(
     base,
     head,

@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
@@ -17,7 +17,9 @@ describe.each([
 ] as const)('%s boundary', (moduleId, file, includeOwnerTest) => {
   const source = `src/shared/${file}.ts`
   const test = `src/shared/${file}.test.ts`
-  const consumer = 'src/consumer.test.ts'
+  const consumer = includeOwnerTest
+    ? 'src/consumer.test.ts'
+    : 'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'
   const uncertain = 'src/runtime.test.ts'
 
   function fixture(implementation = 'export const joinPdfTextItems = () => "text"') {
@@ -85,7 +87,7 @@ describe.each([
     put(source, implementation)
     put(test, `import './${file}'`)
     put('src/shared/other.ts', 'export {}')
-    put(consumer, `import './shared/${file}'`)
+    put(consumer, `import './${relative(dirname(consumer), source).replaceAll('\\', '/')}'`)
     put(uncertain, 'import(moduleName)')
     const base = commit()
     const remaining = {
@@ -134,6 +136,16 @@ describe.each([
       expect(state.inspect().ok).toBe(false)
     }
   })
+
+  if (!includeOwnerTest)
+    it('requires the existing composer behavior suite specifically as consumer evidence', () => {
+      const state = fixture()
+      state.target.testFiles.consumer = state.target.testFiles.consumer.filter(
+        (path) => path !== consumer
+      )
+      state.target.testFiles.contract.push(consumer)
+      expect(state.inspect().ok).toBe(false)
+    })
 
   it('rejects a pure-looking utility with unbounded runtime inputs', () => {
     expect(
