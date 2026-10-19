@@ -394,14 +394,12 @@ const updatePdfSearchHighlights = (
   if (!scroll || !query) return
   const allRanges: Range[] = []
   let selectedRange: Range | undefined
-  for (const page of scroll.querySelectorAll<HTMLElement>('[data-page-number]')) {
-    const layer = Array.from(page.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')).find(
-      (element) => Boolean(element.closest('[data-pdf-translated-page]')) === translated
-    )
-    if (!layer) continue
+  for (const layer of scroll.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')) {
+    if (Boolean(layer.closest('[data-pdf-translated-page]')) !== translated) continue
+    const page = layer.closest<HTMLElement>('[data-pdf-page-number]')
     const pageRanges = textRangesForQuery(layer, query)
     allRanges.push(...pageRanges)
-    if (Number(page.dataset.pageNumber) === selected?.pageNumber) {
+    if (Number(page?.dataset.pdfPageNumber) === selected?.pageNumber) {
       selectedRange = pageRanges[selected.occurrence]
     }
   }
@@ -2454,6 +2452,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           : { aspectRatio: outlineAspectRatio ?? displayedAspectRatio }
       }
       data-page-number={pageMarker ? pageNumber : undefined}
+      data-pdf-page-number={pageNumber}
       data-pdf-page-rotation={pageRotation}
       data-pdf-page-ready={status === 'ready'}
     >
@@ -3409,9 +3408,16 @@ export const PdfPreviewContent = ({
         query: searchQuery,
         match
       }
-      scrollToPage(match.pageNumber)
+      scrollToPage(searchTranslated ? match.pageNumber : viewPageForSource(match.pageNumber))
     },
-    [searchDocument, searchTranslated, resourceRequestKey, searchQuery, scrollToPage]
+    [
+      searchDocument,
+      searchTranslated,
+      resourceRequestKey,
+      searchQuery,
+      scrollToPage,
+      viewPageForSource
+    ]
   )
   const navigateToPage = (pageNumber: number, item?: PdfOutlineItem): void => {
     if (item && reflowPageNumbers && effectiveRendition !== 'original') {

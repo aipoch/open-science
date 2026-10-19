@@ -1373,6 +1373,138 @@ describe('PdfPreviewContent', () => {
   })
 
   it.each([
+    { sourcePages: [[1], [1], [2]], expectedRow: 3 },
+    { sourcePages: [[1, 2]], expectedRow: 1 }
+  ])(
+    'finds original page two in reflow comparison row $expectedRow',
+    async ({ sourcePages, expectedRow }) => {
+      observe()
+      const highlights = new Map<string, Set<Range>>()
+      vi.stubGlobal('CSS', { highlights })
+      vi.stubGlobal(
+        'Highlight',
+        class extends Set<Range> {
+          constructor(...ranges: Range[]) {
+            super(ranges)
+          }
+        }
+      )
+      const basePage = await (
+        getPage as unknown as (number: number) => Promise<Record<string, unknown>>
+      )(1)
+      getPage.mockImplementation(async (pageNumber: number) => ({
+        ...basePage,
+        getTextContent: async () => ({
+          items: [{ str: pageNumber === 2 ? 'needle' : 'first page' }],
+          styles: {}
+        })
+      }))
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          fingerprints: ['fp'],
+          getPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn()
+      } as never)
+      const props = {
+        path: 'reflow-search.pdf',
+        name: 'reflow-search.pdf',
+        source: 'local' as const
+      }
+      const source = createPdfTranslationSource({
+        resourceRequestKey: `${createPreviewResourceKey(props)}:0`,
+        fingerprint: 'fp',
+        pages: Array.from({ length: 2 }, () => ({ width: 600, height: 800 })),
+        units: [
+          {
+            id: 'a',
+            source: 'needle',
+            fragments: [
+              { pageNumber: 2, rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 }, items: [] }
+            ]
+          }
+        ]
+      })
+      const result = { id: 'a', translationSource: 'needle', translation: 'translated needle' }
+      vi.spyOn(pdfTranslations, 'createPdfTranslationBinder').mockReturnValue(async () => ({
+        ...source,
+        units: [{ ...source.units[0], ...result }]
+      }))
+      const ready = {
+        status: 'ready' as const,
+        document: {
+          numPages: sourcePages.length,
+          getPage: vi.fn(async () => ({
+            ...basePage,
+            getTextContent: async () => ({ items: [{ str: 'translated needle' }], styles: {} })
+          }))
+        },
+        pages: sourcePages.map(() => ({ width: 600, height: 800, rotation: 0 })),
+        sourcePageNumbers: sourcePages.map((pages) => pages[0]),
+        sourcePages,
+        retainedUnitIds: [],
+        originalUnitCount: 0
+      }
+      vi.spyOn(translationDocuments, 'usePdfTranslationDocument').mockReturnValue({
+        state: ready,
+        ready,
+        updateAvailable: false,
+        isCurrent: true,
+        unchangedLayoutUnitIds: [],
+        unfilledUnitIds: [],
+        layoutFailures: {},
+        refresh: vi.fn(),
+        retry: vi.fn(),
+        registerDisposer: () => () => {}
+      } as never)
+      await act(async () =>
+        root.render(
+          <PdfPreviewContent
+            {...props}
+            translationLayout="reflow"
+            translationSource={source}
+            translation={{ source, units: [result] }}
+          />
+        )
+      )
+      await openReadingView()
+      await act(async () =>
+        fireEvent.click(within(readingRenditionGroup()).getByRole('button', { name: 'Compare' }))
+      )
+      // Supply PDF.js text layers while keeping canvas rendering outside this search regression.
+      for (const page of container.querySelectorAll<HTMLElement>('[data-pdf-page-number]')) {
+        const layer = document.createElement('div')
+        layer.dataset.pdfTextLayer = 'true'
+        const span = document.createElement('span')
+        span.textContent = page.closest('[data-pdf-translated-page]')
+          ? 'translated needle'
+          : page.dataset.pdfPageNumber === '2'
+            ? 'needle'
+            : 'first page'
+        layer.appendChild(span)
+        page.appendChild(layer)
+      }
+      vi.useFakeTimers()
+      vi.mocked(Element.prototype.scrollIntoView).mockClear()
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('1/1')
+      const row = container.querySelector(`[data-page-number="${expectedRow}"]`)!
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(row)
+      const current = Array.from(highlights.get('pdf-search-current') ?? [])
+      expect(current.map((range) => range.toString())).toEqual(['needle'])
+      expect(row.contains(current[0].startContainer)).toBe(true)
+      expect(
+        current[0].startContainer.parentElement?.closest('[data-pdf-translated-page]')
+      ).toBeNull()
+      expect(
+        Array.from(highlights.get('pdf-search-results') ?? [], (range) => range.toString())
+      ).toEqual(['needle'])
+    }
+  )
+
+  it.each([
     'artifact',
     'retry',
     'retry-sidebar',
