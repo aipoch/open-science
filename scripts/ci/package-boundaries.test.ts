@@ -502,7 +502,11 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   executeModuleTestPlan(durable, {
     environment: { npm_execpath: '/fixture/npm-cli.js' },
     spawn: (_command: string, args: string[]) => {
-      invocations.push(args)
+      invocations.push(
+        args.includes('test:module:arguments')
+          ? JSON.parse(readFileSync(args.at(-1)!, 'utf8'))
+          : args
+      )
       return { status: 0 }
     }
   })
@@ -569,7 +573,11 @@ it('routes download package changes downstream and host adapters without unchang
     executeModuleTestPlan(plan, {
       environment: { npm_execpath: '/fixture/npm-cli.js' },
       spawn: (_command: string, args: string[]) => {
-        invocations.push(args)
+        invocations.push(
+          args.includes('test:module:arguments')
+            ? JSON.parse(readFileSync(args.at(-1)!, 'utf8'))
+            : args
+        )
         return { status: 0 }
       }
     })
