@@ -50,8 +50,12 @@ children remain tracked descendants and are not exempt from cleanup checks.
 Discovery retains a native `QUERY_LIMITED_INFORMATION | SYNCHRONIZE` handle.
 Transient image-query errors 5/31/87 retain that exact identity for the next normal
 sample. There is no guessed image path, PID reopen, added fixed delay, or infinite
-retry. The existing six-minute observation deadline and 100 ms sampling cadence
-remain. Handle-open failures and other query errors remain fatal.
+retry. Observation has separate event-anchored budgets: two minutes from arming
+to a verified installer, six minutes from that installer's creation to its normal
+exit, then two minutes from its exit to the verified successor window. A visible
+successor cannot bypass a live or failed installer. Repeated samples never renew
+these deadlines. The 100 ms sampling cadence remains; handle-open failures and
+other query errors remain fatal.
 
 An unresolved live process cannot establish window ownership or permit completion.
 It must resolve through a successful query on the retained handle or a confirmed
@@ -62,6 +66,12 @@ require a verified successor and zero unresolved live identities, and still chec
 native installer presentation, ready receipts, and final process cleanup themselves.
 Current upgrades allow brief windowless process handoffs. A single
 sample's `successorPid` is not an acceptance result.
+
+Callers should wait for the owned installer's successful exit before starting a
+bounded successor-ready receipt wait. Starting that wait at the update click
+incorrectly consumes application-startup time while NSIS is still installing.
+Keep the original failed run and record installation/startup durations separately;
+do not reinterpret a previous deadline failure as a successful observation.
 
 Native NSIS can launch the successor through Explorer (`ExecShellAsUser`), outside
 the installer process tree. The observer also accepts that path only after finding

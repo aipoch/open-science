@@ -19,13 +19,11 @@ try {
   $observer = [HandoffObserver]::new($TargetPid,$Started,$Application,$Installer,$HelperResource,$ParentExecutable,$HandoffAppData)
   [Console]::Out.WriteLine('OPEN_SCIENCE_UPDATE_HANDOFF_OBSERVER_READY')
   [Console]::Out.Flush()
-  $deadline = [DateTime]::UtcNow.AddMinutes(6)
   do {
     if (Test-Path -LiteralPath ($Output + '.stop')) { throw 'Handoff observation cancelled after application failure' }
     $sample = $observer.Sample()
     $writer.WriteLine(($sample | ConvertTo-Json -Depth 7 -Compress))
-    if ($sample.successorPid -ne 0 -and $sample.unresolvedImages -eq 0) { $observer.RequireResolvedImages(); break }
-    if ([DateTime]::UtcNow -gt $deadline) { $observer.RequireResolvedImages(); throw 'No owned successor window before observation deadline' }
+    if ($observer.IsCompleteWithinDeadline($sample)) { $observer.RequireResolvedImages(); break }
     # Sampling cadence only; this never delays or controls a product transition.
     Start-Sleep -Milliseconds 100
   } while ($true)

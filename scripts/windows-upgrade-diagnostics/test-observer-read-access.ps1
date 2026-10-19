@@ -65,7 +65,7 @@ try {
   if (-not $readDenied) { throw 'Observer hid a real limited-query access denial' }
   $child.StandardInput.WriteLine('exit')
   if (-not $child.WaitForExit(10000)) { throw 'Fixture did not exit normally' }
-  if (-not $identity.process.HasExited -or $child.ExitCode -ne 0) { throw 'Recorded exit not confirmed' }
+  if (-not $identity.process.HasExited -or $child.ExitCode -ne 0 -or $identity.process.ExitCode -ne 0) { throw 'Recorded exit not confirmed' }
   @{status='PASS';pid=$child.Id;allAccessDenied=$denied;readDeniedRemainsFatal=$readDenied;readOnlyIdentity=$identity.path;exitCode=$child.ExitCode;forced=$false} | ConvertTo-Json | Set-Content -LiteralPath $Output
 } finally {
   if (-not $child.HasExited) { $child.StandardInput.WriteLine('exit'); if (-not $child.WaitForExit(10000)) { throw 'Synthetic fixture failed cleanup' } }

@@ -10,6 +10,7 @@ public sealed class ObservedProcess : IDisposable {
   [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr handle, out long created, out long exited, out long kernel, out long user);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr handle, out uint code);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   public IntPtr Handle { get; private set; }
   public DateTime StartTime { get; private set; }
@@ -41,6 +42,14 @@ public sealed class ObservedProcess : IDisposable {
     if(status==258) throw new TimeoutException("Observed fixture did not exit within ten seconds");
     if(status!=0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
   }
+  public int ExitCode {
+    get {
+      if(!HasExited) throw new InvalidOperationException("Observed process has not exited");
+      uint code;
+      if(!GetExitCodeProcess(Handle,out code)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+      return unchecked((int)code);
+    }
+  }
   public void Dispose() { if(Handle!=IntPtr.Zero) { CloseHandle(Handle); Handle=IntPtr.Zero; } }
 }
 public class HandoffIdentity {
@@ -58,6 +67,30 @@ public class HandoffSample {
   public List<HandoffWindow> windows = new List<HandoffWindow>();
   public List<object> identities = new List<object>();
   public int unresolvedImages;
+}
+// Each deadline is anchored to a retained process event, never renewed by another sample.
+public sealed class HandoffObservationBudget {
+  readonly DateTime armed;
+  public HandoffObservationBudget(DateTime started) { armed=started; }
+  public bool Check(DateTime now, DateTime? installerStarted, DateTime? installerExited, int? exitCode, bool successorReady) {
+    if(!installerStarted.HasValue) {
+      if(installerExited.HasValue || exitCode.HasValue) throw new InvalidOperationException("Installer exit without identity");
+      if(now>=armed.AddMinutes(2)) throw new TimeoutException("No owned installer before submission deadline");
+      return false;
+    }
+    if(installerStarted.Value<armed || installerStarted.Value>now) throw new InvalidOperationException("Installer lifetime outside observation");
+    if(installerStarted.Value>=armed.AddMinutes(2)) throw new TimeoutException("Owned installer exceeded submission deadline");
+    if(!installerExited.HasValue) {
+      if(exitCode.HasValue) throw new InvalidOperationException("Installer code without confirmed exit");
+      if(now>=installerStarted.Value.AddMinutes(6)) throw new TimeoutException("Owned installer did not exit before installation deadline");
+      return false;
+    }
+    if(installerExited.Value<installerStarted.Value || installerExited.Value>now) throw new InvalidOperationException("Invalid installer exit time");
+    if(!exitCode.HasValue || exitCode.Value!=0) throw new InvalidOperationException("Owned installer did not exit successfully: " + (exitCode.HasValue ? exitCode.Value.ToString() : "unconfirmed"));
+    if(installerExited.Value>=installerStarted.Value.AddMinutes(6)) throw new TimeoutException("Owned installer exceeded installation deadline");
+    if(now>=installerExited.Value.AddMinutes(2)) throw new TimeoutException("No owned successor window before readiness deadline");
+    return successorReady;
+  }
 }
 public class HandoffObserver : IDisposable {
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Entry {
@@ -81,6 +114,7 @@ public class HandoffObserver : IDisposable {
   readonly string app, installer, helperDigest;
   readonly string[] operationRoots;
   readonly DateTime boundary;
+  readonly HandoffObservationBudget observationBudget = new HandoffObservationBudget(DateTime.UtcNow);
   int installerPid, shellSuccessorPid;
   public HandoffObserver(int pid, string started, string application, string installerPath, string helper, string parentExecutable, string handoffAppData) {
     // .NET Framework treats drive-relative C:dir and root-relative \dir as rooted.
@@ -316,5 +350,14 @@ public class HandoffObserver : IDisposable {
     return sample;
   }
   public void RequireResolvedImages() { foreach(var identity in known.Values) RequireResolvedImage(identity); }
+  public bool IsCompleteWithinDeadline(HandoffSample sample) {
+    if(installerPid==0) return observationBudget.Check(DateTime.UtcNow,null,null,null,false);
+    var process=known[installerPid].process;
+    var exited=process.HasExited ? ReadExitTime(process) : null;
+    var code=exited.HasValue ? (int?)process.ExitCode : null;
+    // Read the clock after the native lifetime: the process may exit during this call.
+    return observationBudget.Check(DateTime.UtcNow,process.StartTime,exited,code,
+      sample.oldExited && sample.successorPid!=0 && sample.unresolvedImages==0);
+  }
   public void Dispose() { foreach(var identity in known.Values) identity.process.Dispose(); }
 }

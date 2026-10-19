@@ -4,12 +4,40 @@ $nativeSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'HandoffObserver
 # Fault injection affects only the native image query; identity handles and exits remain real.
 $query = 'if (!QueryFullProcessImageNameW(process.Handle, 0, buffer, ref size))'
 if (-not $nativeSource.Contains($query)) { throw 'Image query seam changed' }
-$nativeSource = $nativeSource.Replace('public class HandoffObserver : IDisposable {','public class HandoffObserver : IDisposable { public static bool DenyImage; public static int DenyPid; public static string RemoveRequestPath;')
+$nativeSource = $nativeSource.Replace('public class HandoffObserver : IDisposable {','public class HandoffObserver : IDisposable { public static bool DenyImage; public static int DenyPid; public static string RemoveRequestPath; public static Action BeforeInstallerExitRead;')
 $nativeSource = $nativeSource.Replace($query,'if (DenyImage && identity.pid==DenyPid) throw new System.ComponentModel.Win32Exception(5); ' + $query)
 $readRequest = 'var json=File.ReadAllText(requestPath);'
 if (-not $nativeSource.Contains($readRequest)) { throw 'Request read seam changed' }
 $nativeSource = $nativeSource.Replace($readRequest,'if (requestPath==RemoveRequestPath) { File.Delete(requestPath); RemoveRequestPath=null; } ' + $readRequest)
+$exitRead = 'var process=known[installerPid].process;'
+if (-not $nativeSource.Contains($exitRead)) { throw 'Installer lifetime seam changed' }
+$nativeSource = $nativeSource.Replace($exitRead,'if(BeforeInstallerExitRead!=null) BeforeInstallerExitRead(); ' + $exitRead)
 Add-Type -TypeDefinition $nativeSource -ReferencedAssemblies 'System.Web.Extensions'
+# Replay the observed slow-install timing without sleeping or changing product clocks.
+$armed = [DateTime]::SpecifyKind([DateTime]'2026-10-19T12:00:00', [DateTimeKind]::Utc)
+$budget = [HandoffObservationBudget]::new($armed)
+$installStarted = $armed.AddSeconds(40)
+$installExited = $installStarted.AddSeconds(285)
+if ($budget.Check($armed.AddSeconds(39),$null,$null,$null,$false)) { throw 'Completed without installer' }
+if ($budget.Check($installStarted.AddSeconds(280),$installStarted,$null,$null,$true)) { throw 'Visible successor bypassed live installer' }
+if ($budget.Check($installExited.AddSeconds(10),$installStarted,$installExited,0,$false)) { throw 'Completed without ready successor' }
+if (-not $budget.Check($installExited.AddSeconds(50),$installStarted,$installExited,0,$true)) { throw 'Healthy successor lost its startup budget' }
+function RejectBudget([string]$Name,[DateTime]$Now,$Start,$Exit,$Code,[bool]$Ready) {
+  $rejected=$false
+  try { $budget.Check($Now,$Start,$Exit,$Code,$Ready) | Out-Null } catch { $rejected=$true }
+  if (-not $rejected) { throw "Deadline accepted invalid completion: $Name" }
+}
+RejectBudget 'no installer' $armed.AddMinutes(2) $null $null $null $false
+RejectBudget 'old installer' $armed.AddMinutes(1) $armed.AddSeconds(-1) $null $null $false
+RejectBudget 'late installer submission' $armed.AddMinutes(3) $armed.AddMinutes(2) $null $null $false
+RejectBudget 'live installer timeout' $installStarted.AddMinutes(6) $installStarted $null $null $true
+RejectBudget 'late installer exit' $installStarted.AddMinutes(7) $installStarted $installStarted.AddMinutes(6) 0 $true
+RejectBudget 'failed installer' $installExited $installStarted $installExited 7 $true
+RejectBudget 'unconfirmed exit' $installExited $installStarted $installExited $null $true
+RejectBudget 'ready timeout' $installExited.AddMinutes(2) $installStarted $installExited 0 $false
+RejectBudget 'late ready must still fail' $installExited.AddMinutes(2) $installStarted $installExited 0 $true
+# A repeated successful/unsuccessful sample never extends the event-anchored deadline.
+RejectBudget 'repeated sample cannot renew budget' $installExited.AddMinutes(3) $installStarted $installExited 0 $true
 $operation = 'd4b596b1-9356-498c-a1a0-b4c906117c82'
 $root = 'C:\synthetic\UpdateHandoffs'
 $helper = Join-Path $root "$operation\helper.exe"
@@ -170,8 +198,16 @@ try {
     $installerPid = [int]$Matches[1]
     $sample = $observer.Sample()
     if (@($sample.identities | Where-Object { $_.pid -eq $installerPid -and $_.role -eq 'installer' }).Count -ne 1) { throw 'Installer identity missing' }
-    $child.StandardInput.WriteLine('exit')
-    if (-not $child.WaitForExit(10000) -or $child.ExitCode -ne 0) { throw 'Original fixture did not exit normally' }
+    # Force the actual installer to exit inside completion inspection, before its
+    # native timestamps are read. A clock captured before this event is invalid.
+    [HandoffObserver]::BeforeInstallerExitRead = [Action]{
+      $child.StandardInput.WriteLine('exit')
+      if (-not $child.WaitForExit(10000) -or $child.ExitCode -ne 0) { throw 'Original fixture did not exit normally' }
+    }
+    try {
+      if ($observer.IsCompleteWithinDeadline($sample)) { throw 'Installer exit alone allowed completion' }
+    } finally { [HandoffObserver]::BeforeInstallerExitRead=$null }
+    $live += @{scenario='installer-exits-during-completion-inspection';normalExit=$true;forced=$false}
     $installedPath = Join-Path $shellDirectory 'installed.receipt'
     $readyPath = Join-Path $shellDirectory 'ready.receipt'
     [IO.File]::WriteAllText($installedPath,"$shellOperation`r`ninstalled`r`n")
