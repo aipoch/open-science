@@ -153,12 +153,7 @@
     "Retry startup": "重试启动",
     "Open startup logs": "打开启动日志",
     "Could not open the logs folder.": "无法打开日志文件夹。",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。",
-    "Installing the Open-Science update…": "正在安装 Open-Science 更新…",
-    "Opening the updated Open-Science…": "正在打开更新后的 Open-Science…",
-    "The Open-Science update could not finish.": "未能完成 Open-Science 更新。",
-    "Close update window": "关闭更新窗口",
-    "The update status could not be confirmed. Closing this window does not stop installation.": "无法确认更新状态。关闭此窗口不会停止安装。"
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。"
   },
   "renderer": {
     "Update preparation failed": "更新准备失败",

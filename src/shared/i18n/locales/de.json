@@ -154,12 +154,7 @@
     "Retry startup": "Start erneut versuchen",
     "Open startup logs": "Startprotokolle öffnen",
     "Could not open the logs folder.": "Der Protokollordner konnte nicht geöffnet werden.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Dieses verschlüsselte Datenformat wird von dieser App-Version nicht unterstützt. Verwenden Sie eine kompatible App-Version oder stellen Sie das ursprüngliche Profil wieder her. Vorhandene Zugangsdaten wurden nicht ersetzt.",
-    "Installing the Open-Science update…": "Open-Science-Update wird installiert…",
-    "Opening the updated Open-Science…": "Aktualisiertes Open-Science wird geöffnet…",
-    "The Open-Science update could not finish.": "Das Open-Science-Update konnte nicht abgeschlossen werden.",
-    "Close update window": "Update-Fenster schließen",
-    "The update status could not be confirmed. Closing this window does not stop installation.": "Der Aktualisierungsstatus konnte nicht bestätigt werden. Das Schließen dieses Fensters beendet die Installation nicht."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Dieses verschlüsselte Datenformat wird von dieser App-Version nicht unterstützt. Verwenden Sie eine kompatible App-Version oder stellen Sie das ursprüngliche Profil wieder her. Vorhandene Zugangsdaten wurden nicht ersetzt."
   },
   "renderer": {
     "Update preparation failed": "Vorbereitung des Updates fehlgeschlagen",
