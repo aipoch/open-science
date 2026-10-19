@@ -7742,6 +7742,10 @@
     "Save body area": "Сохранить область основного текста",
     "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
-    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения."
+    "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
+    "Waiting for browser…": "Ожидание браузера…",
+    "Receiving package…": "Получение пакета…",
+    "Cancel transfer": "Отменить передачу",
+    "Transfer cancelled": "Передача отменена"
   }
 }

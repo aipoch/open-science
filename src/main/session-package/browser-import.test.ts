@@ -21,7 +21,13 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
-async function setup(options: { idleMs?: number; receive?: () => Promise<boolean> } = {}) {
+async function setup(
+  options: {
+    idleMs?: number
+    receive?: () => Promise<boolean>
+    cancelReceived?: (path: string) => Promise<void>
+  } = {}
+) {
   const port = await findBrowserImportPort()
   const root = await mkdtemp(join(tmpdir(), 'browser-package-'))
   disposers.push(() => rm(root, { recursive: true, force: true }))
@@ -34,6 +40,7 @@ async function setup(options: { idleMs?: number; receive?: () => Promise<boolean
       releases.push(consumed)
       return options.receive?.()
     },
+    cancelReceived: options.cancelReceived,
     idleMs: options.idleMs
   })
   disposers.push(() => bridge.close())
@@ -301,5 +308,199 @@ it('automatically receives without a website grant and exposes only capability d
   } finally {
     await receiver.close()
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('reports real received bytes and cancels only the selected transfer with a signed result', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  const id = f.bridge.snapshot[0].id
+  expect(f.bridge.snapshot).toEqual([
+    { id, filename: 'study.science', state: 'waiting', completedBytes: 0, totalBytes: 5 }
+  ])
+  await f.chunk('he')
+  expect(f.bridge.snapshot[0]).toMatchObject({
+    state: 'receiving',
+    completedBytes: 2,
+    totalBytes: 5
+  })
+  await f.bridge.cancel(id)
+  expect(f.bridge.snapshot[0]).toMatchObject({ state: 'cancelled', completedBytes: 2 })
+  expect(await readdir(f.root)).toEqual([])
+  const cancelled = await f.request('/ready?challenge=' + 'cd'.repeat(32))
+  expect(cancelled.status).toBe(410)
+  expect(await cancelled.json()).toEqual({
+    code: 'cancelled',
+    proof: createHmac('sha256', Buffer.from(secret, 'hex')).update('cancelled').digest('hex')
+  })
+  expect((await f.chunk('llo', 2)).status).toBe(410)
+  expect(f.received).toEqual([])
+})
+
+it('joins an in-flight write before removing a desktop-cancelled source', async () => {
+  let release!: () => void
+  let writing!: () => void
+  const started = new Promise<void>((resolve) => {
+    writing = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const realOpen = fs.open
+  vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+    const handle = await realOpen(...args)
+    const write = handle.write.bind(handle)
+    vi.spyOn(handle, 'write').mockImplementationOnce(async (...args) => {
+      writing()
+      await gate
+      return write(...args)
+    })
+    return handle
+  })
+  syncBuiltinESMExports()
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  const chunk = f.chunk('hello')
+  let cancelling: Promise<void> | undefined
+  try {
+    await started
+    cancelling = f.bridge.cancel(f.bridge.snapshot[0].id)
+    expect((await chunk).status).toBe(410)
+    expect(f.bridge.active).toBe(true)
+    expect(await readdir(f.root)).toHaveLength(1)
+    release()
+    await cancelling
+    expect(await readdir(f.root)).toEqual([])
+    expect(f.received).toEqual([])
+  } finally {
+    release()
+    await cancelling
+    await chunk
+  }
+})
+
+it.each([true, false])(
+  'coordinates desktop cancellation with asynchronous admission (accepted: %s)',
+  async (accepted) => {
+    let admit!: (value: boolean) => void
+    let entered!: () => void
+    const enteredQueue = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const admission = new Promise<boolean>((resolve) => {
+      admit = resolve
+    })
+    const queuedCancellation: string[] = []
+    const f = await setup({
+      receive: () => {
+        entered()
+        return admission
+      },
+      cancelReceived: async (path) => {
+        expect(await readFile(path, 'utf8')).toBe('hello')
+        queuedCancellation.push(path)
+        f.releases[0]()
+      }
+    })
+    await f.bridge.begin(launch(f.port))
+    const id = f.bridge.snapshot[0].id
+    await f.chunk('hello')
+    const complete = f.request('/complete', { method: 'POST' })
+    let cancelling: Promise<void> | undefined
+    try {
+      await enteredQueue
+      cancelling = f.bridge.cancel(id)
+      expect((await complete).status).toBe(410)
+      expect(await readFile(f.received[0], 'utf8')).toBe('hello')
+      admit(accepted)
+      await cancelling
+      expect(queuedCancellation).toEqual(accepted ? f.received : [])
+      await vi.waitFor(async () => expect(await readdir(f.root)).toEqual([]))
+    } finally {
+      admit(true)
+      await cancelling
+      await complete
+    }
+  }
+)
+
+it('does not cancel another waiting transfer or expose protocol secrets in progress', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  const first = f.bridge.snapshot[0].id
+  const secondPort = await findBrowserImportPort()
+  await f.bridge.begin(launch(secondPort).replace(secret, 'ef'.repeat(32)))
+  const second = f.bridge.snapshot[1].id
+  await f.bridge.cancel(first)
+  expect(f.bridge.snapshot).toMatchObject([
+    { id: first, state: 'cancelled' },
+    { id: second, state: 'waiting' }
+  ])
+  expect(JSON.stringify(f.bridge.snapshot)).not.toContain(secret)
+  expect(JSON.stringify(f.bridge.snapshot)).not.toContain('ef'.repeat(32))
+  expect(await readdir(f.root)).toHaveLength(1)
+})
+
+it('keeps failed cancellation cleanup visible and retryable without accepting more bytes', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  await f.chunk('he')
+  const id = f.bridge.snapshot[0].id
+  vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('Cleanup blocked'))
+  syncBuiltinESMExports()
+  await expect(f.bridge.cancel(id)).rejects.toThrow('Cleanup blocked')
+  expect(f.bridge.snapshot[0]).toMatchObject({ state: 'cancelled', cleanupPending: true })
+  expect(f.bridge.active).toBe(true)
+  expect((await f.chunk('llo', 2)).status).toBe(410)
+  await f.bridge.cancel(id)
+  expect(f.bridge.active).toBe(false)
+  expect(await readdir(f.root)).toEqual([])
+})
+
+it('returns a signed cancellation without waiting for an unfinished upload body', async () => {
+  const { request: httpRequest } = await import('node:http')
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  const id = f.bridge.snapshot[0].id
+  const digest = checksum('hello')
+  const signature = createHmac('sha256', Buffer.from(secret, 'hex'))
+    .update(`PUT\n/v1/import/chunk?offset=0\n${digest}`)
+    .digest('hex')
+  const incoming = httpRequest(`http://127.0.0.1:${f.port}/v1/import/chunk?offset=0`, {
+    method: 'PUT',
+    headers: {
+      Origin: origin,
+      Authorization: `HMAC ${signature}`,
+      'X-Chunk-SHA256': digest,
+      'Content-Length': '33'
+    }
+  })
+  const response = new Promise<{ status?: number; body: string }>((resolve, reject) => {
+    incoming.once('error', reject)
+    incoming.once('response', (response) => {
+      let body = ''
+      response.on('data', (data) => {
+        body += data
+      })
+      response.once('end', () => resolve({ status: response.statusCode, body }))
+      response.once('error', reject)
+    })
+  })
+  // Deliberately never finish the advertised request body.
+  incoming.write(Buffer.alloc(1))
+  try {
+    await vi.waitFor(() => expect(f.bridge.snapshot[0].state).toBe('receiving'))
+    await f.bridge.cancel(id)
+    const result = await response
+    expect(result.status).toBe(410)
+    expect(JSON.parse(result.body)).toMatchObject({
+      code: 'cancelled',
+      proof: createHmac('sha256', Buffer.from(secret, 'hex')).update('cancelled').digest('hex')
+    })
+    expect(await readdir(f.root)).toEqual([])
+    expect(f.received).toEqual([])
+  } finally {
+    incoming.destroy()
+    await response.catch(() => undefined)
   }
 })

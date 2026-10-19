@@ -7270,6 +7270,10 @@
     "Save body area": "본문 영역 저장",
     "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
     "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
-    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다."
+    "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다.",
+    "Waiting for browser…": "브라우저 대기 중…",
+    "Receiving package…": "패키지 수신 중…",
+    "Cancel transfer": "전송 취소",
+    "Transfer cancelled": "전송이 취소됨"
   }
 }

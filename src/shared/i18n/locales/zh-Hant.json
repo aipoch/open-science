@@ -7272,6 +7272,10 @@
     "Save body area": "儲存正文區域",
     "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
     "You can configure up to 32 pages.": "最多可設定 32 頁。",
-    "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。"
+    "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。",
+    "Waiting for browser…": "等待瀏覽器…",
+    "Receiving package…": "正在接收研究包…",
+    "Cancel transfer": "取消傳輸",
+    "Transfer cancelled": "傳輸已取消"
   }
 }

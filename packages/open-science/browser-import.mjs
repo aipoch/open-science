@@ -177,6 +177,7 @@ export function prepareBrowserImport(file, options = {}) {
     .then((bytes) => crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['encrypt']))
   let sending = false
   let received = false
+  let cancelled
 
   return Object.freeze({
     url,
@@ -205,12 +206,13 @@ export function prepareBrowserImport(file, options = {}) {
       )
         throw new Error('Invalid readiness retry options.')
       if (sending) throw new Error('This browser transfer is already running.')
+      if (cancelled) throw cancelled
       if (received) return { received: true }
       signal?.throwIfAborted()
       sending = true
       let verified = false
-      const request = (path, init = {}) =>
-        fetch(base + path, {
+      const request = async (path, init = {}) => {
+        const response = await fetch(base + path, {
           mode: 'cors',
           credentials: 'omit',
           cache: 'no-store',
@@ -221,6 +223,26 @@ export function prepareBrowserImport(file, options = {}) {
             [signal, init.signal ?? AbortSignal.timeout(30_000)].filter(Boolean)
           )
         })
+        if (response.status === 410) {
+          const value = await response.json().catch(() => {
+            throw new BrowserImportError(
+              'incompatible',
+              'Could not verify the local receiver identity.'
+            )
+          })
+          if (value?.code !== 'cancelled' || value.proof !== (await sign('cancelled')))
+            throw new BrowserImportError(
+              'incompatible',
+              'Could not verify the local receiver identity.'
+            )
+          cancelled = new BrowserImportError(
+            'cancelled',
+            'The transfer was cancelled in Open-Science. Prepare a new transfer to try again.'
+          )
+          throw cancelled
+        }
+        return response
+      }
       try {
         onPhase?.('waiting-for-receiver')
         // Browser protocol prompts have no observable completion event. Only this secret's proof
@@ -269,7 +291,7 @@ export function prepareBrowserImport(file, options = {}) {
               })
             } catch (error) {
               readySignal.throwIfAborted()
-              if (error.code === 'incompatible') throw error
+              if (error.code === 'incompatible' || error.code === 'cancelled') throw error
               if (error instanceof SyntaxError)
                 throw new BrowserImportError(
                   'incompatible',
@@ -352,6 +374,7 @@ export function prepareBrowserImport(file, options = {}) {
           }).catch(() => undefined)
         }
         signal?.throwIfAborted()
+        if (error.code === 'cancelled' || error.code === 'incompatible') throw error
         if (verified)
           throw new BrowserImportError(
             'transfer-failed',

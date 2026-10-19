@@ -24,6 +24,7 @@ type Owners = {
   projectRepository: Pick<ProjectRepository, 'get'>
   sessionRepository: Pick<SessionRepository, 'loadSession'>
   isPackageHandoffHeld: () => boolean
+  cancelBrowserTransfer?: (id: string) => Promise<void>
   onSensitiveContentFailure?: (
     request: SessionPackageRequest,
     evidence: SensitiveContentEvidence[],
@@ -39,10 +40,12 @@ export const createSessionPackageDesktop = ({
   projectRepository,
   sessionRepository,
   isPackageHandoffHeld,
-  onSensitiveContentFailure
+  onSensitiveContentFailure,
+  cancelBrowserTransfer
 }: Owners): SessionPackageDesktop => {
   return new SessionPackageDesktop({
     service: sessionPackageService,
+    cancelBrowserTransfer,
     translate,
     withDataRootWrite,
     assertCanStart: () => {

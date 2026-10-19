@@ -7272,6 +7272,10 @@
     "Save body area": "本文領域を保存",
     "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
-    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。"
+    "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
+    "Waiting for browser…": "ブラウザーを待機中…",
+    "Receiving package…": "パッケージを受信中…",
+    "Cancel transfer": "転送をキャンセル",
+    "Transfer cancelled": "転送がキャンセルされました"
   }
 }

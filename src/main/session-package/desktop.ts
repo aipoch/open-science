@@ -41,6 +41,7 @@ type NativeImportFile = {
   originClientId?: string
   onReleased?: () => void
   validateBeforeTarget?: boolean
+  work?: Promise<void>
 }
 class PackageSourceUnavailableError extends Error {}
 
@@ -74,6 +75,7 @@ export class SessionPackageDesktop {
         evidence: SensitiveContentEvidence[],
         sources: PackageSensitiveContentSource[]
       ) => void
+      cancelBrowserTransfer?: (id: string) => Promise<void>
       assertCanStart?: () => void
     }
   ) {
@@ -176,7 +178,7 @@ export class SessionPackageDesktop {
     this.operations.setPendingImports(
       this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
     )
-    void this.import(
+    file.work = this.import(
       undefined,
       file.originClientId,
       file.target ?? {},
@@ -193,9 +195,36 @@ export class SessionPackageDesktop {
       })
   }
 
+  async cancelReceivedFile(path: string): Promise<void> {
+    await this.enqueueing
+    path = await realpath(path).catch(() => path)
+    // Only this source is cancelled. Other pending imports and an unrelated active operation survive.
+    const pending = this.pendingFiles.filter((file) => file.path === path)
+    this.pendingFiles = this.pendingFiles.filter((file) => file.path !== path)
+    for (const file of pending) file.onReleased?.()
+    this.operations.setPendingImports(
+      this.pendingFiles.map(({ id, filename }) => ({ id, filename }))
+    )
+    const active = this.activeFile
+    if (active?.path === path) {
+      this.operations.cancel()
+      await active.work
+      active.onReleased?.()
+    }
+    if (this.lastImportFile?.path === path) {
+      this.lastImportFile.onReleased?.()
+      this.lastImportFile = undefined
+    }
+  }
+
   respond(
     request: PackageOperationRequest
   ): PackageOperationSnapshot | null | Promise<PackageOperationSnapshot | null> {
+    if (request.action === 'cancel-browser-transfer') {
+      return Promise.resolve(this.options.cancelBrowserTransfer?.(request.transferId)).then(
+        () => this.operations.snapshot
+      )
+    }
     if (request.action === 'export-with-sensitive-content') {
       const failed = this.operations.snapshot
       if (

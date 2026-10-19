@@ -225,11 +225,14 @@ export function composeSessionPackageSurfaces({
     projectRepository,
     sessionRepository,
     isPackageHandoffHeld: () => packageHandoffHeld.current,
+    cancelBrowserTransfer: (id) => browserPackageImport.cancel(id),
     onSensitiveContentFailure: rememberSensitiveContentFailure
   })
   const browserPackageImport = new BrowserPackageImport({
     root: join(resolveConfigRoot(), 'browser-package-imports'),
-    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed, true)
+    receive: (path, consumed) => sessionPackageDesktop.enqueueFile(path, consumed, true),
+    onChanged: (transfers) => sessionPackageDesktop.operations.setBrowserTransfers(transfers),
+    cancelReceived: (path) => sessionPackageDesktop.cancelReceivedFile(path)
   })
   // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
   sessionPackageDesktopLifecycle.isActive = () =>

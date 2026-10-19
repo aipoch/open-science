@@ -7433,6 +7433,10 @@
     "Save body area": "Textbereich speichern",
     "Body areas are unavailable on rotated pages.": "Auf gedrehten Seiten sind Textbereiche nicht verfügbar.",
     "You can configure up to 32 pages.": "Sie können bis zu 32 Seiten konfigurieren.",
-    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet."
+    "Native reading order will be used for your next message.": "Für Ihre nächste Nachricht wird die native Lesereihenfolge verwendet.",
+    "Waiting for browser…": "Warten auf den Browser…",
+    "Receiving package…": "Paket wird empfangen…",
+    "Cancel transfer": "Übertragung abbrechen",
+    "Transfer cancelled": "Übertragung abgebrochen"
   }
 }

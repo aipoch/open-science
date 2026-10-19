@@ -14,6 +14,7 @@ import {
   formatPackageBytes
 } from '../../shared/session-package'
 import type {
+  BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot,
   PackageProgress,
@@ -36,6 +37,7 @@ export class SessionPackageOperation {
   private importResponse?: (target?: SessionPackageImportRequest) => void
   private pendingImports: NonNullable<PackageOperationSnapshot['pendingImports']> = []
   private importQueueFull = false
+  private browserTransfers: BrowserPackageTransfer[] = []
   private selection?: (selection: PackageFileSelection) => void
   private lastProgressAt = 0
   private autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
@@ -53,6 +55,7 @@ export class SessionPackageOperation {
     return this.current
       ? structuredClone({
           ...this.current,
+          browserTransfers: this.browserTransfers,
           pendingImports: this.pendingImports,
           importQueueFull: this.importQueueFull
         })
@@ -147,6 +150,27 @@ export class SessionPackageOperation {
       presentationRevision: (this.current.presentationRevision ?? 0) + 1
     }
     this.publish()
+  }
+
+  setBrowserTransfers(transfers: BrowserPackageTransfer[]): void {
+    const added = transfers.some((t) => !this.browserTransfers.some((old) => old.id === t.id))
+    this.browserTransfers = transfers
+    // Receipt presentation does not acquire the single import/export operation owner.
+    if (!this.current || this.current.browserReceiptOnly) {
+      if (!this.current && !transfers.length) return
+      this.current = {
+        id: this.current?.id ?? randomUUID(),
+        kind: 'import',
+        browserReceiptOnly: true,
+        state: transfers.some((t) => t.state !== 'cancelled' || t.cleanupPending)
+          ? 'running'
+          : 'cancelled',
+        progress: { phase: 'preparing' },
+        presentationRevision: this.current?.presentationRevision ?? 0
+      }
+    }
+    if (added) this.present()
+    else this.publish()
   }
 
   setPendingImports(

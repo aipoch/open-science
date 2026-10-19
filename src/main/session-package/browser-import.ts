@@ -1,9 +1,10 @@
 import { parseBrowserImportUrl, type BrowserImportRequest } from './browser-import-protocol'
 export { parseBrowserImportUrl } from './browser-import-protocol'
-import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createDecipheriv, createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, open, readdir, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { BrowserPackageTransfer } from '../../shared/session-package'
 
 // Version 1 deliberately bounds browser staging independently of the research archive format.
 const MAX_BYTES = 2 * 1024 ** 3
@@ -14,8 +15,18 @@ type BrowserImportOptions = {
   root: string
   receive: (path: string, consumed: () => void) => void | boolean | Promise<boolean>
   idleMs?: number
+  onChanged?: (transfers: BrowserPackageTransfer[]) => void
+  cancelReceived?: (path: string) => Promise<void>
 }
 type Transfer = {
+  id: string
+  state: BrowserPackageTransfer['state']
+  cancelled?: boolean
+  cancellation?: Promise<void>
+  cleanupPending?: boolean
+  sourceCleanup?: Promise<void>
+  incoming?: IncomingMessage
+  response?: ServerResponse
   request: BrowserImportRequest
   server?: Server
   file?: FileHandle
@@ -121,8 +132,84 @@ export class BrowserPackageImport {
   }
   constructor(private readonly options: BrowserImportOptions) {}
 
+  get snapshot(): BrowserPackageTransfer[] {
+    return [...this.transfers.values()]
+      .filter((t) => !t.removed && (!t.accepted || t.cancelled))
+      .map((t) => ({
+        id: t.id,
+        filename: t.request.name,
+        state: t.state,
+        ...(t.cleanupPending ? { cleanupPending: true } : {}),
+        completedBytes: t.offset,
+        totalBytes: t.request.size
+      }))
+  }
+
+  private publish(): void {
+    try {
+      this.options.onChanged?.(this.snapshot)
+    } catch {
+      /* Presentation cannot own file lifetime. */
+    }
+  }
+
+  private replyCancelled(t: Transfer, response: ServerResponse): void {
+    if (!response.headersSent)
+      reply(response, 410, { code: 'cancelled', proof: this.proof(t, 'cancelled') })
+  }
+
+  cancel(id: string): Promise<void> {
+    const t = [...this.transfers.values()].find((t) => t.id === id)
+    if (!t || t.removed) return Promise.resolve()
+    if (t.cancellation) return t.cancellation
+    t.cancelled = true
+    t.state = 'cancelling'
+    t.cleanupPending = false
+    clearTimeout(t.timer)
+    // End an in-flight HTTP request promptly, but join its disk work before releasing the source.
+    if (t.response && !t.response.headersSent) {
+      const incoming = t.incoming
+      if (incoming && !incoming.complete) t.response.once('finish', () => incoming.destroy())
+      this.replyCancelled(t, t.response)
+    }
+    t.cancellation = (async () => {
+      await t.resources?.catch(() => undefined)
+      await t.io?.catch(() => undefined)
+      if (t.accepted && !t.consumed) {
+        // Queue admission is the ownership boundary, including admission that raced with cancel.
+        await this.options.cancelReceived?.(t.path!)
+        if (!t.consumed) throw new Error('The import queue has not released this source.')
+      }
+      // Once released, the receiver can join/retry source cleanup without touching queue-owned bytes.
+      await t.sourceCleanup?.catch(() => undefined)
+      if (!t.accepted || t.consumed) {
+        await t.file?.close()
+        t.file = undefined
+        if (t.directory) await rm(t.directory, { recursive: true, force: true })
+        t.consumed = true
+      }
+      t.state = 'cancelled'
+      this.publish()
+      // A short-lived signed tombstone lets the website distinguish cancellation from network loss.
+      if (!this.closed && !t.removed) this.touch(t)
+    })().catch((error: unknown) => {
+      t.cancellation = undefined
+      t.cleanupPending = true
+      t.state = 'cancelled'
+      this.publish()
+      throw error
+    })
+    this.publish()
+    return t.cancellation
+  }
+
   get active(): boolean {
-    return [...this.transfers.values()].some((transfer) => !transfer.accepted)
+    return [...this.transfers.values()].some(
+      (transfer) =>
+        (!transfer.accepted && !transfer.cancelled) ||
+        transfer.state === 'cancelling' ||
+        Boolean(transfer.cleanupPending)
+    )
   }
 
   begin(input: unknown): Promise<void> {
@@ -141,12 +228,21 @@ export class BrowserPackageImport {
       return Promise.reject(
         new Error('Browser import staging limit reached. Finish pending imports first.')
       )
-    const transfer: Transfer = { request, offset: 0, busy: false, accepted: false, removed: false }
+    const transfer: Transfer = {
+      id: randomUUID(),
+      state: 'waiting',
+      request,
+      offset: 0,
+      busy: false,
+      accepted: false,
+      removed: false
+    }
     this.transfers.set(request.secret, transfer)
     transfer.work = this.start(transfer).catch(async (error: unknown) => {
       await this.remove(transfer)
       throw error
     })
+    this.publish()
     return transfer.work
   }
 
@@ -208,11 +304,12 @@ export class BrowserPackageImport {
   private releaseSource(t: Transfer): void {
     t.consumed = true
     // Keep the receipt endpoint alive briefly so a lost completion response can be retried.
-    void (async () => {
+    t.sourceCleanup = (async () => {
       await t.io?.catch(() => undefined)
       if (t.directory) await rm(t.directory, { recursive: true, force: true })
       if (!t.server) this.transfers.delete(t.request.secret)
-    })().catch(() => undefined)
+    })()
+    void t.sourceCleanup.catch(() => undefined)
   }
 
   private async handle(
@@ -251,6 +348,10 @@ export class BrowserPackageImport {
         reply(response, 400)
         return
       }
+      if (t.cancelled) {
+        this.replyCancelled(t, response)
+        return
+      }
       const proof = this.proof(
         t,
         `open-science-import-v1:${challenge}:${t.offset}:${t.accepted ? 1 : 0}`
@@ -269,6 +370,11 @@ export class BrowserPackageImport {
     )
     if (!equal(request.headers.authorization ?? '', `HMAC ${signature}`)) {
       reply(response, 403)
+      request.resume()
+      return
+    }
+    if (t.cancelled) {
+      this.replyCancelled(t, response)
       request.resume()
       return
     }
@@ -298,24 +404,31 @@ export class BrowserPackageImport {
         return
       }
       t.busy = true
+      t.response = response
+      t.incoming = request
       t.io = (async () => {
         await t.file!.sync()
         await t.file!.close()
         t.file = undefined
-        if (t.removed || this.closed) return
+        if (t.removed || this.closed || t.cancelled) return
         const queued = await this.options.receive(t.path!, () => this.releaseSource(t))
         if (queued === false) {
+          if (t.cancelled) return
           reply(response, 503, { error: 'Package import queue is full or closing.' })
           void this.remove(t).catch(() => undefined)
           return
         }
         t.accepted = true
+        this.publish()
+        if (t.cancelled) return
         reply(response, 202, { received: true, proof: this.proof(t, `received:${t.request.size}`) })
       })()
       try {
         await t.io
       } finally {
         t.busy = false
+        t.response = undefined
+        t.incoming = undefined
       }
       return
     }
@@ -343,10 +456,15 @@ export class BrowserPackageImport {
       return
     }
     t.busy = true
+    t.response = response
+    t.incoming = request
+    t.state = 'receiving'
+    this.publish()
     t.io = (async () => {
       const chunks: Buffer[] = []
       let bytes = 0
       for await (const chunk of request) {
+        if (t.cancelled) return
         bytes += chunk.length
         if (bytes > limit + 28) {
           reply(response, 413)
@@ -374,14 +492,17 @@ export class BrowserPackageImport {
         reply(response, 422)
         return
       }
-      if (t.removed || this.closed) return
+      if (t.removed || this.closed || t.cancelled) return
       let written = 0
       while (written < bytes) {
-        const result = await t.file!.write(content, written, bytes - written, t.offset + written)
+        if (t.cancelled) return
+        const result = await t.file!.write(content, written, bytes - written, t.offset)
         if (!result.bytesWritten) throw new Error('Could not write browser package.')
         written += result.bytesWritten
+        t.offset += result.bytesWritten
+        this.publish()
       }
-      t.offset += bytes
+      if (t.cancelled) return
       this.touch(t)
       reply(response, 200, { offset: t.offset, proof: this.proof(t, `offset:${t.offset}`) })
     })()
@@ -389,6 +510,8 @@ export class BrowserPackageImport {
       await t.io
     } finally {
       t.busy = false
+      t.response = undefined
+      t.incoming = undefined
     }
   }
 
@@ -403,13 +526,15 @@ export class BrowserPackageImport {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
-    if (retain && !t.consumed) return
-    t.removed = true
     await t.io?.catch(() => undefined)
+    // Admission may have completed while removal was waiting for the in-flight request.
+    if (!this.closed && (retain || t.accepted) && !t.consumed) return
+    t.removed = true
     await t.file?.close().catch(() => undefined)
     t.file = undefined
     if (t.directory) await rm(t.directory, { recursive: true, force: true })
     this.transfers.delete(t.request.secret)
+    this.publish()
   }
 
   stop(): void {
@@ -431,6 +556,11 @@ export class BrowserPackageImport {
       await new Promise<void>((resolve) => this.discovery!.close(() => resolve()))
     }
     // Join all in-flight resource acquisition before removing staged bytes.
-    await Promise.all([...this.transfers.values()].map((transfer) => this.remove(transfer)))
+    await Promise.all(
+      [...this.transfers.values()].map(async (transfer) => {
+        await transfer.cancellation?.catch(() => undefined)
+        await this.remove(transfer)
+      })
+    )
   }
 }

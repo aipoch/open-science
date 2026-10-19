@@ -664,3 +664,69 @@ it('ends the total wait during a response body read and rejects concurrent sends
     vi.useRealTimers()
   }
 })
+
+it('treats authenticated desktop cancellation as terminal without retrying or sending bytes', async () => {
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  const secret = new URL(transfer.url).searchParams.get('secret')!
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: 'cancelled',
+          proof: createHmac('sha256', Buffer.from(secret, 'hex')).update('cancelled').digest('hex')
+        }),
+        { status: 410 }
+      )
+  )
+  vi.stubGlobal('fetch', fetch)
+  await expect(transfer.send({ readinessMode: 'wait-for-launch' })).rejects.toMatchObject({
+    code: 'cancelled'
+  })
+  await expect(transfer.send()).rejects.toMatchObject({ code: 'cancelled' })
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+it('does not trust an unsigned desktop cancellation or treat it as a retryable network fault', async () => {
+  const transfer = prepareBrowserImport(new Blob(['hello']), {
+    filename: 'study.science',
+    origin: 'https://research.example'
+  })
+  const fetch = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ code: 'cancelled', proof: '00'.repeat(32) }), { status: 410 })
+  )
+  vi.stubGlobal('fetch', fetch)
+  await expect(transfer.send({ readinessMode: 'wait-for-launch' })).rejects.toMatchObject({
+    code: 'incompatible'
+  })
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+it.each(['', '{invalid'])(
+  'rejects an unverifiable cancellation body after readiness: %s',
+  async (body) => {
+    const transfer = prepareBrowserImport(new Blob(['hello']), {
+      filename: 'study.science',
+      origin: 'https://research.example'
+    })
+    const secret = new URL(transfer.url).searchParams.get('secret')!
+    let requests = 0
+    vi.stubGlobal('fetch', async (input: string) => {
+      if (++requests === 1) {
+        const challenge = new URL(input).searchParams.get('challenge')
+        const proof = createHmac('sha256', Buffer.from(secret, 'hex'))
+          .update(`open-science-import-v1:${challenge}:0:0`)
+          .digest('hex')
+        return new Response(
+          JSON.stringify({ proof, offset: 0, accepted: false, chunkBytes: 4194304 })
+        )
+      }
+      return new Response(body, { status: 410 })
+    })
+    await expect(transfer.send()).rejects.toMatchObject({ code: 'incompatible' })
+    expect(requests).toBe(2)
+  }
+)

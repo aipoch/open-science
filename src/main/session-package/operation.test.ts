@@ -259,3 +259,34 @@ describe('SessionPackageOperation', () => {
     })
   })
 })
+
+it('publishes browser transfers without claiming an import or replacing an active export', async () => {
+  const owner = new SessionPackageOperation()
+  const transfers = [
+    {
+      id: 'browser-1',
+      filename: 'study.science',
+      state: 'waiting' as const,
+      completedBytes: 0,
+      totalBytes: 5
+    }
+  ]
+  owner.setBrowserTransfers(transfers)
+  expect(sessionPackageCommandContracts.operation.result.parse(owner.snapshot)).toMatchObject({
+    browserReceiptOnly: true,
+    browserTransfers: transfers,
+    state: 'running'
+  })
+  expect(owner.active).toBe(false)
+  const completion = deferred()
+  const exporting = owner.run('export', session, () => completion.promise)
+  const id = owner.snapshot!.id
+  owner.setBrowserTransfers([{ ...transfers[0], state: 'receiving', completedBytes: 2 }])
+  expect(owner.snapshot).toMatchObject({
+    id,
+    kind: 'export',
+    browserTransfers: [{ completedBytes: 2 }]
+  })
+  completion.resolve()
+  await exporting
+})

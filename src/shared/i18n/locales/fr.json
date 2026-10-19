@@ -7602,6 +7602,10 @@
     "Save body area": "Enregistrer la zone de texte principal",
     "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
     "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
-    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message."
+    "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message.",
+    "Waiting for browser…": "En attente du navigateur…",
+    "Receiving package…": "Réception du paquet…",
+    "Cancel transfer": "Annuler le transfert",
+    "Transfer cancelled": "Transfert annulé"
   }
 }

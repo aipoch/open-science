@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import type {
+  BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot
 } from '../../../shared/session-package'
@@ -92,8 +93,15 @@ const operationStatus = (
     confirming: t('Waiting for import confirmation…'),
     cleaning: t('Cleaning temporary files…')
   }[operation.progress.phase]
-  const status =
-    operation.state === 'succeeded'
+  const status = operation.browserReceiptOnly
+    ? operation.browserTransfers?.some((t) => t.state === 'receiving')
+      ? t('Receiving package…')
+      : operation.browserTransfers?.some((t) => t.state === 'waiting')
+        ? t('Waiting for browser…')
+        : operation.browserTransfers?.some((t) => t.state === 'cancelling')
+          ? t('Cancelling and cleaning up…')
+          : t('Transfer cancelled')
+    : operation.state === 'succeeded'
       ? operation.cleanupPending
         ? t('Completed, cleanup pending')
         : operation.kind === 'fork'
@@ -190,6 +198,79 @@ const PackageProgressMeter = ({
         </div>
       ) : null}
     </div>
+  )
+}
+
+const BrowserTransferRow = ({
+  transfer,
+  onCancel
+}: {
+  transfer: BrowserPackageTransfer
+  onCancel: () => Promise<void>
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [pending, setPending] = useState(false)
+  const cancel = async (): Promise<void> => {
+    setPending(true)
+    try {
+      await onCancel()
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <section
+      aria-label={transfer.filename}
+      className="space-y-2 rounded-lg border border-border p-3"
+    >
+      <p className="break-all text-sm font-medium">{transfer.filename}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p role="status" className="text-sm text-muted-foreground">
+          {transfer.state === 'waiting'
+            ? t('Waiting for browser…')
+            : transfer.state === 'receiving'
+              ? t('Receiving package…')
+              : transfer.state === 'cancelling'
+                ? t('Cancelling and cleaning up…')
+                : t('Transfer cancelled')}
+        </p>
+        {transfer.state !== 'cancelled' || transfer.cleanupPending ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pending || transfer.state === 'cancelling'}
+            onClick={() => void cancel()}
+          >
+            {transfer.cleanupPending ? t('Retry cleanup') : t('Cancel transfer')}
+          </Button>
+        ) : null}
+      </div>
+      {transfer.cleanupPending ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          description={t(
+            'Some temporary files could not be removed. Retry cleanup without repeating the transfer.'
+          )}
+        />
+      ) : null}
+      {transfer.state === 'receiving' ? (
+        <PackageProgressMeter
+          compact
+          operation={{
+            id: transfer.id,
+            kind: 'import',
+            state: 'running',
+            progress: {
+              phase: 'copying',
+              completedBytes: transfer.completedBytes,
+              totalBytes: transfer.totalBytes
+            }
+          }}
+        />
+      ) : null}
+    </section>
   )
 }
 
@@ -293,7 +374,7 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           {status}
         </p>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {active ? (
+          {active && !operation.browserReceiptOnly ? (
             <Button
               variant="ghost"
               size="sm"
@@ -338,7 +419,7 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           className="px-3 pb-2 pt-0"
         />
       ) : null}
-      {operation.state === 'running' && !waiting ? (
+      {operation.state === 'running' && !waiting && !operation.browserReceiptOnly ? (
         <div className="border-t border-border px-3 py-3">
           <PackageProgressMeter operation={operation} compact />
         </div>
@@ -675,7 +756,27 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 </Button>
               </div>
             ) : null}
-            {!selecting ? (
+            {operation.browserTransfers?.length ? (
+              <div className="mx-5 my-3 max-h-64 shrink-0 space-y-3 overflow-y-auto">
+                {operation.browserTransfers.map((transfer) => (
+                  <BrowserTransferRow
+                    key={transfer.id}
+                    transfer={transfer}
+                    onCancel={() =>
+                      respond({
+                        action: 'cancel-browser-transfer',
+                        operationId: operation.id,
+                        transferId: transfer.id
+                      })
+                    }
+                  />
+                ))}
+                {operation.browserReceiptOnly && error ? (
+                  <ErrorNotice inline role="alert" tone="amber" description={error} />
+                ) : null}
+              </div>
+            ) : null}
+            {operation.browserReceiptOnly ? null : !selecting ? (
               <div
                 className={`${dialogBodyClassName} min-h-0 space-y-5 overflow-y-auto overscroll-contain`}
               >
@@ -833,7 +934,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     {t('Choose another package')}
                   </Button>
                 ) : null}
-                {active ? (
+                {active && !operation.browserReceiptOnly ? (
                   <Button
                     variant="ghost"
                     className={dialogCancelButtonClassName}

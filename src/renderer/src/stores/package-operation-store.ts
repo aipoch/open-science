@@ -33,6 +33,10 @@ export const usePackageOperationStore = create<{
   receive: (operation) =>
     set((state) => {
       const same = operation?.id === state.operation?.id
+      const newReceipt = operation?.browserTransfers?.some(
+        (transfer) =>
+          !state.operation?.browserTransfers?.some((previous) => previous.id === transfer.id)
+      )
       const retry =
         state.operation?.state === 'failed' &&
         operation?.kind === 'export' &&
@@ -48,7 +52,7 @@ export const usePackageOperationStore = create<{
         )
       return {
         operation,
-        dismissedId: same ? state.dismissedId : undefined,
+        dismissedId: same && !newReceipt ? state.dismissedId : undefined,
         excludedStorageKeys: operation?.files
           ? [
               ...new Set([
@@ -74,8 +78,9 @@ export const usePackageOperationStore = create<{
               ? 'custom'
               : preset,
         threshold: same || retry ? state.threshold : '256',
-        open:
-          same && state.dismissedId === operation?.id
+        open: newReceipt
+          ? true
+          : same && state.dismissedId === operation?.id
             ? false
             : (same && operation?.presentationRevision !== state.operation?.presentationRevision) ||
                 operation?.state === 'awaiting-selection' ||

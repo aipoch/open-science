@@ -7272,6 +7272,10 @@
     "Save body area": "保存正文区域",
     "Body areas are unavailable on rotated pages.": "旋转页面无法设置正文区域。",
     "You can configure up to 32 pages.": "最多可配置 32 页。",
-    "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。"
+    "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。",
+    "Waiting for browser…": "等待浏览器…",
+    "Receiving package…": "正在接收研究包…",
+    "Cancel transfer": "取消传输",
+    "Transfer cancelled": "传输已取消"
   }
 }

@@ -51,3 +51,47 @@ it.each(['update', 'quit'])(
     }
   }
 )
+
+it('routes receipt progress and targeted cancellation through the existing package surface', async () => {
+  const lifecycle = { isActive: () => false, close: async () => {} }
+  const publish = vi.fn()
+  const surfaces = composeSessionPackageSurfaces({
+    declareElectronAdapter: () => {},
+    sessionPackageDesktopLifecycle: lifecycle,
+    packageHandoffHeld: { current: false },
+    applicationEvents: { publish },
+    translate: englishNativeTranslator
+  } as unknown as Parameters<typeof composeSessionPackageSurfaces>[0])
+  try {
+    await surfaces.browserPackageImport.begin(
+      'open-science://import?' +
+        new URLSearchParams({
+          version: '1',
+          origin: 'https://example.com',
+          secret: 'ab'.repeat(32),
+          port: String(await findBrowserImportPort()),
+          name: 'study.science',
+          size: '5'
+        })
+    )
+    const snapshot = surfaces.sessionPackageDesktop.operations.snapshot!
+    expect(snapshot.browserTransfers).toMatchObject([
+      { filename: 'study.science', state: 'waiting', completedBytes: 0 }
+    ])
+    expect(publish).toHaveBeenCalledWith(
+      'sessions:package-operation-changed',
+      expect.objectContaining({ browserTransfers: snapshot.browserTransfers })
+    )
+    await surfaces.sessionPackageDesktop.respond({
+      action: 'cancel-browser-transfer',
+      operationId: snapshot.id,
+      transferId: snapshot.browserTransfers![0].id
+    })
+    expect(surfaces.sessionPackageDesktop.operations.snapshot?.browserTransfers).toMatchObject([
+      { state: 'cancelled' }
+    ])
+    expect(lifecycle.isActive()).toBe(false)
+  } finally {
+    await lifecycle.close()
+  }
+})

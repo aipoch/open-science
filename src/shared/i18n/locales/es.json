@@ -7602,6 +7602,10 @@
     "Save body area": "Guardar el área del cuerpo",
     "Body areas are unavailable on rotated pages.": "Las áreas del cuerpo no están disponibles en páginas giradas.",
     "You can configure up to 32 pages.": "Puede configurar hasta 32 páginas.",
-    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje."
+    "Native reading order will be used for your next message.": "Se utilizará el orden de lectura nativo en el siguiente mensaje.",
+    "Waiting for browser…": "Esperando al navegador…",
+    "Receiving package…": "Recibiendo paquete…",
+    "Cancel transfer": "Cancelar transferencia",
+    "Transfer cancelled": "Transferencia cancelada"
   }
 }

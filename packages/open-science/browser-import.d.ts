@@ -8,6 +8,7 @@ export type BrowserImportFailureCode =
   | 'incompatible'
   | 'launch-failed'
   | 'transfer-failed'
+  | 'cancelled'
 export class BrowserImportError extends Error {
   readonly code: BrowserImportFailureCode
   constructor(code: BrowserImportFailureCode, message: string)
@@ -35,7 +36,9 @@ export function checkBrowserImportAvailability(
 export type BrowserImportTransfer = {
   /** Contains a secret; never log or persist it. Browser policy may require a fresh user click. */
   readonly url: string
-  /** Acknowledges receipt only, independently of destination selection and final import consent. */
+  /** Acknowledges receipt only, independently of destination selection and final import consent.
+   * Authenticated desktop cancellation throws code 'cancelled', terminal for this transfer.
+   * Keep the Blob and explicitly prepare a new transfer; never automatically retry cancellation. */
   send(options?: {
     signal?: AbortSignal
     /** Waiting starts before readiness; transferring starts after identity verification, before bytes.

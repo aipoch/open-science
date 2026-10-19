@@ -89,6 +89,11 @@ async function run(work, cancelTransfer = false) {
           status.textContent =
             'Could not verify the receiver. Update Open-Science and start a new transfer.'
           break
+        case 'cancelled':
+          transfer = undefined
+          status.textContent =
+            'Transfer cancelled in Open-Science. Start a new transfer to try again.'
+          break
         case 'transfer-failed':
           status.textContent =
             'Transfer failed. Retry to resume; if the receiver expired, start a new transfer.'
@@ -263,20 +268,21 @@ let a website avoid guessing from elapsed time. Callbacks should not throw.
 
 `BrowserImportError` extends `Error`, has `name === 'BrowserImportError'` and a stable `code`:
 
-| Code                  | Meaning / recovery                                                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unsupported-browser` | Required browser capability is absent; pure launch requires a navigation API only.                                                             |
-| `launch-failed`       | Synchronous navigation threw. Silent browser/OS refusal cannot be detected.                                                                    |
-| `readiness-exhausted` | Attempt mode exhausted its count; retry the same transfer when the receiver becomes reachable.                                                 |
-| `timeout`             | Readiness deadline elapsed (including launch-wait expiry); the same transfer may be retried without relaunch.                                  |
-| `incompatible`        | Readiness response/identity cannot be verified; no bytes sent. Stop, discard the transfer and prepare a new one after correcting the receiver. |
-| `transfer-failed`     | An operation after verified readiness failed, including network or acknowledgment validation; retry/resume or prepare a new transfer.          |
+| Code                  | Meaning / recovery                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unsupported-browser` | Required browser capability is absent; pure launch requires a navigation API only.                                                                                       |
+| `launch-failed`       | Synchronous navigation threw. Silent browser/OS refusal cannot be detected.                                                                                              |
+| `readiness-exhausted` | Attempt mode exhausted its count; retry the same transfer when the receiver becomes reachable.                                                                           |
+| `timeout`             | Readiness deadline elapsed (including launch-wait expiry); the same transfer may be retried without relaunch.                                                            |
+| `incompatible`        | Receiver identity or cancellation response cannot be verified. Stop and prepare a new transfer after correcting the receiver; earlier chunks may already have been sent. |
+| `cancelled`           | The desktop authenticated a cancellation. Terminal for this transfer; keep the Blob and explicitly prepare a new transfer.                                               |
+| `transfer-failed`     | An operation after verified readiness failed, including network or acknowledgment validation; retry/resume or prepare a new transfer.                                    |
 
 Discovery returns status objects for operational failures. Invalid arguments and concurrent
 `send()` calls throw ordinary `Error`s; caller cancellation rejects with `signal.reason`, not a
 wrapped SDK error. Do not parse error message text. A lost completion response can occur after the
 file was queued: retry the same live transfer to recover its receipt before starting a fresh one,
-which could result in another import. Cancellation after receipt cannot undo the desktop queue.
+which could result in another import. Browser-side cancellation after receipt cannot undo the desktop queue; use the desktop import controls.
 
 Transfer recovery rules:
 
@@ -287,6 +293,10 @@ Transfer recovery rules:
   and launch a new transfer. Network errors cannot reliably distinguish expiry from blocked access.
 - `incompatible`: do not keep polling an unverified identity. Correct the receiver/app version,
   then prepare and launch a new transfer from the retained Blob.
+- Desktop cancellation (`cancelled`): the receiver returns a transfer-secret-signed cancellation.
+  Stop retrying this transfer; subsequent `send()` calls reject with the same code without network
+  activity. Keep the Blob if the user wants to explicitly prepare and launch a new transfer. This
+  requires the updated SDK; older SDKs do not recognize this error contract.
 - Caller cancellation: waiting requests/gaps stop immediately. Before identity verification the SDK
   sends no DELETE to an untrusted port; an abandoned receiver expires normally. After verification
   it attempts authenticated cleanup (up to two seconds). Discard the cancelled transfer and create
@@ -387,6 +397,17 @@ unchanged. At most 16 transfer records and 2 GiB of advertised unconsumed data a
   idempotent while the receiver is alive.
 - `DELETE /v1/import` cancels a partial transfer. After receipt, the desktop owns the queued import;
   cancel it in the app.
+- Desktop receipt progress is per transfer and uses actual bytes written after authentication and
+  decryption. `Waiting for browser…` precedes `Receiving package…`. Neither 100% received nor
+  `received: true` means imported: package validation, target selection and final confirmation follow.
+- `Cancel transfer` stops receipt, joins any active disk write, and removes unqueued temporary bytes.
+  If queue admission wins the race, the queue cancels that source and owns its release. Other
+  transfers and imports are unaffected. A signed `410` body `{ code: 'cancelled', proof }` remains
+  available on that transfer endpoint for the idle retention window (normally 120 seconds).
+  `proof` is HMAC-SHA256 over `cancelled` with the transfer secret. The SDK verifies this proof
+  before treating the response as cancellation; an unsigned or invalid proof is `incompatible`.
+  The tombstone cannot accept more bytes or recreate the cancelled transfer. After it expires,
+  network loss alone cannot establish whether cancellation happened.
 
 The SDK verifies handshake and acknowledgment proofs and encrypts chunks even on loopback. If an
 unrelated local process occupies or later takes over the port, it cannot read package plaintext,

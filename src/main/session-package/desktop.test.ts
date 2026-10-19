@@ -1845,3 +1845,43 @@ it.each(['valid', 'invalid'] as const)(
     }
   }
 )
+
+it('cancels and releases only the browser source owned by the import queue', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const desktop = new SessionPackageDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => undefined
+  })
+  const first = join(fixture.storageRoot, 'first.science')
+  const second = join(fixture.storageRoot, 'second.science')
+  const contents = await readFile(
+    join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science')
+  )
+  await writeFile(first, contents)
+  await writeFile(second, contents)
+  const released: string[] = []
+  try {
+    await desktop.enqueueFile(first, () => released.push('first'), true)
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
+    await desktop.enqueueFile(second, () => released.push('second'), true)
+    await desktop.cancelReceivedFile(second)
+    expect(released).toEqual(['second'])
+    expect(desktop.operations.snapshot?.pendingImports).toEqual([])
+    expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
+    await desktop.cancelReceivedFile(first)
+    expect(released).toEqual(['second', 'first'])
+    expect(desktop.operations.snapshot?.state).toBe('cancelled')
+    expect(await fixture.client.session.count()).toBe(0)
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})

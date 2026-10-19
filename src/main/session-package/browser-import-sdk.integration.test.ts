@@ -127,3 +127,53 @@ it('resumes a lost chunk acknowledgment with the same transfer and receives exac
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each(['waiting', 'receiving'] as const)(
+  'delivers authenticated desktop cancellation while %s and never retries it',
+  async (stage) => {
+    const port = await findBrowserImportPort()
+    const origin = 'https://research.example'
+    const root = await mkdtemp(join(tmpdir(), 'browser-sdk-cancel-'))
+    const received: string[] = []
+    const bridge = new BrowserPackageImport({
+      root,
+      receive: (path) => {
+        received.push(path)
+      }
+    })
+    const realFetch = globalThis.fetch
+    const destinations: string[] = []
+    vi.stubGlobal('fetch', (input: string, init: RequestInit) => {
+      destinations.push(input)
+      return realFetch(input, { ...init, headers: { ...init.headers, Origin: origin } })
+    })
+    let cancellation: Promise<void> | undefined
+    try {
+      const transfer: BrowserImportTransfer = prepareBrowserImport(
+        new Blob([new Uint8Array(4194305)]),
+        { filename: 'study.science', origin, port }
+      )
+      await bridge.begin(transfer.url)
+      const id = bridge.snapshot[0].id
+      if (stage === 'waiting') await bridge.cancel(id)
+      await expect(
+        transfer.send({
+          readinessMode: 'wait-for-launch',
+          onProgress: () => {
+            cancellation ??= bridge.cancel(id)
+          }
+        })
+      ).rejects.toMatchObject({ code: 'cancelled' })
+      await cancellation
+      const count = destinations.length
+      await expect(transfer.send()).rejects.toMatchObject({ code: 'cancelled' })
+      expect(destinations).toHaveLength(count)
+      expect(received).toEqual([])
+      expect(await (await import('node:fs/promises')).readdir(root)).toEqual([])
+    } finally {
+      await cancellation
+      await bridge.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

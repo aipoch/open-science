@@ -99,6 +99,15 @@ export type PackageProgress = {
   currentFile?: string
 }
 
+export type BrowserPackageTransfer = {
+  id: string
+  filename: string
+  state: 'waiting' | 'receiving' | 'cancelling' | 'cancelled'
+  cleanupPending?: boolean
+  completedBytes: number
+  totalBytes: number
+}
+
 export type PackageOperationSnapshot = {
   id: string
   kind: 'export' | 'import' | 'fork'
@@ -110,6 +119,8 @@ export type PackageOperationSnapshot = {
   importPreview?: SessionPackagePreview
   pendingImports?: { id: string; filename: string }[]
   importQueueFull?: boolean
+  browserTransfers?: BrowserPackageTransfer[]
+  browserReceiptOnly?: boolean
   state: 'running' | 'awaiting-selection' | 'cancelling' | 'succeeded' | 'cancelled' | 'failed'
   progress: PackageProgress
   files?: PackageSelectableFile[]
@@ -129,6 +140,13 @@ export type PackageOperationSnapshot = {
 export const packageOperationRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('snapshot') }).strict(),
   z.object({ action: z.literal('cancel'), operationId: identity }).strict(),
+  z
+    .object({
+      action: z.literal('cancel-browser-transfer'),
+      operationId: identity,
+      transferId: identity
+    })
+    .strict(),
   z
     .object({
       action: z.literal('select-project'),
@@ -290,6 +308,22 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .max(16)
       .optional(),
     importQueueFull: z.boolean().optional(),
+    browserReceiptOnly: z.boolean().optional(),
+    browserTransfers: z
+      .array(
+        z
+          .object({
+            id: identity,
+            filename: z.string(),
+            state: z.enum(['waiting', 'receiving', 'cancelling', 'cancelled']),
+            cleanupPending: z.boolean().optional(),
+            completedBytes: z.number().int().nonnegative(),
+            totalBytes: z.number().int().positive()
+          })
+          .strict()
+      )
+      .max(16)
+      .optional(),
     state: z.enum([
       'running',
       'awaiting-selection',

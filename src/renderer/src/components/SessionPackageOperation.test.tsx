@@ -1517,3 +1517,66 @@ it('requires explicit opt-in before exporting notes shared across projects', asy
     expect.objectContaining({ action: 'select', includePdfNotes: true })
   )
 })
+
+it('shows isolated browser receipt progress and cancels the selected transfer without cancelling export', async () => {
+  const operation: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'running',
+    progress: { phase: 'copying' },
+    files: undefined,
+    browserTransfers: [
+      {
+        id: 'browser-a',
+        filename: 'waiting.science',
+        state: 'waiting',
+        completedBytes: 0,
+        totalBytes: 10
+      },
+      {
+        id: 'browser-b',
+        filename: 'receiving.science',
+        state: 'receiving',
+        completedBytes: 5,
+        totalBytes: 10
+      }
+    ]
+  }
+  const packageOperation = vi.fn(async () => operation)
+  vi.stubGlobal('api', {
+    sessions: { packageOperation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.getState().receive(operation)
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.body.textContent).toContain('Waiting for browser…')
+  expect(document.body.textContent).toContain('Receiving package…')
+  const receiving = document.querySelector('[aria-label="receiving.science"]')!
+  expect(receiving.textContent).toContain('50%')
+  expect(receiving.textContent).toContain('5 B / 10 B')
+  await act(async () => (receiving.querySelector('button') as HTMLButtonElement).click())
+  expect(packageOperation).toHaveBeenCalledWith({
+    action: 'cancel-browser-transfer',
+    operationId: operation.id,
+    transferId: 'browser-b'
+  })
+  expect(packageOperation).not.toHaveBeenCalledWith({ action: 'cancel', operationId: operation.id })
+})
+
+it('opens newly launched receipt progress even after the previous package dialog was dismissed', () => {
+  const previous: PackageOperationSnapshot = { ...snapshot, state: 'succeeded', files: undefined }
+  const store = usePackageOperationStore.getState()
+  store.receive(previous)
+  store.dismiss()
+  store.receive({
+    ...previous,
+    browserTransfers: [
+      {
+        id: 'new-browser-transfer',
+        filename: 'new.science',
+        state: 'waiting',
+        completedBytes: 0,
+        totalBytes: 5
+      }
+    ]
+  })
+  expect(usePackageOperationStore.getState().open).toBe(true)
+})
