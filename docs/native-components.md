@@ -6,12 +6,10 @@ packaging reuse the exact binaries pinned in `build/native-components-lock.json`
 macOS/Windows and checksum-verified on Linux. End users receive these files inside the application;
 the application does not download them at runtime.
 
-The Windows update progress executable is an application resource, outside these three backend
-packages. `build/prepare-desktop.cjs` compiles it from `build/windows-update-progress` during Windows
-application packaging, before calling the unchanged backend staging flow. Windows application
-builds therefore need the MSVC toolchain for this resource; dependency installation and backend
-component staging do not compile it. It receives the outer application's normal Windows signing.
-This separate build does not provide a compilation fallback for a missing or stale catalog entry.
+Windows updates use the native NSIS installer for installation UI. There is no separate update
+progress executable to compile, package or sign. `build/prepare-desktop.cjs` validates the target
+platform/architecture and stages the backend runtime. The separate Notebook AppContainer host
+still has its own native build requirements, described below.
 
 An ordinary application release needs no native-component publication when the inputs below are
 unchanged and the pinned objects remain available. The outer application and installer still need
@@ -116,27 +114,32 @@ unchanged by this native-component workflow.
 
 ### Windows update presentation handoff
 
-The native progress companion owns its window only. NSIS/electron-updater retain download,
-verification, installation and recovery ownership. Interactive Windows updates create a fresh UUID
+The application owns update checking, download, verification, data saving and shutdown admission.
+The visible native NSIS installer owns installation progress, errors, file replacement and launching
+the updated application. No independent progress window remains; brief windowless handoffs before
+installer or successor startup are allowed. Interactive Windows updates create a fresh UUID
 under the current user's `%APPDATA%/Open-Science/UpdateHandoffs/<uuid>/`. The request records the
-expected version, executable, installer, profile and runtime startup options. The helper is copied
-atomically into that operation directory, outside the installation being replaced.
+expected version, executable, installer, profile and runtime startup options. Handoff storage must
+remain outside the installation being replaced. Each update creates a new operation, including an
+automatically launched successor that immediately starts another update.
 
 The UUID travels through the patched NSIS updater argument and the installer's Finish-page launch.
 NSIS publishes atomic `accepted`, `installing`, `installed` or `failed` receipts. The new application
 restores the original startup options through the normal credential/profile checks and publishes
-`ready` only after backend and original-data verification and the main window has been shown. A visible window or sampled process tree
-is not an installation result. This protocol covers interactive relaunch; non-relaunching updates
-retain the existing silent installation behavior and do not create a companion.
+`ready` only after backend and original-data verification and the main window has been shown.
+A visible window or sampled process tree is not an installation result. This protocol covers
+interactive relaunch; non-relaunching updates retain the existing silent installation behavior.
 
-Before handoff, aborting writes a complete cancellation marker and closes the companion. After
-handoff, an ambiguous launch error or the 20-minute observation deadline displays an unconfirmed
-status with a Close button. Closing that window never cancels or terminates installation. Late
-valid completion receipts can still close an open unconfirmed window.
+Before installer submission, cancellation records an `aborted` receipt for later cleanup. Once an
+installer may be running, cancellation records `unconfirmed` and preserves the operation for
+diagnosis rather than claiming success or terminating installation. There is no companion
+observation deadline or unconfirmed-status window.
 
-The companion records its exit. A later startup removes recognized aborted/failed operations only
-when all recorded owners have exited. For confirmed operations, it removes the helper executable
-and binary launch input but retains the small configuration/receipt record until explicit uninstall.
+A later startup removes recognized aborted/failed operations only when all recorded owners have
+exited. Historical operations with a helper PID also require its matching closed receipt. New
+operations create neither a helper nor its binary launch input. For confirmed operations, cleanup
+removes any historical helper executable and binary launch input but retains the small
+configuration/receipt record until explicit uninstall.
 Electron relaunch preserves argv and has a gap between old/new PIDs, so PID liveness alone cannot
 prove that the configuration is no longer needed. Each successor renews its PID before opening the
 profile. Once confirmed, ordinary relaunches use current data settings without repeating the original
@@ -150,12 +153,27 @@ uninstall; an unreadable recorded identity remains conservative. Update-time uni
 adopted or recursively deleted because they lack the new ownership record.
 
 Compatibility: installers without an operation argument continue normally; an older target without
-receipts cannot produce confirmed success in the new companion. There is no user-data schema change.
+receipts cannot establish confirmed completion through this handoff protocol. Existing schema-1
+requests and historical helper cleanup checks remain supported. There is no user-data schema change.
 This does not retrofit the released macOS 1.0.0 updater.
 
-Native verification requires Windows. Build the helper through the desktop preparation command,
-then run `node scripts/fixtures/windows-update-progress/run.mjs success`, `installer-failure`, and
-`cancel`, `unconfirmed`, `late-ready`, and `wrong-receipt`. The success fixture deliberately exposes the successor window before releasing readiness.
-The PR Windows runtime lane runs these six native companion cases and the uninstall regressions.
-The independent observer remains diagnostic evidence only. NSIS receipt and uninstall regressions
-run in `build/packaging.test.ts` and `scripts/windows-update-handoff-uninstall.test.ts` on Windows.
+Native process verification requires Windows. Run the maintained observer regressions with:
+
+```powershell
+node --test scripts/windows-upgrade-diagnostics/observer.node-test.mjs
+```
+
+Follow the [diagnostic guide](../scripts/windows-upgrade-diagnostics/README.md) for explicit app-data
+selection, operation-bound discovery of Explorer-launched successors, historical helper observation
+and ordinary-account preflight. The Windows Upgrade Diagnostics workflow runs these tools; it is
+diagnostic evidence, not a new release gate or a substitute for real signed-package upgrade acceptance.
+
+Packaging, NSIS receipt and uninstall regressions use the existing repository test entry point:
+
+```powershell
+npm test -- build/packaging.test.ts scripts/windows-update-notice.test.ts scripts/windows-update-handoff-uninstall.test.ts
+```
+
+Retain the fixtures' Windows/toolchain requirements and report skipped native cases separately.
+Real upgrade acceptance must still verify installer outcome, successor readiness, profile/data
+retention and normal process cleanup; seeing an installer window is insufficient.
