@@ -33,6 +33,11 @@ it('animates only cold hover openings while preserving the shared warm window', 
     expect(screen.queryByRole('dialog')).toBeNull()
     await act(() => vi.advanceTimersByTimeAsync(1))
     expect(skipsEntry()).toBe('false')
+    for (const label of ['In-text citation', 'Reference']) {
+      expect(within(screen.getByRole('dialog')).getByText(label).className).toContain(
+        'text-muted-foreground'
+      )
+    }
     fireEvent.pointerLeave(first, { pointerType: 'mouse' })
     fireEvent.pointerEnter(second, { pointerType: 'mouse' })
     expect(skipsEntry()).toBe('true')

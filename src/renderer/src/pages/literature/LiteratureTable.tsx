@@ -85,7 +85,7 @@ export function LiteratureTextTooltip({
       <TooltipTrigger asChild onPointerMove={guardOverflow} onFocus={guardOverflow}>
         {children}
       </TooltipTrigger>
-      <TooltipContent className="max-h-[min(24rem,calc(100vh-2rem))] max-w-[min(36rem,calc(100vw-1rem))] overflow-y-auto bg-black text-white leading-relaxed">
+      <TooltipContent className="max-h-[min(24rem,calc(100vh-2rem))] max-w-[min(36rem,calc(100vw-1rem))] overflow-y-auto leading-relaxed">
         {text}
       </TooltipContent>
     </Tooltip>
