@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="AIPOCH Open-Science Preprint auf arXiv: 2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#benchmark-ergebnisse">
     <img alt="AIPOCH Open-Science — höchste Werte in den berichteten Benchmark-Vergleichen" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pak
 - [Schnellstart](#-schnellstart)
 - [Produkttour](#produkttour)
 - [AIPOCH Open-Science `.science`-Forschungspakete](#aipoch-open-science-science-forschungspakete)
+- [AIPOCH Open-Science: Paper und Zitierung](#aipoch-open-science-paper-und-zitierung)
 - [Benchmark-Ergebnisse](#benchmark-ergebnisse)
 - [Kernkompetenzen](#kernkompetenzen)
 - [Modellanbieter](#modellanbieter)
@@ -180,6 +184,33 @@ Exportieren Sie eine abgeschlossene Forschungssitzung als portables `.science`-P
 Importierte Aufzeichnungen bleiben schreibgeschützt; die Wiedergabe führt weder Code noch Modellaufrufe aus und stellt keine Anmeldeinformationen wieder her. Die erste Frage erstellt eine zugehörige beschreibbare Diskussion. Mit **Create a copy to continue research** erstellen Sie eine Arbeitskopie. Eine erneute Ausführung benötigt weiterhin ein vollständiges Rezept, notwendige Eingaben und eine verfügbare Laufzeit.
 
 Side Chats, private Lesezeichen und Anmeldeinformationen sind ausgeschlossen; enthaltene Dateien hängen von der Exportauswahl ab. Empfangene Prüfprotokolle beschreiben die Prüfungen des Absenders, keinen erneuten Lauf auf diesem Computer. Siehe die [Anleitung für `.science`-Pakete](https://aipoch.com/docs/guides/research-packages/).
+
+## AIPOCH Open-Science: Paper und Zitierung
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+arXiv-Preprint · [v1](https://arxiv.org/abs/2610.17110v1) · Eingereicht am 12. Oktober 2026.
+
+Unser Preprint stellt AIPOCH Open-Science vor, eine quelloffene KI-Forschungsumgebung mit portablen `.science`-Paketen zum Teilen von Forschungskontext, Artefaktversionen und Prüfprotokollen. Lesen Sie das Paper für Einzelheiten zum Austauschdesign der Pakete und zur kontrollierten Evaluation.
+
+Wenn Sie AIPOCH Open-Science in Ihrer Forschung verwenden, können Sie den Preprint zitieren:
+
+<details>
+<summary>BibTeX-Zitat</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## Benchmark-Ergebnisse
 

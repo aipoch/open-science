@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="AIPOCH Open-Science arXiv 預印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#基準測試表現">
     <img alt="AIPOCH Open-Science — 已報告基準比較中的最高分" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 - [快速開始](#-快速開始)
 - [產品導覽](#產品導覽)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
+- [AIPOCH Open-Science 論文與引用](#aipoch-open-science-論文與引用)
 - [基準測試表現](#基準測試表現)
 - [核心能力](#核心能力)
 - [模型服務商](#模型服務商)
@@ -179,6 +183,33 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 匯入記錄保持唯讀；瀏覽回放不會執行程式碼、呼叫模型或還原憑證。首次提問會建立關聯的可寫討論；使用 **Create a copy to continue research** 建立副本後可繼續研究。重新執行結果仍需要完整配方、必要輸入與可用執行環境。
 
 Side Chat 對話、私人閱讀書籤與憑證不隨包匯出，所含檔案取決於匯出選擇。收到的驗證記錄描述傳送方執行過的檢查，不代表接收電腦已重新執行。詳見 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
+
+## AIPOCH Open-Science 論文與引用
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+arXiv 預印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交於 2026 年 10 月 12 日。
+
+我們的預印本介紹了 AIPOCH Open-Science：一個開源 AI 研究工作台，透過可攜式 `.science` 包分享研究脈絡、產物版本與驗證記錄。閱讀論文，了解包交換設計與受控評估。
+
+若在研究中使用 AIPOCH Open-Science，可引用這篇預印本：
+
+<details>
+<summary>BibTeX 引用</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## 基準測試表現
 

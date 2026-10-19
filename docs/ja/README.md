@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="AIPOCH Open-Science の arXiv プレプリント：2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#ベンチマーク性能">
     <img alt="AIPOCH Open-Science — 報告されたベンチマーク比較での最高スコア" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 - [クイックスタート](#-クイックスタート)
 - [製品ツアー](#製品ツアー)
 - [AIPOCH Open-Science `.science` 研究パッケージ](#aipoch-open-science-science-研究パッケージ)
+- [AIPOCH Open-Science の論文と引用](#aipoch-open-science-の論文と引用)
 - [ベンチマーク性能](#ベンチマーク性能)
 - [主な機能](#主な機能)
 - [モデルプロバイダー](#モデルプロバイダー)
@@ -179,6 +183,33 @@ Windows での再インストールでは研究データが保持されます。
 インポートした記録は読み取り専用です。再生してもコードの実行、モデルの呼び出し、認証情報の復元は行いません。最初の質問で関連する編集可能な会話が作成されます。研究を続けるには **Create a copy to continue research** で作業用コピーを作成します。再実行には完全なレシピ、必要な入力、利用可能な実行環境が必要です。
 
 Side Chat、非公開の読書ブックマーク、認証情報は含まれず、ファイルの範囲はエクスポート時の選択によります。受け取った検証記録は送信者のチェックを示すもので、このコンピューターでの再実行を証明しません。[`.science` パッケージガイド](https://aipoch.com/docs/guides/research-packages/)を参照してください。
+
+## AIPOCH Open-Science の論文と引用
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+arXiv プレプリント · [v1](https://arxiv.org/abs/2610.17110v1) · 2026 年 10 月 12 日投稿。
+
+本プレプリントは、研究の文脈、成果物のバージョン、検証記録を可搬な `.science` パッケージで共有できるオープンソースの AI 研究ワークベンチ、AIPOCH Open-Science を紹介します。パッケージ交換の設計と制御された評価の詳細は論文をご覧ください。
+
+研究で AIPOCH Open-Science を使用する場合は、このプレプリントを引用できます。
+
+<details>
+<summary>BibTeX 引用</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## ベンチマーク性能
 

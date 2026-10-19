@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="Препринт AIPOCH Open-Science на arXiv: 2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#результаты-тестирования">
     <img alt="AIPOCH Open-Science — наивысшие оценки в представленных сравнениях бенчмарков" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ AIPOCH Open-Science подходит для вычислительных исс�
 - [Быстрый старт](#-быстрый-старт)
 - [Обзор продукта](#обзор-продукта)
 - [Исследовательские пакеты `.science` AIPOCH Open-Science](#исследовательские-пакеты-science-aipoch-open-science)
+- [AIPOCH Open-Science: статья и цитирование](#aipoch-open-science-статья-и-цитирование)
 - [Результаты тестирования](#результаты-тестирования)
 - [Основные возможности](#основные-возможности)
 - [Поставщики моделей](#поставщики-моделей)
@@ -179,6 +183,33 @@ brew install aipoch/tap/open-science
 Импортированные записи остаются доступными только для чтения. Просмотр не выполняет код, не вызывает модель и не восстанавливает учётные данные. Первый вопрос создаёт связанный редактируемый диалог; **Create a copy to continue research** создаёт рабочую копию. Для повторного выполнения по-прежнему нужны полный рецепт, необходимые входные данные и доступная среда.
 
 Диалоги Side Chat, личные закладки чтения и учётные данные исключены; состав файлов зависит от выбора при экспорте. Полученные записи проверки описывают действия отправителя, а не повторный запуск на этом компьютере. См. [руководство по пакетам `.science`](https://aipoch.com/docs/guides/research-packages/).
+
+## AIPOCH Open-Science: статья и цитирование
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+Препринт arXiv · [v1](https://arxiv.org/abs/2610.17110v1) · Подан 12 октября 2026 года.
+
+Наш препринт представляет AIPOCH Open-Science — открытую исследовательскую среду с ИИ и переносимыми пакетами `.science` для обмена исследовательским контекстом, версиями артефактов и записями проверок. Подробности устройства обмена пакетами и контролируемой оценки приведены в статье.
+
+Если вы используете AIPOCH Open-Science в исследовании, можно сослаться на препринт:
+
+<details>
+<summary>Цитата BibTeX</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## Результаты тестирования
 

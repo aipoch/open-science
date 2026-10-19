@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="Preprint de AIPOCH Open-Science en arXiv: 2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#rendimiento-en-benchmarks">
     <img alt="AIPOCH Open-Science — puntuaciones más altas en las comparaciones de benchmarks presentadas" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ Las sesiones de investigación terminadas también pueden exportarse como paquet
 - [Inicio rápido](#-inicio-rápido)
 - [Recorrido por el producto](#recorrido-por-el-producto)
 - [Paquetes de investigación `.science` de AIPOCH Open-Science](#paquetes-de-investigación-science-de-aipoch-open-science)
+- [AIPOCH Open-Science: artículo y cita](#aipoch-open-science-artículo-y-cita)
 - [Rendimiento en benchmarks](#rendimiento-en-benchmarks)
 - [Capacidades principales](#capacidades-principales)
 - [Proveedores de modelos](#proveedores-de-modelos)
@@ -180,6 +184,33 @@ Exporte una sesión de investigación terminada como un paquete `.science` port�
 Los registros importados siguen siendo de solo lectura; ver la reproducción no ejecuta código, no llama a modelos ni restaura credenciales. La primera pregunta crea una conversación editable asociada; utilice **Create a copy to continue research** para crear una copia de trabajo. Volver a ejecutar un resultado sigue requiriendo una receta completa, los datos necesarios y un entorno disponible.
 
 Se excluyen las conversaciones Side Chat, los marcadores privados de lectura y las credenciales; los archivos incluidos dependen de la selección de exportación. Los registros de verificación recibidos describen las comprobaciones del remitente, no una nueva ejecución en este equipo. Consulte la [guía de paquetes `.science`](https://aipoch.com/docs/guides/research-packages/).
+
+## AIPOCH Open-Science: artículo y cita
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+Preprint de arXiv · [v1](https://arxiv.org/abs/2610.17110v1) · Enviado el 12 de octubre de 2026.
+
+Nuestro preprint presenta AIPOCH Open-Science, un entorno de investigación con IA de código abierto que utiliza paquetes `.science` portátiles para compartir el contexto de investigación, las versiones de artefactos y los registros de verificación. Consulte el artículo para conocer el diseño de intercambio de paquetes y la evaluación controlada.
+
+Si utiliza AIPOCH Open-Science en su investigación, puede citar el preprint:
+
+<details>
+<summary>Cita BibTeX</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## Rendimiento en benchmarks
 

@@ -14,6 +14,9 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="AIPOCH Open-Science arXiv 프리프린트: 2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
   <a href="#벤치마크-성능">
     <img alt="AIPOCH Open-Science — 보고된 벤치마크 비교에서 최고 점수" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
@@ -62,6 +65,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 - [빠른 시작](#-빠른-시작)
 - [제품 둘러보기](#제품-둘러보기)
 - [AIPOCH Open-Science `.science` 연구 패키지](#aipoch-open-science-science-연구-패키지)
+- [AIPOCH Open-Science 논문 및 인용](#aipoch-open-science-논문-및-인용)
 - [벤치마크 성능](#벤치마크-성능)
 - [핵심 기능](#핵심-기능)
 - [모델 제공업체](#모델-제공업체)
@@ -179,6 +183,33 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 가져온 기록은 읽기 전용입니다. 재생은 코드 실행, 모델 호출 또는 자격 증명 복원을 수행하지 않습니다. 첫 질문은 연결된 쓰기 가능한 대화를 만듭니다. **Create a copy to continue research**로 작업 사본을 만들어 연구를 계속할 수 있습니다. 재실행에는 완전한 레시피, 필요한 입력과 사용 가능한 실행 환경이 필요합니다.
 
 Side Chat 대화, 비공개 읽기 북마크와 자격 증명은 제외되며, 포함 파일은 내보내기 선택에 따라 달라집니다. 받은 검증 기록은 발신자의 검사 결과이며 이 컴퓨터에서 다시 실행했음을 증명하지 않습니다. [`.science` 패키지 가이드](https://aipoch.com/docs/guides/research-packages/)를 참고하세요.
+
+## AIPOCH Open-Science 논문 및 인용
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+arXiv 프리프린트 · [v1](https://arxiv.org/abs/2610.17110v1) · 2026년 10월 12일 제출.
+
+이 프리프린트는 연구 맥락, 산출물 버전 및 검증 기록을 이동 가능한 `.science` 패키지로 공유하는 오픈소스 AI 연구 워크벤치 AIPOCH Open-Science를 소개합니다. 패키지 교환 설계와 통제된 평가에 관한 자세한 내용은 논문을 참고하세요.
+
+연구에 AIPOCH Open-Science를 사용한다면 이 프리프린트를 인용할 수 있습니다.
+
+<details>
+<summary>BibTeX 인용</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## 벤치마크 성능
 
