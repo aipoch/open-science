@@ -175,6 +175,17 @@ export type OAuthClientProviderOptions = {
   openExternal?: (url: string) => Promise<void> | void
 }
 
+export function clearUnboundOAuthCredentials(state: McpOAuthState): boolean {
+  const unbound = [state.tokens, state.clientInformation].some(
+    (value) => value && (typeof value.issuer !== 'string' || !value.issuer.trim())
+  )
+  if (!unbound) return false
+  // Discovery is controlled by the MCP server; it cannot establish a legacy credential's issuer.
+  delete state.tokens
+  delete state.clientInformation
+  return true
+}
+
 // Persistent provider backed by the app's encrypted state callback. The SDK owns discovery, PKCE,
 // dynamic registration, token exchange, and refresh; this class only supplies storage and browser IO.
 export class PersistentOAuthClientProvider implements OAuthClientProvider {
@@ -332,14 +343,7 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
   }
 
   private async clearUnboundCredentials(): Promise<void> {
-    const unbound = [this.oauthState.tokens, this.oauthState.clientInformation].some(
-      (value) => value && (typeof value.issuer !== 'string' || !value.issuer.trim())
-    )
-    if (!unbound) return
-    // Discovery is controlled by the MCP server; it cannot establish a legacy credential's issuer.
-    delete this.oauthState.tokens
-    delete this.oauthState.clientInformation
-    await this.persist()
+    if (clearUnboundOAuthCredentials(this.oauthState)) await this.persist()
   }
 
   private persist(): Promise<void> {

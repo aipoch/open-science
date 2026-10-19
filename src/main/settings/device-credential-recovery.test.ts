@@ -103,7 +103,13 @@ describe('device credential recovery', () => {
         clientSecret: 'old'
       }
     })
-    const state = { tokens: { access_token: 'valid-token', token_type: 'Bearer' } }
+    const state = {
+      tokens: {
+        access_token: 'valid-token',
+        token_type: 'Bearer',
+        issuer: 'https://auth.example.test/'
+      }
+    }
     await store.saveOAuthState(created.id, state)
     await store.update({ id: created.id, secret: 'new' })
     await expect(new DeviceCredentialStore(dir).resolveOAuth(created.id)).resolves.toMatchObject({

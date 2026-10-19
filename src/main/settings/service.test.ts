@@ -904,7 +904,11 @@ describe('SettingsService: custom MCP OAuth', () => {
     const id = added.customServers[0].id
     const authenticator = vi.fn(async (serverId: string) => {
       await service.saveCustomServerOAuthState(serverId, {
-        tokens: { access_token: 'access', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'access',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
     })
     const cancel = vi.fn(async () => undefined)
@@ -939,7 +943,7 @@ describe('SettingsService: custom MCP OAuth', () => {
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'access', token_type: 'Bearer' }
+      tokens: { access_token: 'access', token_type: 'Bearer', issuer: 'https://auth.example.test/' }
     })
     const disconnectRuntime = vi.fn(async () => undefined)
     service.setDeviceCredentialAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
