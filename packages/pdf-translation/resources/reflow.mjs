@@ -258,6 +258,37 @@ export async function generateReflow(input) {
   }
   try {
     if (p.FPDF_GetPageCount(source.doc) !== input.pages.length) throw Error('Source pages changed')
+    const retainedPages = new Set()
+    for (let number = 1; number <= input.pages.length; number++) {
+      const sourcePage = p.FPDF_LoadPage(source.doc, number - 1)
+      try {
+        if (p.FPDFPage_GetRotation(sourcePage)) retainedPages.add(number)
+      } finally {
+        p.FPDF_ClosePage(sourcePage)
+      }
+    }
+    // Copy rotated pages intact. Extend the fallback across joined paragraphs so
+    // their source text cannot also be emitted on a neighboring reflowed page.
+    let previousSize
+    do {
+      previousSize = retainedPages.size
+      for (const unit of input.units)
+        if (unit.fragments.some((fragment) => retainedPages.has(fragment.pageNumber)))
+          for (const fragment of unit.fragments) retainedPages.add(fragment.pageNumber)
+    } while (retainedPages.size !== previousSize)
+    for (const number of retainedPages) changedPages.delete(number)
+    for (const [unitIndex, unit] of input.units.entries())
+      if (
+        unit.translation !== unit.source &&
+        unit.fragments.some((fragment) => retainedPages.has(fragment.pageNumber))
+      )
+        layoutFailures.push({
+          unitIndex,
+          code: 'unsupported-layout',
+          phase: 'planning',
+          pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
+          fragmentCount: unit.fragments.length
+        })
     for (let number = 1; number <= input.pages.length; number++) {
       sourceNumber = number
       if (!changedPages.has(number)) {
@@ -282,9 +313,6 @@ export async function generateReflow(input) {
         nativePage = p.FPDF_LoadPage(source.doc, number - 1)
       let bitmap
       try {
-        const rotation = p.FPDFPage_GetRotation(nativePage)
-        // Crop geometry is expressed in the PDF.js default viewport. For unusual
-        // rotations preserve the complete visible page before its reflowed text.
         const objects = [],
           matrixBuffer = native.alloc(24)
         // A publisher Form may wrap the entire page. Walk through it to locate
@@ -378,12 +406,10 @@ export async function generateReflow(input) {
           cursor += drawHeight + 12
           return target
         }
-        const graphics = rotation
-          ? [{ x: 0, y: 0, width: 1, height: 1 }]
-          : (input.originalRegions ?? [])
-              .filter((region) => region.pageNumber === number)
-              .map((region) => ({ ...region.rect }))
-        for (const object of rotation ? [] : objects) {
+        const graphics = (input.originalRegions ?? [])
+          .filter((region) => region.pageNumber === number)
+          .map((region) => ({ ...region.rect }))
+        for (const object of objects) {
           if (object.type === 1) continue
           const [left, low, right, high] = object.bounds
           if (

@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
 import { PdfTranslationWriter } from '../src/writer.js'
@@ -124,3 +124,80 @@ it('retains every source fragment when an unsupported glyph spans two source pag
     caller.release()
   }
 })
+
+it.each([90, 180, 270])(
+  'retains rotated pages and whole cross-page paragraphs (%s degrees)',
+  async (rotation) => {
+    const original = await PDFDocument.create()
+    const font = await original.embedFont(StandardFonts.Helvetica)
+    for (let number = 1; number <= 4; number++) {
+      const page = original.addPage([400, 500])
+      page.drawText(`Original ${number}.`, { font, size: 12, x: 40, y: 440 })
+      if (number === 1) page.setRotation(degrees(rotation))
+    }
+    const units = [
+      {
+        source: 'Original 2. Original 3.',
+        translation: 'Translated second joint paragraph.',
+        fragments: [fragment(2, 0.08), fragment(3, 0.08)]
+      },
+      {
+        source: 'Original 1. Original 2.',
+        translation: 'Translated first joint paragraph.',
+        fragments: [fragment(1, 0.08), fragment(2, 0.08)]
+      },
+      {
+        source: 'Original 4.',
+        translation: 'Translated unaffected page.',
+        fragments: [fragment(4, 0.08)]
+      }
+    ]
+    const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    const caller = new TestCallerRegistry().acquire({
+      leaseId: 'rotated-reflow',
+      surface: 'electron'
+    })
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await writer.generateDetailed(
+        {
+          id: 'rotated-reflow',
+          layout: 'reflow',
+          data: await original.save(),
+          pages: Array.from({ length: 4 }, (_, index) =>
+            index === 0 && rotation !== 180
+              ? { width: 500, height: 400 }
+              : { width: 400, height: 500 }
+          ),
+          units
+        },
+        caller.lease
+      )
+      expect(output!.reflow!.originalPageNumbers).toEqual([1, 2, 3])
+      expect(output!.layoutFailures).toEqual(
+        [0, 1].map((unitIndex) => ({
+          unitIndex,
+          code: 'unsupported-layout',
+          phase: 'planning',
+          pageNumbers: units[unitIndex].fragments.map((f) => f.pageNumber),
+          fragmentCount: 2
+        }))
+      )
+      task = getDocument({ data: output!.data.slice() })
+      const pdf = await task.promise
+      expect(pdf.numPages).toBe(4)
+      for (let number = 1; number <= 4; number++) {
+        const page = await pdf.getPage(number)
+        const text = (await page.getTextContent()).items
+          .map((i) => ('str' in i ? i.str : ''))
+          .join('')
+        expect(text).toBe(number <= 3 ? `Original ${number}.` : 'Translated unaffected page.')
+        if (number === 1) expect(page.rotate).toBe(rotation)
+        page.cleanup()
+      }
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
