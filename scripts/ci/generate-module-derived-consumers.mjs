@@ -13,7 +13,7 @@ import { derivedConsumersPath, validateDerivedConsumers } from './module-derived
 
 const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')
 
-export function consumerDependencyGraph(source, runtimeEdges) {
+export function consumerDependencyGraph(source, runtimeEdges, { includeAssets = true } = {}) {
   for (const [target, consumers] of runtimeEdges) {
     if (
       !source.files.has(target) ||
@@ -22,7 +22,7 @@ export function consumerDependencyGraph(source, runtimeEdges) {
     )
       throw Error(`Invalid runtime consumer edge: ${target}`)
   }
-  const inspect = createConsumerDependencyReader(source, runtimeEdges)
+  const inspect = createConsumerDependencyReader(source, runtimeEdges, { includeAssets })
   const reverse = new Map()
   for (const path of source.files) {
     if (!/\.[cm]?[jt]sx?$/.test(path)) continue
@@ -40,7 +40,7 @@ export function consumerDependencyGraph(source, runtimeEdges) {
   return { reverse, inspect }
 }
 
-export function generateDerivedConsumers(manifest, reverse) {
+export function generateDerivedConsumers(manifest, reverse, schemaVersion = 2) {
   const modules = {}
   for (const id of Object.keys(manifest.modules).sort()) {
     const module = manifest.modules[id]
@@ -61,7 +61,7 @@ export function generateDerivedConsumers(manifest, reverse) {
     const tests = [...visited].filter((p) => isTest(p) && !explicit.has(p)).sort()
     if (tests.length) modules[id] = tests
   }
-  return { schemaVersion: 1, modules }
+  return { schemaVersion, modules }
 }
 
 export function checkDerivedConsumers(source, manifest) {
@@ -71,8 +71,11 @@ export function checkDerivedConsumers(source, manifest) {
   const runtimeEdges = Object.entries(
     JSON.parse(source.read('scripts/ci/module-runtime-consumers.json'))
   )
-  const graph = consumerDependencyGraph(source, runtimeEdges)
-  const expected = generateDerivedConsumers(manifest, graph.reverse)
+  // Keep v1 reproducible while the trusted checker is rolled out before the v2 index.
+  const graph = consumerDependencyGraph(source, runtimeEdges, {
+    includeAssets: actual.schemaVersion >= 2
+  })
+  const expected = generateDerivedConsumers(manifest, graph.reverse, actual.schemaVersion)
   if (!isDeepStrictEqual(actual, expected))
     throw Error('Stale derived consumer index; run npm run generate:module-consumers')
   return graph
@@ -95,7 +98,20 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
     cwd,
     encoding: 'utf8'
   }).trim()
-  if (hasIndex(mergeBase) || hasIndex(head)) checkDerivedConsumersAtRevision(head, cwd)
+  if (hasIndex(mergeBase) || hasIndex(head)) {
+    checkDerivedConsumersAtRevision(head, cwd)
+    if (hasIndex(mergeBase)) {
+      const version = (revision) =>
+        JSON.parse(
+          execFileSync('git', ['show', `${revision}:${derivedConsumersPath}`], {
+            cwd,
+            encoding: 'utf8',
+            maxBuffer: 16 * 1024 * 1024
+          })
+        ).schemaVersion
+      if (version(head) < version(mergeBase)) throw Error('Derived consumer index cannot downgrade')
+    }
+  }
 }
 
 export function workingConsumerSource(cwd = process.cwd()) {

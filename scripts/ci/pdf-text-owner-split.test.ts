@@ -11,9 +11,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 describe.each([
-  ['pdf_text', 'pdf-text'],
-  ['shared_promise_identity', 'in-flight-promise']
-])('%s boundary', (moduleId, file) => {
+  ['pdf_text', 'pdf-text', true],
+  ['shared_promise_identity', 'in-flight-promise', true],
+  ['shared_fuzzy_match', 'fuzzy-match', false]
+] as const)('%s boundary', (moduleId, file, includeOwnerTest) => {
   const source = `src/shared/${file}.ts`
   const test = `src/shared/${file}.test.ts`
   const consumer = 'src/consumer.test.ts'
@@ -36,10 +37,17 @@ describe.each([
       testFiles: { owner: tests, contract: [] as string[], consumer: [] as string[] }
     })
     const original = {
-      ...module([source, test, 'src/shared/other.ts'], [test]),
+      ...module(
+        [source, ...(includeOwnerTest ? [test] : []), 'src/shared/other.ts'],
+        includeOwnerTest ? [test] : []
+      ),
       fullTestReason: 'Dynamic cross-process contracts'
     }
-    const host = module([consumer, uncertain], [consumer, uncertain])
+    original.testFiles.contract.push(consumer)
+    const host = module(
+      [consumer, uncertain, ...(!includeOwnerTest ? [test] : [])],
+      [consumer, uncertain, ...(!includeOwnerTest ? [test] : [])]
+    )
     const save = (id: string, value: object) =>
       put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(value))
     const commit = () => {
@@ -85,8 +93,11 @@ describe.each([
       ownerPaths: ['src/shared/other.ts'],
       interfacePaths: ['src/shared/other.ts']
     }
-    const target = module([source, test], [test])
-    target.testFiles.consumer = [consumer, uncertain]
+    const target = module(
+      [source, ...(includeOwnerTest ? [test] : [])],
+      includeOwnerTest ? [test] : []
+    )
+    target.testFiles.consumer = [consumer, uncertain, ...(!includeOwnerTest ? [test] : [])]
     const inspect = () => {
       save('shared_application_contracts', remaining)
       save(moduleId, target)
@@ -100,7 +111,7 @@ describe.each([
       ok: true,
       boundedOwnerSplits: [
         `shared_application_contracts:${source}`,
-        `shared_application_contracts:${test}`
+        ...(includeOwnerTest ? [`shared_application_contracts:${test}`] : [])
       ]
     })
   })

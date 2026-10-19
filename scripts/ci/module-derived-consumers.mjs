@@ -7,7 +7,7 @@ export const derivedConsumersPath = 'scripts/ci/module-derived-consumers.json'
 export function validateDerivedConsumers(index, manifest) {
   if (
     !index ||
-    index.schemaVersion !== 1 ||
+    ![1, 2].includes(index.schemaVersion) ||
     Object.keys(index).some((key) => !['schemaVersion', 'modules'].includes(key)) ||
     !index.modules ||
     typeof index.modules !== 'object' ||

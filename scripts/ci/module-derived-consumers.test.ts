@@ -45,7 +45,7 @@ const manifest = (): ModuleImpactManifest => ({
     }
   }
 })
-const expected = { schemaVersion: 1, modules: { owner: [consumer] } }
+const expected = { schemaVersion: 2, modules: { owner: [consumer] } }
 const source = (extra: Record<string, string> = {}) => {
   const contents: Record<string, string> = {
     [owner]: 'export const value = 1',
@@ -102,6 +102,79 @@ it('keeps known edges in opaque cones without claiming coverage of computed impo
   )
   expect(graph.inspect.dependencies(consumer).complete).toBe(false)
   expect(generateDerivedConsumers(manifest(), graph.reverse)).toEqual(expected)
+})
+
+it.each([
+  ['./icon.svg', 'src/main/icon.svg'],
+  ['./icon.svg?raw', 'src/main/icon.svg'],
+  ['./icon.svg?url#mark', 'src/main/icon.svg'],
+  ['@/assets/logo.png', 'src/renderer/src/assets/logo.png'],
+  ['@renderer/assets/logo.png?inline', 'src/renderer/src/assets/logo.png'],
+  ['../renderer/src/annotations/controls.css', 'src/renderer/src/annotations/controls.css']
+])(
+  'selects resource consumers through %s without proving the cone complete',
+  (specifier, asset) => {
+    const registration = manifest()
+    registration.modules.owner.ownerPaths = [asset, ownerTest]
+    registration.modules.owner.interfacePaths = [asset]
+    const input = source({
+      [asset]: 'not JavaScript',
+      'src/main/bridge.ts': `import asset from '${specifier}'; export { asset }`
+    })
+    const graph = consumerDependencyGraph(input, [])
+    const index = generateDerivedConsumers(registration, graph.reverse)
+    expect(index.modules.owner).toContain(consumer)
+    expect(graph.inspect(consumer, new Set([asset])).reachable).toBe(true)
+    expect(graph.inspect(consumer, new Set(['unrelated.ts'])).complete).toBe(false)
+    const effective = withDerivedConsumers(registration, index)
+    expect(createModuleTestPlan('owner', effective).testFiles).toContain(consumer)
+    expect(createModuleTestPlan('owner', effective).reasonChains).toContain(
+      `owner -> derived dependency evidence -> ${consumer}`
+    )
+  }
+)
+
+it.each(['./missing.svg', './icon.svg?unknown', './icon.svg?raw&plugin', '../escape.svg'])(
+  'does not invent resource edges for %s',
+  (specifier) => {
+    const graph = consumerDependencyGraph(
+      source({
+        [consumer]: `import '${specifier}'`,
+        'src/main/icon.svg': '<svg />'
+      }),
+      []
+    )
+    expect([...graph.inspect.dependencies(consumer).paths]).toEqual([])
+    expect(graph.inspect.dependencies(consumer).complete).toBe(false)
+  }
+)
+
+it('keeps legacy evidence reproducible but requires all resource consumers in v2', () => {
+  const asset = 'src/main/icon.svg'
+  const registration = manifest()
+  registration.modules.owner.ownerPaths = [asset, ownerTest]
+  registration.modules.owner.interfacePaths = [asset]
+  const input = source({ [asset]: '<svg />', 'src/main/bridge.ts': "import './icon.svg'" })
+  const legacy = generateDerivedConsumers(
+    registration,
+    consumerDependencyGraph(input, [], { includeAssets: false }).reverse,
+    1
+  )
+  const withIndex = (index: object) => ({
+    ...input,
+    read: (path: string) =>
+      path === derivedConsumersPath ? JSON.stringify(index) : input.read(path)
+  })
+  expect(legacy.modules.owner).toBeUndefined()
+  expect(() => checkDerivedConsumers(withIndex(legacy), registration)).not.toThrow()
+  expect(() =>
+    checkDerivedConsumers(withIndex({ ...legacy, schemaVersion: 2 }), registration)
+  ).toThrow('Stale')
+  const upgraded = generateDerivedConsumers(
+    registration,
+    consumerDependencyGraph(input, []).reverse
+  )
+  expect(() => checkDerivedConsumers(withIndex(upgraded), registration)).not.toThrow()
 })
 
 it('requires shared test helpers to be interfaces before propagating their consumers', () => {
@@ -197,7 +270,7 @@ it.each([
 })
 it.each([
   null,
-  { schemaVersion: 2, modules: {} },
+  { schemaVersion: 3, modules: {} },
   { schemaVersion: 1, modules: [], extra: true },
   { schemaVersion: 1, modules: { missing: [] } },
   { schemaVersion: 1, modules: { owner: [consumer, consumer] } }
@@ -300,6 +373,14 @@ it('rejects Git symlinks without following them on any platform', () => {
   expect(() => checkDerivedConsumerRevisions(base, f.git('rev-parse', 'HEAD'), f.root)).toThrow(
     'Missing'
   )
+}, 30_000)
+
+it('rejects downgrading a trusted v2 index even when legacy contents are valid', () => {
+  const f = repository()
+  runDerivedConsumersCli(['--write'], f.root)
+  const base = f.commit()
+  f.put(derivedConsumersPath, JSON.stringify({ ...expected, schemaVersion: 1 }))
+  expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow('cannot downgrade')
 }, 30_000)
 
 it('follows explicit native intermediates and source package exports', () => {
